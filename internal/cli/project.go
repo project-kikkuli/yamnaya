@@ -114,11 +114,19 @@ func projectCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 			return from + " merged into " + into, e.core.Store.Merge(from, into)
 		}),
 	}, &cobra.Command{
-		Use:   "split <session>",
-		Short: "Undo a merge so the session's project stands alone again",
+		Use:   "split <project>",
+		Short: "Undo every merge into or out of a project",
 		Args:  cobra.ExactArgs(1),
 		RunE: resolve(func(e *env, b core.Board, args []string) (string, error) {
-			return args[0] + " split", e.core.Store.Unmerge(args[0])
+			key, err := b.ProjectKey(args[0])
+			if err != nil {
+				key = args[0]
+			}
+			n, err := e.core.Store.Split(key)
+			if err == nil && n == 0 {
+				err = fmt.Errorf("%s has no merges", args[0])
+			}
+			return fmt.Sprintf("%s: undid %d merges", key, n), err
 		}),
 	})
 	return cmd
@@ -188,7 +196,7 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			}
 			err = e.core.Focus(t)
 			if errors.Is(err, core.ErrNoHost) {
-				fmt.Fprintf(out, "no terminal ym can reach; resume with: %s\n", strings.Join(t.Resume, " "))
+				fmt.Fprintln(out, t.Advice())
 				return nil
 			}
 			if err == nil {

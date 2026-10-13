@@ -3,6 +3,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -44,7 +45,6 @@ type Model struct {
 	core     *core.Core
 	board    core.Board
 	loaded   bool
-	loading  bool
 	err      error
 	mode     mode
 	back     mode
@@ -77,6 +77,7 @@ func Run(c *core.Core) error {
 type boardMsg struct {
 	board core.Board
 	err   error
+	tick  bool
 }
 
 type tickMsg struct{}
@@ -86,11 +87,12 @@ type doneMsg struct {
 	err     error
 }
 
-func (m Model) refresh() tea.Cmd {
+// refresh reloads the board; only the periodic reload schedules the next one, so actions never start a second loop.
+func (m Model) refresh(tick bool) tea.Cmd {
 	c := m.core
 	return func() tea.Msg {
 		b, err := c.Board()
-		return boardMsg{b, err}
+		return boardMsg{b, err, tick}
 	}
 }
 
@@ -98,7 +100,7 @@ func (m Model) tick() tea.Cmd {
 	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func (m Model) Init() tea.Cmd { return m.refresh() }
+func (m Model) Init() tea.Cmd { return m.refresh(true) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -106,27 +108,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case boardMsg:
-		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
 		m.clamp()
-		return m, m.tick()
-	case tickMsg:
-		if m.loading {
+		if msg.tick {
 			return m, m.tick()
 		}
-		m.loading = true
-		return m, m.refresh()
+		return m, nil
+	case tickMsg:
+		return m, m.refresh(true)
 	case doneMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
 		} else {
 			m.message = msg.message
 		}
-		return m, m.refresh()
+		return m, m.refresh(false)
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -340,7 +340,10 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		if p := m.projectOf(r); p != nil {
 			key := p.Key
-			return m, m.do(func() (string, error) { return "split", m.core.Store.Unmerge(key) })
+			return m, m.do(func() (string, error) {
+				n, err := m.core.Store.Split(key)
+				return fmt.Sprintf("split %d merged missions back out", n), err
+			})
 		}
 	}
 	return m, nil
@@ -463,7 +466,7 @@ func (m Model) focus(t core.Target) tea.Cmd {
 	return m.do(func() (string, error) {
 		err := m.core.Focus(t)
 		if errors.Is(err, core.ErrNoHost) {
-			return "no terminal ym can reach; resume with: " + strings.Join(t.Resume, " "), nil
+			return t.Advice(), nil
 		}
 		return "opened " + t.String(), err
 	})

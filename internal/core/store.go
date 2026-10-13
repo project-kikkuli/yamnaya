@@ -445,7 +445,11 @@ func (s *Store) Merge(project, into string) error {
 	return err
 }
 
-func (s *Store) Unmerge(project string) error {
-	_, err := s.db.Exec(`DELETE FROM ym_merges WHERE project = ?`, project)
-	return err
+// Split undoes every merge into or out of project and reports how many it undid.
+func (s *Store) Split(project string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM ym_merges WHERE project = ? OR into_project = ?`, project, project)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

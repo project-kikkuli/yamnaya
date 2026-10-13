@@ -159,8 +159,13 @@ func TestDuplicateProcessesOnOneSessionAreFlagged(t *testing.T) {
 	w := newWorld(t)
 	w.run(10, 1, "/dev/t1", "claude", "same", Busy)
 	w.run(11, 1, "/dev/t2", "claude", "same", Busy)
+	w.run(20, 1, "/dev/t3", "claude", "wrapped", Idle)
+	w.run(21, 20, "/dev/t3", "claude", "wrapped", Idle)
 	w.tmux.ttys["/dev/t1"], w.tmux.ttys["/dev/t2"] = "%1", "%2"
 	b := w.board(t)
+	if s, _ := b.Session("wrapped"); len(s.Copies) != 1 || s.PID != 21 {
+		t.Errorf("a launcher and its child on one terminal = %+v, want one copy, the child", s)
+	}
 	p, _ := b.Project("same")
 	if !p.Duplicated() || len(p.Sessions) != 1 || len(p.Sessions[0].Copies) != 2 {
 		t.Fatalf("project = %+v", p)

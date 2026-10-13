@@ -25,11 +25,22 @@ func (p Proc) Command() string {
 	if len(p.Args) == 0 {
 		return ""
 	}
-	base := filepath.Base(p.Args[0])
-	if (base == "node" || base == "bun") && len(p.Args) > 1 {
-		return filepath.Base(p.Args[1])
+	return filepath.Base(p.Args[p.program()])
+}
+
+// Params are the arguments after the program name, looking past a launcher.
+func (p Proc) Params() []string {
+	if len(p.Args) == 0 {
+		return nil
 	}
-	return base
+	return p.Args[p.program()+1:]
+}
+
+func (p Proc) program() int {
+	if base := filepath.Base(p.Args[0]); (base == "node" || base == "bun") && len(p.Args) > 1 {
+		return 1
+	}
+	return 0
 }
 
 // List runs ps once and returns every process.

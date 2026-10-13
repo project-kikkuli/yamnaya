@@ -58,7 +58,7 @@ func (a *Adapter) Owns(p proc.Proc) bool {
 	if p.Command() != "codex" {
 		return false
 	}
-	for _, arg := range p.Args[1:] {
+	for _, arg := range p.Params() {
 		if notSessions[arg] {
 			return false
 		}
@@ -190,31 +190,34 @@ func (a *Adapter) newestSince(p proc.Proc, now time.Time, claimed map[string]boo
 	return thread{}, false
 }
 
+// Discover resolves every thread named by arguments or open files before guessing the rest from their directories.
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	now := a.Now()
+	ids := make([]string, len(procs))
 	claimed := map[string]bool{}
+	for i, p := range procs {
+		if ids[i] = argThread(p.Args); ids[i] == "" {
+			ids[i] = a.heldThread(p.PID)
+		}
+		claimed[ids[i]] = ids[i] != ""
+	}
 	out := make([]core.Session, 0, len(procs))
-	for _, p := range procs {
-		out = append(out, a.read(p, now, claimed))
+	for i, p := range procs {
+		out = append(out, a.read(p, ids[i], now, claimed))
 	}
 	return out
 }
 
-func (a *Adapter) read(p proc.Proc, now time.Time, claimed map[string]bool) core.Session {
+func (a *Adapter) read(p proc.Proc, id string, now time.Time, claimed map[string]bool) core.Session {
 	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY}
 	var t thread
 	var ok bool
-	id := argThread(p.Args)
-	if id == "" {
-		id = a.heldThread(p.PID)
-	}
 	if id != "" {
-		t, ok = a.threadByID(id)
-		if !ok {
+		if t, ok = a.threadByID(id); !ok {
 			t, ok = thread{id: id}, true
 		}
-	} else {
-		t, ok = a.newestSince(p, now, claimed)
+	} else if t, ok = a.newestSince(p, now, claimed); ok {
+		claimed[t.id] = true
 	}
 	if !ok {
 		if a.Cwd != nil {
@@ -222,7 +225,6 @@ func (a *Adapter) read(p proc.Proc, now time.Time, claimed map[string]bool) core
 		}
 		return s
 	}
-	claimed[t.id] = true
 	s.ID, s.Title, s.Cwd = t.id, t.title, t.cwd
 	if s.Cwd == "" && a.Cwd != nil {
 		s.Cwd = a.Cwd(p.PID)

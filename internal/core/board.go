@@ -107,11 +107,10 @@ func (c *Core) now() time.Time {
 	return time.Now()
 }
 
-// owned lists each harness's terminal processes, skipping one nested in the same harness on the same terminal.
+// owned lists each harness's terminal processes. A launcher wrapping the same harness on the same terminal gives way to its child.
 func (c *Core) owned(procs []proc.Proc) [][]proc.Proc {
 	byHarness := make([][]proc.Proc, len(c.Harnesses))
 	owner := map[int]int{}
-	table := proc.Index(procs)
 	for _, p := range procs {
 		for i, h := range c.Harnesses {
 			if h.Owns(p) {
@@ -120,17 +119,19 @@ func (c *Core) owned(procs []proc.Proc) [][]proc.Proc {
 			}
 		}
 	}
+	wraps := map[int]bool{}
+	table := proc.Index(procs)
 	for _, p := range procs {
 		i, ok := owner[p.PID]
-		if !ok || p.TTY == "" {
-			continue
+		parent, found := table[p.PPID]
+		if pi, owned := owner[p.PPID]; ok && found && owned && pi == i && parent.TTY == p.TTY {
+			wraps[p.PPID] = true
 		}
-		if parent, ok := table[p.PPID]; ok && parent.TTY == p.TTY {
-			if pi, ok := owner[parent.PID]; ok && pi == i {
-				continue
-			}
+	}
+	for _, p := range procs {
+		if i, ok := owner[p.PID]; ok && p.TTY != "" && !wraps[p.PID] {
+			byHarness[i] = append(byHarness[i], p)
 		}
-		byHarness[i] = append(byHarness[i], p)
 	}
 	return byHarness
 }
@@ -360,10 +361,15 @@ func projectStatus(p Project) Status {
 // needs orders permission prompts first, then open items by how much they block, oldest first.
 func needs(b Board) []Need {
 	var out []Need
+	asked := map[string]bool{}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
+		if asked[s.Key()] {
+			continue
+		}
 		if s.Prompt != nil || (s.Status == Waiting && strings.Contains(strings.ToLower(s.WaitingFor), "permission")) {
 			out = append(out, Need{Session: s, Project: s.Project})
+			asked[s.Key()] = true
 		}
 	}
 	var items []Need

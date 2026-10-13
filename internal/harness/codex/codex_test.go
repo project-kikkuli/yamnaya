@@ -108,6 +108,14 @@ func TestDiscoverReadsTitleStatusAndAsksForScreenWhenBusy(t *testing.T) {
 	}
 }
 
+func TestDiscoverNeverGuessesAThreadAnotherProcessNames(t *testing.T) {
+	f := setup(t)
+	got := f.Discover([]proc.Proc{cp(1, time.Minute, "codex"), cp(2, time.Minute, "codex", "resume", newID)})
+	if got[0].ID == newID || got[1].ID != newID {
+		t.Fatalf("ids = %q, %q", got[0].ID, got[1].ID)
+	}
+}
+
 func TestDiscoverFailsSoftWithoutState(t *testing.T) {
 	a := &Adapter{Home: t.TempDir(), Cwd: func(int) string { return "/Users/me/src/web" }, Now: time.Now}
 	got := a.Discover([]proc.Proc{cp(9, time.Minute, "codex")})

@@ -113,6 +113,8 @@ func TestOwnsSessionProcessesOnly(t *testing.T) {
 		"interactive":   {[]string{"/opt/bin/claude", "--resume", "x"}, true},
 		"headless":      {[]string{"claude", "-p", "do it"}, true},
 		"node launcher": {[]string{"node", "/usr/lib/claude", "--continue"}, true},
+		"prompt words":  {[]string{"claude", "fix", "it", "then", "update", "mcp"}, true},
+		"subcommand":    {[]string{"claude", "update"}, false},
 		"chrome host":   {[]string{"claude", "--chrome-native-host"}, false},
 		"mcp server":    {[]string{"claude", "mcp", "serve"}, false},
 		"other program": {[]string{"codex"}, false},

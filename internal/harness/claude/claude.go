@@ -48,17 +48,19 @@ func New() *Adapter {
 
 func (a *Adapter) Name() string { return Name }
 
-var notSessions = []string{"--chrome-native-host", "mcp", "--version", "-v", "doctor", "update", "install"}
+var subcommands = map[string]bool{"mcp": true, "doctor": true, "update": true, "install": true, "config": true, "setup-token": true, "plugin": true}
 
 func (a *Adapter) Owns(p proc.Proc) bool {
 	if p.Command() != "claude" {
 		return false
 	}
-	for _, arg := range p.Args[1:] {
-		for _, h := range notSessions {
-			if arg == h {
-				return false
-			}
+	args := p.Params()
+	if len(args) > 0 && subcommands[args[0]] {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "--chrome-native-host" || arg == "--version" {
+			return false
 		}
 	}
 	return true

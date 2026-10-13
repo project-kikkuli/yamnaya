@@ -78,7 +78,7 @@ func setup(t *testing.T) (Model, *core.Core, *host) {
 
 func refresh(t *testing.T, m Model) Model {
 	t.Helper()
-	next, _ := m.Update(m.refresh()())
+	next, _ := m.Update(m.refresh(false)())
 	return next.(Model)
 }
 

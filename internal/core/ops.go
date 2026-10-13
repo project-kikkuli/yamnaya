@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -48,6 +49,19 @@ func (t Target) String() string {
 		return fmt.Sprintf("%s %s (pid %d)", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	}
 	return strings.Join(t.Resume, " ")
+}
+
+// Advice is what to tell the owner when ym cannot focus the target.
+func (t Target) Advice() string {
+	resume := strings.Join(t.Resume, " ")
+	if t.Session.PID == 0 {
+		return "not running; resume with: " + resume
+	}
+	where := "pid " + strconv.Itoa(t.Session.PID)
+	if t.Session.TTY != "" {
+		where += " on " + t.Session.TTY
+	}
+	return where + " runs outside any terminal ym can focus; resume with: " + resume + " (only after quitting that process)"
 }
 
 // Targets lists every live copy of a session with its host; a session with no live process yields its resume command.
