@@ -35,6 +35,10 @@ func byPID(sessions []core.Session) map[int]core.Session {
 
 func TestDiscoverReadsStateTranscriptAndCrew(t *testing.T) {
 	a := fixture(t)
+	open := filepath.Join(a.Dir, "projects", "-Users-me-src-app", "33333333-cccc-4ccc-8ccc-333333333333.jsonl")
+	info, err := os.Stat(open)
+	must(t, err)
+	a.Now = func() time.Time { return info.ModTime().Add(time.Minute) }
 	got := byPID(a.Discover([]proc.Proc{
 		p(101, "claude"),
 		p(102, "claude", "--continue"),
