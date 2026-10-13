@@ -129,8 +129,9 @@ func (m *boardModel) expandedProject(p signals.Project) bool {
 	return p.Open > 0 || p.NeedPermission() > 0 || ((m.sel.kind == rowProject || m.sel.kind == rowWindow) && m.sel.project == p.Name)
 }
 
+// rows lists selectable rows in the order the view draws them: the popup puts sessions above projects, the sidebar below.
 func (m *boardModel) rows() []row {
-	rows := m.sessionRows()
+	var rows []row
 	for _, p := range m.snap.Projects {
 		rows = append(rows, row{kind: rowProject, project: p.Name})
 		if m.expandedProject(p) {
@@ -139,7 +140,10 @@ func (m *boardModel) rows() []row {
 			}
 		}
 	}
-	return rows
+	if m.sidebar {
+		return append(rows, m.sessionRows()...)
+	}
+	return append(m.sessionRows(), rows...)
 }
 
 func (m *boardModel) selIndex(rows []row) int {
@@ -225,6 +229,8 @@ func (m *boardModel) promptKey(msg tea.KeyMsg) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.prompt = nil
+	case tea.KeyCtrlU:
+		f.value = ""
 	case tea.KeyBackspace:
 		if r := []rune(f.value); len(r) > 0 {
 			f.value = string(r[:len(r)-1])
@@ -417,7 +423,7 @@ func (m *boardModel) itemsKey(msg tea.KeyMsg) tea.Cmd {
 	case "q", "esc":
 		m.itemsOf, m.items = "", nil
 		return nil
-	case "up", "k":
+	case "up":
 		m.itemSel = clamp(m.itemSel-1, len(m.items))
 		return nil
 	case "down", "j":

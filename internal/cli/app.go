@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness"
@@ -135,5 +136,37 @@ func (a *app) closeIfDead(project, name string) error {
 	if liveWindow(w, live) {
 		return nil
 	}
+	if signals.Present(w, live) {
+		if err := a.tmux.KillWindow(w.TmuxTarget); err != nil {
+			return err
+		}
+	}
 	return a.store.CloseWindow(w.ID)
+}
+
+// startGrace is how long a fresh harness must keep running before ym calls its start good.
+func startGrace() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("YAMNAYA_START_GRACE")); err == nil {
+		return d
+	}
+	return 2 * time.Second
+}
+
+// checkStarted reports a window whose harness exited within the start grace, with the pane's last output.
+func (a *app) checkStarted(project, name string) error {
+	w, err := a.store.OpenWindow(project, name)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(startGrace())
+	for {
+		if p, err := a.tmux.Pane(w.TmuxTarget); err == nil && p.Dead {
+			out := strings.Join(a.tmux.LastLines(w.TmuxTarget, 5), "\n")
+			return fmt.Errorf("%s/%s exited right after starting:\n%s", project, name, out)
+		}
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

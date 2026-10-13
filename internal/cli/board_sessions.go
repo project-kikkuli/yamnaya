@@ -138,7 +138,8 @@ func (a *app) promote(s signals.Session, project string) error {
 	tag := func(w store.Window) (string, error) {
 		return s.WindowID, a.tmux.Tag(s.WindowID, strconv.FormatInt(w.ID, 10))
 	}
-	return a.store.CreateProject(store.Project{Name: project, Cwd: s.Cwd}, manager, tag)
+	gitDir, branch := gitSource(s.Cwd)
+	return a.store.CreateProject(store.Project{Name: project, Cwd: s.Cwd, GitDir: gitDir, Branch: branch}, manager, tag)
 }
 
 func promoteName(s signals.Session) string {

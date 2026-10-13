@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/tmux"
 	_ "modernc.org/sqlite"
 )
 
@@ -67,9 +68,10 @@ func newEnv(t *testing.T) *env {
 		"YAMNAYA_CODEX_BIN="+fake,
 		"CODEX_HOME="+codex,
 		"CLAUDE_CONFIG_DIR="+filepath.Join(dir, "claude"),
+		"YAMNAYA_START_GRACE=300ms",
 		"YM_PROJECT=", "YM_WINDOW=", "TMUX=",
 	)
-	t.Cleanup(func() { exec.Command("tmux", "-L", e.socket, "kill-server").Run() })
+	t.Cleanup(tmux.Client{Socket: e.socket}.KillServer)
 	return e
 }
 

@@ -42,13 +42,13 @@ Item ids are stable per project and never reused: `D` decisions, `V` veto-able d
 
 `ym` (or `ym home`) opens a tmux session `ym`: the board as a narrow sidebar on the left, and a stage on the right. Enter on a window or a discovered session moves its live pane onto the stage with `swap-pane` and focuses it; choosing another window first returns the staged pane to the window it came from. Nothing is restarted or copied. The stage is recorded in the state database, so a restarted sidebar returns a pane left on stage. Killing the `ym` session kills whatever agent is on stage.
 
-Sidebar keys: Enter stages, Tab focuses the stage, `n` starts a new project (name, cwd, harness, phases, first prompt), `k` lists landed projects and Enter revives one, `q` detaches. All board keys below work too; `g` and `f` stage the source window instead of switching to it.
+Sidebar keys: Enter stages, Tab focuses the stage, `n` starts a new project (name, cwd, harness, phases, first prompt), `k` lists landed projects and Enter revives one, `q` detaches. In a form, Enter moves to the next field and ctrl-u clears a prefilled one. All board keys below work too; `g` and `f` stage the source window instead of switching to it.
 
 ## Board
 
 `ym board` shows one line per project: phase dots and how many items ask you. A project expands to its windows when selected or when something in it asks you. Windows read `needs permission` with the requested tool and command when a Claude Code or Codex permission dialog is on screen, else `asks you`, `running`, `idle 12m`, or `dead`; tmux windows ym does not track show as unmanaged, and `a` adopts one.
 
-Keys: arrows or `j`/`k` move, Enter jumps to a window, `o` opens the project's items, `t` starts a side thread, `q` quits. In the item list: Enter expands, `g` goes to the source window, `f` goes there and types `re <id>: `, `y`/`n` answer a default, `d` dismisses with a reason, `s` snoozes.
+Keys: ↑/↓ (or `j`) move, Enter jumps to a window, `o` opens the project's items, `t` starts a side thread, `q` quits. In the item list: Enter expands, `g` goes to the source window, `f` goes there and types `re <id>: `, `y`/`n` answer a default, `d` dismisses with a reason, `s` snoozes.
 
 `ym next` jumps to the next window waiting on a permission dialog, then to windows with open items, oldest item first.
 
@@ -59,4 +59,5 @@ Keys: arrows or `j`/`k` move, Enter jumps to a window, `o` opens the project's i
 - `YAMNAYA_CLAUDE_BIN`, `YAMNAYA_CODEX_BIN`: harness binaries
 - `YAMNAYA_CS_BIN`: the `cs` script `switch` uses to port sessions (default: `cs` on PATH)
 - `CODEX_HOME`: where Codex keeps its state; ym reads it to record Codex session ids
+- `YAMNAYA_START_GRACE`: how long `new`, `spawn` and `switch` watch a fresh harness for an immediate exit (default `2s`)
 - `CLAUDE_CONFIG_DIR`: where Claude Code keeps transcripts (default `~/.claude`); the board reads them for idle time

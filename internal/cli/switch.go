@@ -82,6 +82,9 @@ func switchCmd(withApp runner) *cobra.Command {
 			if err := a.store.SwitchHarness(w.ID, to, newID); err != nil {
 				return err
 			}
+			if err := a.checkStarted(project, w.Name); err != nil {
+				return err
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s now runs %s session %s\n", project, w.Name, to, newID)
 			return nil
 		}),

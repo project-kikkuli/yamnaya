@@ -11,7 +11,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
 )
 
-// IdleAfter is how long a transcript stays quiet before its window reads as idle.
+// IdleAfter is how long a transcript stays quiet before its window reads as idle, when the harness's own status is not known.
 const IdleAfter = 2 * time.Minute
 
 type State int
@@ -31,6 +31,8 @@ type Window struct {
 	LastActive time.Time
 	Permission *Permission
 	Discovered *discover.Session
+	// Exited is the last line a dead pane showed, when its window is still there.
+	Exited string
 	// Staged is true while the window's agent pane is lent to the ym home stage.
 	Staged bool
 	// Pane is where the window's agent pane is: its own window, or the stage pane.
@@ -45,6 +47,11 @@ func (w Window) State(now time.Time) State {
 		return Asking
 	case !w.Alive:
 		return Dead
+	case w.Discovered != nil:
+		if w.Discovered.Status == discover.Running {
+			return Running
+		}
+		return Idle
 	case !w.LastActive.IsZero() && now.Sub(w.LastActive) >= IdleAfter:
 		return Idle
 	}
@@ -61,6 +68,9 @@ func (w Window) Label(now time.Time) string {
 		}
 		return "asks you"
 	case Dead:
+		if w.Exited != "" {
+			return "exited: " + w.Exited
+		}
 		return "dead"
 	case Idle:
 		return "idle " + Duration(now.Sub(w.LastActive))
@@ -173,6 +183,11 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 				pane, err := r.Tmux.Pane(stage.Pane)
 				sw.Staged, sw.Pane, sw.Alive = true, stage.Pane, err == nil && !pane.Dead
 			}
+			if !sw.Alive && Present(w, live) {
+				if last := r.Tmux.LastLines(sw.Pane, 1); len(last) > 0 {
+					sw.Exited = last[0]
+				}
+			}
 			if sw.Alive {
 				if screen, err := r.Tmux.CapturePane(sw.Pane); err == nil {
 					if perm, ok := ParsePermission(screen); ok {
@@ -200,9 +215,14 @@ const RoleRest = "rest"
 // Live reports whether w's tmux window still runs; a reused tmux id carries another tag and does not count.
 // Managed windows must also sit in their project's session; adopted ones stay wherever they were.
 func Live(w store.Window, live map[string]tmux.WindowInfo) bool {
+	return Present(w, live) && !live[w.TmuxTarget].Dead
+}
+
+// Present reports whether w's tmux window still exists, running or not.
+func Present(w store.Window, live map[string]tmux.WindowInfo) bool {
 	info, ok := live[w.TmuxTarget]
 	inPlace := !w.Managed || info.Session == tmux.SessionName(w.Project)
-	return ok && info.Tag == strconv.FormatInt(w.ID, 10) && inPlace && !info.Dead
+	return ok && info.Tag == strconv.FormatInt(w.ID, 10) && inPlace
 }
 
 // ResolveCodexSessions records Codex session ids for open windows whose thread Codex has since written.

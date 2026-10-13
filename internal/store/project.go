@@ -21,15 +21,18 @@ type Project struct {
 	PhaseIndex int
 	CreatedAt  time.Time
 	LandedAt   time.Time
+	// GitDir and Branch let revive recreate Cwd as a worktree when it was removed.
+	GitDir string
+	Branch string
 }
 
-const projectCols = `name, cwd, state, phases, phase_index, created_at, landed_at`
+const projectCols = `name, cwd, state, phases, phase_index, created_at, landed_at, git_dir, branch`
 
 func scanProject(row interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var phases string
 	var created, landed sql.NullString
-	if err := row.Scan(&p.Name, &p.Cwd, &p.State, &phases, &p.PhaseIndex, &created, &landed); err != nil {
+	if err := row.Scan(&p.Name, &p.Cwd, &p.State, &phases, &p.PhaseIndex, &created, &landed, &p.GitDir, &p.Branch); err != nil {
 		return p, err
 	}
 	if err := json.Unmarshal([]byte(phases), &p.Phases); err != nil {
@@ -94,8 +97,8 @@ func (s *Store) CreateProject(p Project, manager Window, launch func(Window) (st
 	if exists > 0 {
 		return fmt.Errorf("project %q already exists", p.Name)
 	}
-	if _, err := tx.Exec(`INSERT INTO projects (name, cwd, state, phases, phase_index, created_at) VALUES (?, ?, ?, ?, 0, ?)`,
-		p.Name, p.Cwd, ProjectActive, string(phases), now()); err != nil {
+	if _, err := tx.Exec(`INSERT INTO projects (name, cwd, state, phases, phase_index, created_at, git_dir, branch) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
+		p.Name, p.Cwd, ProjectActive, string(phases), now(), p.GitDir, p.Branch); err != nil {
 		return err
 	}
 	if err := insertWindow(tx, manager, launch); err != nil {
@@ -183,4 +186,10 @@ func nonNil(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// SetGit records where a project's working directory comes from in git, unless it is already recorded.
+func (s *Store) SetGit(name, gitDir, branch string) error {
+	_, err := s.db.Exec(`UPDATE projects SET git_dir = ?, branch = ? WHERE name = ? AND git_dir = ''`, gitDir, branch, name)
+	return err
 }

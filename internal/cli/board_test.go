@@ -35,6 +35,8 @@ func press(m *boardModel, keys ...string) tea.Cmd {
 			msg = tea.KeyMsg{Type: tea.KeyUp}
 		case "down":
 			msg = tea.KeyMsg{Type: tea.KeyDown}
+		case "ctrl+u":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 		default:
 			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		}

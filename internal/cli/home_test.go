@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,6 +137,25 @@ func TestStageSwapsAgentPanesAndReturnsThem(t *testing.T) {
 	e.assertHomeResting()
 }
 
+// resumedInOrigin checks that w1's own window runs its harness again, resuming its session.
+func resumedInOrigin(e *testEnv, agent string) {
+	e.t.Helper()
+	w, err := e.a.store.OpenWindow("alpha", "w1")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	p, err := e.a.tmux.Pane(w.TmuxTarget)
+	if err != nil || p.Role != "" || p.Dead {
+		e.t.Fatalf("w1's window pane = %+v, %v", p, err)
+	}
+	if cmd := e.tmux("display-message", "-p", "-t", w.TmuxTarget, "#{pane_start_command}"); !strings.Contains(cmd, "--resume "+w.SessionID) {
+		e.t.Fatalf("w1 restarted as %q, want a resume of %s", cmd, w.SessionID)
+	}
+	if out := e.ym("ls", "-p", "alpha"); !strings.Contains(out, "w1") {
+		e.t.Fatalf("w1 row closed:\n%s", out)
+	}
+}
+
 func TestStrandedStageIsReturnedOnSidebarStart(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -158,13 +178,12 @@ func TestStrandedStageIsReturnedOnSidebarStart(t *testing.T) {
 				e.t.Fatalf("w1 not alive after recovery:\n%s", out)
 			}
 		}},
-		{"agent exited on stage", func(e *testEnv, agent string) {
+		{"agent pane destroyed", func(e *testEnv, agent string) {
 			e.tmux("kill-pane", "-t", agent)
-		}, func(e *testEnv, agent string) {
-			if strings.Contains(e.tmux("list-windows", "-a", "-F", "#{window_id}"), e.target("alpha", "w1")) {
-				e.t.Fatal("origin window still holds the placeholder")
-			}
-		}},
+		}, resumedInOrigin},
+		{"ym session killed", func(e *testEnv, agent string) {
+			e.tmux("kill-session", "-t", homeSession)
+		}, resumedInOrigin},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -216,9 +235,7 @@ func TestSidebarNewProjectFormStagesItsManager(t *testing.T) {
 	e := newHomeEnv(t)
 	m := newSidebar(e.a)
 	m.refresh()
-	press(m, "n", "gamma", "enter")
-	m.prompt.fields[1].value = e.dir
-	press(m, "enter", "enter", "plan,build", "enter", "go", "enter")
+	press(m, "n", "gamma", "enter", "ctrl+u", e.dir, "enter", "enter", "plan,build", "enter", "go", "enter")
 	p, err := e.a.store.ActiveProject("gamma")
 	if err != nil {
 		t.Fatal(err)
@@ -374,5 +391,73 @@ func TestSidebarEnterStagesADiscoveredSession(t *testing.T) {
 	}
 	if got := e.tmux("display-message", "-p", "-t", pane, "#{session_name}"); got != "scratch" {
 		t.Fatalf("discovered pane went to %s when the manager took the stage", got)
+	}
+}
+
+func TestNavigationFollowsScreenOrder(t *testing.T) {
+	for _, sidebar := range []bool{false, true} {
+		t.Run(map[bool]string{false: "popup", true: "sidebar"}[sidebar], func(t *testing.T) {
+			e := newHomeEnv(t)
+			e.project("alpha", "w1")
+			e.project("beta")
+			m := newBoard(e.a)
+			if sidebar {
+				m = newSidebar(e.a)
+			}
+			m.refresh()
+			m.snap.Sessions = []signals.Session{
+				{Session: discover.Session{Pane: "%901", Harness: "claude", Title: "first chat"}},
+				{Session: discover.Session{Pane: "%902", Harness: "codex", Title: "second chat"}},
+			}
+			m.sel = row{kind: rowProject, project: "alpha"}
+			lines := strings.Split(m.View(), "\n")
+			at := -1
+			for _, r := range m.rows() {
+				label := map[rowKind]string{rowProject: r.project, rowWindow: r.window}[r.kind]
+				if s, ok := m.session(r.target); ok && r.kind == rowSession {
+					label = s.Title
+				}
+				next := -1
+				for i := at + 1; i < len(lines); i++ {
+					if strings.Contains(lines[i], label) {
+						next = i
+						break
+					}
+				}
+				if next < 0 {
+					t.Fatalf("row %q is not drawn below line %d:\n%s", label, at, strings.Join(lines, "\n"))
+				}
+				at = next
+			}
+		})
+	}
+}
+
+func TestReviveRecreatesAReapedWorktree(t *testing.T) {
+	e := newHomeEnv(t)
+	repo := filepath.Join(e.dir, "repo")
+	wt := filepath.Join(e.dir, "wt-feature")
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", repo)
+	git("-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+	git("-C", repo, "worktree", "add", "-q", "-b", "feature", wt)
+	wt, _ = filepath.EvalSymlinks(wt)
+	e.ym("new", "gamma", "--cwd", wt)
+	e.ym("land", "gamma")
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	e.ym("revive", "gamma")
+	out, err := exec.Command("git", "-C", wt, "symbolic-ref", "--short", "HEAD").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "feature" {
+		t.Fatalf("worktree not recreated on feature: %q %v", out, err)
+	}
+	if ls := e.ym("ls", "-p", "gamma"); !strings.Contains(ls, "manager") || strings.Contains(ls, "gone") {
+		t.Fatalf("manager not running after revive:\n%s", ls)
 	}
 }

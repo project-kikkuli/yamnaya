@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
 // describe joins a project's stored state with live tmux windows; live is nil for landed projects.
-// While the project's session runs, a window missing from it is confirmed dead and its row is closed.
+// While the project's session runs, a window missing from it is confirmed gone and its row is closed; a window whose harness exited stays, dead.
 func (a *app) describe(p store.Project, live map[string]tmux.WindowInfo) (projectJSON, error) {
 	total, byWindow, err := a.store.OpenItemCounts(p.Name)
 	if err != nil {
@@ -40,7 +41,7 @@ func (a *app) describe(p store.Project, live map[string]tmux.WindowInfo) (projec
 	}
 	for _, w := range windows {
 		alive := liveWindow(w, live)
-		if pj.Alive && !alive {
+		if pj.Alive && !signals.Present(w, live) {
 			if err := a.store.CloseWindow(w.ID); err != nil {
 				return pj, err
 			}

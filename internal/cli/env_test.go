@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/store"
+	"github.com/project-kikkuli/yamnaya/internal/tmux"
 )
 
 var socketSeq atomic.Int64
@@ -46,6 +47,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		"YM_WINDOW":           "",
 		"TMUX":                "",
 		"TMUX_PANE":           "",
+		"YAMNAYA_START_GRACE": "300ms",
 	} {
 		t.Setenv(k, v)
 	}
@@ -55,8 +57,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Cleanup(func() {
 		a.close()
-		exec.Command("tmux", "-L", socket, "kill-server").Run()
-		exec.Command("tmux", "-L", socket+"-outer", "kill-server").Run()
+		tmux.Client{Socket: socket + "-outer"}.KillServer()
+		tmux.Client{Socket: socket}.KillServer()
 	})
 	return &testEnv{t: t, a: a, dir: dir, socket: socket}
 }

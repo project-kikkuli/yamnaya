@@ -35,7 +35,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { s.Close() })
 	tc := tmux.Client{Socket: fmt.Sprintf("ymsig-%d-%d", os.Getpid(), socketSeq.Add(1))}
-	t.Cleanup(func() { exec.Command("tmux", "-L", tc.Socket, "kill-server").Run() })
+	t.Cleanup(tc.KillServer)
 	r := NewReader(s, tc)
 	r.Transcripts = &Transcripts{ClaudeDir: filepath.Join(dir, "claude"), CodexHome: filepath.Join(dir, "codex")}
 	return &fixture{t: t, dir: dir, store: s, tmux: tc, reader: r}
@@ -247,5 +247,27 @@ func TestSnapshotHangsDiscoveredSessionsOnTheirWindowsAndListsTheRest(t *testing
 	want := []string{"loose work: needs permission · Bash: rm -rf build/ && mkdir build", "calm work: idle 1h"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("sessions = %q, want %q", got, want)
+	}
+}
+
+func TestDiscoveredStatusDecidesRunningOrIdle(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name   string
+		status discover.Status
+		quiet  time.Duration
+		want   string
+	}{
+		{"turn ended just now", discover.YourTurn, 5 * time.Second, "idle 5s"},
+		{"waiting on a prompt", discover.NeedsYou, 30 * time.Second, "idle 30s"},
+		{"working with a quiet transcript", discover.Running, 10 * time.Minute, "running"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := Window{Alive: true, LastActive: now.Add(-c.quiet), Discovered: &discover.Session{Status: c.status}}
+			if got := w.Label(now); got != c.want {
+				t.Fatalf("label = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

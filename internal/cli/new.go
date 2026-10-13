@@ -45,6 +45,9 @@ func newCmd(withApp runner) *cobra.Command {
 			if err := a.newProject(name, cwd, harnessName, phases, prompt); err != nil {
 				return err
 			}
+			if err := a.checkStarted(name, store.RoleManager); err != nil {
+				return err
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: manager started (%s) in tmux session ym-%s\n", name, harnessName, name)
 			return nil
 		}),
@@ -69,6 +72,9 @@ func spawnCmd(withApp runner) *cobra.Command {
 			}
 			name := args[0]
 			if err := a.spawn(project, name, harnessName, prompt); err != nil {
+				return err
+			}
+			if err := a.checkStarted(project, name); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: worker %s started (%s)\n", project, name, harnessName)
@@ -113,5 +119,6 @@ func (a *app) newProject(name, cwd, harnessName, phases, prompt string) error {
 	if err != nil {
 		return err
 	}
-	return a.store.CreateProject(store.Project{Name: name, Cwd: dir, Phases: splitPhases(phases)}, w, launch)
+	gitDir, branch := gitSource(dir)
+	return a.store.CreateProject(store.Project{Name: name, Cwd: dir, Phases: splitPhases(phases), GitDir: gitDir, Branch: branch}, w, launch)
 }

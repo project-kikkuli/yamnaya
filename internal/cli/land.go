@@ -21,6 +21,11 @@ func landCmd(withApp runner) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if p, err := a.store.Project(project); err == nil {
+				if err := a.recordGit(p); err != nil {
+					return err
+				}
+			}
 			if err := a.unstageProject(project); err != nil {
 				return err
 			}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,6 +74,7 @@ func (c Client) HasSession(session string) bool {
 }
 
 // NewWindow starts argv in a new window tagged with tag, creating the session when needed, and returns the window id.
+// The pane is made to remain on exit before argv starts, so a harness that dies at once leaves its output behind.
 // The tag tells a ym window apart from a later window that reuses its tmux id.
 func (c Client) NewWindow(session, name, tag, cwd string, env map[string]string, argv []string) (string, error) {
 	var a []string
@@ -81,14 +83,16 @@ func (c Client) NewWindow(session, name, tag, cwd string, env map[string]string,
 	} else {
 		a = []string{"new-session", "-d", "-s", session, "-n", name}
 	}
-	a = append(a, "-c", cwd, "-P", "-F", "#{window_id}")
-	a = append(a, envArgs(env)...)
-	a = append(a, argv...)
+	a = append(append(a, "-c", cwd, "-P", "-F", "#{window_id}"), envArgs(env)...)
+	a = append(a, "sleep", "86400")
 	id, err := c.run(a...)
 	if err != nil {
 		return "", err
 	}
-	if _, err := c.run("set-option", "-w", "-t", id, tagOption, tag); err != nil {
+	if _, err := c.run("set-option", "-w", "-t", id, tagOption, tag, ";", "set-option", "-p", "-t", id, "remain-on-exit", "on"); err != nil {
+		return "", err
+	}
+	if err := c.Respawn(id, cwd, env, argv); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -239,7 +243,12 @@ func (c Client) SelectPane(target string) error {
 	return err
 }
 
+// SetPaneRole marks pane with role; an empty role clears the mark and makes the pane remain when its process exits, like any ym window.
 func (c Client) SetPaneRole(pane, role string) error {
+	if role == "" {
+		_, err := c.run("set-option", "-p", "-u", "-t", pane, RoleOption, ";", "set-option", "-p", "-t", pane, "remain-on-exit", "on")
+		return err
+	}
 	_, err := c.run("set-option", "-p", "-t", pane, RoleOption, role)
 	return err
 }
@@ -282,5 +291,45 @@ func (c Client) Detach() error {
 
 func (c Client) KillPane(pane string) error {
 	_, err := c.run("kill-pane", "-t", pane)
+	return err
+}
+
+// SocketPath is where tmux keeps the server socket named name.
+func SocketPath(name string) string {
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), name)
+}
+
+// KillServer stops the server and removes its socket file.
+func (c Client) KillServer() {
+	c.run("kill-server")
+	if c.Socket != "" {
+		os.Remove(SocketPath(c.Socket))
+	}
+}
+
+// LastLines returns up to n of the last non-blank lines target's pane printed, reading into its scrollback: tmux scrolls a dead pane's output up to show its exit status.
+func (c Client) LastLines(target string, n int) []string {
+	out, err := c.run("capture-pane", "-p", "-S", "-200", "-t", target)
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "Pane is dead") {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
+}
+
+func (c Client) KillWindow(target string) error {
+	_, err := c.run("kill-window", "-t", target)
 	return err
 }

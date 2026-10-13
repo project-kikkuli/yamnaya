@@ -173,7 +173,7 @@ func (a *app) lend(pane string, windowID int64, focus bool) error {
 }
 
 // unstage returns the staged agent pane to its origin window and puts the placeholder back on stage.
-// An agent whose process ended takes its placeholder with it, closing an origin window left empty; one whose origin window was closed gets a new window in its project session.
+// A ym window whose staged pane was destroyed, as when the ym session is killed, is resumed in its origin window; a discovered session's placeholder is removed; one whose origin window was closed gets a new window in its project session.
 func (a *app) unstage() error {
 	st, ok, err := a.store.Stage()
 	if err != nil || !ok {
@@ -183,10 +183,17 @@ func (a *app) unstage() error {
 	if err != nil {
 		panes, _ := a.tmux.WindowPanes(st.Origin)
 		for _, p := range panes {
-			if p.Role == signals.RoleRest {
-				if err := a.tmux.KillPane(p.ID); err != nil {
+			if p.Role != signals.RoleRest {
+				continue
+			}
+			if st.WindowID != 0 {
+				if err := a.resumeInto(st.WindowID, p.ID); err != nil {
 					return err
 				}
+				continue
+			}
+			if err := a.tmux.KillPane(p.ID); err != nil {
+				return err
 			}
 		}
 		return a.store.ClearStage()
@@ -306,4 +313,27 @@ func restCmd() *cobra.Command {
 			}
 		},
 	}
+}
+
+// resumeInto replaces the placeholder pane holding window id's place with that window's harness, resuming its session.
+func (a *app) resumeInto(id int64, pane string) error {
+	w, err := a.store.WindowByID(id)
+	if err != nil {
+		return err
+	}
+	p, err := a.store.Project(w.Project)
+	if err != nil {
+		return err
+	}
+	l, err := relaunch(w)
+	if err != nil {
+		return err
+	}
+	if err := trustFor(w.Harness, p.Cwd); err != nil {
+		return err
+	}
+	if err := a.tmux.SetPaneRole(pane, ""); err != nil {
+		return err
+	}
+	return a.tmux.Respawn(pane, p.Cwd, windowEnv(p.Name, w.Name), l.Argv)
 }

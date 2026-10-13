@@ -57,6 +57,12 @@ func (a *app) revive(name string) (store.Project, int, error) {
 	if len(windows) == 0 {
 		return p, 0, fmt.Errorf("project %q has no windows to revive", p.Name)
 	}
+	if err := restoreCwd(p); err != nil {
+		return p, 0, err
+	}
+	if err := a.recordGit(p); err != nil {
+		return p, 0, err
+	}
 	if err := a.resolveCodexSessions(p, windows); err != nil {
 		return p, 0, err
 	}
