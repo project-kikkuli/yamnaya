@@ -1,0 +1,159 @@
+package codex
+
+import (
+	"database/sql"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
+)
+
+const (
+	busyID = "0190aaaa-1111-7111-8111-111111111111"
+	idleID = "0190bbbb-2222-7222-8222-222222222222"
+	newID  = "0190cccc-3333-7333-8333-333333333333"
+)
+
+type fixture struct {
+	*Adapter
+	open map[int][]string
+}
+
+func setup(t *testing.T) fixture {
+	t.Helper()
+	home := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, created_at INTEGER, updated_at INTEGER, cwd TEXT, title TEXT,
+		archived INTEGER DEFAULT 0, first_user_message TEXT DEFAULT '', name TEXT)`)
+	now := time.Now()
+	rollout := func(id string, lines ...string) string {
+		path := filepath.Join(home, "sessions", "2026", "01", "02", "rollout-2026-01-02T03-04-05-"+id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		data := ""
+		for _, l := range lines {
+			data += l + "\n"
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	started := `{"type":"event_msg","payload":{"type":"task_started"}}`
+	complete := `{"type":"event_msg","payload":{"type":"task_complete"}}`
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', '', 0, 'add retries', 'Retry work')`, busyID, rollout(busyID, started, "garbage"), now.Add(-time.Hour).Unix())
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', 'Docs pass', 0, 'docs', NULL)`, idleID, rollout(idleID, started, complete), now.Add(-time.Hour).Unix())
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, 'fresh start', NULL)`, newID, rollout(newID), now.Unix())
+	f := fixture{open: map[int][]string{}}
+	f.Adapter = &Adapter{
+		Home:      home,
+		Bin:       "codex",
+		OpenFiles: func(pid int) []string { return f.open[pid] },
+		Cwd:       func(pid int) string { return "/Users/me/src/web" },
+		Now:       time.Now,
+	}
+	return f
+}
+
+func cp(pid int, elapsed time.Duration, args ...string) proc.Proc {
+	return proc.Proc{PID: pid, PPID: 1, TTY: "/dev/ttys009", Elapsed: elapsed, Args: args}
+}
+
+func TestSessionIDFromArgvOpenFilesThenNewestThread(t *testing.T) {
+	f := setup(t)
+	f.open[2] = []string{"/dev/null", filepath.Join(f.Home, "sessions", "2026", "01", "02", "rollout-2026-01-02T03-04-05-"+idleID+".jsonl")}
+	f.open[3] = []string{filepath.Join(f.Home, "thread-writer-locks", busyID+".lock")}
+	cases := []struct {
+		proc proc.Proc
+		want string
+	}{
+		{cp(1, time.Hour, "codex", "resume", busyID), busyID},
+		{cp(2, time.Hour, "codex"), idleID},
+		{cp(3, time.Hour, "codex"), busyID},
+		{cp(4, time.Minute, "codex"), newID},
+	}
+	for _, c := range cases {
+		if got := f.SessionID(c.proc); got != c.want {
+			t.Errorf("pid %d: SessionID = %q, want %q", c.proc.PID, got, c.want)
+		}
+	}
+}
+
+func TestDiscoverReadsTitleStatusAndAsksForScreenWhenBusy(t *testing.T) {
+	f := setup(t)
+	got := f.Discover([]proc.Proc{
+		cp(1, time.Hour, "codex", "resume", busyID),
+		cp(2, time.Hour, "codex", "resume", idleID),
+	})
+	busy, idle := got[0], got[1]
+	if busy.ID != busyID || busy.Title != "Retry work" || busy.Status != core.Busy || !busy.CheckScreen || busy.Cwd != "/Users/me/src/api" {
+		t.Errorf("busy = %+v", busy)
+	}
+	if idle.Title != "Docs pass" || idle.Status != core.Idle || idle.CheckScreen {
+		t.Errorf("idle = %+v", idle)
+	}
+}
+
+func TestDiscoverFailsSoftWithoutState(t *testing.T) {
+	a := &Adapter{Home: t.TempDir(), Cwd: func(int) string { return "/Users/me/src/web" }, Now: time.Now}
+	got := a.Discover([]proc.Proc{cp(9, time.Minute, "codex")})
+	if len(got) != 1 || got[0].ID != "" || got[0].Status != core.Unknown || got[0].Cwd != "/Users/me/src/web" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestOwnsInteractiveAndExecButNotServers(t *testing.T) {
+	a := &Adapter{}
+	cases := map[string]struct {
+		args []string
+		want bool
+	}{
+		"tui":        {[]string{"codex"}, true},
+		"resume":     {[]string{"/opt/bin/codex", "resume", busyID}, true},
+		"exec":       {[]string{"codex", "exec", "do it"}, true},
+		"app server": {[]string{"codex", "app-server", "--listen", "unix://"}, false},
+		"mcp":        {[]string{"codex", "mcp-server"}, false},
+		"claude":     {[]string{"claude"}, false},
+	}
+	for name, c := range cases {
+		if got := a.Owns(proc.Proc{Args: c.args}); got != c.want {
+			t.Errorf("%s: Owns = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestParsePromptFromRealDialogs(t *testing.T) {
+	cases := map[string]core.Prompt{
+		"codex-exec":    {Tool: "Shell", Detail: "rm -rf build && mkdir build"},
+		"codex-patch":   {Tool: "Edit", Detail: "/Users/me/tmp/ymperm-codex/notes.txt"},
+		"codex-trust":   {Tool: "trust folder", Detail: "/Users/me/tmp/ymperm-codex"},
+		"codex-trust-2": {Tool: "trust folder", Detail: "/private/tmp/ymcx.3AJg/repo/sub"},
+	}
+	for name, want := range cases {
+		b, err := os.ReadFile(filepath.Join("testdata", name+".txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := ParsePrompt(string(b))
+		if !ok || got != want {
+			t.Errorf("%s: ParsePrompt = %+v, %v; want %+v", name, got, ok, want)
+		}
+	}
+	if got, ok := ParsePrompt("› Would you like to run the following command?\n• sure\n"); ok {
+		t.Errorf("quoted prompt read as a dialog: %+v", got)
+	}
+}

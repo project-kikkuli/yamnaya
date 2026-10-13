@@ -1,0 +1,210 @@
+package core
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
+)
+
+// Caller is the session whose process tree contains pid.
+type Caller struct {
+	Harness string
+	Session string
+	PID     int
+}
+
+// Identify walks pid's ancestry to the nearest harness process and asks that harness for its session.
+func (c *Core) Identify(pid int) (Caller, error) {
+	procs, err := c.Procs()
+	if err != nil {
+		return Caller{}, err
+	}
+	for _, p := range proc.Index(procs).Ancestors(pid) {
+		for _, h := range c.Harnesses {
+			if !h.Owns(p) {
+				continue
+			}
+			id := h.SessionID(p)
+			if id == "" {
+				return Caller{}, fmt.Errorf("found %s process %d but could not read its session id", h.Name(), p.PID)
+			}
+			return Caller{Harness: h.Name(), Session: id, PID: p.PID}, nil
+		}
+	}
+	return Caller{}, fmt.Errorf("no claude or codex process above pid %d: %w", pid, ErrNotFound)
+}
+
+// Target is one place a session can be opened.
+type Target struct {
+	Session Session
+	Handle  *Handle
+	Resume  []string
+}
+
+func (t Target) String() string {
+	if t.Handle != nil {
+		return fmt.Sprintf("%s %s (pid %d)", t.Handle.Host, t.Handle.Label, t.Session.PID)
+	}
+	return strings.Join(t.Resume, " ")
+}
+
+// Targets lists every live copy of a session with its host; a session with no live process yields its resume command.
+func (c *Core) Targets(b Board, key, harnessName string) []Target {
+	var out []Target
+	for _, s := range b.Sessions {
+		if s.Key() != key {
+			continue
+		}
+		for _, cp := range copiesOf(s) {
+			t := Target{Session: cp}
+			if h, host := c.locate(cp.TTY); host != nil {
+				t.Handle = &h
+			} else {
+				t.Resume = c.resume(cp.Harness, cp.ID)
+			}
+			out = append(out, t)
+		}
+		return out
+	}
+	if r := c.resume(harnessName, key); r != nil {
+		out = append(out, Target{Session: Session{Harness: harnessName, ID: key}, Resume: r})
+	}
+	return out
+}
+
+func copiesOf(s Live) []Session {
+	if len(s.Copies) > 0 {
+		return s.Copies
+	}
+	return []Session{s.Session}
+}
+
+func (c *Core) resume(harnessName, id string) []string {
+	if id == "" || strings.HasPrefix(id, "pid:") {
+		return nil
+	}
+	for _, h := range c.Harnesses {
+		if h.Name() == harnessName {
+			return h.Resume(id)
+		}
+	}
+	return nil
+}
+
+// ErrNoHost means the target has no terminal ym can focus; show its resume command instead.
+var ErrNoHost = errors.New("no terminal host")
+
+// Focus brings the target's terminal forward, and the terminal showing that one when it is nested.
+func (c *Core) Focus(t Target) error {
+	if t.Handle == nil {
+		return ErrNoHost
+	}
+	host := c.host(t.Handle.Host)
+	if host == nil {
+		return ErrNoHost
+	}
+	outer, err := host.Focus(*t.Handle)
+	if err != nil || outer == "" {
+		return err
+	}
+	if h, oh := c.locate(outer); oh != nil && oh != host {
+		_, err = oh.Focus(h)
+	}
+	return err
+}
+
+// AddItem files an item against a session.
+func (c *Core) AddItem(it Item) (Item, error) { return c.Store.AddItem(it) }
+
+// Delivery says how an answer reached, or will reach, its agent.
+type Delivery int
+
+const (
+	Queued Delivery = iota
+	Typed
+)
+
+func (d Delivery) String() string {
+	if d == Typed {
+		return "typed into the agent's terminal"
+	}
+	return "queued for the agent's next turn"
+}
+
+// Answer records the answer and types it into the source agent when that agent sits idle at its prompt in a host that accepts input.
+func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
+	it, err := c.Store.Transition(id, ItemAnswered, text)
+	if err != nil {
+		return it, Queued, err
+	}
+	d := c.deliver(b, it, fmt.Sprintf("re %s: %s", it.ID, oneLine(text)))
+	return it, d, nil
+}
+
+// Dismiss closes the item for good and tells an idle agent.
+func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
+	it, err := c.Store.Transition(id, ItemDismissed, reason)
+	if err != nil {
+		return it, Queued, err
+	}
+	d := c.deliver(b, it, fmt.Sprintf("re %s: dismissed: %s", it.ID, oneLine(reason)))
+	return it, d, nil
+}
+
+func (c *Core) Snooze(id string) (Item, error) { return c.Store.Transition(id, ItemSnoozed, "") }
+
+func (c *Core) Reopen(id string) (Item, error) { return c.Store.Transition(id, ItemOpen, "") }
+
+func (c *Core) deliver(b Board, it Item, text string) Delivery {
+	s, ok := b.Session(it.Session)
+	if !ok || s.Status != Idle || len(s.Copies) > 1 || s.Handle == nil {
+		return Queued
+	}
+	host := c.host(s.Handle.Host)
+	if host == nil || host.Type(*s.Handle, text) != nil {
+		return Queued
+	}
+	if c.Store.MarkDelivered(it.ID) != nil {
+		return Queued
+	}
+	return Typed
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// Inbox returns the session's answered and dismissed items it has not received, and marks them received.
+func (c *Core) Inbox(session string) ([]Item, error) {
+	items, err := c.Store.Items(ItemFilter{Sessions: []string{session}, Undelivered: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, it := range items {
+		if err := c.Store.MarkDelivered(it.ID); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+// ProjectKey resolves a project by key, name, or any of its session ids.
+func (b Board) ProjectKey(ref string) (string, error) {
+	var hits []string
+	for _, p := range b.Projects {
+		match := p.Key == ref || strings.EqualFold(p.Name, ref)
+		for _, s := range p.Sessions {
+			match = match || s.Key() == ref || (len(ref) >= 6 && strings.HasPrefix(s.Key(), ref))
+		}
+		if match {
+			hits = append(hits, p.Key)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return "", fmt.Errorf("project %q: %w", ref, ErrNotFound)
+	case 1:
+		return hits[0], nil
+	}
+	return "", fmt.Errorf("project %q is ambiguous: %s", ref, strings.Join(hits, ", "))
+}

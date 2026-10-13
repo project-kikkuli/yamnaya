@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"Fix the flaky login test"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Looking."}],"stop_reason":"end_turn"}}
+{"type":"ai-title","aiTitle":"Flaky login test"}
+not json at all
+{"type":"system","subtype":"turn_duration"}
