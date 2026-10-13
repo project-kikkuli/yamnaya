@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// askingTargets lists live windows with open items, ordered by each window's oldest open item.
+// askingTargets lists live windows waiting on a permission prompt, then live windows with open items ordered by each window's oldest open item.
 func (a *app) askingTargets(snap signals.Snapshot) ([]string, error) {
 	type pending struct {
 		item   store.Item
@@ -30,6 +30,14 @@ func (a *app) askingTargets(snap signals.Snapshot) ([]string, error) {
 	sort.SliceStable(all, func(i, j int) bool { return all[i].item.CreatedAt.Before(all[j].item.CreatedAt) })
 	var targets []string
 	seen := map[string]bool{}
+	for _, p := range snap.Projects {
+		for _, w := range p.Windows {
+			if w.Alive && w.Permission != nil && !seen[w.TmuxTarget] {
+				seen[w.TmuxTarget] = true
+				targets = append(targets, w.TmuxTarget)
+			}
+		}
+	}
 	for _, pd := range all {
 		if !seen[pd.target] {
 			seen[pd.target] = true
@@ -59,7 +67,7 @@ func nextTarget(targets []string, current string) string {
 func nextCmd(withApp runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "next",
-		Short: "Jump to the next window with an open item, oldest first",
+		Short: "Jump to the next window waiting on a permission prompt, then one with an open item, oldest first",
 		Args:  cobra.NoArgs,
 		RunE: withApp(func(a *app, cmd *cobra.Command, args []string) error {
 			snap, err := signals.NewReader(a.store, a.tmux).Snapshot()

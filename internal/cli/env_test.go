@@ -132,3 +132,18 @@ func (e *testEnv) clientWindow() string {
 	out, _ := exec.Command("tmux", "-L", e.socket, "list-clients", "-F", "#{window_id}").Output()
 	return strings.TrimSpace(string(out))
 }
+
+// showDialog swaps target's process for a fake harness that prints a captured permission dialog, then waits until it shows.
+func (e *testEnv) showDialog(target, name string) {
+	e.t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", "signals", "testdata", name+".txt"))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.tmux("respawn-pane", "-k", "-t", target, "sh", "-c", "cat '"+path+"'; exec sleep 600")
+	for deadline := time.Now().Add(3 * time.Second); !strings.Contains(e.tmux("capture-pane", "-p", "-t", target), "cancel"); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			e.t.Fatalf("dialog %s never showed in %s", name, target)
+		}
+	}
+}

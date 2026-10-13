@@ -12,6 +12,7 @@ import (
 
 var (
 	styleDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	styleNeed  = lipgloss.NewStyle().Foreground(lipgloss.Color("201")).Bold(true)
 	styleAsk   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 	styleBad   = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 	stylePlain = lipgloss.NewStyle()
@@ -67,6 +68,9 @@ func (m *boardModel) projectsView() []string {
 	for _, p := range m.snap.Projects {
 		selected := m.sel.kind == rowProject && m.sel.project == p.Name
 		var flags []string
+		if n := p.NeedPermission(); n > 0 {
+			flags = append(flags, styleNeed.Render(fmt.Sprintf("%d needs permission", n)))
+		}
 		if p.Open > 0 {
 			flags = append(flags, styleAsk.Render(fmt.Sprintf("%d asks you", p.Open)))
 		}
@@ -78,7 +82,7 @@ func (m *boardModel) projectsView() []string {
 			phase = p.Phases[p.PhaseIndex]
 		}
 		style := styleDim
-		if selected || p.Open > 0 {
+		if selected || p.Open > 0 || p.NeedPermission() > 0 {
 			style = stylePlain
 		}
 		head := style.Render(fmt.Sprintf("%s%-20s %-8s %-12s", marker(selected), p.Name, phaseDots(p.Project), phase))
@@ -90,6 +94,8 @@ func (m *boardModel) projectsView() []string {
 			sel := m.sel.kind == rowWindow && m.sel.project == p.Name && m.sel.window == w.Name
 			style := styleDim
 			switch w.State(now) {
+			case signals.NeedsPermission:
+				style = styleNeed
 			case signals.Asking:
 				style = styleAsk
 			case signals.Dead:

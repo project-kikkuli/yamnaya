@@ -22,6 +22,7 @@ const (
 	Idle
 	Asking
 	Dead
+	NeedsPermission
 )
 
 type Window struct {
@@ -29,10 +30,13 @@ type Window struct {
 	Alive      bool
 	Open       int
 	LastActive time.Time
+	Permission *Permission
 }
 
 func (w Window) State(now time.Time) State {
 	switch {
+	case w.Alive && w.Permission != nil:
+		return NeedsPermission
 	case w.Open > 0:
 		return Asking
 	case !w.Alive:
@@ -45,6 +49,8 @@ func (w Window) State(now time.Time) State {
 
 func (w Window) Label(now time.Time) string {
 	switch w.State(now) {
+	case NeedsPermission:
+		return "needs permission · " + w.Permission.String()
 	case Asking:
 		if !w.Alive {
 			return "asks you (dead)"
@@ -62,6 +68,16 @@ type Project struct {
 	store.Project
 	Open    int
 	Windows []Window
+}
+
+func (p Project) NeedPermission() int {
+	n := 0
+	for _, w := range p.Windows {
+		if w.Alive && w.Permission != nil {
+			n++
+		}
+	}
+	return n
 }
 
 func (p Project) Dead() int {
@@ -139,12 +155,20 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 			if w.Role == store.RoleManager {
 				open += byWindow[""]
 			}
-			sp.Windows = append(sp.Windows, Window{
+			sw := Window{
 				Window:     w,
 				Alive:      Live(w, live),
 				Open:       open,
 				LastActive: r.Transcripts.LastActive(w.Harness, w.SessionID),
-			})
+			}
+			if sw.Alive {
+				if screen, err := r.Tmux.CapturePane(w.TmuxTarget); err == nil {
+					if perm, ok := ParsePermission(screen); ok {
+						sw.Permission = &perm
+					}
+				}
+			}
+			sp.Windows = append(sp.Windows, sw)
 		}
 		snap.Projects = append(snap.Projects, sp)
 	}

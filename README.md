@@ -39,11 +39,11 @@ Item ids are stable per project and never reused: `D` decisions, `V` veto-able d
 
 ## Board
 
-`ym board` shows one line per project: phase dots and how many items ask you. A project expands to its windows when selected or when something in it asks you. Windows read `asks you`, `running`, `idle 12m`, or `dead`; tmux windows ym does not track show as unmanaged, and `a` adopts one.
+`ym board` shows one line per project: phase dots and how many items ask you. A project expands to its windows when selected or when something in it asks you. Windows read `needs permission` with the requested tool and command when a Claude Code or Codex permission dialog is on screen, else `asks you`, `running`, `idle 12m`, or `dead`; tmux windows ym does not track show as unmanaged, and `a` adopts one.
 
 Keys: arrows or `j`/`k` move, Enter jumps to a window, `o` opens the project's items, `t` starts a side thread, `q` quits. In the item list: Enter expands, `g` goes to the source window, `f` goes there and types `re <id>: `, `y`/`n` answer a default, `d` dismisses with a reason, `s` snoozes.
 
-`ym next` jumps to the next window with an open item, oldest item first.
+`ym next` jumps to the next window waiting on a permission dialog, then to windows with open items, oldest item first.
 
 ## Environment
 

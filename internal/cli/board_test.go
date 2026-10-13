@@ -328,3 +328,30 @@ func buildSleeper(t *testing.T, path string) {
 		t.Fatalf("build sleeper: %v\n%s", err, out)
 	}
 }
+
+func TestBoardShowsPermissionPromptsLoudest(t *testing.T) {
+	e := newTestEnv(t)
+	e.project("alpha")
+	e.project("beta", "b1")
+	e.item("beta", "b1", store.KindDecision)
+	e.showDialog(e.target("beta", "b1"), "claude-bash")
+	e.tmux("new-session", "-d", "-s", "elsewhere", "sleep 600")
+	e.attach("elsewhere")
+	m := newTestBoard(e)
+	if got := strings.Join(visible(m), " "); !strings.HasPrefix(got, "alpha alpha/manager beta beta/manager beta/b1 ") {
+		t.Fatalf("rows %q: beta should expand", got)
+	}
+	view := m.View()
+	for _, want := range []string{"1 needs permission", "needs permission · Bash: rm -rf build/ && mkdir build"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("board lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "b1                 claude  asks you") {
+		t.Error("permission should outrank asks you on the window row")
+	}
+	press(m, "j", "j", "j", "j")
+	if !quits(press(m, "enter")) || e.clientWindow() != e.target("beta", "b1") {
+		t.Fatalf("enter did not jump into the waiting window; client on %s", e.clientWindow())
+	}
+}

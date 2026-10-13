@@ -49,3 +49,18 @@ func TestNextSkipsDeadSourcesAndAnsweredItems(t *testing.T) {
 		t.Fatalf("client on %s, want w2", got)
 	}
 }
+
+func TestNextVisitsPermissionPromptsBeforeOpenItems(t *testing.T) {
+	e := newTestEnv(t)
+	e.project("alpha", "w1")
+	e.project("beta", "b1")
+	e.item("alpha", "w1", store.KindDecision)
+	e.showDialog(e.target("beta", "b1"), "codex-exec")
+	e.attach("ym-alpha")
+	for i, w := range []string{e.target("beta", "b1"), e.target("alpha", "w1"), e.target("beta", "b1")} {
+		e.ym("next")
+		if got := e.clientWindow(); got != w {
+			t.Fatalf("jump %d: client on %s, want %s", i+1, got, w)
+		}
+	}
+}

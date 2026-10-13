@@ -1,0 +1,23 @@
+› Run this exact shell command: rm -rf build && mkdir build
+
+
+• I’ll run the exact command in the current directory.
+
+• Running rm -rf build && mkdir build
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: Allow the requested command to delete and recreate the build
+  directory?
+
+  $ rm -rf build && mkdir build
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `rm -rf build` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

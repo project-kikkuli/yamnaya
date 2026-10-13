@@ -117,7 +117,7 @@ func clamp(i, n int) int {
 }
 
 func (m *boardModel) expandedProject(p signals.Project) bool {
-	return p.Open > 0 || (m.sel.kind != rowUnmanaged && m.sel.project == p.Name)
+	return p.Open > 0 || p.NeedPermission() > 0 || (m.sel.kind != rowUnmanaged && m.sel.project == p.Name)
 }
 
 func (m *boardModel) rows() []row {

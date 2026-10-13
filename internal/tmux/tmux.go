@@ -166,3 +166,8 @@ func (c Client) TypeText(target, text string) error {
 	_, err := c.run("send-keys", "-t", target, "-l", text)
 	return err
 }
+
+// CapturePane returns the visible text of target's active pane.
+func (c Client) CapturePane(target string) (string, error) {
+	return c.run("capture-pane", "-p", "-t", target)
+}
