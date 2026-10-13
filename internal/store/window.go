@@ -137,3 +137,11 @@ func (s *Store) CloseWindow(windowID int64) error {
 	_, err := s.db.Exec(`UPDATE windows SET closed_at = ? WHERE id = ? AND closed_at IS NULL`, now(), windowID)
 	return err
 }
+
+func (s *Store) OpenWindowByTarget(target string) (Window, error) {
+	w, err := scanWindow(s.db.QueryRow(`SELECT `+windowCols+` FROM windows WHERE tmux_target = ? AND closed_at IS NULL`, target))
+	if err == sql.ErrNoRows {
+		return w, fmt.Errorf("window %s: %w", target, ErrNotFound)
+	}
+	return w, err
+}

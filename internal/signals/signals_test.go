@@ -1,0 +1,229 @@
+package signals
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/store"
+	"github.com/project-kikkuli/yamnaya/internal/tmux"
+)
+
+var socketSeq atomic.Int64
+
+type fixture struct {
+	t      *testing.T
+	dir    string
+	store  *store.Store
+	tmux   tmux.Client
+	reader *Reader
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := store.Open(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	tc := tmux.Client{Socket: fmt.Sprintf("ymsig-%d-%d", os.Getpid(), socketSeq.Add(1))}
+	t.Cleanup(func() { exec.Command("tmux", "-L", tc.Socket, "kill-server").Run() })
+	r := NewReader(s, tc)
+	r.Transcripts = &Transcripts{ClaudeDir: filepath.Join(dir, "claude"), CodexHome: filepath.Join(dir, "codex")}
+	return &fixture{t: t, dir: dir, store: s, tmux: tc, reader: r}
+}
+
+func (f *fixture) launch(project string) func(store.Window) (string, error) {
+	return func(w store.Window) (string, error) {
+		return f.tmux.NewWindow(tmux.SessionName(project), w.Name, strconv.FormatInt(w.ID, 10), f.dir, nil, []string{"sleep", "600"})
+	}
+}
+
+func (f *fixture) project(name string, windows ...store.Window) {
+	f.t.Helper()
+	manager := store.Window{Project: name, Name: "manager", Role: store.RoleManager, Harness: "claude", SessionID: name + "-mgr", Managed: true}
+	if err := f.store.CreateProject(store.Project{Name: name, Cwd: f.dir}, manager, f.launch(name)); err != nil {
+		f.t.Fatal(err)
+	}
+	for _, w := range windows {
+		w.Project, w.Role, w.Managed = name, store.RoleWorker, true
+		if err := f.store.AddWindow(w, f.launch(name)); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+func (f *fixture) item(project, source string) {
+	f.t.Helper()
+	if _, err := f.store.AddItem(store.Item{Project: project, Kind: store.KindDecision, Question: "q", SourceWindow: source}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) transcript(path string, age time.Duration) {
+	f.t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	mt := time.Now().Add(-age)
+	if err := os.Chtimes(path, mt, mt); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) snapshot() Snapshot {
+	f.t.Helper()
+	snap, err := f.reader.Snapshot()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return snap
+}
+
+func (f *fixture) window(snap Snapshot, project, name string) Window {
+	f.t.Helper()
+	p, ok := snap.Project(project)
+	if !ok {
+		f.t.Fatalf("project %s missing", project)
+	}
+	w, ok := p.Window(name)
+	if !ok {
+		f.t.Fatalf("window %s/%s missing", project, name)
+	}
+	return w
+}
+
+func TestWindowStates(t *testing.T) {
+	f := newFixture(t)
+	f.project("alpha",
+		store.Window{Name: "asker", Harness: "claude", SessionID: "s-asker"},
+		store.Window{Name: "busy", Harness: "claude", SessionID: "s-busy"},
+		store.Window{Name: "quiet", Harness: "claude", SessionID: "s-quiet"},
+		store.Window{Name: "fresh", Harness: "claude", SessionID: "s-none"},
+		store.Window{Name: "gone", Harness: "claude", SessionID: "s-gone"},
+	)
+	f.item("alpha", "asker")
+	f.transcript(filepath.Join(f.dir, "claude", "projects", "-work", "s-busy.jsonl"), 10*time.Second)
+	f.transcript(filepath.Join(f.dir, "claude", "projects", "-other", "s-quiet.jsonl"), 12*time.Minute)
+	gone := f.window(f.snapshot(), "alpha", "gone")
+	exec.Command("tmux", "-L", f.tmux.Socket, "kill-window", "-t", gone.TmuxTarget).Run()
+
+	snap := f.snapshot()
+	now := time.Now()
+	cases := []struct {
+		window string
+		state  State
+		label  string
+	}{
+		{"asker", Asking, "asks you"},
+		{"busy", Running, "running"},
+		{"quiet", Idle, "idle 12m"},
+		{"fresh", Running, "running"},
+		{"gone", Dead, "dead"},
+		{"manager", Running, "running"},
+	}
+	for _, c := range cases {
+		t.Run(c.window, func(t *testing.T) {
+			w := f.window(snap, "alpha", c.window)
+			if got := w.State(now); got != c.state {
+				t.Errorf("state = %v, want %v", got, c.state)
+			}
+			if got := w.Label(now); got != c.label {
+				t.Errorf("label = %q, want %q", got, c.label)
+			}
+		})
+	}
+	p, _ := snap.Project("alpha")
+	if p.Open != 1 || p.Dead() != 1 {
+		t.Errorf("project open=%d dead=%d, want 1 and 1", p.Open, p.Dead())
+	}
+}
+
+func TestItemsWithoutSourceCountAgainstManager(t *testing.T) {
+	f := newFixture(t)
+	f.project("alpha", store.Window{Name: "w1", Harness: "claude"})
+	f.item("alpha", "")
+	f.item("alpha", "")
+	f.item("alpha", "w1")
+	snap := f.snapshot()
+	if got := f.window(snap, "alpha", "manager").Open; got != 2 {
+		t.Errorf("manager open = %d, want 2", got)
+	}
+	if got := f.window(snap, "alpha", "w1").Open; got != 1 {
+		t.Errorf("w1 open = %d, want 1", got)
+	}
+}
+
+func TestCodexTranscripts(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(f *fixture, rollout string)
+	}{
+		{"state db rollout path", func(f *fixture, rollout string) {
+			f.transcript(rollout, 30*time.Minute)
+			os.MkdirAll(filepath.Join(f.dir, "codex"), 0o755)
+			db, err := sql.Open("sqlite", filepath.Join(f.dir, "codex", "state_5.sqlite"))
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)`); err != nil {
+				f.t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO threads VALUES ('t-1', ?)`, rollout); err != nil {
+				f.t.Fatal(err)
+			}
+		}},
+		{"sessions glob", func(f *fixture, _ string) {
+			f.transcript(filepath.Join(f.dir, "codex", "sessions", "2026", "10", "13", "rollout-2026-10-13T09-00-00-t-1.jsonl"), 30*time.Minute)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.project("alpha", store.Window{Name: "cx", Harness: "codex", SessionID: "t-1"})
+			c.setup(f, filepath.Join(f.dir, "elsewhere", "rollout.jsonl"))
+			if got := f.window(f.snapshot(), "alpha", "cx").Label(time.Now()); got != "idle 30m" {
+				t.Errorf("label = %q, want idle 30m", got)
+			}
+		})
+	}
+}
+
+func TestUnmanagedExcludesYmSessionsAndTrackedWindows(t *testing.T) {
+	f := newFixture(t)
+	f.project("alpha")
+	stray, err := f.tmux.NewWindow("scratch", "notes", "", f.dir, nil, []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := f.tmux.NewWindow("scratch", "kept", "", f.dir, nil, []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.tmux.NewWindow("ym-alpha", "loose", "", f.dir, nil, []string{"sleep", "600"}); err != nil {
+		t.Fatal(err)
+	}
+	w := store.Window{Project: "alpha", Name: "kept", Role: store.RoleWorker, Harness: "claude"}
+	tag := func(w store.Window) (string, error) { return adopted, f.tmux.Tag(adopted, strconv.FormatInt(w.ID, 10)) }
+	if err := f.store.AddWindow(w, tag); err != nil {
+		t.Fatal(err)
+	}
+	snap := f.snapshot()
+	if len(snap.Unmanaged) != 1 || snap.Unmanaged[0].ID != stray {
+		t.Fatalf("unmanaged = %+v, want only %s", snap.Unmanaged, stray)
+	}
+	if !f.window(snap, "alpha", "kept").Alive {
+		t.Error("adopted window outside its ym session should read alive")
+	}
+}

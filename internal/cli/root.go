@@ -35,6 +35,9 @@ func NewRoot() *cobra.Command {
 		reviveCmd(withApp),
 		switchCmd(withApp),
 		installCmd(),
+		adoptCmd(withApp),
+		nextCmd(withApp),
+		boardCmd(withApp),
 	)
 	return root
 }

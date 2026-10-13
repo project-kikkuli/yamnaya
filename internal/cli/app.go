@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness"
+	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
 )
@@ -107,41 +108,15 @@ func (a *app) newWindow(project, cwd, name, role, harnessName, prompt string) (s
 	return w, launch, nil
 }
 
-// resolveCodexSessions records Codex session ids for open windows whose thread Codex has since written.
 func (a *app) resolveCodexSessions(p store.Project, windows []store.Window) error {
-	var claimed map[string]bool
-	for i, w := range windows {
-		if w.Harness != harness.Codex || w.SessionID != "" {
-			continue
-		}
-		if claimed == nil {
-			var err error
-			if claimed, err = a.store.ClaimedSessionIDs(harness.Codex); err != nil {
-				return err
-			}
-		}
-		id, err := harness.CodexSessionID(p.Cwd, w.CreatedAt, w.Prompt, claimed)
-		if err != nil {
-			return err
-		}
-		if id == "" {
-			continue
-		}
-		if err := a.store.SetSessionID(w.ID, id); err != nil {
-			return err
-		}
-		claimed[id] = true
-		windows[i].SessionID = id
-	}
-	return nil
+	return signals.ResolveCodexSessions(a.store, p, windows)
 }
 
 func envWindow() string { return os.Getenv("YM_WINDOW") }
 
 // liveWindow reports whether w's tmux window still runs; a reused tmux id carries another tag and does not count.
 func liveWindow(w store.Window, live map[string]tmux.WindowInfo) bool {
-	info, ok := live[w.TmuxTarget]
-	return ok && info.Tag == strconv.FormatInt(w.ID, 10) && info.Session == tmux.SessionName(w.Project) && !info.Dead
+	return signals.Live(w, live)
 }
 
 // closeIfDead closes the open window row named name when its tmux window no longer runs, so the name can be reused.

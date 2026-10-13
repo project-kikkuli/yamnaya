@@ -29,12 +29,21 @@ Requires tmux 3.0 or newer. State lives in `~/.local/state/yamnaya/ym.db` (overr
     ym board
     ym next
     ym install [--board-key Space] [--next-key N]
+    ym adopt <tmux-target> [--name n] [--harness claude|codex]
 
 Commands run inside a ym window pick up the project from `YM_PROJECT` and the filing window from `YM_WINDOW`; elsewhere pass `-p <project>`.
 
 `revive` recreates a landed or dead project's tmux session and resumes every window's session. `switch` ports an idle window's session to the other harness with `cs port` and resumes it in the same window. `install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex` skills and writes `~/.config/yamnaya/tmux.conf` (prefix+Space opens `ym board`, prefix+N runs `ym next`); source that file from `~/.tmux.conf`.
 
 Item ids are stable per project and never reused: `D` decisions, `V` veto-able defaults, `C` chores, sharing one sequence.
+
+## Board
+
+`ym board` shows one line per project: phase dots and how many items ask you. A project expands to its windows when selected or when something in it asks you. Windows read `asks you`, `running`, `idle 12m`, or `dead`; tmux windows ym does not track show as unmanaged, and `a` adopts one.
+
+Keys: arrows or `j`/`k` move, Enter jumps to a window, `o` opens the project's items, `t` starts a side thread, `q` quits. In the item list: Enter expands, `g` goes to the source window, `f` goes there and types `re <id>: `, `y`/`n` answer a default, `d` dismisses with a reason, `s` snoozes.
+
+`ym next` jumps to the next window with an open item, oldest item first.
 
 ## Environment
 
@@ -43,3 +52,4 @@ Item ids are stable per project and never reused: `D` decisions, `V` veto-able d
 - `YAMNAYA_CLAUDE_BIN`, `YAMNAYA_CODEX_BIN`: harness binaries
 - `YAMNAYA_CS_BIN`: the `cs` script `switch` uses to port sessions (default: `cs` on PATH)
 - `CODEX_HOME`: where Codex keeps its state; ym reads it to record Codex session ids
+- `CLAUDE_CONFIG_DIR`: where Claude Code keeps transcripts (default `~/.claude`); the board reads them for idle time

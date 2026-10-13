@@ -83,21 +83,7 @@ func spawnCmd(withApp runner) *cobra.Command {
 				return err
 			}
 			name := args[0]
-			if err := validName("window", name); err != nil {
-				return err
-			}
-			p, err := a.store.ActiveProject(project)
-			if err != nil {
-				return err
-			}
-			if err := a.closeIfDead(project, name); err != nil {
-				return err
-			}
-			w, launch, err := a.newWindow(project, p.Cwd, name, store.RoleWorker, harnessName, workerPrompt(project, name, prompt))
-			if err != nil {
-				return err
-			}
-			if err := a.store.AddWindow(w, launch); err != nil {
+			if err := a.spawn(project, name, harnessName, prompt); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: worker %s started (%s)\n", project, name, harnessName)
@@ -107,4 +93,22 @@ func spawnCmd(withApp runner) *cobra.Command {
 	cmd.Flags().StringVar(&harnessName, "harness", "claude", "worker harness: claude or codex")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "initial prompt for the worker")
 	return cmd
+}
+
+func (a *app) spawn(project, name, harnessName, prompt string) error {
+	if err := validName("window", name); err != nil {
+		return err
+	}
+	p, err := a.store.ActiveProject(project)
+	if err != nil {
+		return err
+	}
+	if err := a.closeIfDead(project, name); err != nil {
+		return err
+	}
+	w, launch, err := a.newWindow(project, p.Cwd, name, store.RoleWorker, harnessName, workerPrompt(project, name, prompt))
+	if err != nil {
+		return err
+	}
+	return a.store.AddWindow(w, launch)
 }

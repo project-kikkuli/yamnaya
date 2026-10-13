@@ -21,6 +21,8 @@ type WindowInfo struct {
 	Name    string
 	Tag     string
 	Dead    bool
+	Index   int
+	Command string
 }
 
 const tagOption = "@ym_window"
@@ -114,7 +116,7 @@ func (c Client) KillSession(session string) error {
 }
 
 func (c Client) Windows() (map[string]WindowInfo, error) {
-	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{"+tagOption+"}\t#{pane_dead}")
+	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{"+tagOption+"}\t#{pane_dead}\t#{window_index}\t#{pane_current_command}")
 	if err != nil {
 		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "error connecting") {
 			return map[string]WindowInfo{}, nil
@@ -124,10 +126,11 @@ func (c Client) Windows() (map[string]WindowInfo, error) {
 	windows := map[string]WindowInfo{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 5 {
+		if len(f) != 7 {
 			continue
 		}
-		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Tag: f[3], Dead: f[4] == "1"}
+		idx, _ := strconv.Atoi(f[5])
+		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Tag: f[3], Dead: f[4] == "1", Index: idx, Command: f[6]}
 	}
 	return windows, nil
 }
@@ -141,4 +144,25 @@ func (c Client) Jump(target string) error {
 	cmd := exec.Command("tmux", c.args("attach-session", "-t", target)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
+}
+
+func (c Client) Tag(target, tag string) error {
+	_, err := c.run("set-option", "-w", "-t", target, tagOption, tag)
+	return err
+}
+
+// WindowID resolves any tmux target to its window id.
+func (c Client) WindowID(target string) (string, error) {
+	return c.run("display-message", "-p", "-t", target, "#{window_id}")
+}
+
+// CurrentWindow is the window of the current or most recently active client.
+func (c Client) CurrentWindow() (string, error) {
+	return c.run("display-message", "-p", "#{window_id}")
+}
+
+// TypeText types text into target's active pane without pressing Enter.
+func (c Client) TypeText(target, text string) error {
+	_, err := c.run("send-keys", "-t", target, "-l", text)
+	return err
 }
