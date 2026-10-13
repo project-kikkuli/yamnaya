@@ -271,3 +271,21 @@ func TestDiscoveredStatusDecidesRunningOrIdle(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscoveredSessionLabels(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		s    discover.Session
+		want string
+	}{
+		{discover.Session{Status: discover.Idle, Since: now.Add(-12 * time.Minute)}, "idle 12m"},
+		{discover.Session{Status: discover.NeedsYou, WaitingFor: "permission"}, "waiting on you · permission"},
+		{discover.Session{Status: discover.NeedsYou}, "waiting on you"},
+		{discover.Session{Status: discover.Running}, "running"},
+	}
+	for _, c := range cases {
+		if got := (Session{Session: c.s}).Label(now); got != c.want {
+			t.Errorf("label = %q, want %q", got, c.want)
+		}
+	}
+}

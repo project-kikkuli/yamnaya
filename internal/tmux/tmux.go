@@ -185,18 +185,19 @@ type PanePlace struct {
 	Window  string
 	Session string
 	Role    string
+	Cwd     string
 	Dead    bool
 }
 
 func parsePane(line string) PanePlace {
 	f := strings.Split(line, "\t")
-	for len(f) < 5 {
+	for len(f) < 6 {
 		f = append(f, "")
 	}
-	return PanePlace{ID: f[0], Window: f[1], Session: f[2], Dead: f[3] == "1", Role: f[4]}
+	return PanePlace{ID: f[0], Window: f[1], Session: f[2], Dead: f[3] == "1", Cwd: f[4], Role: f[5]}
 }
 
-const paneFormat = "#{pane_id}\t#{window_id}\t#{session_name}\t#{pane_dead}\t#{" + RoleOption + "}"
+const paneFormat = "#{pane_id}\t#{window_id}\t#{session_name}\t#{pane_dead}\t#{pane_current_path}\t#{" + RoleOption + "}"
 
 // Pane describes one pane, wherever it currently sits; display-message quietly falls back to another pane for a missing target, so the id is checked.
 func (c Client) Pane(target string) (PanePlace, error) {

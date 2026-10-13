@@ -20,6 +20,15 @@ func claudeConfigPath() (string, error) {
 	return filepath.Join(home, ".claude.json"), nil
 }
 
+// trustKeys is dir as given and as Claude Code sees it once symlinks resolve, such as /tmp to /private/tmp on macOS.
+func trustKeys(dir string) []string {
+	keys := []string{filepath.Clean(dir)}
+	if real, err := filepath.EvalSymlinks(dir); err == nil && real != keys[0] {
+		keys = append(keys, real)
+	}
+	return keys
+}
+
 // TrustClaudeDir records dir as trusted the way accepting Claude Code's trust dialog does, so a new window does not stall on it.
 func TrustClaudeDir(dir string) error {
 	path, err := claudeConfigPath()
@@ -51,15 +60,22 @@ func TrustClaudeDir(dir string) error {
 			return err
 		}
 	}
-	entry := projects[dir]
-	if string(entry["hasTrustDialogAccepted"]) == "true" {
+	changed := false
+	for _, key := range trustKeys(dir) {
+		entry := projects[key]
+		if string(entry["hasTrustDialogAccepted"]) == "true" {
+			continue
+		}
+		if entry == nil {
+			entry = map[string]json.RawMessage{}
+		}
+		entry["hasTrustDialogAccepted"] = json.RawMessage("true")
+		projects[key] = entry
+		changed = true
+	}
+	if !changed {
 		return nil
 	}
-	if entry == nil {
-		entry = map[string]json.RawMessage{}
-	}
-	entry["hasTrustDialogAccepted"] = json.RawMessage("true")
-	projects[dir] = entry
 	if config["projects"], err = json.Marshal(projects); err != nil {
 		return err
 	}

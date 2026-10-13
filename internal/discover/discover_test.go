@@ -157,8 +157,8 @@ func TestClaudeStatus(t *testing.T) {
 	}{
 		{name: "busy is running", status: "busy", updated: now.Add(-time.Minute), want: Running},
 		{name: "waiting needs you", status: "waiting", updated: now.Add(-time.Minute), want: NeedsYou, waitingFor: "permission"},
-		{name: "fresh idle is your turn", status: "idle", updated: now.Add(-5 * time.Minute), want: YourTurn},
-		{name: "old idle fades", status: "idle", updated: now.Add(-2 * time.Hour), want: Idle},
+		{name: "fresh idle is idle", status: "idle", updated: now.Add(-5 * time.Minute), want: Idle},
+		{name: "old idle is idle", status: "idle", updated: now.Add(-2 * time.Hour), want: Idle},
 		{name: "no state, open turn", lines: []any{user("fix the kiln"), assistant("tool_use", "tool_use")}, modified: now.Add(-time.Minute), want: Running},
 		{name: "no state, finished turn", lines: []any{user("fix the kiln"), assistant("end_turn", "text"), turnDone}, modified: now.Add(-time.Minute), want: YourTurn},
 		{name: "no state, stale open turn", lines: []any{user("fix the kiln"), assistant("tool_use", "tool_use")}, modified: now.Add(-time.Hour), want: Idle},

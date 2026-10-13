@@ -22,9 +22,9 @@ func (s Session) Label(now time.Time) string {
 		return "running"
 	case discover.NeedsYou:
 		if s.WaitingFor != "" {
-			return "needs you · " + s.WaitingFor
+			return "waiting on you · " + s.WaitingFor
 		}
-		return "needs you"
+		return "waiting on you"
 	case discover.YourTurn:
 		return "waiting on you"
 	}

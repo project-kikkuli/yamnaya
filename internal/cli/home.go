@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/harness"
 	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
@@ -125,11 +126,12 @@ func (a *app) stage(id int64, focus bool) error {
 	if err != nil {
 		return err
 	}
-	return a.lend(agent.ID, w.ID, focus)
+	return a.lend(agent.ID, w.ID, w.Harness, w.SessionID, focus)
 }
 
 // stagePane lends any pane, such as a discovered session's, to the stage.
-func (a *app) stagePane(pane string, focus bool) error {
+// harnessName and sessionID, when discovery knows them, let the pane be resumed if it is destroyed on stage.
+func (a *app) stagePane(pane, harnessName, sessionID string, focus bool) error {
 	if st, ok, err := a.store.Stage(); err != nil {
 		return err
 	} else if ok && st.Pane == pane {
@@ -138,7 +140,7 @@ func (a *app) stagePane(pane string, focus bool) error {
 	if err := a.unstage(); err != nil {
 		return err
 	}
-	return a.lend(pane, 0, focus)
+	return a.lend(pane, 0, harnessName, sessionID, focus)
 }
 
 func (a *app) focusStaged(pane string, focus bool) error {
@@ -148,7 +150,7 @@ func (a *app) focusStaged(pane string, focus bool) error {
 	return a.tmux.SelectPane(pane)
 }
 
-func (a *app) lend(pane string, windowID int64, focus bool) error {
+func (a *app) lend(pane string, windowID int64, harnessName, sessionID string, focus bool) error {
 	if err := a.ensureHome(homeCwd()); err != nil {
 		return err
 	}
@@ -163,7 +165,8 @@ func (a *app) lend(pane string, windowID int64, focus bool) error {
 	if err != nil {
 		return err
 	}
-	if err := a.store.SetStage(store.Stage{WindowID: windowID, Origin: agent.Window, OriginSession: agent.Session, Pane: agent.ID}); err != nil {
+	st := store.Stage{WindowID: windowID, Origin: agent.Window, OriginSession: agent.Session, Pane: agent.ID, Harness: harnessName, SessionID: sessionID, Cwd: agent.Cwd}
+	if err := a.store.SetStage(st); err != nil {
 		return err
 	}
 	if err := a.tmux.SwapPane(agent.ID, slot); err != nil {
@@ -186,13 +189,7 @@ func (a *app) unstage() error {
 			if p.Role != signals.RoleRest {
 				continue
 			}
-			if st.WindowID != 0 {
-				if err := a.resumeInto(st.WindowID, p.ID); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := a.tmux.KillPane(p.ID); err != nil {
+			if err := a.resumeInto(st, p.ID); err != nil {
 				return err
 			}
 		}
@@ -315,25 +312,40 @@ func restCmd() *cobra.Command {
 	}
 }
 
-// resumeInto replaces the placeholder pane holding window id's place with that window's harness, resuming its session.
-func (a *app) resumeInto(id int64, pane string) error {
-	w, err := a.store.WindowByID(id)
-	if err != nil {
-		return err
+// resumeInto replaces the placeholder holding a destroyed staged pane's place with its harness, resuming the recorded session in the recorded directory.
+// A pane with nothing to resume, such as one whose session id was never known, just loses its placeholder.
+func (a *app) resumeInto(st store.Stage, pane string) error {
+	var argv []string
+	cwd, env := st.Cwd, map[string]string{}
+	if st.WindowID != 0 {
+		w, err := a.store.WindowByID(st.WindowID)
+		if err != nil {
+			return err
+		}
+		p, err := a.store.Project(w.Project)
+		if err != nil {
+			return err
+		}
+		l, err := relaunch(w)
+		if err != nil {
+			return err
+		}
+		argv, cwd, env = l.Argv, p.Cwd, windowEnv(p.Name, w.Name)
+	} else if st.Harness != "" && st.SessionID != "" {
+		l, err := harness.Resume(st.Harness, st.SessionID)
+		if err != nil {
+			return err
+		}
+		argv = l.Argv
 	}
-	p, err := a.store.Project(w.Project)
-	if err != nil {
-		return err
+	if argv == nil || cwd == "" {
+		return a.tmux.KillPane(pane)
 	}
-	l, err := relaunch(w)
-	if err != nil {
-		return err
-	}
-	if err := trustFor(w.Harness, p.Cwd); err != nil {
+	if err := trustFor(st.Harness, cwd); err != nil {
 		return err
 	}
 	if err := a.tmux.SetPaneRole(pane, ""); err != nil {
 		return err
 	}
-	return a.tmux.Respawn(pane, p.Cwd, windowEnv(p.Name, w.Name), l.Argv)
+	return a.tmux.Respawn(pane, cwd, env, argv)
 }

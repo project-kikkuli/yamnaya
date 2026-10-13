@@ -121,8 +121,7 @@ func (d *Discoverer) readClaude(s *Session, p Proc, started, now time.Time) {
 	case ok && st.Status == "waiting":
 		s.Status, s.Since, s.WaitingFor = NeedsYou, msTime(st.StatusUpdatedAt), st.WaitingFor
 	case ok && st.Status == "idle":
-		s.Since = msTime(st.StatusUpdatedAt)
-		s.Status = settle(s.Since, now)
+		s.Status, s.Since = Idle, msTime(st.StatusUpdatedAt)
 	case scan.open && now.Sub(scan.modified) < StaleAfter:
 		s.Status, s.Since = Running, scan.modified
 	default:

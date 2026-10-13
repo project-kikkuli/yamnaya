@@ -349,7 +349,7 @@ func TestStagingAPaneWithoutAYmWindow(t *testing.T) {
 			if err := e.a.ensureHome(e.dir); err != nil {
 				t.Fatal(err)
 			}
-			if err := e.a.stagePane(agent, false); err != nil {
+			if err := e.a.stagePane(agent, "", "", false); err != nil {
 				t.Fatal(err)
 			}
 			if s := e.spots(); s[agent].window != e.homeWindowID() || s[neighbor].window != origin {
@@ -374,13 +374,13 @@ func TestSidebarEnterStagesADiscoveredSession(t *testing.T) {
 	e.tmux("new-session", "-d", "-s", "scratch", "sleep 600")
 	pane := e.tmux("display-message", "-p", "-t", "scratch:", "#{pane_id}")
 	m := newSidebar(e.a)
-	m.snap.Sessions = []signals.Session{{Session: discover.Session{Pane: pane, Harness: "claude", TmuxSession: "scratch"}}}
+	m.snap.Sessions = []signals.Session{{Session: discover.Session{Pane: pane, Harness: "claude", ID: "s-9", TmuxSession: "scratch"}}}
 	m.sel = row{kind: rowSession, target: pane}
 	if cmd := press(m, "enter"); cmd != nil {
 		t.Fatal("enter closed the sidebar")
 	}
 	st, ok := e.staged()
-	if !ok || st.Pane != pane || st.WindowID != 0 {
+	if !ok || st.Pane != pane || st.WindowID != 0 || st.Harness != "claude" || st.SessionID != "s-9" {
 		t.Fatalf("stage = %+v, %v; want the discovered pane %s", st, ok, pane)
 	}
 	if e.spots()[pane].window != e.homeWindowID() {
@@ -459,5 +459,45 @@ func TestReviveRecreatesAReapedWorktree(t *testing.T) {
 	}
 	if ls := e.ym("ls", "-p", "gamma"); !strings.Contains(ls, "manager") || strings.Contains(ls, "gone") {
 		t.Fatalf("manager not running after revive:\n%s", ls)
+	}
+}
+
+func TestDestroyedDiscoveredSessionResumesInItsOwnWindow(t *testing.T) {
+	cases := []struct {
+		name   string
+		strand func(e *testEnv, agent string)
+	}{
+		{"pane killed", func(e *testEnv, agent string) { e.tmux("kill-pane", "-t", agent) }},
+		{"ym session killed", func(e *testEnv, agent string) { e.tmux("kill-session", "-t", homeSession) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newHomeEnv(t)
+			e.project("alpha")
+			work := filepath.Join(e.dir, "work")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			work, _ = filepath.EvalSymlinks(work)
+			e.tmux("new-session", "-d", "-s", "scratch", "-c", work, "sleep 600")
+			origin := e.tmux("display-message", "-p", "-t", "scratch:", "#{window_id}")
+			agent := e.tmux("display-message", "-p", "-t", origin, "#{pane_id}")
+			if err := e.a.stagePane(agent, "claude", "sess-1", false); err != nil {
+				t.Fatal(err)
+			}
+			c.strand(e, agent)
+			newSidebar(e.a)
+			p, err := e.a.tmux.Pane(origin)
+			if err != nil || p.Role != "" || p.Dead {
+				t.Fatalf("origin pane = %+v, %v", p, err)
+			}
+			if cmd := e.tmux("display-message", "-p", "-t", origin, "#{pane_start_command}"); !strings.Contains(cmd, "--resume sess-1") {
+				t.Fatalf("origin restarted as %q", cmd)
+			}
+			if got := e.tmux("display-message", "-p", "-t", origin, "#{pane_current_path}"); got != work {
+				t.Fatalf("resumed in %s, want %s", got, work)
+			}
+			e.assertHomeResting()
+		})
 	}
 }

@@ -336,7 +336,8 @@ func (m *boardModel) projectsKey(msg tea.KeyMsg) tea.Cmd {
 			if !m.sidebar {
 				return m.jump(m.sel.target)
 			}
-			if err := m.a.stagePane(m.sel.target, true); err != nil {
+			ses, _ := m.session(m.sel.target)
+			if err := m.a.stagePane(m.sel.target, ses.Harness, ses.ID, true); err != nil {
 				m.status = err.Error()
 			}
 			m.refresh()
