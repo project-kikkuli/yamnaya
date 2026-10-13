@@ -58,7 +58,7 @@ func installCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&boardKey, "board-key", "Space", "prefix key that opens the board popup")
-	cmd.Flags().StringVar(&nextKey, "next-key", "n", "prefix key that jumps to the next window needing you")
+	cmd.Flags().StringVar(&nextKey, "next-key", "N", "prefix key that jumps to the next window needing you")
 	return cmd
 }
 

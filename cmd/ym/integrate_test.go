@@ -190,7 +190,7 @@ func TestInstallLinksSkillAndWritesTmuxConf(t *testing.T) {
 		t.Fatalf("codex link points at %q", dst)
 	}
 	conf, _ := os.ReadFile(filepath.Join(home, ".config", "yamnaya", "tmux.conf"))
-	for _, want := range []string{"bind-key Space display-popup -E -w 80% -h 70% '", " board'", "bind-key n run-shell '", " next'"} {
+	for _, want := range []string{"bind-key Space display-popup -E -w 80% -h 70% '", " board'", "bind-key N run-shell '", " next'"} {
 		if !strings.Contains(string(conf), want) {
 			t.Fatalf("tmux.conf missing %q:\n%s", want, conf)
 		}
