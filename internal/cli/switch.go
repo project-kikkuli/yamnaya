@@ -41,11 +41,11 @@ func switchCmd(withApp runner) *cobra.Command {
 			if w.Harness == to {
 				return fmt.Errorf("window %q already runs %s", w.Name, to)
 			}
-			live, err := a.tmux.Windows()
+			pane, staged, err := a.agentPane(w)
 			if err != nil {
 				return err
 			}
-			if info, ok := live[w.TmuxTarget]; !ok || info.Dead {
+			if info, err := a.tmux.Pane(pane); err != nil || info.Dead {
 				return fmt.Errorf("window %q is not alive in tmux; ym revive %s first", w.Name, project)
 			}
 			windows := []store.Window{w}
@@ -53,7 +53,7 @@ func switchCmd(withApp runner) *cobra.Command {
 				return err
 			}
 			w = windows[0]
-			if err := a.idleEnough(w, minIdle); err != nil {
+			if err := a.idleEnough(w, pane, staged, minIdle); err != nil {
 				return err
 			}
 			if w.SessionID == "" {
@@ -70,12 +70,25 @@ func switchCmd(withApp runner) *cobra.Command {
 			if err := trustFor(to, p.Cwd); err != nil {
 				return err
 			}
+			if err := a.refuseDuplicate(newID, ""); err != nil {
+				return err
+			}
 			env := windowEnv(project, w.Name)
-			if err := a.tmux.Respawn(w.TmuxTarget, p.Cwd, env, harness.CarryEnv(to, l.Argv, env)); err != nil {
+			if err := a.tmux.Respawn(pane, p.Cwd, env, harness.CarryEnv(to, l.Argv, env)); err != nil {
 				return err
 			}
 			if err := a.store.SwitchHarness(w.ID, to, newID); err != nil {
 				return err
+			}
+			if staged {
+				st, _, err := a.store.Stage()
+				if err != nil {
+					return err
+				}
+				st.Harness, st.SessionID = to, newID
+				if err := a.store.SetStage(st); err != nil {
+					return err
+				}
 			}
 			if err := a.checkStarted(project, w.Name); err != nil {
 				return err
@@ -113,8 +126,9 @@ func portSession(cwd, sessionID, to string) (string, error) {
 	return lines[len(lines)-1], nil
 }
 
-// idleEnough refuses a window mid-turn: for Codex, whose TUI keeps redrawing, by its rollout's open task; otherwise by recent pane output or transcript writes.
-func (a *app) idleEnough(w store.Window, minIdle time.Duration) error {
+// idleEnough refuses a window mid-turn: for Codex, whose TUI keeps redrawing, by its rollout's open task; otherwise by recent output or transcript writes.
+// A staged window shares ym home with the sidebar, whose redraws would read as output, so only its transcript counts.
+func (a *app) idleEnough(w store.Window, pane string, staged bool, minIdle time.Duration) error {
 	if w.Harness == harness.Codex {
 		if path := signals.NewTranscripts().Path(w.Harness, w.SessionID); path != "" {
 			if open, modified := discover.CodexTurn(path); open && time.Since(modified) < discover.StaleAfter {
@@ -123,9 +137,12 @@ func (a *app) idleEnough(w store.Window, minIdle time.Duration) error {
 			return nil
 		}
 	}
-	last, err := a.tmux.LastActivity(w.TmuxTarget)
-	if err != nil {
-		return err
+	var last time.Time
+	if !staged {
+		var err error
+		if last, err = a.tmux.LastActivity(pane); err != nil {
+			return err
+		}
 	}
 	if t := signals.NewTranscripts().LastActive(w.Harness, w.SessionID); t.After(last) {
 		last = t

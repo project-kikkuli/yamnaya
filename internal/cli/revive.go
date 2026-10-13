@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness"
+	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
 	"github.com/spf13/cobra"
@@ -67,7 +68,23 @@ func (a *app) revive(name string) (store.Project, int, error) {
 	if err := a.resolveCodexSessions(p, windows); err != nil {
 		return p, 0, err
 	}
+	st, staged, err := a.store.Stage()
+	if err != nil {
+		return p, 0, err
+	}
+	moved := false
 	launch := func(w store.Window) (string, store.Window, error) {
+		env := windowEnv(p.Name, w.Name)
+		if staged && st.WindowID == w.ID {
+			if agent, err := a.tmux.Pane(st.Pane); err == nil && !agent.Dead {
+				target, err := a.holdStagedPlace(w, session, p.Cwd, env)
+				st.Origin, st.OriginSession, moved = target, session, err == nil
+				return target, w, err
+			}
+		}
+		if err := a.refuseDuplicate(w.SessionID, ""); err != nil {
+			return "", w, err
+		}
 		l, err := relaunch(w)
 		if err != nil {
 			return "", w, err
@@ -76,7 +93,6 @@ func (a *app) revive(name string) (store.Project, int, error) {
 		if err := trustFor(w.Harness, p.Cwd); err != nil {
 			return "", w, err
 		}
-		env := windowEnv(p.Name, w.Name)
 		target, err := a.tmux.NewWindow(session, w.Name, strconv.FormatInt(w.ID, 10), p.Cwd, env, harness.CarryEnv(w.Harness, l.Argv, env))
 		return target, w, err
 	}
@@ -86,5 +102,19 @@ func (a *app) revive(name string) (store.Project, int, error) {
 		}
 		return p, 0, err
 	}
+	if moved {
+		if err := a.store.SetStage(st); err != nil {
+			return p, 0, err
+		}
+	}
 	return p, len(windows), nil
+}
+
+// holdStagedPlace gives a window whose harness is still running on the ym stage a new origin window holding only a placeholder, so the agent returns there instead of a second harness starting.
+func (a *app) holdStagedPlace(w store.Window, session, cwd string, env map[string]string) (string, error) {
+	target, err := a.tmux.NewWindow(session, w.Name, strconv.FormatInt(w.ID, 10), cwd, env, []string{ymBin(), "rest"})
+	if err != nil {
+		return "", err
+	}
+	return target, a.tmux.SetPaneRole(target, signals.RoleRest)
 }

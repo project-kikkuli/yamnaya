@@ -341,6 +341,9 @@ func (a *app) resumeInto(st store.Stage, pane string) error {
 	if argv == nil || cwd == "" {
 		return a.tmux.KillPane(pane)
 	}
+	if err := a.refuseDuplicate(st.SessionID, pane); err != nil {
+		return err
+	}
 	if err := trustFor(st.Harness, cwd); err != nil {
 		return err
 	}
@@ -348,4 +351,33 @@ func (a *app) resumeInto(st store.Stage, pane string) error {
 		return err
 	}
 	return a.tmux.Respawn(pane, cwd, env, harness.CarryEnv(st.Harness, argv, env))
+}
+
+// agentPane is where window w's harness runs now: the stage pane while w is staged, else its own window.
+func (a *app) agentPane(w store.Window) (pane string, staged bool, err error) {
+	st, ok, err := a.store.Stage()
+	if err != nil {
+		return "", false, err
+	}
+	if ok && st.WindowID == w.ID {
+		return st.Pane, true, nil
+	}
+	return w.TmuxTarget, false, nil
+}
+
+// refuseDuplicate errors when a live pane other than except already runs sessionID, so no path starts a second harness on one session.
+func (a *app) refuseDuplicate(sessionID, except string) error {
+	if sessionID == "" {
+		return nil
+	}
+	panes, err := a.tmux.PanesRunning(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, p := range panes {
+		if p != except {
+			return fmt.Errorf("session %s already runs in tmux pane %s", sessionID, p)
+		}
+	}
+	return nil
 }

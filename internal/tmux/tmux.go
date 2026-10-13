@@ -340,3 +340,22 @@ func (c Client) KillWindow(target string) error {
 	_, err := c.run("kill-window", "-t", target)
 	return err
 }
+
+// PanesRunning lists live panes whose start command mentions needle, such as a session id.
+func (c Client) PanesRunning(needle string) ([]string, error) {
+	out, err := c.run("list-panes", "-a", "-F", "#{pane_id}\t#{pane_dead}\t#{pane_start_command}")
+	if err != nil {
+		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "error connecting") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var panes []string
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.SplitN(line, "\t", 3)
+		if len(f) == 3 && f[1] != "1" && strings.Contains(f[2], needle) {
+			panes = append(panes, f[0])
+		}
+	}
+	return panes, nil
+}

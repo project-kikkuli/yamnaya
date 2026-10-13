@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -553,5 +554,99 @@ func TestNextInsideHomeStagesInsteadOfLeaving(t *testing.T) {
 		if st, ok := e.staged(); !ok || st.WindowID != e.windowID("alpha", want) {
 			t.Fatalf("next %d staged %+v, want %s", i+1, st, want)
 		}
+	}
+}
+
+func (e *testEnv) running(sessionID string) []string {
+	e.t.Helper()
+	panes, err := e.a.tmux.PanesRunning(sessionID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return panes
+}
+
+func TestSwitchOnAStagedWindowReplacesTheHarnessOnStage(t *testing.T) {
+	e := newHomeEnv(t)
+	cs := filepath.Join(e.dir, "cs")
+	if err := os.WriteFile(cs, []byte("#!/bin/sh\necho thread-from-cs\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAMNAYA_CS_BIN", cs)
+	e.project("beta")
+	if err := e.a.ensureHome(e.dir); err != nil {
+		t.Fatal(err)
+	}
+	mgr, _ := e.a.store.OpenWindow("beta", "manager")
+	if err := e.a.stage(mgr.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	staged, _ := e.staged()
+	e.ym("-p", "beta", "switch", "manager", "--to", "codex", "--min-idle", "0s")
+
+	if got := e.running(mgr.SessionID); len(got) != 0 {
+		t.Fatalf("old claude session still runs in %v", got)
+	}
+	if got := e.running("thread-from-cs"); len(got) != 1 || got[0] != staged.Pane {
+		t.Fatalf("new codex session runs in %v, want only the staged pane %s", got, staged.Pane)
+	}
+	if p, _ := e.a.tmux.Pane(mgr.TmuxTarget); p.Role != "rest" {
+		t.Fatalf("origin holds %+v, want the placeholder", p)
+	}
+	if st, _ := e.staged(); st.Harness != "codex" || st.SessionID != "thread-from-cs" {
+		t.Fatalf("stage record not updated: %+v", st)
+	}
+	if err := e.a.unstage(); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.spots()[staged.Pane].window; got != mgr.TmuxTarget {
+		t.Fatalf("switched harness returned to %s, want %s", got, mgr.TmuxTarget)
+	}
+	e.assertHomeResting()
+	e.ym("land", "beta")
+	if got := e.running("thread-from-cs"); len(got) != 0 {
+		t.Fatalf("landed project still runs in %v", got)
+	}
+}
+
+func TestReviveKeepsAStagedAgentInsteadOfStartingASecond(t *testing.T) {
+	e := newHomeEnv(t)
+	e.project("alpha", "w1")
+	if err := e.a.ensureHome(e.dir); err != nil {
+		t.Fatal(err)
+	}
+	w1, _ := e.a.store.OpenWindow("alpha", "w1")
+	if err := e.a.stage(w1.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	staged, _ := e.staged()
+	e.tmux("kill-session", "-t", "ym-alpha")
+	e.ym("revive", "alpha")
+	if got := e.running(w1.SessionID); len(got) != 1 || got[0] != staged.Pane {
+		t.Fatalf("w1's session runs in %v, want only the staged pane %s", got, staged.Pane)
+	}
+	if err := e.a.unstage(); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.spots()[staged.Pane].window; got != e.target("alpha", "w1") {
+		t.Fatalf("staged agent returned to %s, want w1's new window %s", got, e.target("alpha", "w1"))
+	}
+	e.assertHomeResting()
+}
+
+func TestReviveRefusesASessionAlreadyRunningElsewhere(t *testing.T) {
+	e := newHomeEnv(t)
+	e.project("alpha")
+	mgr, _ := e.a.store.OpenWindow("alpha", "manager")
+	e.tmux("kill-session", "-t", "ym-alpha")
+	e.tmux("new-session", "-d", "-s", "scratch", "sleep 600 # resumed by hand "+mgr.SessionID)
+	root := NewRoot()
+	root.SetOut(io.Discard)
+	root.SetArgs([]string{"revive", "alpha"})
+	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "already runs") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := e.running(mgr.SessionID); len(got) != 1 {
+		t.Fatalf("session runs in %v, want only the hand-started pane", got)
 	}
 }
