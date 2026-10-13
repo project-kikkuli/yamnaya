@@ -265,7 +265,8 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 func TestFocusBringsOuterTerminalForwardAndFallsBackToResume(t *testing.T) {
 	w := newWorld(t)
 	w.run(10, 1, "/dev/pane", "claude", "intmux", Idle)
-	w.run(20, 1, "/dev/plain", "codex", "bare", Idle)
+	w.procs = append(w.procs, proc.Proc{PID: 19, PPID: 1, Args: []string{"/Applications/iTerm.app/Contents/MacOS/iTerm2"}})
+	w.run(20, 19, "/dev/ttys012", "codex", "bare", Idle)
 	w.tmux.ttys["/dev/pane"] = "%7"
 	w.tmux.outer = "/dev/client"
 	w.gui.ttys["/dev/client"] = "tab 3"
@@ -280,6 +281,9 @@ func TestFocusBringsOuterTerminalForwardAndFallsBackToResume(t *testing.T) {
 	bare := w.core.Targets(b, "bare", "codex")
 	if err := w.core.Focus(bare[0]); !errors.Is(err, ErrNoHost) || strings.Join(bare[0].Resume, " ") != "codex --resume bare" {
 		t.Fatalf("bare target = %+v, err %v", bare, err)
+	}
+	if s, _ := b.Session("bare"); s.Location() != "iTerm ttys012" || !strings.Contains(bare[0].Advice(), "pid 20 on ttys012 in iTerm") {
+		t.Errorf("location %q, advice %q", s.Location(), bare[0].Advice())
 	}
 	ended := w.core.Targets(b, "gone", "claude")
 	if len(ended) != 1 || ended[0].Handle != nil || ended[0].Resume == nil {

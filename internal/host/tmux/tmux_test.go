@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,40 +64,45 @@ func TestLocateTypeAndScreenByPaneTTY(t *testing.T) {
 	})
 }
 
-func TestFocusMovesTheClientWithoutChangingLayout(t *testing.T) {
+func TestFocusJumpsOnlyYmsOwnClientWithoutChangingLayout(t *testing.T) {
 	h := server(t)
-	h.must(t, "new-session", "-d", "-s", "home", "-x", "120", "-y", "30", "cat")
-	h.must(t, "new-session", "-d", "-s", "agents", "-x", "120", "-y", "30", "cat")
-	h.must(t, "split-window", "-d", "-t", "agents:0", "cat")
+	h.must(t, "new-session", "-d", "-s", "home", "cat")
+	h.must(t, "new-session", "-d", "-s", "agents", "cat")
+	h.must(t, "split-window", "-d", "-t", "agents:", "cat")
 	h.must(t, "new-window", "-d", "-t", "agents:", "cat")
-	target := h.must(t, "display-message", "-p", "-t", "agents:0.1", "#{pane_id}")
-	if _, err := h.Focus(core.Handle{ID: target, Label: "agents:0.1"}); err == nil {
-		t.Fatal("focus with no attached client should fail")
+	target := h.must(t, "list-panes", "-t", "agents:^", "-F", "#{pane_id}")
+	target = strings.Split(target, "\n")[1]
+	if _, err := h.Focus(core.Handle{ID: target}); !errors.Is(err, core.ErrNoHost) {
+		t.Fatalf("focus outside tmux = %v, want ErrNoHost", err)
 	}
 	if _, err := exec.LookPath("script"); err != nil {
 		t.Skip("script not installed")
 	}
 	client := exec.Command("script", "-q", "/dev/null", "tmux", "-L", h.Socket, "attach", "-t", "home")
 	client.Env = append(os.Environ(), "TERM=xterm-256color")
+	stdin, err := client.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := client.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { client.Process.Kill(); client.Wait() })
-	waitFor(t, "a client to attach", func() bool { return len(h.clients()) == 1 })
+	t.Cleanup(func() { client.Process.Kill(); stdin.Close(); client.Wait() })
+	waitFor(t, "a client to attach", func() bool {
+		out, _ := h.run("list-clients", "-F", "#{client_tty}")
+		return out != ""
+	})
 	layout := func() string {
 		return h.must(t, "list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index} #{pane_id} #{window_panes} #{window_zoomed_flag}")
 	}
 	before := layout()
-	outer, err := h.Focus(core.Handle{ID: target, Label: "agents:0.1"})
-	if err != nil {
+	h.Self = h.must(t, "display-message", "-p", "-t", "home:", "#{pane_id}")
+	sock := h.must(t, "display-message", "-p", "#{socket_path}")
+	t.Setenv("TMUX", sock+",1,0")
+	if _, err := h.Focus(core.Handle{ID: target}); err != nil {
 		t.Fatal(err)
 	}
-	c := h.clients()[0]
-	if outer != c.tty {
-		t.Errorf("outer = %q, want the client's tty %q", outer, c.tty)
-	}
-	shown := h.must(t, "display-message", "-p", "-c", c.tty, "#{session_name} #{pane_id}")
-	if shown != "agents "+target {
+	if shown := h.must(t, "list-clients", "-F", "#{session_name} #{pane_id}"); shown != "agents "+target {
 		t.Errorf("client shows %q, want agents %s", shown, target)
 	}
 	if after := layout(); after != before {

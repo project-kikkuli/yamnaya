@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,45 +78,13 @@ func (h *Host) Locate(tty string) (core.Handle, bool) {
 	return core.Handle{Host: Name, ID: p.id, Label: p.target}, true
 }
 
-type client struct {
-	tty, session string
-	activity     int64
-}
-
-func (h *Host) clients() []client {
-	out, err := h.run("list-clients", "-F", "#{client_tty}\t#{client_session}\t#{client_activity}")
-	if err != nil {
-		return nil
-	}
-	var cs []client
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) != 3 {
-			continue
-		}
-		act, _ := strconv.ParseInt(f[2], 10, 64)
-		cs = append(cs, client{tty: f[0], session: f[1], activity: act})
-	}
-	sort.SliceStable(cs, func(i, j int) bool { return cs[i].activity > cs[j].activity })
-	return cs
-}
-
-// Focus selects the pane's window and pane and points a client at its session.
-// Inside tmux it moves ym's own client; outside, the most recently active client, whose terminal it returns.
+// Focus jumps ym's own tmux client to the pane. Outside tmux it does nothing, so no other client or window ever moves.
 func (h *Host) Focus(hd core.Handle) (string, error) {
-	sel := []string{"select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID}
-	if h.Self != "" && os.Getenv("TMUX") != "" {
-		_, err := h.run(append([]string{"switch-client", "-t", hd.ID, ";"}, sel...)...)
-		return "", err
+	if h.Self == "" || os.Getenv("TMUX") == "" {
+		return "", core.ErrNoHost
 	}
-	cs := h.clients()
-	if len(cs) == 0 {
-		return "", fmt.Errorf("no tmux client is attached to show %s", hd.Label)
-	}
-	if _, err := h.run(append([]string{"switch-client", "-c", cs[0].tty, "-t", hd.ID, ";"}, sel...)...); err != nil {
-		return "", err
-	}
-	return cs[0].tty, nil
+	_, err := h.run("switch-client", "-t", hd.ID, ";", "select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID)
+	return "", err
 }
 
 // Type sends text literally, then Enter as a separate key so the harness does not read it as a pasted newline.

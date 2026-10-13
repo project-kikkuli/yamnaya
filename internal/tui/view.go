@@ -217,9 +217,13 @@ func (m Model) missionLine(i int, p core.Project) string {
 			where += fmt.Sprintf(" +%d", len(p.Sessions)-1)
 		}
 	}
-	line := m.mark(i) + pad(p.Name, 30) + " " + pad(phase, 16) + " " + pad(crew, 9) + " " + pad(p.Status.String(), 8) + " " + where
+	status := pad(p.Status.String(), 8)
 	if p.Duplicated() {
-		return line + "  " + alarm.Render(copiesText(p))
+		status = alarm.Render(pad(copiesText(p), 8))
+	}
+	line := m.mark(i) + pad(p.Name, 30) + " " + pad(phase, 12) + " " + pad(crew, 8) + " " + status + " " + where
+	if p.Duplicated() {
+		return line + "  " + alarm.Render(copiesWhere(p))
 	}
 	if p.Status != core.Waiting && i != m.cursor {
 		return dim.Render(line)
@@ -230,11 +234,20 @@ func (m Model) missionLine(i int, p core.Project) string {
 func copiesText(p core.Project) string {
 	for _, s := range p.Sessions {
 		if len(s.Copies) > 1 {
+			return fmt.Sprintf("%d COPIES", len(s.Copies))
+		}
+	}
+	return ""
+}
+
+func copiesWhere(p core.Project) string {
+	for _, s := range p.Sessions {
+		if len(s.Copies) > 1 {
 			var at []string
 			for _, c := range s.Copies {
-				at = append(at, fmt.Sprintf("pid %d %s", c.PID, c.TTY))
+				at = append(at, fmt.Sprintf("pid %d %s", c.PID, strings.TrimPrefix(c.TTY, "/dev/")))
 			}
-			return fmt.Sprintf("%d COPIES (%s)", len(s.Copies), strings.Join(at, ", "))
+			return strings.Join(at, ", ")
 		}
 	}
 	return ""
@@ -368,9 +381,9 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
  MISSIONS groups each session with the sessions it spawned; enter shows a mission's detail.
 
    ↑ ↓ or k j   move
-   enter        open: a need's terminal, or a mission's detail
-   o            open the terminal of the selected row
-   a            answer an item; an idle agent gets it typed in, a busy one on its next turn
+   enter        a need: jump to its tmux pane or say where it runs; a mission: its detail
+   o            jump to the selected row's session
+   a            answer an item; an idle agent in tmux gets it typed in, others on their next turn
    l            later: snooze the item
    u            reopen a snoozed item (detail)
    w            why: the item's rec, options, assumption and history

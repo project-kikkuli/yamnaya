@@ -20,7 +20,9 @@ type Core struct {
 // Live is a discovered session with where it runs and how many processes run it.
 type Live struct {
 	Session
-	Handle  *Handle
+	Handle *Handle
+	// App is the program the session's terminal belongs to when no host adapter knows it, such as iTerm2.
+	App     string
 	Copies  []Session
 	Project string
 }
@@ -28,7 +30,14 @@ type Live struct {
 // Location names where the session runs, for display.
 func (l Live) Location() string {
 	if l.Handle == nil {
-		return "no host"
+		where := strings.TrimPrefix(l.TTY, "/dev/")
+		if where == "" {
+			where = "no terminal"
+		}
+		if l.App != "" {
+			where = l.App + " " + where
+		}
+		return where
 	}
 	return l.Handle.Host + " " + l.Handle.Label
 }
@@ -158,9 +167,14 @@ func (c *Core) Board() (Board, error) {
 			copies[s.Harness+"/"+s.ID] = append(copies[s.Harness+"/"+s.ID], s)
 		}
 	}
+	table := proc.Index(procs)
 	for _, s := range found {
 		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.ID]}
-		if h, host := c.locate(s.TTY); host != nil {
+		h, host := c.locate(s.TTY)
+		if host == nil {
+			l.App = appOf(table, s.PID)
+		}
+		if host != nil {
 			l.Handle = &h
 			if (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
 				if screen, err := host.Screen(h); err == nil {
@@ -178,7 +192,7 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	parents := processParents(b.Sessions, proc.Index(procs))
+	parents := processParents(b.Sessions, table)
 	for child, parent := range lin.Parent {
 		if _, ok := parents[child]; !ok {
 			parents[child] = parent
@@ -228,6 +242,18 @@ func (c *Core) host(name string) Host {
 		}
 	}
 	return nil
+}
+
+// appOf names the macOS app among the process's ancestors, if any.
+func appOf(table proc.Table, pid int) string {
+	for _, a := range table.Ancestors(pid) {
+		if len(a.Args) > 0 {
+			if i := strings.Index(a.Args[0], ".app/Contents/MacOS/"); i >= 0 {
+				return a.Args[0][strings.LastIndex(a.Args[0][:i], "/")+1 : i]
+			}
+		}
+	}
+	return ""
 }
 
 // processParents links each session to the nearest ancestor process that runs another session.

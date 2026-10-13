@@ -41,6 +41,7 @@ func (c *Core) Identify(pid int) (Caller, error) {
 type Target struct {
 	Session Session
 	Handle  *Handle
+	App     string
 	Resume  []string
 }
 
@@ -48,20 +49,29 @@ func (t Target) String() string {
 	if t.Handle != nil {
 		return fmt.Sprintf("%s %s (pid %d)", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	}
+	if t.Session.PID != 0 {
+		return fmt.Sprintf("%s %s (pid %d)", t.App, strings.TrimPrefix(t.Session.TTY, "/dev/"), t.Session.PID)
+	}
 	return strings.Join(t.Resume, " ")
 }
 
-// Advice is what to tell the owner when ym cannot focus the target.
+// Advice is what to tell the owner when ym cannot jump to the target itself.
 func (t Target) Advice() string {
 	resume := strings.Join(t.Resume, " ")
-	if t.Session.PID == 0 {
+	switch {
+	case t.Handle != nil:
+		return fmt.Sprintf("runs in %s %s (pid %d); ym jumps there only when it runs inside that tmux", t.Handle.Host, t.Handle.Label, t.Session.PID)
+	case t.Session.PID == 0:
 		return "not running; resume with: " + resume
 	}
 	where := "pid " + strconv.Itoa(t.Session.PID)
 	if t.Session.TTY != "" {
-		where += " on " + t.Session.TTY
+		where += " on " + strings.TrimPrefix(t.Session.TTY, "/dev/")
 	}
-	return where + " runs outside any terminal ym can focus; resume with: " + resume + " (only after quitting that process)"
+	if t.App != "" {
+		where += " in " + t.App
+	}
+	return "runs as " + where + "; switch to it there. To move it, quit it first, then: " + resume
 }
 
 // Targets lists every live copy of a session with its host; a session with no live process yields its resume command.
@@ -72,7 +82,7 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 			continue
 		}
 		for _, cp := range copiesOf(s) {
-			t := Target{Session: cp}
+			t := Target{Session: cp, App: s.App}
 			if h, host := c.locate(cp.TTY); host != nil {
 				t.Handle = &h
 			} else {
@@ -123,7 +133,7 @@ func (c *Core) Focus(t Target) error {
 	if err != nil || outer == "" {
 		return err
 	}
-	if h, oh := c.locate(outer); oh != nil && oh != host {
+	if h, oh := c.locate(outer); oh != nil && oh.Name() != host.Name() {
 		_, err = oh.Focus(h)
 	}
 	return err

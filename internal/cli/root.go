@@ -11,8 +11,6 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
-	"github.com/project-kikkuli/yamnaya/internal/host/iterm"
-	"github.com/project-kikkuli/yamnaya/internal/host/terminal"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
@@ -27,7 +25,7 @@ func Wire(path string) (*core.Core, error) {
 	return &core.Core{
 		Store:     st,
 		Harnesses: []core.Harness{claude.New(), codex.New()},
-		Hosts:     []core.Host{tmux.New(), iterm.New(), terminal.New()},
+		Hosts:     []core.Host{tmux.New()},
 		Procs:     proc.List,
 	}, nil
 }
