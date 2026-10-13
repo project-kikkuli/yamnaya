@@ -42,22 +42,7 @@ func newCmd(withApp runner) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: withApp(func(a *app, cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if err := validName("project", name); err != nil {
-				return err
-			}
-			if p, err := a.store.Project(name); err == nil && p.State == store.ProjectLanded {
-				return fmt.Errorf("project %q is in the kurgan; use ym revive %s", name, name)
-			}
-			dir, err := absDir(cwd)
-			if err != nil {
-				return err
-			}
-			w, launch, err := a.newWindow(name, dir, store.RoleManager, store.RoleManager, harnessName, managerPrompt(name, prompt))
-			if err != nil {
-				return err
-			}
-			p := store.Project{Name: name, Cwd: dir, Phases: splitPhases(phases)}
-			if err := a.store.CreateProject(p, w, launch); err != nil {
+			if err := a.newProject(name, cwd, harnessName, phases, prompt); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s: manager started (%s) in tmux session ym-%s\n", name, harnessName, name)
@@ -111,4 +96,22 @@ func (a *app) spawn(project, name, harnessName, prompt string) error {
 		return err
 	}
 	return a.store.AddWindow(w, launch)
+}
+
+func (a *app) newProject(name, cwd, harnessName, phases, prompt string) error {
+	if err := validName("project", name); err != nil {
+		return err
+	}
+	if p, err := a.store.Project(name); err == nil && p.State == store.ProjectLanded {
+		return fmt.Errorf("project %q is in the kurgan; use ym revive %s", name, name)
+	}
+	dir, err := absDir(cwd)
+	if err != nil {
+		return err
+	}
+	w, launch, err := a.newWindow(name, dir, store.RoleManager, store.RoleManager, harnessName, managerPrompt(name, prompt))
+	if err != nil {
+		return err
+	}
+	return a.store.CreateProject(store.Project{Name: name, Cwd: dir, Phases: splitPhases(phases)}, w, launch)
 }

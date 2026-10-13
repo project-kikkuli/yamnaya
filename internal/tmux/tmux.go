@@ -23,9 +23,13 @@ type WindowInfo struct {
 	Dead    bool
 	Index   int
 	Command string
+	Role    string
 }
 
 const tagOption = "@ym_window"
+
+// RoleOption marks the panes of the ym home window: the sidebar and the resting stage placeholder.
+const RoleOption = "@ym_role"
 
 func FromEnv() Client {
 	return Client{Socket: os.Getenv("YAMNAYA_TMUX_SOCKET")}
@@ -116,7 +120,7 @@ func (c Client) KillSession(session string) error {
 }
 
 func (c Client) Windows() (map[string]WindowInfo, error) {
-	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{"+tagOption+"}\t#{pane_dead}\t#{window_index}\t#{pane_current_command}")
+	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{"+tagOption+"}\t#{pane_dead}\t#{window_index}\t#{"+RoleOption+"}\t#{pane_current_command}")
 	if err != nil {
 		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "error connecting") {
 			return map[string]WindowInfo{}, nil
@@ -126,11 +130,11 @@ func (c Client) Windows() (map[string]WindowInfo, error) {
 	windows := map[string]WindowInfo{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 7 {
+		if len(f) != 8 {
 			continue
 		}
 		idx, _ := strconv.Atoi(f[5])
-		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Tag: f[3], Dead: f[4] == "1", Index: idx, Command: f[6]}
+		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Tag: f[3], Dead: f[4] == "1", Index: idx, Role: f[6], Command: f[7]}
 	}
 	return windows, nil
 }
@@ -170,4 +174,109 @@ func (c Client) TypeText(target, text string) error {
 // CapturePane returns the visible text of target's active pane.
 func (c Client) CapturePane(target string) (string, error) {
 	return c.run("capture-pane", "-p", "-t", target)
+}
+
+type PanePlace struct {
+	ID      string
+	Window  string
+	Session string
+	Role    string
+	Dead    bool
+}
+
+func parsePane(line string) PanePlace {
+	f := strings.Split(line, "\t")
+	for len(f) < 5 {
+		f = append(f, "")
+	}
+	return PanePlace{ID: f[0], Window: f[1], Session: f[2], Dead: f[3] == "1", Role: f[4]}
+}
+
+const paneFormat = "#{pane_id}\t#{window_id}\t#{session_name}\t#{pane_dead}\t#{" + RoleOption + "}"
+
+// Pane describes one pane, wherever it currently sits; display-message quietly falls back to another pane for a missing target, so the id is checked.
+func (c Client) Pane(target string) (PanePlace, error) {
+	out, err := c.run("display-message", "-p", "-t", target, paneFormat)
+	if err != nil {
+		return PanePlace{}, err
+	}
+	p := parsePane(out)
+	if (strings.HasPrefix(target, "%") && p.ID != target) || (strings.HasPrefix(target, "@") && p.Window != target) {
+		return PanePlace{}, fmt.Errorf("tmux: no pane %s", target)
+	}
+	return p, nil
+}
+
+func (c Client) WindowPanes(window string) ([]PanePlace, error) {
+	out, err := c.run("list-panes", "-t", window, "-F", paneFormat)
+	if err != nil {
+		return nil, err
+	}
+	var panes []PanePlace
+	for _, line := range strings.Split(out, "\n") {
+		panes = append(panes, parsePane(line))
+	}
+	return panes, nil
+}
+
+// SwapPane exchanges two panes between their windows without changing which pane is active.
+func (c Client) SwapPane(src, dst string) error {
+	_, err := c.run("swap-pane", "-d", "-s", src, "-t", dst)
+	return err
+}
+
+// BreakPane moves pane into a new window of session and returns the window id.
+func (c Client) BreakPane(pane, session, name string) (string, error) {
+	return c.run("break-pane", "-d", "-s", pane, "-t", "="+session+":", "-n", name, "-P", "-F", "#{window_id}")
+}
+
+func (c Client) SelectPane(target string) error {
+	_, err := c.run("select-pane", "-t", target)
+	return err
+}
+
+func (c Client) SetPaneRole(pane, role string) error {
+	_, err := c.run("set-option", "-p", "-t", pane, RoleOption, role)
+	return err
+}
+
+func (c Client) KillWindow(target string) error {
+	_, err := c.run("kill-window", "-t", target)
+	return err
+}
+
+// NewHome creates a detached session whose one window holds a sidebar pane of width cols and a stage pane right of it, in one tmux command so no observer sees half of it.
+func (c Client) NewHome(session, window, cwd string, env map[string]string, sidebar, stage []string, sidebarRole, stageRole string, cols int) error {
+	a := append([]string{"new-session", "-d", "-s", session, "-n", window, "-x", "160", "-y", "48", "-c", cwd}, envArgs(env)...)
+	a = append(append(a, sidebar...), ";", "set-option", "-p", RoleOption, sidebarRole, ";", "split-window", "-h", "-c", cwd)
+	a = append(append(append(a, envArgs(env)...), stage...), ";", "set-option", "-p", RoleOption, stageRole,
+		";", "select-pane", "-L", ";", "resize-pane", "-x", strconv.Itoa(cols))
+	_, err := c.run(a...)
+	return err
+}
+
+// Split opens a pane beside target, to its left when left is set, leaving target active, and returns the new pane id.
+func (c Client) Split(target string, left bool, cwd string, env map[string]string, argv []string) (string, error) {
+	a := []string{"split-window", "-h", "-d", "-t", target, "-c", cwd, "-P", "-F", "#{pane_id}"}
+	if left {
+		a = append(a, "-b")
+	}
+	a = append(a, envArgs(env)...)
+	return c.run(append(a, argv...)...)
+}
+
+func (c Client) ResizeWidth(pane string, cols int) error {
+	_, err := c.run("resize-pane", "-t", pane, "-x", strconv.Itoa(cols))
+	return err
+}
+
+// Hook sets a session hook.
+func (c Client) Hook(session, hook, command string) error {
+	_, err := c.run("set-hook", "-t", session, hook, command)
+	return err
+}
+
+func (c Client) Detach() error {
+	_, err := c.run("detach-client")
+	return err
 }

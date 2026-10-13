@@ -23,6 +23,8 @@ func NewRoot() *cobra.Command {
 			return run(a, cmd, args)
 		}
 	}
+	root.Args = cobra.NoArgs
+	root.RunE = withApp(runHome)
 	root.AddCommand(
 		newCmd(withApp),
 		spawnCmd(withApp),
@@ -38,6 +40,8 @@ func NewRoot() *cobra.Command {
 		adoptCmd(withApp),
 		nextCmd(withApp),
 		boardCmd(withApp),
+		homeCmd(withApp),
+		restCmd(),
 	)
 	return root
 }

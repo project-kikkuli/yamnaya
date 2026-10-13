@@ -50,7 +50,7 @@ func installCmd() *cobra.Command {
 			if err := writeTmuxConf(conf, bin, boardKey, nextKey); err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "tmux: %s (prefix+%s board, prefix+%s next)\n", conf, boardKey, nextKey)
+			fmt.Fprintf(out, "tmux: %s (prefix+%s board, prefix+%s next, prefix+Tab focus in ym home)\n", conf, boardKey, nextKey)
 			if main, err := os.ReadFile(filepath.Join(home, ".tmux.conf")); err != nil || !strings.Contains(string(main), "yamnaya/tmux.conf") {
 				fmt.Fprintf(out, "add to ~/.tmux.conf: source-file -q %s\n", conf)
 			}
@@ -99,6 +99,7 @@ func writeTmuxConf(path, bin, boardKey, nextKey string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	conf := fmt.Sprintf("bind-key %s display-popup -E -w 80%% -h 70%% '%s board'\nbind-key %s run-shell '%s next'\n", boardKey, bin, nextKey, bin)
+	conf := fmt.Sprintf("bind-key %s display-popup -E -w 80%% -h 70%% '%s board'\nbind-key %s run-shell '%s next'\n", boardKey, bin, nextKey, bin) +
+		"bind-key Tab if-shell -F '#{==:#{session_name}," + homeSession + "}' 'select-pane -t :.+'\n"
 	return os.WriteFile(path, []byte(conf), 0o644)
 }

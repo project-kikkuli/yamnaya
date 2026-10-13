@@ -83,7 +83,7 @@ func (s *Snapshot) windowFor(d discover.Session) *Window {
 	for i := range s.Projects {
 		for j := range s.Projects[i].Windows {
 			w := &s.Projects[i].Windows[j]
-			if (d.ID != "" && w.SessionID == d.ID) || (w.Alive && w.TmuxTarget == d.WindowID) {
+			if (d.ID != "" && w.SessionID == d.ID) || (w.Alive && w.TmuxTarget == d.WindowID) || (w.Staged && w.Pane == d.Pane) {
 				return w
 			}
 		}

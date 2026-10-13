@@ -89,7 +89,7 @@ func TestBoardExpandsSelectedAndAskingProjectsOnly(t *testing.T) {
 		{nil, "alpha alpha/manager alpha/w1 beta gamma gamma/manager"},
 		{[]string{"j", "j", "j"}, "alpha beta beta/manager beta/b1 gamma gamma/manager"},
 		{[]string{"j", "j", "j"}, "alpha beta gamma gamma/manager"},
-		{[]string{"k", "k"}, "alpha alpha/manager alpha/w1 beta gamma gamma/manager"},
+		{[]string{"up", "up"}, "alpha alpha/manager alpha/w1 beta gamma gamma/manager"},
 	}
 	for i, c := range cases {
 		press(m, c.keys...)

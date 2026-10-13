@@ -31,6 +31,10 @@ type Window struct {
 	LastActive time.Time
 	Permission *Permission
 	Discovered *discover.Session
+	// Staged is true while the window's agent pane is lent to the ym home stage.
+	Staged bool
+	// Pane is where the window's agent pane is: its own window, or the stage pane.
+	Pane string
 }
 
 func (w Window) State(now time.Time) State {
@@ -135,6 +139,10 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	stage, staged, err := r.Store.Stage()
+	if err != nil {
+		return Snapshot{}, err
+	}
 	var snap Snapshot
 	for _, p := range projects {
 		windows, err := r.Store.OpenWindows(p.Name)
@@ -159,9 +167,14 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 				Alive:      Live(w, live),
 				Open:       open,
 				LastActive: r.Transcripts.LastActive(w.Harness, w.SessionID),
+				Pane:       w.TmuxTarget,
+			}
+			if staged && stage.WindowID == w.ID {
+				pane, err := r.Tmux.Pane(stage.Pane)
+				sw.Staged, sw.Pane, sw.Alive = true, stage.Pane, err == nil && !pane.Dead
 			}
 			if sw.Alive {
-				if screen, err := r.Tmux.CapturePane(w.TmuxTarget); err == nil {
+				if screen, err := r.Tmux.CapturePane(sw.Pane); err == nil {
 					if perm, ok := ParsePermission(screen); ok {
 						sw.Permission = &perm
 					}
@@ -176,6 +189,13 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 	}
 	return snap, nil
 }
+
+// HomeSession is the tmux session that holds the sidebar and the stage.
+const HomeSession = "ym"
+
+// RoleRest marks the placeholder pane that holds a staged window's place, or the empty stage.
+// A window holding it counts as live: its agent is on the stage.
+const RoleRest = "rest"
 
 // Live reports whether w's tmux window still runs; a reused tmux id carries another tag and does not count.
 // Managed windows must also sit in their project's session; adopted ones stay wherever they were.

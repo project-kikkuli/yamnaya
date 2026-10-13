@@ -39,17 +39,32 @@ func marker(selected bool) string {
 
 func (m *boardModel) View() string {
 	var lines []string
-	if m.itemsOf != "" {
+	switch {
+	case m.sidebar && m.inKurgan:
+		lines = m.kurganView()
+	case m.sidebar && m.itemsOf != "":
+		lines = m.sidebarItemsView()
+	case m.sidebar:
+		lines = m.sidebarView()
+	case m.itemsOf != "":
 		lines = m.itemsView()
-	} else {
+	default:
 		lines = m.projectsView()
 	}
 	lines = append(lines, "")
 	if m.prompt != nil {
 		f := m.prompt.fields[m.prompt.at]
-		lines = append(lines, f.label+": "+f.value+"█")
+		if m.sidebar {
+			lines = append(lines, styleDim.Render(f.label), f.value+"█")
+		} else {
+			lines = append(lines, f.label+": "+f.value+"█")
+		}
 	} else if m.status != "" {
-		lines = append(lines, styleBad.Render(m.status))
+		status := m.status
+		if m.sidebar && m.width > 0 {
+			status = ansi.Wordwrap(status, m.width, " ")
+		}
+		lines = append(lines, styleBad.Render(status))
 	}
 	if m.width > 0 {
 		for i, l := range lines {

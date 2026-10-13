@@ -21,6 +21,9 @@ func landCmd(withApp runner) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := a.unstageProject(project); err != nil {
+				return err
+			}
 			session := tmux.SessionName(project)
 			err = a.store.Land(project, func() error {
 				if !a.tmux.HasSession(session) {

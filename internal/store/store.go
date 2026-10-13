@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS item_events (
 	text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS item_events_item ON item_events(project, item);
+CREATE TABLE IF NOT EXISTS stage (
+	slot INTEGER PRIMARY KEY CHECK (slot = 1),
+	window_id INTEGER NOT NULL REFERENCES windows(id),
+	origin TEXT NOT NULL,
+	pane TEXT NOT NULL
+);
 `
 
 func DefaultPath() (string, error) {
