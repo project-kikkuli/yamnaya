@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -69,6 +71,20 @@ func newEnv(t *testing.T) *env {
 	)
 	t.Cleanup(func() { exec.Command("tmux", "-L", e.socket, "kill-server").Run() })
 	return e
+}
+
+// waitExit waits for the tmux server process to exit; a client that connects while it shuts down dies with it.
+func (e *env) waitExit(pid string) {
+	e.t.Helper()
+	n, err := strconv.Atoi(pid)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); syscall.Kill(n, 0) == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			e.t.Fatal("tmux server never exited")
+		}
+	}
 }
 
 func (e *env) run(extra []string, args ...string) (string, error) {
@@ -370,8 +386,16 @@ func TestReusedTmuxWindowIDIsNotMistakenForAStaleWindow(t *testing.T) {
 		name string
 		kill func(e *env)
 	}{
-		{"last window killed", func(e *env) { e.tmux("kill-window", "-t", window(e.ls()["rc"], "manager").TmuxTarget) }},
-		{"server killed", func(e *env) { e.tmux("kill-server") }},
+		{"last window killed", func(e *env) {
+			pid := e.tmux("display-message", "-p", "#{pid}")
+			e.tmux("kill-window", "-t", window(e.ls()["rc"], "manager").TmuxTarget)
+			e.waitExit(pid)
+		}},
+		{"server killed", func(e *env) {
+			pid := e.tmux("display-message", "-p", "#{pid}")
+			e.tmux("kill-server")
+			e.waitExit(pid)
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
