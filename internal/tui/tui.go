@@ -51,6 +51,7 @@ type Model struct {
 	cursor   int
 	detail   string
 	input    []rune
+	fresh    bool
 	inKind   inputKind
 	inItem   string
 	inProj   string
@@ -108,12 +109,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case boardMsg:
+		keep := ""
+		if r, ok := m.selected(); ok {
+			keep = rowKey(r)
+		}
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
-		m.clamp()
+		m.follow(keep)
 		if msg.tick {
 			return m, m.tick()
 		}
@@ -131,6 +136,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.key(msg)
 	}
 	return m, nil
+}
+
+// follow keeps the cursor on the row it was on when that row still exists.
+func (m *Model) follow(key string) {
+	if key != "" {
+		for i, r := range m.rows() {
+			if rowKey(r) == key {
+				m.cursor = i
+				return
+			}
+		}
+	}
+	m.clamp()
+}
+
+func rowKey(r row) string {
+	switch {
+	case r.item != nil:
+		return "item:" + r.item.ID
+	case r.session != nil:
+		return "session:" + r.session.Key()
+	case r.project != nil:
+		return "project:" + r.project.Key
+	}
+	return ""
 }
 
 func (m *Model) clamp() {
@@ -228,11 +258,26 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeInput:
 		return m.inputKey(k)
-	case modeWhy, modeHelp:
-		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == "w" || k.String() == "?" {
+	case modeHelp:
+		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == "?" {
 			m.mode = m.back
 		}
 		return m, nil
+	case modeWhy:
+		switch k.String() {
+		case "a", "l", "x", "u", "o":
+			m.mode = m.back
+			m.follow("item:" + m.why.ID)
+			if r, ok := m.selected(); !ok || r.item == nil || r.item.ID != m.why.ID {
+				m.message = m.why.ID + " is no longer on this list"
+				return m, nil
+			}
+		case "esc", "q", "enter", "w":
+			m.mode = m.back
+			return m, nil
+		default:
+			return m, nil
+		}
 	case modePick:
 		return m.pickKey(k)
 	}
@@ -268,7 +313,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/":
 		if m.mode == modeList {
-			m.startInput(inFilter, "", "", m.filter)
+			m.startInput(inFilter, "", "", m.filter, false)
 		}
 		return m, nil
 	}
@@ -288,6 +333,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k.String() {
 	case "enter":
+		if r.item != nil {
+			return m.expand(r.item.ID)
+		}
 		if r.project != nil && r.need == nil && m.mode == modeList {
 			m.mode, m.detail, m.cursor = modeDetail, r.project.Key, 0
 			return m, nil
@@ -297,11 +345,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.open(r)
 	case "a":
 		if r.item != nil && r.item.State == core.ItemOpen {
-			m.startInput(inAnswer, r.item.ID, "", r.item.Rec)
+			m.startInput(inAnswer, r.item.ID, "", r.item.Rec, true)
 		}
 	case "x":
 		if r.item != nil && (r.item.State == core.ItemOpen || r.item.State == core.ItemSnoozed) {
-			m.startInput(inDismiss, r.item.ID, "", "")
+			m.startInput(inDismiss, r.item.ID, "", "", false)
 		}
 	case "l":
 		if r.item != nil && r.item.State == core.ItemOpen {
@@ -321,16 +369,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "w":
 		if r.item != nil {
-			it, err := m.core.Store.Item(r.item.ID)
-			if err != nil {
-				m.message = "error: " + err.Error()
-				return m, nil
-			}
-			m.why, m.back, m.mode = &it, m.mode, modeWhy
+			return m.expand(r.item.ID)
 		}
 	case "r":
 		if p := m.projectOf(r); p != nil {
-			m.startInput(inRename, "", p.Key, p.Name)
+			m.startInput(inRename, "", p.Key, p.Name, true)
 		}
 	case "m":
 		if p := m.projectOf(r); p != nil && m.mode == modeList {
@@ -349,6 +392,17 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// expand shows an item in full; its keys act on it there.
+func (m Model) expand(id string) (tea.Model, tea.Cmd) {
+	it, err := m.core.Store.Item(id)
+	if err != nil {
+		m.message = "error: " + err.Error()
+		return m, nil
+	}
+	m.why, m.back, m.mode = &it, m.mode, modeWhy
+	return m, nil
+}
+
 func (m Model) projectOf(r row) *core.Project {
 	if r.need != nil {
 		return nil
@@ -364,13 +418,15 @@ func (m Model) projectOf(r row) *core.Project {
 	return nil
 }
 
-func (m *Model) startInput(kind inputKind, item, project, initial string) {
+// startInput opens the input line. A fresh initial text is a default: enter accepts it, typing replaces it.
+func (m *Model) startInput(kind inputKind, item, project, initial string, fresh bool) {
 	if kind != inFilter {
 		m.back = m.mode
 	} else {
 		m.back = modeList
 	}
 	m.mode, m.inKind, m.inItem, m.inProj, m.input = modeInput, kind, item, project, []rune(initial)
+	m.fresh = fresh && initial != ""
 }
 
 func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -379,6 +435,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = m.back
 		return m, nil
 	case tea.KeyBackspace:
+		if m.fresh {
+			m.input, m.fresh = nil, false
+		}
 		if len(m.input) > 0 {
 			m.input = m.input[:len(m.input)-1]
 		}
@@ -388,7 +447,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyCtrlU:
-		m.input = nil
+		m.input, m.fresh = nil, false
 		return m, nil
 	case tea.KeyEnter:
 		text := strings.TrimSpace(string(m.input))
@@ -417,6 +476,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
+		if m.fresh {
+			m.input, m.fresh = nil, false
+		}
 		m.input = append(m.input, k.Runes...)
 		if k.Type == tea.KeySpace && len(k.Runes) == 0 {
 			m.input = append(m.input, ' ')

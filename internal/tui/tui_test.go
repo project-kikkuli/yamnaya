@@ -118,7 +118,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 
 func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	m, c, h := setup(t)
-	if v := m.View(); !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter open") {
+	if v := m.View(); !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
 		t.Fatalf("view:\n%s", v)
 	}
 	m = press(t, m, "a", "ctrl+u", "ship", " ", "it", "enter")
@@ -131,6 +131,49 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	}
 	if !strings.Contains(m.message, "typed into the agent's terminal") || strings.Contains(m.View(), "NEEDS YOU (2)") {
 		t.Fatalf("message %q\n%s", m.message, m.View())
+	}
+}
+
+func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
+	m, c, _ := setup(t)
+	m = press(t, m, "a", "enter")
+	if it, _ := c.Store.Item("D1"); it.Answer != "yes" {
+		t.Fatalf("enter on the default answered %q, want the rec", it.Answer)
+	}
+	press(t, m, "a", "h", "i", "enter")
+	if it, _ := c.Store.Item("D2"); it.Answer != "hi" {
+		t.Fatalf("typed answer = %q, want it to replace the rec", it.Answer)
+	}
+}
+
+func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
+	m, c, h := setup(t)
+	m = press(t, m, "down", "enter")
+	if m.mode != modeWhy || m.why.ID != "D2" || !strings.Contains(m.View(), "Rename the flag?") {
+		t.Fatalf("enter did not expand D2: mode %v\n%s", m.mode, m.View())
+	}
+	if len(h.focused) != 0 {
+		t.Fatalf("enter on an item jumped to %v", h.focused)
+	}
+	m = press(t, m, "l")
+	if it, _ := c.Store.Item("D2"); it.State != core.ItemSnoozed {
+		t.Fatalf("l in the expanded view left D2 %s", it.State)
+	}
+	m = press(t, m, "enter", "o")
+	if len(h.focused) != 1 || h.focused[0] != "/dev/a" {
+		t.Fatalf("o from the expanded view focused %v", h.focused)
+	}
+}
+
+func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
+	m, c, _ := setup(t)
+	m = press(t, m, "down")
+	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	if r, _ := m.selected(); r.item == nil || r.item.ID != "D2" {
+		t.Fatalf("cursor moved to %+v after a new item sorted above it", r)
 	}
 }
 

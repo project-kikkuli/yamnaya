@@ -23,9 +23,9 @@ func (m Model) View() string {
 	b.WriteString(m.header() + "\n\n")
 	switch m.mode {
 	case modeHelp:
-		b.WriteString(help)
+		b.WriteString(ansi.Wrap(help, m.width, " "))
 	case modeWhy:
-		b.WriteString(m.whyView())
+		b.WriteString(ansi.Wrap(m.whyView(), m.width, " "))
 	case modePick:
 		b.WriteString(m.pickView())
 	default:
@@ -36,7 +36,10 @@ func (m Model) View() string {
 		}
 	}
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-	foot := m.footer()
+	var foot []string
+	for _, l := range m.footer() {
+		foot = append(foot, strings.Split(ansi.Wrap(l, max(20, m.width-1), " "), "\n")...)
+	}
 	room := max(1, m.height-len(foot))
 	if len(lines) > room {
 		lines = m.scroll(lines, room)
@@ -91,6 +94,11 @@ func (m Model) footer() []string {
 	var lines []string
 	if m.mode == modeInput {
 		label := map[inputKind]string{inAnswer: "answer " + m.inItem, inDismiss: "dismiss " + m.inItem + " because", inRename: "rename to", inFilter: "filter"}[m.inKind]
+		if m.fresh {
+			lines = append(lines, " "+bold.Render(label+":")+" "+dim.Render(string(m.input))+"█")
+			lines = append(lines, dim.Render(" enter accepts the default   type to replace it   esc cancel"))
+			return lines
+		}
 		lines = append(lines, " "+bold.Render(label+":")+" "+string(m.input)+"█")
 		lines = append(lines, dim.Render(" enter save   esc cancel   ctrl+u clear"))
 		return lines
@@ -107,16 +115,18 @@ func (m Model) footer() []string {
 
 func (m Model) hints() string {
 	switch m.mode {
-	case modeHelp, modeWhy:
+	case modeHelp:
 		return "esc back"
+	case modeWhy:
+		return "a answer   l later   x dismiss   u unsnooze   o go to its session   esc back"
 	case modePick:
 		return "↑↓ choose   enter open   esc back"
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeDetail:
-		return "↑↓ move   enter open   a answer   l later   u unsnooze   w why   x dismiss   r rename   esc back   ? help"
+		return "↑↓ move   enter expand or go to session   o go to session   a answer   l later   u unsnooze   x dismiss   r rename   esc back   ? help"
 	}
-	return "↑↓ move   enter open   a answer   l later   w why   x dismiss   / filter   ? help   q quit"
+	return "↑↓ move   enter expand   o go to session   a answer   l later   x dismiss   / filter   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -147,6 +157,7 @@ func (m Model) listView() string {
 		if r.need == nil && !missions {
 			missions = true
 			b.WriteString("\n" + bold.Render(" MISSIONS") + "\n")
+			b.WriteString(dim.Render("   "+pad("", m.nameWidth())+" "+m.phaseCol("phase")+pad("crew", 16)+" "+pad("status", 8)+" where") + "\n")
 		}
 		if r.need != nil {
 			b.WriteString(m.needLines(i, *r.need))
@@ -161,7 +172,7 @@ func (m Model) listView() string {
 }
 
 func (m Model) needLines(i int, n core.Need) string {
-	name := pad(m.projectName(n.Project), 28)
+	name := pad(m.projectName(n.Project), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
 	if n.Item == nil {
@@ -171,7 +182,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		}
 		b.WriteString(m.mark(i) + alarm.Render("PERM ") + " " + name + " " + what + "\n")
 		if sel {
-			b.WriteString(dim.Render("         enter open its terminal") + "\n")
+			b.WriteString(dim.Render("         enter go to its session") + "\n")
 		}
 		return b.String()
 	}
@@ -184,7 +195,7 @@ func (m Model) needLines(i int, n core.Need) string {
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	b.WriteString(dim.Render("         "+strings.Join(meta, " | ")) + "\n")
 	if sel {
-		b.WriteString(dim.Render("         a answer   l later   w why   x dismiss   enter open source") + "\n")
+		b.WriteString(dim.Render("         enter expand   a answer   l later   x dismiss   o go to session") + "\n")
 	}
 	return b.String()
 }
@@ -197,7 +208,7 @@ func (m Model) sourceName(it core.Item) string {
 }
 
 func (m Model) missionLine(i int, p core.Project) string {
-	phase := "------"
+	phase := ""
 	if len(p.Phases.Names) > 0 {
 		dots := ""
 		for j := range p.Phases.Names {
@@ -209,7 +220,7 @@ func (m Model) missionLine(i int, p core.Project) string {
 		}
 		phase = p.Phases.Names[p.Phases.Current] + " " + dots
 	}
-	crew := fmt.Sprintf("crew %d", p.Crew())
+	crew := crewText(p)
 	where := ""
 	if len(p.Sessions) > 0 {
 		where = p.Sessions[0].Location()
@@ -221,7 +232,7 @@ func (m Model) missionLine(i int, p core.Project) string {
 	if p.Duplicated() {
 		status = alarm.Render(pad(copiesText(p), 8))
 	}
-	line := m.mark(i) + pad(p.Name, 30) + " " + pad(phase, 12) + " " + pad(crew, 8) + " " + status + " " + where
+	line := m.mark(i) + pad(p.Name, m.nameWidth()) + " " + m.phaseCol(phase) + pad(crew, 16) + " " + status + " " + where
 	if p.Duplicated() {
 		return line + "  " + alarm.Render(copiesWhere(p))
 	}
@@ -229,6 +240,49 @@ func (m Model) missionLine(i int, p core.Project) string {
 		return dim.Render(line)
 	}
 	return line
+}
+
+// nameWidth gives mission names what the fixed columns leave, between 20 and 60 cells.
+func (m Model) nameWidth() int {
+	return min(60, max(20, m.width-3-len(m.phaseCol(""))-16-8-16-3))
+}
+
+// phaseCol is a phase cell, or nothing when no mission has phases.
+func (m Model) phaseCol(s string) string {
+	for _, p := range m.board.Projects {
+		if len(p.Phases.Names) > 0 {
+			return pad(s, 12) + " "
+		}
+	}
+	return ""
+}
+
+func crewCounts(p core.Project) (running, idle, done int) {
+	for _, s := range p.Sessions {
+		for _, c := range s.Crew {
+			switch c.Status {
+			case core.Busy:
+				running++
+			case core.Done:
+				done++
+			default:
+				idle++
+			}
+		}
+	}
+	return
+}
+
+func crewText(p core.Project) string {
+	running, idle, _ := crewCounts(p)
+	var parts []string
+	if running > 0 {
+		parts = append(parts, fmt.Sprintf("%d run", running))
+	}
+	if idle > 0 {
+		parts = append(parts, fmt.Sprintf("%d idle", idle))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func copiesText(p core.Project) string {
@@ -281,7 +335,7 @@ func (m Model) detailView() string {
 		if title == "" {
 			title = core.Short(s.Key())
 		}
-		line := m.mark(i) + pad(title, 34) + " " + pad(s.Harness, 7) + pad(s.Status.String(), 9) + s.Location()
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pad(s.Status.String(), 9) + s.Location()
 		if s.Prompt != nil {
 			line += "  " + alarm.Render(s.Prompt.String())
 		}
@@ -289,7 +343,12 @@ func (m Model) detailView() string {
 			line += "  " + alarm.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
 		b.WriteString(line + "\n")
+		done := 0
 		for _, c := range s.Crew {
+			if c.Status == core.Done {
+				done++
+				continue
+			}
 			kind := "subagent"
 			if c.Teammate {
 				kind = "teammate"
@@ -299,6 +358,9 @@ func (m Model) detailView() string {
 				l = dim.Render(l)
 			}
 			b.WriteString(l + "\n")
+		}
+		if done > 0 {
+			b.WriteString(dim.Render(fmt.Sprintf("       +%d finished subagents", done)) + "\n")
 		}
 		i++
 	}
@@ -381,12 +443,11 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
  MISSIONS groups each session with the sessions it spawned; enter shows a mission's detail.
 
    ↑ ↓ or k j   move
-   enter        a need: jump to its tmux pane or say where it runs; a mission: its detail
-   o            jump to the selected row's session
+   enter        an item: expand it; a permission prompt: go to its session; a mission: its detail
+   o            go to the selected row's session: jump to its tmux pane, or say where it runs
    a            answer an item; an idle agent in tmux gets it typed in, others on their next turn
    l            later: snooze the item
    u            reopen a snoozed item (detail)
-   w            why: the item's rec, options, assumption and history
    x            dismiss the item with a reason
    r            rename a mission
    m            merge a mission into another

@@ -51,14 +51,6 @@ type Project struct {
 	Status   Status
 }
 
-func (p Project) Crew() int {
-	n := 0
-	for _, s := range p.Sessions {
-		n += len(s.Crew)
-	}
-	return n
-}
-
 // Duplicated reports whether any session of the project runs in more than one process.
 func (p Project) Duplicated() bool {
 	for _, s := range p.Sessions {
