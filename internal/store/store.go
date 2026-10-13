@@ -71,10 +71,12 @@ CREATE TABLE IF NOT EXISTS item_events (
 	text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS item_events_item ON item_events(project, item);
-CREATE TABLE IF NOT EXISTS stage (
+DROP TABLE IF EXISTS stage;
+CREATE TABLE IF NOT EXISTS staged (
 	slot INTEGER PRIMARY KEY CHECK (slot = 1),
-	window_id INTEGER NOT NULL REFERENCES windows(id),
+	window_id INTEGER REFERENCES windows(id),
 	origin TEXT NOT NULL,
+	origin_session TEXT NOT NULL,
 	pane TEXT NOT NULL
 );
 `

@@ -102,10 +102,12 @@ func (a *app) stageSlot() (string, error) {
 
 // stage lends window id's agent pane to the stage, returning whatever was there first.
 func (a *app) stage(id int64, focus bool) error {
-	if err := a.unstage(); err != nil {
+	if st, ok, err := a.store.Stage(); err != nil {
 		return err
+	} else if ok && st.WindowID == id {
+		return a.focusStaged(st.Pane, focus)
 	}
-	if err := a.ensureHome(homeCwd()); err != nil {
+	if err := a.unstage(); err != nil {
 		return err
 	}
 	w, err := a.store.WindowByID(id)
@@ -123,24 +125,55 @@ func (a *app) stage(id int64, focus bool) error {
 	if err != nil {
 		return err
 	}
+	return a.lend(agent.ID, w.ID, focus)
+}
+
+// stagePane lends any pane, such as a discovered session's, to the stage.
+func (a *app) stagePane(pane string, focus bool) error {
+	if st, ok, err := a.store.Stage(); err != nil {
+		return err
+	} else if ok && st.Pane == pane {
+		return a.focusStaged(pane, focus)
+	}
+	if err := a.unstage(); err != nil {
+		return err
+	}
+	return a.lend(pane, 0, focus)
+}
+
+func (a *app) focusStaged(pane string, focus bool) error {
+	if !focus {
+		return nil
+	}
+	return a.tmux.SelectPane(pane)
+}
+
+func (a *app) lend(pane string, windowID int64, focus bool) error {
+	if err := a.ensureHome(homeCwd()); err != nil {
+		return err
+	}
+	agent, err := a.tmux.Pane(pane)
+	if err != nil {
+		return err
+	}
+	if agent.Session == homeSession {
+		return fmt.Errorf("pane %s is part of ym home", pane)
+	}
 	slot, err := a.stageSlot()
 	if err != nil {
 		return err
 	}
-	if err := a.store.SetStage(store.Stage{WindowID: w.ID, Origin: agent.Window, Pane: agent.ID}); err != nil {
+	if err := a.store.SetStage(store.Stage{WindowID: windowID, Origin: agent.Window, OriginSession: agent.Session, Pane: agent.ID}); err != nil {
 		return err
 	}
 	if err := a.tmux.SwapPane(agent.ID, slot); err != nil {
 		return errors.Join(err, a.store.ClearStage())
 	}
-	if focus {
-		return a.tmux.SelectPane(agent.ID)
-	}
-	return nil
+	return a.focusStaged(agent.ID, focus)
 }
 
 // unstage returns the staged agent pane to its origin window and puts the placeholder back on stage.
-// An agent whose process ended takes its placeholder-holding origin window with it; one whose origin window was closed gets a new window in its project session.
+// An agent whose process ended takes its placeholder with it, closing an origin window left empty; one whose origin window was closed gets a new window in its project session.
 func (a *app) unstage() error {
 	st, ok, err := a.store.Stage()
 	if err != nil || !ok {
@@ -148,9 +181,12 @@ func (a *app) unstage() error {
 	}
 	agent, err := a.tmux.Pane(st.Pane)
 	if err != nil {
-		if panes, err := a.tmux.WindowPanes(st.Origin); err == nil && len(panes) == 1 && panes[0].Role == signals.RoleRest {
-			if err := a.tmux.KillWindow(st.Origin); err != nil {
-				return err
+		panes, _ := a.tmux.WindowPanes(st.Origin)
+		for _, p := range panes {
+			if p.Role == signals.RoleRest {
+				if err := a.tmux.KillPane(p.ID); err != nil {
+					return err
+				}
 			}
 		}
 		return a.store.ClearStage()
@@ -167,6 +203,12 @@ func (a *app) unstage() error {
 				return a.store.ClearStage()
 			}
 		}
+	}
+	if st.WindowID == 0 {
+		if _, err := a.tmux.BreakPane(agent.ID, st.OriginSession, ""); err != nil {
+			return fmt.Errorf("return pane %s from the stage: %w", agent.ID, err)
+		}
+		return a.store.ClearStage()
 	}
 	w, err := a.store.WindowByID(st.WindowID)
 	if err != nil {
@@ -190,6 +232,9 @@ func (a *app) unstageProject(project string) error {
 	st, ok, err := a.store.Stage()
 	if err != nil || !ok {
 		return err
+	}
+	if st.WindowID == 0 {
+		return nil
 	}
 	w, err := a.store.WindowByID(st.WindowID)
 	if err != nil || w.Project != project {

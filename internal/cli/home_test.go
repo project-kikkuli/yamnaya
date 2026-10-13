@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/project-kikkuli/yamnaya/internal/discover"
 	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 )
@@ -288,5 +289,90 @@ func TestSidebarKeepsSelectionAndHelpOnShortPanes(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("view lacks %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestStagingAPaneWithoutAYmWindow(t *testing.T) {
+	cases := []struct {
+		name   string
+		strand func(e *testEnv, agent, origin string)
+		check  func(e *testEnv, agent, origin, neighbor string)
+	}{
+		{"returned to its window", func(e *testEnv, agent, origin string) {}, func(e *testEnv, agent, origin, neighbor string) {
+			if s := e.spots(); s[agent].window != origin || s[neighbor].window != origin {
+				e.t.Fatalf("panes not back in %s: %v", origin, s)
+			}
+		}},
+		{"origin window closed", func(e *testEnv, agent, origin string) {
+			e.tmux("kill-window", "-t", origin)
+		}, func(e *testEnv, agent, origin, neighbor string) {
+			if got := e.tmux("display-message", "-p", "-t", agent, "#{session_name}"); got != "scratch" {
+				e.t.Fatalf("pane landed in session %q, want scratch", got)
+			}
+		}},
+		{"agent exited on stage", func(e *testEnv, agent, origin string) {
+			e.tmux("kill-pane", "-t", agent)
+		}, func(e *testEnv, agent, origin, neighbor string) {
+			for id, spot := range e.spots() {
+				if spot.window == origin && id != neighbor {
+					e.t.Fatalf("origin still holds %s (%s)", id, spot.role)
+				}
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newHomeEnv(t)
+			e.project("alpha")
+			e.tmux("new-session", "-d", "-s", "scratch", "sleep 600")
+			e.tmux("new-window", "-d", "-t", "scratch:", "sleep 600")
+			origin := e.tmux("display-message", "-p", "-t", "scratch:{end}", "#{window_id}")
+			agent := e.tmux("display-message", "-p", "-t", origin, "#{pane_id}")
+			neighbor := e.tmux("split-window", "-d", "-t", agent, "-P", "-F", "#{pane_id}", "sleep 600")
+			if err := e.a.ensureHome(e.dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.a.stagePane(agent, false); err != nil {
+				t.Fatal(err)
+			}
+			if s := e.spots(); s[agent].window != e.homeWindowID() || s[neighbor].window != origin {
+				t.Fatalf("after staging: %v", s)
+			}
+			c.strand(e, agent, origin)
+			if err := e.a.unstage(); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.a.ensureHome(e.dir); err != nil {
+				t.Fatal(err)
+			}
+			c.check(e, agent, origin, neighbor)
+			e.assertHomeResting()
+		})
+	}
+}
+
+func TestSidebarEnterStagesADiscoveredSession(t *testing.T) {
+	e := newHomeEnv(t)
+	e.project("alpha")
+	e.tmux("new-session", "-d", "-s", "scratch", "sleep 600")
+	pane := e.tmux("display-message", "-p", "-t", "scratch:", "#{pane_id}")
+	m := newSidebar(e.a)
+	m.snap.Sessions = []signals.Session{{Session: discover.Session{Pane: pane, Harness: "claude", TmuxSession: "scratch"}}}
+	m.sel = row{kind: rowSession, target: pane}
+	if cmd := press(m, "enter"); cmd != nil {
+		t.Fatal("enter closed the sidebar")
+	}
+	st, ok := e.staged()
+	if !ok || st.Pane != pane || st.WindowID != 0 {
+		t.Fatalf("stage = %+v, %v; want the discovered pane %s", st, ok, pane)
+	}
+	if e.spots()[pane].window != e.homeWindowID() {
+		t.Fatal("discovered pane not on stage")
+	}
+	if err := e.a.stage(e.windowID("alpha", "manager"), false); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.tmux("display-message", "-p", "-t", pane, "#{session_name}"); got != "scratch" {
+		t.Fatalf("discovered pane went to %s when the manager took the stage", got)
 	}
 }

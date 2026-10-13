@@ -327,7 +327,14 @@ func (m *boardModel) projectsKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "enter":
 		if m.sel.kind == rowSession || m.sel.kind == rowCrew {
-			return m.jump(m.sel.target)
+			if !m.sidebar {
+				return m.jump(m.sel.target)
+			}
+			if err := m.a.stagePane(m.sel.target, true); err != nil {
+				m.status = err.Error()
+			}
+			m.refresh()
+			return nil
 		}
 		if m.sel.project != "" {
 			name := m.sel.window

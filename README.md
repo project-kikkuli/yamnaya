@@ -40,7 +40,7 @@ Item ids are stable per project and never reused: `D` decisions, `V` veto-able d
 
 ## Home
 
-`ym` (or `ym home`) opens a tmux session `ym`: the board as a narrow sidebar on the left, and a stage on the right. Enter on a window moves that window's live pane onto the stage with `swap-pane` and focuses it; choosing another window first returns the staged pane to its own window. Nothing is restarted or copied. The stage is recorded in the state database, so a restarted sidebar returns a pane left on stage. Killing the `ym` session kills whatever agent is on stage.
+`ym` (or `ym home`) opens a tmux session `ym`: the board as a narrow sidebar on the left, and a stage on the right. Enter on a window or a discovered session moves its live pane onto the stage with `swap-pane` and focuses it; choosing another window first returns the staged pane to the window it came from. Nothing is restarted or copied. The stage is recorded in the state database, so a restarted sidebar returns a pane left on stage. Killing the `ym` session kills whatever agent is on stage.
 
 Sidebar keys: Enter stages, Tab focuses the stage, `n` starts a new project (name, cwd, harness, phases, first prompt), `k` lists landed projects and Enter revives one, `q` detaches. All board keys below work too; `g` and `f` stage the source window instead of switching to it.
 

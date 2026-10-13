@@ -225,9 +225,13 @@ func (c Client) SwapPane(src, dst string) error {
 	return err
 }
 
-// BreakPane moves pane into a new window of session and returns the window id.
+// BreakPane moves pane into a new window of session, named name when given, and returns the window id.
 func (c Client) BreakPane(pane, session, name string) (string, error) {
-	return c.run("break-pane", "-d", "-s", pane, "-t", "="+session+":", "-n", name, "-P", "-F", "#{window_id}")
+	a := []string{"break-pane", "-d", "-s", pane, "-t", "=" + session + ":", "-P", "-F", "#{window_id}"}
+	if name != "" {
+		a = append(a, "-n", name)
+	}
+	return c.run(a...)
 }
 
 func (c Client) SelectPane(target string) error {
@@ -237,11 +241,6 @@ func (c Client) SelectPane(target string) error {
 
 func (c Client) SetPaneRole(pane, role string) error {
 	_, err := c.run("set-option", "-p", "-t", pane, RoleOption, role)
-	return err
-}
-
-func (c Client) KillWindow(target string) error {
-	_, err := c.run("kill-window", "-t", target)
 	return err
 }
 
@@ -278,5 +277,10 @@ func (c Client) Hook(session, hook, command string) error {
 
 func (c Client) Detach() error {
 	_, err := c.run("detach-client")
+	return err
+}
+
+func (c Client) KillPane(pane string) error {
+	_, err := c.run("kill-pane", "-t", pane)
 	return err
 }
