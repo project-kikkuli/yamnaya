@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness"
+	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -49,6 +50,9 @@ func switchCmd(withApp runner) *cobra.Command {
 			last, err := a.tmux.LastActivity(w.TmuxTarget)
 			if err != nil {
 				return err
+			}
+			if t := signals.NewTranscripts().LastActive(w.Harness, w.SessionID); t.After(last) {
+				last = t
 			}
 			if idle := time.Since(last); idle < minIdle {
 				return fmt.Errorf("window %q is busy (output %s ago); switch once it has been idle %s", w.Name, idle.Round(time.Second), minIdle)

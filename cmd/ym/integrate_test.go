@@ -145,6 +145,14 @@ func TestSwitchPortsIdleWindowAndRefusesBusyOne(t *testing.T) {
 	if out, err := e.run(extra, "-p", "sw", "switch", "manager", "--to", "claude"); err == nil {
 		t.Fatalf("switching to the same harness succeeded: %s", out)
 	}
+	transcript := filepath.Join(e.dir, "claude", "projects", "-sw", mgr.SessionID+".jsonl")
+	os.MkdirAll(filepath.Dir(transcript), 0o755)
+	os.WriteFile(transcript, []byte("{}\n"), 0o644)
+	if out, err := e.run(extra, "-p", "sw", "switch", "manager", "--to", "codex", "--min-idle", "2s"); err == nil || !strings.Contains(out, "busy") {
+		t.Fatalf("switching a window whose transcript just changed: err=%v out=%s", err, out)
+	}
+	old := time.Now().Add(-time.Minute)
+	os.Chtimes(transcript, old, old)
 	if out, err := e.run(extra, "-p", "sw", "switch", "manager", "--to", "codex", "--min-idle", "2s"); err != nil {
 		t.Fatalf("switch: %v %s", err, out)
 	}
