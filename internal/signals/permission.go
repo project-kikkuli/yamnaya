@@ -8,13 +8,19 @@ import (
 type Permission struct {
 	Tool   string
 	Detail string
+	// From names the subagent that asked, when it was not the main agent.
+	From string
 }
 
 func (p Permission) String() string {
-	if p.Detail == "" {
-		return p.Tool
+	s := p.Tool
+	if p.Detail != "" {
+		s += ": " + p.Detail
 	}
-	return p.Tool + ": " + p.Detail
+	if p.From != "" {
+		s += " · " + p.From
+	}
+	return s
 }
 
 // footerLines is how far from the bottom of the screen a dialog's key hint may sit and still be the live dialog.
@@ -23,7 +29,7 @@ const footerLines = 6
 var footers = []string{
 	"Esc to cancel",
 	"Press enter to confirm or esc to cancel",
-	"enter continue · esc quit",
+	"enter continue · esc",
 }
 
 var claudeTools = map[string]string{"Bash command": "Bash", "Create file": "Write"}
@@ -56,8 +62,8 @@ func ParsePermission(screen string) (Permission, bool) {
 	if rule < 0 || rule+1 >= ask {
 		return Permission{Tool: strings.TrimSuffix(strings.TrimPrefix(lines[ask], "Do you want to "), "?")}, true
 	}
-	title := lines[rule+1]
-	p := Permission{Tool: title}
+	title, from, _ := strings.Cut(lines[rule+1], " · from the ")
+	p := Permission{Tool: title, From: from}
 	if tool, ok := claudeTools[title]; ok {
 		p.Tool = tool
 	}

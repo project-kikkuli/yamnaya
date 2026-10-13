@@ -32,6 +32,8 @@ func TestParsePermissionFromRealDialogs(t *testing.T) {
 		{"codex-exec", Permission{Tool: "Shell", Detail: "rm -rf build && mkdir build"}},
 		{"codex-patch", Permission{Tool: "Edit", Detail: "/Users/me/tmp/ymperm-codex/notes.txt"}},
 		{"codex-trust", Permission{Tool: "trust folder", Detail: "/Users/me/tmp/ymperm-codex"}},
+		{"codex-trust-2", Permission{Tool: "trust folder", Detail: "/private/tmp/ymcx.3AJg/repo/sub"}},
+		{"claude-subagent", Permission{Tool: "Bash", Detail: "rm -rf build/ && mkdir build", From: "general-purpose agent"}},
 	}
 	for _, c := range cases {
 		t.Run(c.fixture, func(t *testing.T) {

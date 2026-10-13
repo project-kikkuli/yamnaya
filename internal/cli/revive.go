@@ -35,11 +35,12 @@ func relaunch(w store.Window) (harness.Launch, error) {
 }
 
 func trustFor(harnessName, cwd string) error {
-	if harnessName != harness.Claude {
+	trust := map[string]func(string) error{harness.Claude: harness.TrustClaudeDir, harness.Codex: harness.TrustCodexDir}[harnessName]
+	if trust == nil {
 		return nil
 	}
-	if err := harness.TrustClaudeDir(cwd); err != nil {
-		return fmt.Errorf("mark %s trusted for claude: %w", cwd, err)
+	if err := trust(cwd); err != nil {
+		return fmt.Errorf("mark %s trusted for %s: %w", cwd, harnessName, err)
 	}
 	return nil
 }

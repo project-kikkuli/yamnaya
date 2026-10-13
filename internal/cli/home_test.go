@@ -434,31 +434,45 @@ func TestNavigationFollowsScreenOrder(t *testing.T) {
 }
 
 func TestReviveRecreatesAReapedWorktree(t *testing.T) {
-	e := newHomeEnv(t)
-	repo := filepath.Join(e.dir, "repo")
-	wt := filepath.Join(e.dir, "wt-feature")
-	git := func(args ...string) {
-		t.Helper()
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	git("init", "-q", repo)
-	git("-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
-	git("-C", repo, "worktree", "add", "-q", "-b", "feature", wt)
-	wt, _ = filepath.EvalSymlinks(wt)
-	e.ym("new", "gamma", "--cwd", wt)
-	e.ym("land", "gamma")
-	if err := os.RemoveAll(wt); err != nil {
-		t.Fatal(err)
-	}
-	e.ym("revive", "gamma")
-	out, err := exec.Command("git", "-C", wt, "symbolic-ref", "--short", "HEAD").Output()
-	if err != nil || strings.TrimSpace(string(out)) != "feature" {
-		t.Fatalf("worktree not recreated on feature: %q %v", out, err)
-	}
-	if ls := e.ym("ls", "-p", "gamma"); !strings.Contains(ls, "manager") || strings.Contains(ls, "gone") {
-		t.Fatalf("manager not running after revive:\n%s", ls)
+	for _, branchDeleted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "branch kept", true: "branch deleted"}[branchDeleted], func(t *testing.T) {
+			e := newHomeEnv(t)
+			repo := filepath.Join(e.dir, "repo")
+			wt := filepath.Join(e.dir, "wt-feature")
+			git := func(args ...string) string {
+				t.Helper()
+				out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+			git("init", "-q", repo)
+			git("-C", repo, "commit", "-q", "--allow-empty", "-m", "init")
+			git("-C", repo, "worktree", "add", "-q", "-b", "feature", wt)
+			git("-C", wt, "commit", "-q", "--allow-empty", "-m", "feature work")
+			head := git("-C", wt, "rev-parse", "HEAD")
+			wt, _ = filepath.EvalSymlinks(wt)
+			e.ym("new", "gamma", "--cwd", wt)
+			e.ym("land", "gamma")
+			if err := os.RemoveAll(wt); err != nil {
+				t.Fatal(err)
+			}
+			if branchDeleted {
+				git("-C", repo, "worktree", "prune")
+				git("-C", repo, "branch", "-D", "feature")
+			}
+			e.ym("revive", "gamma")
+			if got := git("-C", wt, "symbolic-ref", "--short", "HEAD"); got != "feature" {
+				t.Fatalf("worktree on %q, want feature", got)
+			}
+			if got := git("-C", wt, "rev-parse", "HEAD"); got != head {
+				t.Fatalf("worktree at %s, want %s", got, head)
+			}
+			if ls := e.ym("ls", "-p", "gamma"); !strings.Contains(ls, "manager") || strings.Contains(ls, "gone") {
+				t.Fatalf("manager not running after revive:\n%s", ls)
+			}
+		})
 	}
 }
 
@@ -499,5 +513,45 @@ func TestDestroyedDiscoveredSessionResumesInItsOwnWindow(t *testing.T) {
 			}
 			e.assertHomeResting()
 		})
+	}
+}
+
+func TestHomeFromInsideAnotherPaneLeavesThatPaneAlone(t *testing.T) {
+	e := newHomeEnv(t)
+	e.tmux("new-session", "-d", "-s", "work", "sleep 600")
+	caller := e.tmux("display-message", "-p", "-t", "work:", "#{pane_id}")
+	t.Setenv("TMUX", "/tmp/ym-test,1,0")
+	t.Setenv("TMUX_PANE", caller)
+	if err := e.a.ensureHome(e.dir); err != nil {
+		t.Fatal(err)
+	}
+	panes := e.tmux("list-panes", "-t", "work:", "-F", "#{pane_id}:#{@ym_role}:#{pane_width}")
+	if panes != caller+"::"+e.tmux("display-message", "-p", "-t", "work:", "#{window_width}") {
+		t.Fatalf("caller's window changed: %s", panes)
+	}
+	e.assertHomeResting()
+	if w := e.tmux("display-message", "-p", "-t", homeWindow+".{left}", "#{pane_width}"); w != "30" {
+		t.Fatalf("sidebar width %s", w)
+	}
+}
+
+func TestNextInsideHomeStagesInsteadOfLeaving(t *testing.T) {
+	e := newHomeEnv(t)
+	e.project("alpha", "w1", "w2")
+	e.item("alpha", "w2", store.KindDecision)
+	e.item("alpha", "w1", store.KindDecision)
+	if err := e.a.ensureHome(e.dir); err != nil {
+		t.Fatal(err)
+	}
+	e.attach(homeSession)
+	home := e.homeWindowID()
+	for i, want := range []string{"w2", "w1", "w2"} {
+		e.ym("next")
+		if got := e.clientWindow(); got != home {
+			t.Fatalf("next %d moved the client to %s", i+1, got)
+		}
+		if st, ok := e.staged(); !ok || st.WindowID != e.windowID("alpha", want) {
+			t.Fatalf("next %d staged %+v, want %s", i+1, st, want)
+		}
 	}
 }

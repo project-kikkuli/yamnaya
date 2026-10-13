@@ -121,8 +121,9 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 	if err := addColumns(db, "projects", map[string]string{
-		"git_dir": "TEXT NOT NULL DEFAULT ''",
-		"branch":  "TEXT NOT NULL DEFAULT ''",
+		"git_dir":  "TEXT NOT NULL DEFAULT ''",
+		"branch":   "TEXT NOT NULL DEFAULT ''",
+		"head_sha": "TEXT NOT NULL DEFAULT ''",
 	}); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)

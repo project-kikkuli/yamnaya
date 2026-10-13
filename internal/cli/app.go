@@ -99,10 +99,8 @@ func (a *app) newWindow(project, cwd, name, role, harnessName, prompt string) (s
 		CreatedAt: time.Now().UTC(),
 	}
 	launch := func(w store.Window) (string, error) {
-		if harnessName == harness.Claude {
-			if err := harness.TrustClaudeDir(cwd); err != nil {
-				return "", fmt.Errorf("mark %s trusted for claude: %w", cwd, err)
-			}
+		if err := trustFor(harnessName, cwd); err != nil {
+			return "", err
 		}
 		return a.tmux.NewWindow(tmux.SessionName(project), name, strconv.FormatInt(w.ID, 10), cwd, windowEnv(project, name), l.Argv)
 	}

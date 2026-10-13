@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// askingTargets lists live windows waiting on a permission prompt, then live windows with open items ordered by each window's oldest open item.
-func (a *app) askingTargets(snap signals.Snapshot) ([]string, error) {
+// askingWindows lists live windows waiting on a permission prompt, then live windows with open items ordered by each window's oldest open item.
+func (a *app) askingWindows(snap signals.Snapshot) ([]signals.Window, error) {
 	type pending struct {
 		item   store.Item
-		target string
+		window signals.Window
 	}
 	var all []pending
 	for _, p := range snap.Projects {
@@ -23,28 +23,28 @@ func (a *app) askingTargets(snap signals.Snapshot) ([]string, error) {
 		}
 		for _, it := range items {
 			if w, ok := sourceWindow(p, it); ok && w.Alive {
-				all = append(all, pending{it, w.TmuxTarget})
+				all = append(all, pending{it, w})
 			}
 		}
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].item.CreatedAt.Before(all[j].item.CreatedAt) })
-	var targets []string
-	seen := map[string]bool{}
+	var out []signals.Window
+	seen := map[int64]bool{}
 	for _, p := range snap.Projects {
 		for _, w := range p.Windows {
-			if w.Alive && w.Permission != nil && !seen[w.TmuxTarget] {
-				seen[w.TmuxTarget] = true
-				targets = append(targets, w.TmuxTarget)
+			if w.Alive && w.Permission != nil && !seen[w.ID] {
+				seen[w.ID] = true
+				out = append(out, w)
 			}
 		}
 	}
 	for _, pd := range all {
-		if !seen[pd.target] {
-			seen[pd.target] = true
-			targets = append(targets, pd.target)
+		if !seen[pd.window.ID] {
+			seen[pd.window.ID] = true
+			out = append(out, pd.window)
 		}
 	}
-	return targets, nil
+	return out, nil
 }
 
 // sourceWindow is the window that filed it, falling back to the manager when that window is gone.
@@ -55,35 +55,45 @@ func sourceWindow(p signals.Project, it store.Item) (signals.Window, bool) {
 	return p.Window("")
 }
 
-func nextTarget(targets []string, current string) string {
-	for i, t := range targets {
-		if t == current {
-			return targets[(i+1)%len(targets)]
+// nextWindow is the window after the one matching current, or the first.
+func nextWindow(windows []signals.Window, current func(signals.Window) bool) signals.Window {
+	for i, w := range windows {
+		if current(w) {
+			return windows[(i+1)%len(windows)]
 		}
 	}
-	return targets[0]
+	return windows[0]
 }
 
 func nextCmd(withApp runner) *cobra.Command {
 	return &cobra.Command{
 		Use:   "next",
-		Short: "Jump to the next window waiting on a permission prompt, then one with an open item, oldest first",
+		Short: "Jump to the next window waiting on a permission prompt, then one with an open item, oldest first; inside ym home, stage it",
 		Args:  cobra.NoArgs,
 		RunE: withApp(func(a *app, cmd *cobra.Command, args []string) error {
 			snap, err := signals.NewReader(a.store, a.tmux).Snapshot()
 			if err != nil {
 				return err
 			}
-			targets, err := a.askingTargets(snap)
+			windows, err := a.askingWindows(snap)
 			if err != nil {
 				return err
 			}
-			if len(targets) == 0 {
+			if len(windows) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "nothing asks you")
 				return nil
 			}
-			current, _ := a.tmux.CurrentWindow()
-			return a.tmux.Jump(nextTarget(targets, current))
+			session, current, _ := a.tmux.CurrentSessionWindow()
+			if session == homeSession {
+				st, _, err := a.store.Stage()
+				if err != nil {
+					return err
+				}
+				w := nextWindow(windows, func(w signals.Window) bool { return w.ID == st.WindowID })
+				return a.stage(w.ID, true)
+			}
+			w := nextWindow(windows, func(w signals.Window) bool { return w.TmuxTarget == current })
+			return a.tmux.Jump(w.Pane)
 		}),
 	}
 }

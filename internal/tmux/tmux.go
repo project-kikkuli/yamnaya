@@ -164,9 +164,14 @@ func (c Client) WindowID(target string) (string, error) {
 	return c.run("display-message", "-p", "-t", target, "#{window_id}")
 }
 
-// CurrentWindow is the window of the current or most recently active client.
-func (c Client) CurrentWindow() (string, error) {
-	return c.run("display-message", "-p", "#{window_id}")
+// CurrentSessionWindow is the session and window of the current or most recently active client.
+func (c Client) CurrentSessionWindow() (session, window string, err error) {
+	out, err := c.run("display-message", "-p", "#{session_name}\t#{window_id}")
+	if err != nil {
+		return "", "", err
+	}
+	session, window, _ = strings.Cut(out, "\t")
+	return session, window, nil
 }
 
 // TypeText types text into target's active pane without pressing Enter.
@@ -256,10 +261,11 @@ func (c Client) SetPaneRole(pane, role string) error {
 
 // NewHome creates a detached session whose one window holds a sidebar pane of width cols and a stage pane right of it, in one tmux command so no observer sees half of it.
 func (c Client) NewHome(session, window, cwd string, env map[string]string, sidebar, stage []string, sidebarRole, stageRole string, cols int) error {
+	w := "=" + session + ":" + window
 	a := append([]string{"new-session", "-d", "-s", session, "-n", window, "-x", "160", "-y", "48", "-c", cwd}, envArgs(env)...)
-	a = append(append(a, sidebar...), ";", "set-option", "-p", RoleOption, sidebarRole, ";", "split-window", "-h", "-c", cwd)
-	a = append(append(append(a, envArgs(env)...), stage...), ";", "set-option", "-p", RoleOption, stageRole,
-		";", "select-pane", "-L", ";", "resize-pane", "-x", strconv.Itoa(cols))
+	a = append(append(a, sidebar...), ";", "set-option", "-p", "-t", w, RoleOption, sidebarRole, ";", "split-window", "-h", "-t", w, "-c", cwd)
+	a = append(append(append(a, envArgs(env)...), stage...), ";", "set-option", "-p", "-t", w, RoleOption, stageRole,
+		";", "select-pane", "-t", w+".{left}", ";", "resize-pane", "-t", w+".{left}", "-x", strconv.Itoa(cols))
 	_, err := c.run(a...)
 	return err
 }
