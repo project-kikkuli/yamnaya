@@ -68,6 +68,8 @@ type boardModel struct {
 
 	// sidebar is true when the board runs as the ym home sidebar and stages windows instead of switching to them.
 	sidebar   bool
+	height    int
+	selLine   int
 	kurgan    []store.Project
 	inKurgan  bool
 	kurganSel int
@@ -177,7 +179,7 @@ func (m *boardModel) move(delta int) {
 func (m *boardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
 	case tickMsg:
 		if m.sidebar {
 			if err := m.a.healStage(); err != nil {

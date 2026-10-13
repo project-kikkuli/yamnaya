@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 )
@@ -263,5 +265,28 @@ func TestSidebarRevivesFromKurganAndStagesManager(t *testing.T) {
 	}
 	if st, ok := e.staged(); !ok || st.WindowID != e.windowID("beta", "manager") {
 		t.Fatalf("stage = %+v, %v; want beta's manager", st, ok)
+	}
+}
+
+func TestSidebarKeepsSelectionAndHelpOnShortPanes(t *testing.T) {
+	e := newHomeEnv(t)
+	for _, p := range []string{"p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"} {
+		e.project(p)
+	}
+	m := newSidebar(e.a)
+	m.refresh()
+	m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	for i := 0; i < 20; i++ {
+		press(m, "down")
+	}
+	view := strings.Split(m.View(), "\n")
+	if len(view) > 8 {
+		t.Fatalf("view has %d lines for an 8-line pane:\n%s", len(view), strings.Join(view, "\n"))
+	}
+	joined := strings.Join(view, "\n")
+	for _, want := range []string{"p8", "› manager", "n new  k kurgan"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("view lacks %q:\n%s", want, joined)
+		}
 	}
 }

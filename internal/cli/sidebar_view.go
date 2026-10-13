@@ -53,6 +53,9 @@ func (m *boardModel) sidebarView() []string {
 		if selected || p.Open > 0 || p.NeedPermission() > 0 {
 			style = stylePlain
 		}
+		if selected {
+			m.selLine = len(lines)
+		}
 		head := style.Render(fmt.Sprintf("%s%-13s %-5s", marker(selected), ansi.Truncate(p.Name, 13, "…"), ansi.Truncate(phaseDots(p.Project), 5, "")))
 		lines = append(lines, strings.TrimRight(head+" "+strings.Join(flags, " "), " "))
 		if !m.expandedProject(p) {
@@ -77,6 +80,9 @@ func (m *boardModel) sidebarView() []string {
 			if w.Staged {
 				stage = "»"
 			}
+			if sel {
+				m.selLine = len(lines)
+			}
 			lines = append(lines, style.Render(fmt.Sprintf(" %s%s%-14s %s", stage, marker(sel), ansi.Truncate(w.Name, 14, "…"), shortLabel(w, now))))
 			if w.State(now) == signals.NeedsPermission {
 				lines = append(lines, styleNeed.Render("     "+w.Permission.String()))
@@ -91,6 +97,9 @@ func (m *boardModel) sidebarView() []string {
 			if sel || ses.Loud() {
 				style = stylePlain
 			}
+			if sel {
+				m.selLine = len(lines)
+			}
 			lines = append(lines, style.Render(fmt.Sprintf("  %s%-16s %s", marker(sel), ansi.Truncate(sessionTitle(ses), 16, "…"), ses.Label(now))))
 			if !m.expandedSession(ses) {
 				continue
@@ -101,6 +110,9 @@ func (m *boardModel) sidebarView() []string {
 				style := styleDim
 				if csel {
 					style = stylePlain
+				}
+				if csel {
+					m.selLine = len(lines)
 				}
 				lines = append(lines, style.Render(fmt.Sprintf("    %s%-16s %s", marker(csel), ansi.Truncate(c.Label(), 16, "…"), c.Status)))
 			}
@@ -123,6 +135,9 @@ func (m *boardModel) sidebarItemsView() []string {
 		style := styleDim
 		if sel {
 			style = stylePlain
+		}
+		if sel {
+			m.selLine = len(lines)
 		}
 		lines = append(lines, style.Render(fmt.Sprintf("%s%-4s %s", marker(sel), it.ID, it.Question)))
 		if m.expanded != it.ID {
@@ -167,7 +182,24 @@ func (m *boardModel) kurganView() []string {
 		if sel {
 			style = stylePlain
 		}
+		if sel {
+			m.selLine = len(lines)
+		}
 		lines = append(lines, style.Render(fmt.Sprintf("%s%-16s %s", marker(sel), ansi.Truncate(p.Name, 16, "…"), signals.Duration(now.Sub(p.LandedAt)))))
 	}
-	return append(lines, "", styleDim.Render("  ⏎ revive  esc back"))
+	return append(lines, "", styleDim.Render("  ⏎ revive"), styleDim.Render("  esc back"))
+}
+
+// sidebarFooter is how many trailing lines of every sidebar view are its key help.
+const sidebarFooter = 3
+
+// clip keeps the sidebar's key help and the selected row on screen when its rows outgrow the pane.
+func (m *boardModel) clip(lines []string, below int) []string {
+	room := m.height - sidebarFooter - below
+	if m.height <= 0 || len(lines) <= room+sidebarFooter || room < 1 {
+		return lines
+	}
+	body, footer := lines[:len(lines)-sidebarFooter], lines[len(lines)-sidebarFooter:]
+	start := max(0, min(m.selLine-room/2, len(body)-room))
+	return append(append([]string{}, body[start:start+room]...), footer...)
 }

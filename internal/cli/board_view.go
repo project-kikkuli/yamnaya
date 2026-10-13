@@ -51,21 +51,25 @@ func (m *boardModel) View() string {
 	default:
 		lines = m.projectsView()
 	}
-	lines = append(lines, "")
+	var below []string
 	if m.prompt != nil {
 		f := m.prompt.fields[m.prompt.at]
 		if m.sidebar {
-			lines = append(lines, styleDim.Render(f.label), f.value+"█")
+			below = append(below, styleDim.Render(f.label), f.value+"█")
 		} else {
-			lines = append(lines, f.label+": "+f.value+"█")
+			below = append(below, f.label+": "+f.value+"█")
 		}
 	} else if m.status != "" {
 		status := m.status
 		if m.sidebar && m.width > 0 {
 			status = ansi.Wordwrap(status, m.width, " ")
 		}
-		lines = append(lines, styleBad.Render(status))
+		below = append(below, strings.Split(styleBad.Render(status), "\n")...)
 	}
+	if m.sidebar {
+		lines = m.clip(lines, len(below)+1)
+	}
+	lines = append(append(lines, ""), below...)
 	if m.width > 0 {
 		for i, l := range lines {
 			lines[i] = ansi.Truncate(l, m.width, "…")
