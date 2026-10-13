@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS items (
 	PRIMARY KEY (project, id),
 	UNIQUE (project, seq)
 );
+CREATE TABLE IF NOT EXISTS item_events (
+	seq INTEGER PRIMARY KEY AUTOINCREMENT,
+	project TEXT NOT NULL,
+	item TEXT NOT NULL,
+	at TEXT NOT NULL,
+	from_state TEXT NOT NULL,
+	to_state TEXT NOT NULL,
+	text TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS item_events_item ON item_events(project, item);
 `
 
 func DefaultPath() (string, error) {

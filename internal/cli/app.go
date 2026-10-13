@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness"
@@ -16,9 +17,10 @@ import (
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 type app struct {
-	store   *store.Store
-	tmux    tmux.Client
-	project string
+	store       *store.Store
+	tmux        tmux.Client
+	project     string
+	projectFlag string
 }
 
 func openApp(projectFlag string) (*app, error) {
@@ -34,7 +36,7 @@ func openApp(projectFlag string) (*app, error) {
 	if project == "" {
 		project = os.Getenv("YM_PROJECT")
 	}
-	return &app{store: s, tmux: tmux.FromEnv(), project: project}, nil
+	return &app{store: s, tmux: tmux.FromEnv(), project: project, projectFlag: projectFlag}, nil
 }
 
 func (a *app) close() { a.store.Close() }
@@ -70,7 +72,7 @@ func absDir(dir string) (string, error) {
 
 func windowEnv(project, window string) map[string]string {
 	env := map[string]string{"YM_PROJECT": project, "YM_WINDOW": window}
-	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_TMUX_SOCKET", "YAMNAYA_CLAUDE_BIN", "YAMNAYA_CODEX_BIN", "CODEX_HOME"} {
+	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_TMUX_SOCKET", "YAMNAYA_CLAUDE_BIN", "YAMNAYA_CODEX_BIN", "CODEX_HOME", "CLAUDE_CONFIG_DIR"} {
 		if v := os.Getenv(k); v != "" {
 			env[k] = v
 		}
@@ -95,7 +97,12 @@ func (a *app) newWindow(project, cwd, name, role, harnessName, prompt string) (s
 		CreatedAt: time.Now().UTC(),
 	}
 	launch := func(w store.Window) (string, error) {
-		return a.tmux.NewWindow(tmux.SessionName(project), name, cwd, windowEnv(project, name), l.Argv)
+		if harnessName == harness.Claude {
+			if err := harness.TrustClaudeDir(cwd); err != nil {
+				return "", fmt.Errorf("mark %s trusted for claude: %w", cwd, err)
+			}
+		}
+		return a.tmux.NewWindow(tmux.SessionName(project), name, strconv.FormatInt(w.ID, 10), cwd, windowEnv(project, name), l.Argv)
 	}
 	return w, launch, nil
 }
@@ -130,3 +137,28 @@ func (a *app) resolveCodexSessions(p store.Project, windows []store.Window) erro
 }
 
 func envWindow() string { return os.Getenv("YM_WINDOW") }
+
+// liveWindow reports whether w's tmux window still runs; a reused tmux id carries another tag and does not count.
+func liveWindow(w store.Window, live map[string]tmux.WindowInfo) bool {
+	info, ok := live[w.TmuxTarget]
+	return ok && info.Tag == strconv.FormatInt(w.ID, 10) && info.Session == tmux.SessionName(w.Project) && !info.Dead
+}
+
+// closeIfDead closes the open window row named name when its tmux window no longer runs, so the name can be reused.
+func (a *app) closeIfDead(project, name string) error {
+	w, err := a.store.OpenWindow(project, name)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	live, err := a.tmux.Windows()
+	if err != nil {
+		return err
+	}
+	if liveWindow(w, live) {
+		return nil
+	}
+	return a.store.CloseWindow(w.ID)
+}

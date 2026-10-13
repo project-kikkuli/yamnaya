@@ -124,6 +124,16 @@ func printItem(w io.Writer, it store.Item) {
 	if it.Reason != "" {
 		fmt.Fprintf(w, "dismissed: %s\n", it.Reason)
 	}
+	for _, e := range it.History {
+		if e.From == "" {
+			continue
+		}
+		line := fmt.Sprintf("history: %s %s -> %s", ts(e.At), e.From, e.To)
+		if e.Text != "" {
+			line += ": " + e.Text
+		}
+		fmt.Fprintln(w, line)
+	}
 }
 
 func itemShowCmd(withApp runner) *cobra.Command {

@@ -105,6 +105,9 @@ func (s *Store) CreateProject(p Project, manager Window, launch func(Window) (st
 }
 
 func (s *Store) SetPhases(name string, phases []string) (Project, error) {
+	if _, err := s.ActiveProject(name); err != nil {
+		return Project{}, err
+	}
 	data, err := json.Marshal(nonNil(phases))
 	if err != nil {
 		return Project{}, err

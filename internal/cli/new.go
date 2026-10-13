@@ -45,6 +45,9 @@ func newCmd(withApp runner) *cobra.Command {
 			if err := validName("project", name); err != nil {
 				return err
 			}
+			if p, err := a.store.Project(name); err == nil && p.State == store.ProjectLanded {
+				return fmt.Errorf("project %q is in the kurgan; use ym revive %s", name, name)
+			}
 			dir, err := absDir(cwd)
 			if err != nil {
 				return err
@@ -85,6 +88,9 @@ func spawnCmd(withApp runner) *cobra.Command {
 			}
 			p, err := a.store.ActiveProject(project)
 			if err != nil {
+				return err
+			}
+			if err := a.closeIfDead(project, name); err != nil {
 				return err
 			}
 			w, launch, err := a.newWindow(project, p.Cwd, name, store.RoleWorker, harnessName, workerPrompt(project, name, prompt))

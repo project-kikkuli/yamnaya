@@ -41,6 +41,15 @@ type Item struct {
 	Answer       string
 	Reason       string
 	AnsweredAt   time.Time
+	History      []Event
+}
+
+// Event is one state change of an item; reopening keeps earlier answers and dismissals here.
+type Event struct {
+	At   time.Time
+	From string
+	To   string
+	Text string
 }
 
 const itemCols = `project, id, kind, question, rec, options, assumption, source_window, created_at, state, answer, reason, answered_at`
@@ -96,7 +105,16 @@ func (s *Store) AddItem(it Item) (Item, error) {
 		it.Project, seq, it.ID, it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.SourceWindow, it.CreatedAt.Format(time.RFC3339Nano), it.State); err != nil {
 		return it, err
 	}
+	if err := addEvent(tx, it.Project, it.ID, "", ItemOpen, ""); err != nil {
+		return it, err
+	}
+	it.History = []Event{{At: it.CreatedAt, To: ItemOpen}}
 	return it, tx.Commit()
+}
+
+func addEvent(tx *sql.Tx, project, item, from, to, text string) error {
+	_, err := tx.Exec(`INSERT INTO item_events (project, item, at, from_state, to_state, text) VALUES (?, ?, ?, ?, ?, ?)`, project, item, now(), from, to, text)
+	return err
 }
 
 func (s *Store) Item(project, id string) (Item, error) {
@@ -104,7 +122,25 @@ func (s *Store) Item(project, id string) (Item, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return it, fmt.Errorf("item %s in project %q: %w", id, project, ErrNotFound)
 	}
-	return it, err
+	if err != nil {
+		return it, err
+	}
+	rows, err := s.db.Query(`SELECT at, from_state, to_state, text FROM item_events WHERE project = ? AND item = ? ORDER BY seq`, project, it.ID)
+	if err != nil {
+		return it, err
+	}
+	defer rows.Close()
+	it.History = []Event{}
+	for rows.Next() {
+		var e Event
+		var at sql.NullString
+		if err := rows.Scan(&at, &e.From, &e.To, &e.Text); err != nil {
+			return it, err
+		}
+		e.At = parseTime(at)
+		it.History = append(it.History, e)
+	}
+	return it, rows.Err()
 }
 
 func (s *Store) Items(project string, all bool) ([]Item, error) {
@@ -182,13 +218,24 @@ func (s *Store) transition(project, id, to, answer, reason string) (Item, error)
 	if to == ItemAnswered || to == ItemDismissed {
 		answeredAt = now()
 	}
-	res, err := s.db.Exec(`UPDATE items SET state = ?, answer = ?, reason = ?, answered_at = ? WHERE project = ? AND id = ? AND state = ?`,
+	tx, err := s.db.Begin()
+	if err != nil {
+		return it, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE items SET state = ?, answer = ?, reason = ?, answered_at = ? WHERE project = ? AND id = ? AND state = ?`,
 		to, answer, reason, answeredAt, project, it.ID, it.State)
 	if err != nil {
 		return it, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return it, fmt.Errorf("item %s changed concurrently; retry", it.ID)
+	}
+	if err := addEvent(tx, project, it.ID, it.State, to, answer+reason); err != nil {
+		return it, err
+	}
+	if err := tx.Commit(); err != nil {
+		return it, err
 	}
 	return s.Item(project, it.ID)
 }

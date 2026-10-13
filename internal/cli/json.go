@@ -22,6 +22,14 @@ type itemJSON struct {
 	Answer       string         `json:"answer"`
 	Reason       string         `json:"reason"`
 	AnsweredAt   string         `json:"answered_at"`
+	History      []eventJSON    `json:"history,omitempty"`
+}
+
+type eventJSON struct {
+	At   string `json:"at"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	Text string `json:"text"`
 }
 
 type windowJSON struct {
@@ -63,8 +71,19 @@ func toItemJSON(it store.Item) itemJSON {
 		ID: it.ID, Project: it.Project, Kind: it.Kind, Question: it.Question, Rec: it.Rec,
 		Options: it.Options, Assumption: it.Assumption, SourceWindow: it.SourceWindow,
 		CreatedAt: ts(it.CreatedAt), State: it.State, Answer: it.Answer, Reason: it.Reason,
-		AnsweredAt: ts(it.AnsweredAt),
+		AnsweredAt: ts(it.AnsweredAt), History: toEventsJSON(it.History),
 	}
+}
+
+func toEventsJSON(events []store.Event) []eventJSON {
+	if events == nil {
+		return nil
+	}
+	out := make([]eventJSON, 0, len(events))
+	for _, e := range events {
+		out = append(out, eventJSON{At: ts(e.At), From: e.From, To: e.To, Text: e.Text})
+	}
+	return out
 }
 
 func currentPhase(p store.Project) string {

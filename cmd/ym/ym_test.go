@@ -37,6 +37,7 @@ var socketSeq atomic.Int64
 
 type env struct {
 	t      *testing.T
+	dir    string
 	vars   []string
 	socket string
 	cwd    string
@@ -55,13 +56,15 @@ func newEnv(t *testing.T) *env {
 	os.MkdirAll(cwd, 0o755)
 	os.MkdirAll(codex, 0o755)
 	cwd, _ = filepath.EvalSymlinks(cwd)
-	e := &env{t: t, socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), socketSeq.Add(1)), cwd: cwd, codex: codex}
+	os.MkdirAll(filepath.Join(dir, "claude"), 0o755)
+	e := &env{t: t, socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), socketSeq.Add(1)), cwd: cwd, codex: codex, dir: dir}
 	e.vars = append(os.Environ(),
 		"YAMNAYA_STATE_DIR="+filepath.Join(dir, "state"),
 		"YAMNAYA_TMUX_SOCKET="+e.socket,
 		"YAMNAYA_CLAUDE_BIN="+fake,
 		"YAMNAYA_CODEX_BIN="+fake,
 		"CODEX_HOME="+codex,
+		"CLAUDE_CONFIG_DIR="+filepath.Join(dir, "claude"),
 		"YM_PROJECT=", "YM_WINDOW=", "TMUX=",
 	)
 	t.Cleanup(func() { exec.Command("tmux", "-L", e.socket, "kill-server").Run() })
@@ -359,5 +362,128 @@ func TestCodexSessionIDIsRecordedFromCodexState(t *testing.T) {
 	insert("sibling", e.cwd, after, "user", "something else")
 	if id := window(e.ls()["cx"], "manager").SessionID; id != "mine" {
 		t.Fatalf("session id %q, want mine", id)
+	}
+}
+
+func TestReusedTmuxWindowIDIsNotMistakenForAStaleWindow(t *testing.T) {
+	cases := []struct {
+		name string
+		kill func(e *env)
+	}{
+		{"last window killed", func(e *env) { e.tmux("kill-window", "-t", window(e.ls()["rc"], "manager").TmuxTarget) }},
+		{"server killed", func(e *env) { e.tmux("kill-server") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.ym("new", "rc")
+			tc.kill(e)
+			e.ym("-p", "rc", "spawn", "cx")
+			p := e.ls()["rc"]
+			cx := window(p, "cx")
+			if len(p.Windows) != 1 || !cx.Alive {
+				t.Fatalf("want only cx alive, got %+v", p.Windows)
+			}
+			if out, err := e.run(nil, "jump", "rc", "manager"); err == nil {
+				t.Fatalf("jump to the dead manager succeeded: %s", out)
+			}
+		})
+	}
+}
+
+func TestDeadWindowNameCanBeReused(t *testing.T) {
+	e := newEnv(t)
+	e.ym("new", "re")
+	e.ym("-p", "re", "spawn", "w1")
+	e.tmux("kill-window", "-t", window(e.ls()["re"], "w1").TmuxTarget)
+	e.ym("-p", "re", "spawn", "w1")
+	if w := window(e.ls()["re"], "w1"); !w.Alive {
+		t.Fatalf("respawned w1 %+v", w)
+	}
+	if out, err := e.run(nil, "-p", "re", "spawn", "w1"); err == nil {
+		t.Fatalf("spawning over a live window succeeded: %s", out)
+	}
+}
+
+func TestClaudeWindowsMarkTheirCwdTrusted(t *testing.T) {
+	e := newEnv(t)
+	config := filepath.Join(e.dir, "claude", ".claude.json")
+	os.WriteFile(config, []byte(`{"numStartups": 7, "projects": {"/elsewhere": {"allowedTools": ["Bash"]}}}`), 0o600)
+	codexDir := filepath.Join(e.dir, "codex-only")
+	os.MkdirAll(codexDir, 0o755)
+	e.ym("new", "cdx", "--harness", "codex", "--cwd", codexDir)
+	e.ym("new", "trusty")
+
+	var got struct {
+		NumStartups int `json:"numStartups"`
+		Projects    map[string]struct {
+			HasTrustDialogAccepted bool     `json:"hasTrustDialogAccepted"`
+			AllowedTools           []string `json:"allowedTools"`
+		} `json:"projects"`
+	}
+	data, _ := os.ReadFile(config)
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Projects[e.cwd].HasTrustDialogAccepted {
+		t.Fatalf("cwd not trusted: %s", data)
+	}
+	if got.NumStartups != 7 || len(got.Projects["/elsewhere"].AllowedTools) != 1 {
+		t.Fatalf("existing config lost: %s", data)
+	}
+	if _, ok := got.Projects[codexDir]; ok {
+		t.Fatalf("codex window touched claude trust: %s", data)
+	}
+}
+
+func TestReopenKeepsAnswerHistory(t *testing.T) {
+	e := newEnv(t)
+	e.ym("new", "hist")
+	id := e.ym("-p", "hist", "item", "add", "--kind", "default", "--question", "Drop the old table?")
+	e.ym("-p", "hist", "item", "answer", id, "yes")
+	e.ym("-p", "hist", "item", "reopen", id)
+	e.ym("-p", "hist", "item", "dismiss", id, "moot")
+	var it struct {
+		State   string `json:"state"`
+		History []struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+			Text string `json:"text"`
+		} `json:"history"`
+	}
+	json.Unmarshal([]byte(e.ym("-p", "hist", "item", "show", id, "--json")), &it)
+	var trail []string
+	for _, h := range it.History {
+		trail = append(trail, h.To+":"+h.Text)
+	}
+	if got := strings.Join(trail, " "); got != "open: answered:yes open: dismissed:moot" {
+		t.Fatalf("history %q", got)
+	}
+}
+
+func TestLandedAndScopedErrors(t *testing.T) {
+	e := newEnv(t)
+	e.ym("new", "gone")
+	e.ym("new", "here")
+	e.ym("land", "gone")
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-p", "gone", "phase", "set", "a,b"}, "landed"},
+		{[]string{"new", "gone"}, "ym revive gone"},
+	}
+	for _, tc := range cases {
+		out, err := e.run(nil, tc.args...)
+		if err == nil || !strings.Contains(out, tc.want) {
+			t.Fatalf("ym %v: err %v, output %q, want it to mention %q", tc.args, err, out, tc.want)
+		}
+	}
+	var scoped struct {
+		Projects []lsProject `json:"projects"`
+	}
+	json.Unmarshal([]byte(e.ym("-p", "here", "ls", "--json")), &scoped)
+	if len(scoped.Projects) != 1 || scoped.Projects[0].Name != "here" {
+		t.Fatalf("ls -p here: %+v", scoped.Projects)
 	}
 }

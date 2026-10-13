@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
@@ -11,6 +10,7 @@ import (
 )
 
 // describe joins a project's stored state with live tmux windows; live is nil for landed projects.
+// While the project's session runs, a window missing from it is confirmed dead and its row is closed.
 func (a *app) describe(p store.Project, live map[string]tmux.WindowInfo) (projectJSON, error) {
 	total, byWindow, err := a.store.OpenItemCounts(p.Name)
 	if err != nil {
@@ -39,11 +39,16 @@ func (a *app) describe(p store.Project, live map[string]tmux.WindowInfo) (projec
 		}
 	}
 	for _, w := range windows {
-		info, ok := live[w.TmuxTarget]
+		alive := liveWindow(w, live)
+		if pj.Alive && !alive {
+			if err := a.store.CloseWindow(w.ID); err != nil {
+				return pj, err
+			}
+			continue
+		}
 		pj.Windows = append(pj.Windows, windowJSON{
 			Name: w.Name, Role: w.Role, Harness: w.Harness, SessionID: w.SessionID,
-			TmuxTarget: w.TmuxTarget, Managed: w.Managed,
-			Alive:     ok && info.Session == session && !info.Dead,
+			TmuxTarget: w.TmuxTarget, Managed: w.Managed, Alive: alive,
 			OpenItems: byWindow[w.Name], CreatedAt: ts(w.CreatedAt),
 		})
 	}
@@ -77,12 +82,19 @@ func lsCmd(withApp runner) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List active projects with phase, open items, and windows",
+		Short: "List active projects (or only -p) with phase, open items, and windows",
 		Args:  cobra.NoArgs,
 		RunE: withApp(func(a *app, cmd *cobra.Command, args []string) error {
 			projects, err := a.store.Projects(store.ProjectActive)
 			if err != nil {
 				return err
+			}
+			if a.projectFlag != "" {
+				p, err := a.store.ActiveProject(a.projectFlag)
+				if err != nil {
+					return err
+				}
+				projects = []store.Project{p}
 			}
 			live, err := a.tmux.Windows()
 			if err != nil {
@@ -133,8 +145,8 @@ func jumpCmd(withApp runner) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				if _, ok := live[w.TmuxTarget]; !ok {
-					return fmt.Errorf("window %q is not alive in tmux", strings.TrimSpace(w.Name))
+				if !liveWindow(w, live) {
+					return fmt.Errorf("window %q is not alive in tmux", w.Name)
 				}
 				target = w.TmuxTarget
 			}

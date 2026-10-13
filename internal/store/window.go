@@ -47,12 +47,19 @@ func insertWindow(tx *sql.Tx, w Window, launch func(Window) (string, error)) err
 	if w.CreatedAt.IsZero() {
 		w.CreatedAt = time.Now().UTC()
 	}
+	res, err := tx.Exec(`INSERT INTO windows (project, name, role, harness, session_id, prompt, managed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.Project, w.Name, w.Role, w.Harness, w.SessionID, w.Prompt, w.Managed, w.CreatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return err
+	}
+	if w.ID, err = res.LastInsertId(); err != nil {
+		return err
+	}
 	target, err := launch(w)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO windows (project, name, role, harness, session_id, prompt, tmux_target, managed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.Project, w.Name, w.Role, w.Harness, w.SessionID, w.Prompt, target, w.Managed, w.CreatedAt.Format(time.RFC3339Nano))
+	_, err = tx.Exec(`UPDATE windows SET tmux_target = ? WHERE id = ?`, target, w.ID)
 	return err
 }
 
@@ -123,5 +130,10 @@ func (s *Store) ClaimedSessionIDs(harness string) (map[string]bool, error) {
 
 func (s *Store) SetSessionID(windowID int64, sessionID string) error {
 	_, err := s.db.Exec(`UPDATE windows SET session_id = ? WHERE id = ? AND session_id = ''`, sessionID, windowID)
+	return err
+}
+
+func (s *Store) CloseWindow(windowID int64) error {
+	_, err := s.db.Exec(`UPDATE windows SET closed_at = ? WHERE id = ? AND closed_at IS NULL`, now(), windowID)
 	return err
 }

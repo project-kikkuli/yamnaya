@@ -17,8 +17,11 @@ type WindowInfo struct {
 	ID      string
 	Session string
 	Name    string
+	Tag     string
 	Dead    bool
 }
+
+const tagOption = "@ym_window"
 
 func FromEnv() Client {
 	return Client{Socket: os.Getenv("YAMNAYA_TMUX_SOCKET")}
@@ -61,8 +64,9 @@ func (c Client) HasSession(session string) bool {
 	return err == nil
 }
 
-// NewWindow starts argv in a new window, creating the session when it does not exist, and returns the window id.
-func (c Client) NewWindow(session, name, cwd string, env map[string]string, argv []string) (string, error) {
+// NewWindow starts argv in a new window tagged with tag, creating the session when needed, and returns the window id.
+// The tag tells a ym window apart from a later window that reuses its tmux id.
+func (c Client) NewWindow(session, name, tag, cwd string, env map[string]string, argv []string) (string, error) {
 	var a []string
 	if c.HasSession(session) {
 		a = []string{"new-window", "-d", "-t", "=" + session + ":", "-n", name}
@@ -72,7 +76,14 @@ func (c Client) NewWindow(session, name, cwd string, env map[string]string, argv
 	a = append(a, "-c", cwd, "-P", "-F", "#{window_id}")
 	a = append(a, envArgs(env)...)
 	a = append(a, argv...)
-	return c.run(a...)
+	id, err := c.run(a...)
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.run("set-option", "-w", "-t", id, tagOption, tag); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (c Client) KillSession(session string) error {
@@ -81,7 +92,7 @@ func (c Client) KillSession(session string) error {
 }
 
 func (c Client) Windows() (map[string]WindowInfo, error) {
-	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{pane_dead}")
+	out, err := c.run("list-windows", "-a", "-F", "#{window_id}\t#{session_name}\t#{window_name}\t#{"+tagOption+"}\t#{pane_dead}")
 	if err != nil {
 		if strings.Contains(err.Error(), "no server running") || strings.Contains(err.Error(), "error connecting") {
 			return map[string]WindowInfo{}, nil
@@ -91,10 +102,10 @@ func (c Client) Windows() (map[string]WindowInfo, error) {
 	windows := map[string]WindowInfo{}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 4 {
+		if len(f) != 5 {
 			continue
 		}
-		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Dead: f[3] == "1"}
+		windows[f[0]] = WindowInfo{ID: f[0], Session: f[1], Name: f[2], Tag: f[3], Dead: f[4] == "1"}
 	}
 	return windows, nil
 }
