@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/discover"
 	"github.com/project-kikkuli/yamnaya/internal/harness"
 	"github.com/project-kikkuli/yamnaya/internal/signals"
 	"github.com/project-kikkuli/yamnaya/internal/store"
@@ -47,21 +48,14 @@ func switchCmd(withApp runner) *cobra.Command {
 			if info, ok := live[w.TmuxTarget]; !ok || info.Dead {
 				return fmt.Errorf("window %q is not alive in tmux; ym revive %s first", w.Name, project)
 			}
-			last, err := a.tmux.LastActivity(w.TmuxTarget)
-			if err != nil {
-				return err
-			}
-			if t := signals.NewTranscripts().LastActive(w.Harness, w.SessionID); t.After(last) {
-				last = t
-			}
-			if idle := time.Since(last); idle < minIdle {
-				return fmt.Errorf("window %q is busy (output %s ago); switch once it has been idle %s", w.Name, idle.Round(time.Second), minIdle)
-			}
 			windows := []store.Window{w}
 			if err := a.resolveCodexSessions(p, windows); err != nil {
 				return err
 			}
 			w = windows[0]
+			if err := a.idleEnough(w, minIdle); err != nil {
+				return err
+			}
 			if w.SessionID == "" {
 				return fmt.Errorf("window %q has no recorded session to port yet", w.Name)
 			}
@@ -76,7 +70,8 @@ func switchCmd(withApp runner) *cobra.Command {
 			if err := trustFor(to, p.Cwd); err != nil {
 				return err
 			}
-			if err := a.tmux.Respawn(w.TmuxTarget, p.Cwd, windowEnv(project, w.Name), l.Argv); err != nil {
+			env := windowEnv(project, w.Name)
+			if err := a.tmux.Respawn(w.TmuxTarget, p.Cwd, env, harness.CarryEnv(to, l.Argv, env)); err != nil {
 				return err
 			}
 			if err := a.store.SwitchHarness(w.ID, to, newID); err != nil {
@@ -116,4 +111,27 @@ func portSession(cwd, sessionID, to string) (string, error) {
 		return "", fmt.Errorf("cs port %s printed no session id", sessionID)
 	}
 	return lines[len(lines)-1], nil
+}
+
+// idleEnough refuses a window mid-turn: for Codex, whose TUI keeps redrawing, by its rollout's open task; otherwise by recent pane output or transcript writes.
+func (a *app) idleEnough(w store.Window, minIdle time.Duration) error {
+	if w.Harness == harness.Codex {
+		if path := signals.NewTranscripts().Path(w.Harness, w.SessionID); path != "" {
+			if open, modified := discover.CodexTurn(path); open && time.Since(modified) < discover.StaleAfter {
+				return fmt.Errorf("window %q is mid-turn; switch once Codex finishes it", w.Name)
+			}
+			return nil
+		}
+	}
+	last, err := a.tmux.LastActivity(w.TmuxTarget)
+	if err != nil {
+		return err
+	}
+	if t := signals.NewTranscripts().LastActive(w.Harness, w.SessionID); t.After(last) {
+		last = t
+	}
+	if idle := time.Since(last); idle < minIdle {
+		return fmt.Errorf("window %q is busy (output %s ago); switch once it has been idle %s", w.Name, idle.Round(time.Second), minIdle)
+	}
+	return nil
 }

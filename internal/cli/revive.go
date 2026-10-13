@@ -76,7 +76,8 @@ func (a *app) revive(name string) (store.Project, int, error) {
 		if err := trustFor(w.Harness, p.Cwd); err != nil {
 			return "", w, err
 		}
-		target, err := a.tmux.NewWindow(session, w.Name, strconv.FormatInt(w.ID, 10), p.Cwd, windowEnv(p.Name, w.Name), l.Argv)
+		env := windowEnv(p.Name, w.Name)
+		target, err := a.tmux.NewWindow(session, w.Name, strconv.FormatInt(w.ID, 10), p.Cwd, env, harness.CarryEnv(w.Harness, l.Argv, env))
 		return target, w, err
 	}
 	if err := a.store.Revive(p.Name, windows, launch); err != nil {

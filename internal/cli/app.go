@@ -102,7 +102,8 @@ func (a *app) newWindow(project, cwd, name, role, harnessName, prompt string) (s
 		if err := trustFor(harnessName, cwd); err != nil {
 			return "", err
 		}
-		return a.tmux.NewWindow(tmux.SessionName(project), name, strconv.FormatInt(w.ID, 10), cwd, windowEnv(project, name), l.Argv)
+		env := windowEnv(project, name)
+		return a.tmux.NewWindow(tmux.SessionName(project), name, strconv.FormatInt(w.ID, 10), cwd, env, harness.CarryEnv(harnessName, l.Argv, env))
 	}
 	return w, launch, nil
 }

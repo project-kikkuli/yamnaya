@@ -100,3 +100,9 @@ func (d *Discoverer) readCodex(s *Session, p Proc, started, now time.Time, claim
 	}
 	s.Status = settle(s.Since, now)
 }
+
+// CodexTurn reports whether the Codex rollout at path has a task started with no task_complete after it, and when the rollout last changed.
+func CodexTurn(path string) (open bool, modified time.Time) {
+	scan := (&Discoverer{}).scan(path, true)
+	return scan.open, scan.modified
+}

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -66,4 +69,24 @@ func Resume(name, sessionID string) (Launch, error) {
 		return Launch{Argv: []string{bin, "--resume", sessionID}, SessionID: sessionID}, nil
 	}
 	return Launch{Argv: []string{bin, "resume", sessionID}, SessionID: sessionID}, nil
+}
+
+// CarryEnv returns argv with ym's YM_* and YAMNAYA_* variables set for the harness's own shell commands.
+// Codex builds that environment from its shell_environment_policy, which may drop them, so each is set there explicitly.
+func CarryEnv(name string, argv []string, env map[string]string) []string {
+	if name != Codex || len(argv) == 0 {
+		return argv
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if strings.HasPrefix(k, "YM_") || strings.HasPrefix(k, "YAMNAYA_") {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	out := []string{argv[0]}
+	for _, k := range keys {
+		out = append(out, "-c", "shell_environment_policy.set."+k+"="+strconv.Quote(env[k]))
+	}
+	return append(out, argv[1:]...)
 }

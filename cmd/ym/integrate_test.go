@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -33,15 +34,20 @@ func lastArgv(t *testing.T, dir, window string) string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return lines[len(lines)-1]
+	return withoutCodexEnv(lines[len(lines)-1])
 }
+
+var codexEnvFlag = regexp.MustCompile(`-c shell_environment_policy\.set\.\w+="[^"]*" `)
+
+// withoutCodexEnv drops the -c flags that carry ym's environment into Codex shells, leaving the launch itself.
+func withoutCodexEnv(argv string) string { return codexEnvFlag.ReplaceAllString(argv, "") }
 
 func waitArgvLines(t *testing.T, dir, window string, n int) string {
 	t.Helper()
 	for i := 0; i < 100; i++ {
 		data, _ := os.ReadFile(filepath.Join(dir, window+".argv"))
 		if lines := strings.Split(strings.TrimSpace(string(data)), "\n"); len(lines) >= n {
-			return lines[len(lines)-1]
+			return withoutCodexEnv(lines[len(lines)-1])
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

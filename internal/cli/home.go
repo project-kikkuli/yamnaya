@@ -347,5 +347,5 @@ func (a *app) resumeInto(st store.Stage, pane string) error {
 	if err := a.tmux.SetPaneRole(pane, ""); err != nil {
 		return err
 	}
-	return a.tmux.Respawn(pane, cwd, env, argv)
+	return a.tmux.Respawn(pane, cwd, env, harness.CarryEnv(st.Harness, argv, env))
 }

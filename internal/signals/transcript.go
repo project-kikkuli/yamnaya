@@ -34,6 +34,14 @@ func NewTranscripts() *Transcripts {
 	return t
 }
 
+// Path is the session's transcript file, or "" when it is not found.
+func (t *Transcripts) Path(harnessName, sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	return t.find(harnessName, sessionID)
+}
+
 // LastActive is the transcript's modification time, or zero when the transcript is not found.
 func (t *Transcripts) LastActive(harnessName, sessionID string) time.Time {
 	if sessionID == "" {
