@@ -1,0 +1,73 @@
+package cli
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/project-kikkuli/yamnaya/internal/harness"
+	"github.com/project-kikkuli/yamnaya/internal/store"
+	"github.com/project-kikkuli/yamnaya/internal/tmux"
+	"github.com/spf13/cobra"
+)
+
+func reviveCmd(withApp runner) *cobra.Command {
+	return &cobra.Command{
+		Use:   "revive <project>",
+		Short: "Recreate a landed or dead project's tmux session, resuming each window's session",
+		Args:  cobra.ExactArgs(1),
+		RunE: withApp(func(a *app, cmd *cobra.Command, args []string) error {
+			p, windows, err := a.store.ReviveWindows(args[0])
+			if err != nil {
+				return err
+			}
+			session := tmux.SessionName(p.Name)
+			if a.tmux.HasSession(session) {
+				return fmt.Errorf("project %q is alive in tmux session %s; use ym jump", p.Name, session)
+			}
+			if len(windows) == 0 {
+				return fmt.Errorf("project %q has no windows to revive", p.Name)
+			}
+			if err := a.resolveCodexSessions(p, windows); err != nil {
+				return err
+			}
+			launch := func(w store.Window) (string, store.Window, error) {
+				l, err := relaunch(w)
+				if err != nil {
+					return "", w, err
+				}
+				w.SessionID = l.SessionID
+				if err := trustFor(w.Harness, p.Cwd); err != nil {
+					return "", w, err
+				}
+				target, err := a.tmux.NewWindow(session, w.Name, strconv.FormatInt(w.ID, 10), p.Cwd, windowEnv(p.Name, w.Name), l.Argv)
+				return target, w, err
+			}
+			if err := a.store.Revive(p.Name, windows, launch); err != nil {
+				if a.tmux.HasSession(session) {
+					a.tmux.KillSession(session)
+				}
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: revived %d windows in tmux session %s\n", p.Name, len(windows), session)
+			return nil
+		}),
+	}
+}
+
+// relaunch resumes the window's session, or starts it fresh from its prompt when no session was ever recorded.
+func relaunch(w store.Window) (harness.Launch, error) {
+	if w.SessionID != "" {
+		return harness.Resume(w.Harness, w.SessionID)
+	}
+	return harness.Start(w.Harness, w.Prompt)
+}
+
+func trustFor(harnessName, cwd string) error {
+	if harnessName != harness.Claude {
+		return nil
+	}
+	if err := harness.TrustClaudeDir(cwd); err != nil {
+		return fmt.Errorf("mark %s trusted for claude: %w", cwd, err)
+	}
+	return nil
+}

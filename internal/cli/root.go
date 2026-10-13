@@ -32,6 +32,9 @@ func NewRoot() *cobra.Command {
 		kurganCmd(withApp),
 		lsCmd(withApp),
 		jumpCmd(withApp),
+		reviveCmd(withApp),
+		switchCmd(withApp),
+		installCmd(),
 	)
 	return root
 }

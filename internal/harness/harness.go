@@ -52,3 +52,18 @@ func Start(name, prompt string) (Launch, error) {
 	}
 	return l, nil
 }
+
+// Resume builds the command that reopens an existing session in its harness.
+func Resume(name, sessionID string) (Launch, error) {
+	if err := Valid(name); err != nil {
+		return Launch{}, err
+	}
+	bin, err := binary(name)
+	if err != nil {
+		return Launch{}, err
+	}
+	if name == Claude {
+		return Launch{Argv: []string{bin, "--resume", sessionID}, SessionID: sessionID}, nil
+	}
+	return Launch{Argv: []string{bin, "resume", sessionID}, SessionID: sessionID}, nil
+}

@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -84,6 +86,26 @@ func (c Client) NewWindow(session, name, tag, cwd string, env map[string]string,
 		return "", err
 	}
 	return id, nil
+}
+
+// Respawn replaces the process in target's pane with argv, keeping the window id.
+func (c Client) Respawn(target, cwd string, env map[string]string, argv []string) error {
+	a := append([]string{"respawn-pane", "-k", "-t", target, "-c", cwd}, envArgs(env)...)
+	_, err := c.run(append(a, argv...)...)
+	return err
+}
+
+// LastActivity is when target's window last produced output.
+func (c Client) LastActivity(target string) (time.Time, error) {
+	out, err := c.run("display-message", "-p", "-t", target, "#{window_activity}")
+	if err != nil {
+		return time.Time{}, err
+	}
+	sec, err := strconv.ParseInt(out, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("window_activity %q: %w", out, err)
+	}
+	return time.Unix(sec, 0), nil
 }
 
 func (c Client) KillSession(session string) error {
