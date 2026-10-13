@@ -4,11 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/project-kikkuli/yamnaya/internal/discover"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 )
 
@@ -52,7 +55,18 @@ func visible(m *boardModel) []string {
 	var out []string
 	for _, r := range m.rows() {
 		name := r.project
-		if r.kind != rowProject {
+		switch r.kind {
+		case rowSession:
+			s, _ := m.session(r.target)
+			name = "session:" + strings.Fields(s.Title)[0]
+		case rowCrew:
+			s, _ := m.session(r.target)
+			for _, c := range s.Crew {
+				if c.ID == r.window {
+					name = "crew:" + strings.ReplaceAll(c.Label(), " ", "-")
+				}
+			}
+		case rowWindow:
 			name += "/" + r.window
 		}
 		out = append(out, name)
@@ -244,33 +258,101 @@ func TestBoardStartsSideThread(t *testing.T) {
 	}
 }
 
-func TestBoardAdoptsUnmanagedWindow(t *testing.T) {
+func crewMember(id, name string, status discover.CrewStatus, ago time.Duration) discover.Member {
+	return discover.Member{ID: id, Description: name, Status: status, LastActive: time.Now().Add(-ago)}
+}
+
+// discovered fakes the harness sessions found in tmux panes.
+func discovered(m *boardModel, sessions ...discover.Session) {
+	m.reader.Discover = func() ([]discover.Session, error) { return sessions, nil }
+	m.refresh()
+}
+
+func TestBoardShowsDiscoveredSessionsWithCrewAndPromotesThem(t *testing.T) {
 	e := newTestEnv(t)
 	e.project("alpha")
-	e.project("beta")
-	e.tmux("new-session", "-d", "-s", "scratch", "-n", "my notes", "sleep 600")
-	stray := e.tmux("display-message", "-p", "-t", "scratch:my notes", "#{window_id}")
+	e.tmux("new-session", "-d", "-s", "scratch", "-n", "notes", "sleep 600")
+	e.tmux("new-window", "-d", "-t", "scratch", "-n", "quiet", "sleep 600")
+	window := e.tmux("display-message", "-p", "-t", "scratch:notes", "#{window_id}")
+	pane := e.tmux("display-message", "-p", "-t", "scratch:notes", "#{pane_id}")
+	quiet := e.tmux("display-message", "-p", "-t", "scratch:quiet", "#{pane_id}")
+	glaze := discover.Session{
+		Harness: "claude", ID: "s-glaze", Title: "Glaze the bowls", Cwd: e.dir, Repo: "kiln", Branch: "main",
+		Pane: pane, WindowID: window, TmuxSession: "scratch", Status: discover.YourTurn,
+		Crew: []discover.Member{
+			{ID: "a1", Name: "glazer", Teammate: true, Status: discover.CrewRunning},
+			{ID: "a2", Name: "firer", Teammate: true, Status: discover.CrewIdle, LastActive: time.Now().Add(-5 * time.Minute)},
+			crewMember("a3", "price kilns", discover.CrewDone, time.Hour),
+			crewMember("a4", "count clay", discover.CrewDone, 2*time.Hour),
+			crewMember("a5", "sweep floor", discover.CrewDone, 3*time.Hour),
+			crewMember("a6", "old audit", discover.CrewDone, 4*time.Hour),
+		},
+	}
+	calm := discover.Session{Harness: "codex", ID: "s-calm", Title: "Sort glazes", Pane: quiet, TmuxSession: "scratch", WindowIndex: 1, Status: discover.Idle, Since: time.Now().Add(-3 * time.Hour)}
 	m := newTestBoard(e)
-	if got := visible(m); got[len(got)-1] != "/my notes" {
-		t.Fatalf("rows %v do not end with the unmanaged window", got)
+	discovered(m, glaze, calm)
+	press(m, "up", "up")
+
+	if got := strings.Join(visible(m), " "); got != "session:Glaze crew:glazer crew:firer crew:price-kilns crew:count-clay crew:sweep-floor session:Sort alpha" {
+		t.Fatalf("rows = %s", got)
 	}
-	press(m, "j", "j", "j", "j", "j", "j", "a")
-	if m.prompt == nil || m.prompt.fields[1].value != "my-notes" {
-		t.Fatalf("adopt prompt = %+v", m.prompt)
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Glaze the bowls", "kiln/main", "waiting on you", "6 crew · 1 running", "glazer", "idle 5m", "+1 done", "Sort glazes", "idle 3h"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view lacks %q:\n%s", want, view)
+		}
 	}
-	press(m, "beta", "enter", "enter")
-	w, err := e.a.store.OpenWindow("beta", "my-notes")
+	if strings.Contains(view, "old audit") || strings.Contains(view, "unmanaged") {
+		t.Errorf("view shows hidden rows:\n%s", view)
+	}
+
+	press(m, "a")
+	if m.prompt == nil || m.prompt.fields[0].value != "kiln" {
+		t.Fatalf("promote prompt = %+v", m.prompt)
+	}
+	press(m, "enter")
+	w, err := e.a.store.OpenWindow("kiln", "manager")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.TmuxTarget != stray || w.Managed || w.Harness != "claude" {
-		t.Errorf("adopted window = %+v", w)
+	if w.TmuxTarget != window || w.Managed || w.SessionID != "s-glaze" || w.Harness != "claude" {
+		t.Errorf("promoted manager = %+v", w)
 	}
-	if len(m.snap.Unmanaged) != 0 {
-		t.Errorf("unmanaged still lists %v", m.snap.Unmanaged)
+	if p, err := e.a.store.ActiveProject("kiln"); err != nil || p.Cwd != e.dir {
+		t.Errorf("project = %+v, %v", p, err)
 	}
-	if strings.Join(visible(m), " ") != "alpha beta beta/manager beta/my-notes" {
-		t.Errorf("rows after adopt: %v", visible(m))
+	if e.tmux("show-options", "-wv", "-t", window, "@ym_window") != strconv.FormatInt(w.ID, 10) {
+		t.Error("promoted window is not tagged")
+	}
+	if got := strings.Join(visible(m), " "); got != "session:Sort alpha kiln kiln/manager" {
+		t.Errorf("rows after promote = %s", got)
+	}
+	if d := m.snap.Projects[1].Windows[0].Discovered; d == nil || len(d.Crew) != 6 {
+		t.Errorf("kiln manager does not carry the session's crew: %+v", d)
+	}
+}
+
+func TestBoardEnterOnCrewJumpsToItsSessionPane(t *testing.T) {
+	e := newTestEnv(t)
+	e.project("alpha")
+	e.tmux("new-session", "-d", "-s", "scratch", "-n", "notes", "sleep 600")
+	e.tmux("split-window", "-d", "-t", "scratch:notes", "sleep 600")
+	window := e.tmux("display-message", "-p", "-t", "scratch:notes", "#{window_id}")
+	pane := e.tmux("display-message", "-p", "-t", "scratch:notes.1", "#{pane_id}")
+	e.attach("ym-alpha")
+	m := newTestBoard(e)
+	discovered(m, discover.Session{Harness: "claude", ID: "s1", Title: "Glaze", Pane: pane, WindowID: window, TmuxSession: "scratch", Status: discover.Running,
+		Crew: []discover.Member{{ID: "a1", Name: "glazer", Status: discover.CrewRunning}}})
+	press(m, "up", "j")
+	if m.sel.kind != rowCrew {
+		t.Fatalf("selection = %+v", m.sel)
+	}
+	if !quits(press(m, "enter")) {
+		t.Fatal("enter did not close the board")
+	}
+	out, _ := exec.Command("tmux", "-L", e.socket, "list-clients", "-F", "#{pane_id}").Output()
+	if strings.TrimSpace(string(out)) != pane {
+		t.Fatalf("client on pane %s, want %s", out, pane)
 	}
 }
 
@@ -338,7 +420,7 @@ func TestBoardShowsPermissionPromptsLoudest(t *testing.T) {
 	e.tmux("new-session", "-d", "-s", "elsewhere", "sleep 600")
 	e.attach("elsewhere")
 	m := newTestBoard(e)
-	if got := strings.Join(visible(m), " "); !strings.HasPrefix(got, "alpha alpha/manager beta beta/manager beta/b1 ") {
+	if got := strings.Join(visible(m), " "); got != "alpha alpha/manager beta beta/manager beta/b1" {
 		t.Fatalf("rows %q: beta should expand", got)
 	}
 	view := m.View()

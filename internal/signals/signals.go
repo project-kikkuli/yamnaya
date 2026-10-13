@@ -2,11 +2,10 @@ package signals
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/discover"
 	"github.com/project-kikkuli/yamnaya/internal/harness"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
@@ -31,6 +30,7 @@ type Window struct {
 	Open       int
 	LastActive time.Time
 	Permission *Permission
+	Discovered *discover.Session
 }
 
 func (w Window) State(now time.Time) State {
@@ -101,8 +101,8 @@ func (p Project) Window(name string) (Window, bool) {
 }
 
 type Snapshot struct {
-	Projects  []Project
-	Unmanaged []tmux.WindowInfo
+	Projects []Project
+	Sessions []Session
 }
 
 func (s Snapshot) Project(name string) (Project, bool) {
@@ -118,10 +118,11 @@ type Reader struct {
 	Store       *store.Store
 	Tmux        tmux.Client
 	Transcripts *Transcripts
+	Discover    func() ([]discover.Session, error)
 }
 
 func NewReader(s *store.Store, t tmux.Client) *Reader {
-	return &Reader{Store: s, Tmux: t, Transcripts: NewTranscripts()}
+	return &Reader{Store: s, Tmux: t, Transcripts: NewTranscripts(), Discover: discover.New(t).Discover}
 }
 
 // Snapshot joins every active project's stored windows and items with live tmux state and transcript activity.
@@ -135,7 +136,6 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	var snap Snapshot
-	tracked := map[string]bool{}
 	for _, p := range projects {
 		windows, err := r.Store.OpenWindows(p.Name)
 		if err != nil {
@@ -150,7 +150,6 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 		}
 		sp := Project{Project: p, Open: total}
 		for _, w := range windows {
-			tracked[w.TmuxTarget] = true
 			open := byWindow[w.Name]
 			if w.Role == store.RoleManager {
 				open += byWindow[""]
@@ -172,18 +171,9 @@ func (r *Reader) Snapshot() (Snapshot, error) {
 		}
 		snap.Projects = append(snap.Projects, sp)
 	}
-	for _, info := range live {
-		if !tracked[info.ID] && !strings.HasPrefix(info.Session, "ym-") {
-			snap.Unmanaged = append(snap.Unmanaged, info)
-		}
+	if err := r.attachSessions(&snap); err != nil {
+		return snap, err
 	}
-	sort.Slice(snap.Unmanaged, func(i, j int) bool {
-		a, b := snap.Unmanaged[i], snap.Unmanaged[j]
-		if a.Session != b.Session {
-			return a.Session < b.Session
-		}
-		return a.Index < b.Index
-	})
 	return snap, nil
 }
 

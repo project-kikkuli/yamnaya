@@ -61,9 +61,12 @@ func (m *boardModel) View() string {
 
 func (m *boardModel) projectsView() []string {
 	now := m.now()
-	var lines []string
-	if len(m.snap.Projects) == 0 {
-		lines = append(lines, styleDim.Render("  no projects"))
+	lines := m.sessionsView(now)
+	if len(lines) > 0 && len(m.snap.Projects) > 0 {
+		lines = append(lines, "")
+	}
+	if len(lines) == 0 && len(m.snap.Projects) == 0 {
+		lines = append(lines, styleDim.Render("  no sessions or projects"))
 	}
 	for _, p := range m.snap.Projects {
 		selected := m.sel.kind == rowProject && m.sel.project == p.Name
@@ -112,18 +115,7 @@ func (m *boardModel) projectsView() []string {
 			lines = append(lines, style.Render(fmt.Sprintf("    %s%-18s %-7s %s", marker(sel), w.Name, harnessLabel, w.Label(now))))
 		}
 	}
-	if len(m.snap.Unmanaged) > 0 {
-		lines = append(lines, "", styleDim.Render("  unmanaged"))
-		for _, u := range m.snap.Unmanaged {
-			sel := m.sel.kind == rowUnmanaged && m.sel.target == u.ID
-			style := styleDim
-			if sel {
-				style = stylePlain
-			}
-			lines = append(lines, style.Render(fmt.Sprintf("    %s%-26s %s", marker(sel), fmt.Sprintf("%s:%d %s", u.Session, u.Index, u.Name), u.Command)))
-		}
-	}
-	lines = append(lines, "", styleDim.Render("  ↑↓ move  ⏎ jump  o items  t thread  a adopt  q quit"))
+	lines = append(lines, "", styleDim.Render("  ↑↓ move  ⏎ jump  o items  t thread  a promote  q quit"))
 	return lines
 }
 

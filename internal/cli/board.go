@@ -20,7 +20,8 @@ type rowKind int
 const (
 	rowProject rowKind = iota
 	rowWindow
-	rowUnmanaged
+	rowSession
+	rowCrew
 )
 
 type row struct {
@@ -117,11 +118,11 @@ func clamp(i, n int) int {
 }
 
 func (m *boardModel) expandedProject(p signals.Project) bool {
-	return p.Open > 0 || p.NeedPermission() > 0 || (m.sel.kind != rowUnmanaged && m.sel.project == p.Name)
+	return p.Open > 0 || p.NeedPermission() > 0 || ((m.sel.kind == rowProject || m.sel.kind == rowWindow) && m.sel.project == p.Name)
 }
 
 func (m *boardModel) rows() []row {
-	var rows []row
+	rows := m.sessionRows()
 	for _, p := range m.snap.Projects {
 		rows = append(rows, row{kind: rowProject, project: p.Name})
 		if m.expandedProject(p) {
@@ -130,15 +131,12 @@ func (m *boardModel) rows() []row {
 			}
 		}
 	}
-	for _, u := range m.snap.Unmanaged {
-		rows = append(rows, row{kind: rowUnmanaged, target: u.ID, window: u.Name})
-	}
 	return rows
 }
 
 func (m *boardModel) selIndex(rows []row) int {
 	for i, r := range rows {
-		if r.kind == m.sel.kind && r.project == m.sel.project && r.window == m.sel.window && (r.kind != rowUnmanaged || r.target == m.sel.target) {
+		if r.kind == m.sel.kind && r.project == m.sel.project && r.window == m.sel.window && (r.kind != rowSession && r.kind != rowCrew || r.target == m.sel.target) {
 			return i
 		}
 	}
@@ -153,7 +151,7 @@ func (m *boardModel) fixSelection() {
 	}
 	if m.selIndex(rows) < 0 {
 		for _, r := range rows {
-			if r.kind == rowProject && r.project == m.sel.project {
+			if (r.kind == rowProject && r.project == m.sel.project) || (r.kind == rowSession && r.target == m.sel.target) {
 				m.sel = r
 				return
 			}
@@ -271,12 +269,12 @@ func (m *boardModel) projectsKey(msg tea.KeyMsg) tea.Cmd {
 			return m.jump(target)
 		}
 	case "o":
-		if m.sel.kind != rowUnmanaged && m.sel.project != "" {
+		if m.sel.project != "" {
 			m.itemsOf, m.itemSel, m.expanded = m.sel.project, 0, ""
 			m.refresh()
 		}
 	case "t":
-		if m.sel.kind != rowUnmanaged && m.sel.project != "" {
+		if m.sel.project != "" {
 			project := m.sel.project
 			m.ask(func(v []string) error {
 				if err := m.a.spawn(project, v[0], v[1], ""); err != nil {
@@ -287,20 +285,14 @@ func (m *boardModel) projectsKey(msg tea.KeyMsg) tea.Cmd {
 			}, promptField{label: "thread name"}, promptField{label: "harness", value: harness.Claude})
 		}
 	case "a":
-		if m.sel.kind == rowUnmanaged {
-			target := m.sel.target
-			project := ""
-			if len(m.snap.Projects) == 1 {
-				project = m.snap.Projects[0].Name
-			}
+		if sess, ok := m.session(m.sel.target); ok && m.sel.project == "" {
 			m.ask(func(v []string) error {
-				w, err := m.a.adopt(target, v[0], v[1], "")
-				if err != nil {
+				if err := m.a.promote(sess, v[0]); err != nil {
 					return err
 				}
-				m.sel = row{kind: rowWindow, project: w.Project, window: w.Name}
+				m.sel = row{kind: rowProject, project: v[0]}
 				return nil
-			}, promptField{label: "adopt into project", value: project}, promptField{label: "name", value: adoptName(m.sel.window)})
+			}, promptField{label: "promote to project", value: promoteName(sess)})
 		}
 	}
 	return nil

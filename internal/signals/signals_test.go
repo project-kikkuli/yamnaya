@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/discover"
 	"github.com/project-kikkuli/yamnaya/internal/store"
 	"github.com/project-kikkuli/yamnaya/internal/tmux"
 )
@@ -200,18 +201,15 @@ func TestCodexTranscripts(t *testing.T) {
 	}
 }
 
-func TestUnmanagedExcludesYmSessionsAndTrackedWindows(t *testing.T) {
+func TestSnapshotHangsDiscoveredSessionsOnTheirWindowsAndListsTheRest(t *testing.T) {
 	f := newFixture(t)
 	f.project("alpha")
-	stray, err := f.tmux.NewWindow("scratch", "notes", "", f.dir, nil, []string{"sleep", "600"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	adopted, err := f.tmux.NewWindow("scratch", "kept", "", f.dir, nil, []string{"sleep", "600"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.tmux.NewWindow("ym-alpha", "loose", "", f.dir, nil, []string{"sleep", "600"}); err != nil {
+	stray, err := f.tmux.NewWindow("scratch", "loose", "", f.dir, nil, []string{"sleep", "600"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	w := store.Window{Project: "alpha", Name: "kept", Role: store.RoleWorker, Harness: "claude"}
@@ -219,11 +217,35 @@ func TestUnmanagedExcludesYmSessionsAndTrackedWindows(t *testing.T) {
 	if err := f.store.AddWindow(w, tag); err != nil {
 		t.Fatal(err)
 	}
-	snap := f.snapshot()
-	if len(snap.Unmanaged) != 1 || snap.Unmanaged[0].ID != stray {
-		t.Fatalf("unmanaged = %+v, want only %s", snap.Unmanaged, stray)
+	showDialog(t, f.tmux.Socket, stray, "claude-bash")
+	since := time.Now().Add(-time.Hour)
+	f.reader.Discover = func() ([]discover.Session, error) {
+		return []discover.Session{
+			{Harness: "claude", ID: "alpha-mgr", Title: "plan alpha", Status: discover.Running},
+			{Harness: "claude", ID: "s-kept", WindowID: adopted, Title: "kept work", Status: discover.YourTurn, Since: since},
+			{Harness: "claude", ID: "s-loose", WindowID: stray, Pane: stray, Title: "loose work", Status: discover.Running},
+			{Harness: "codex", ID: "s-calm", Title: "calm work", Status: discover.Idle, Since: since},
+		}, nil
 	}
-	if !f.window(snap, "alpha", "kept").Alive {
-		t.Error("adopted window outside its ym session should read alive")
+	var snap Snapshot
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if snap = f.snapshot(); len(snap.Sessions) == 2 && snap.Sessions[0].Permission != nil {
+			break
+		}
+	}
+	if d := f.window(snap, "alpha", "manager").Discovered; d == nil || d.Title != "plan alpha" {
+		t.Errorf("manager discovered = %+v", d)
+	}
+	kept := f.window(snap, "alpha", "kept")
+	if kept.Discovered == nil || kept.Discovered.Title != "kept work" || !kept.LastActive.Equal(since) {
+		t.Errorf("kept = %+v", kept)
+	}
+	var got []string
+	for _, s := range snap.Sessions {
+		got = append(got, s.Title+": "+s.Label(since.Add(90*time.Minute)))
+	}
+	want := []string{"loose work: needs permission · Bash: rm -rf build/ && mkdir build", "calm work: idle 1h"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("sessions = %q, want %q", got, want)
 	}
 }
