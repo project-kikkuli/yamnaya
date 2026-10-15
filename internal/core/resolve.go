@@ -42,15 +42,18 @@ func (c *Core) carries(session string) func(id string) bool {
 	}
 }
 
-// Direct hands text to a running session's own inbox; false when its harness has none or the inbox did not take it.
-func (c *Core) Direct(s Session, text string) bool { return c.message(s, text) == nil }
+// Direct hands text to a running session's own inbox, as the owner's own words when owner is set; false when its harness has none
+// or the inbox did not take it.
+func (c *Core) Direct(s Session, text string, owner bool) bool {
+	return c.message(s, text, owner) == nil
+}
 
-func (c *Core) message(s Session, text string) error {
+func (c *Core) message(s Session, text string, owner bool) error {
 	m, ok := c.harness(s.Harness).(Messenger)
 	if !ok {
 		return errNoMessenger
 	}
-	return m.Message(s, text)
+	return m.Message(s, text, owner)
 }
 
 var errNoMessenger = errors.New("harness has no session inbox")

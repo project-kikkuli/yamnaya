@@ -69,15 +69,13 @@ type body struct {
 
 // Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym.
 // It counts once the session read the frame, closed its side and sent no held, refused or dropped receipt in time.
-func (a *Adapter) Message(s core.Session, text string) error { return a.message(s, text, true) }
-
-func (a *Adapter) message(s core.Session, text string, gate bool) error {
+func (a *Adapter) Message(s core.Session, text string, owner bool) error {
 	st, ok := a.state(s.PID)
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
 		return ErrNoInbox
 	}
 	mode := a.scan(a.transcript(st.Cwd, s.ID)).Mode
-	if gate && !a.admits(st.Cwd, mode) {
+	if !a.admits(st.Cwd, mode, owner) {
 		return ErrHeld
 	}
 	back, err := listenReceipts(filepath.Dir(st.MessagingSocket))
@@ -95,7 +93,7 @@ func (a *Adapter) message(s core.Session, text string, gate bool) error {
 		MsgV:      peerProtocol,
 		MsgID:     id,
 		Type:      "user",
-		Message:   body{Role: "user", Content: wrap(text, attested(mode))},
+		Message:   body{Role: "user", Content: wrap(text, attested(mode, owner))},
 		Priority:  "next",
 		From:      "uds:" + back.Addr().String(),
 		SessionID: s.ID,
@@ -181,8 +179,8 @@ var inboundRank = map[string]int{"accept": 0, "hold": 1, "refuse": 2}
 var promptingModes = map[string]bool{"default": true, "acceptEdits": true, "auto": true, "dontAsk": true}
 
 // admits mirrors Claude Code's inbound gate for ym's sends: the crossSessionInbound setting decides when set,
-// else the session reads it while it prompts for permissions or bypasses them under ym's attestation.
-func (a *Adapter) admits(cwd, mode string) bool {
+// else the session reads it while it prompts for permissions, or bypasses them and ym attests the owner's own words.
+func (a *Adapter) admits(cwd, mode string, owner bool) bool {
 	policy, invalid := "", false
 	read := func(path string) string {
 		v, set := inbound(path)
@@ -210,13 +208,13 @@ func (a *Adapter) admits(cwd, mode string) bool {
 	if policy != "" {
 		return policy == "accept"
 	}
-	return promptingModes[mode] || attested(mode) != ""
+	return promptingModes[mode] || attested(mode, owner) != ""
 }
 
 // attested is the permission mode ym claims for the owner's own words: bypass to a session that bypasses prompts,
-// which reads a message only from a sender in its own mode, and none to the rest, which read one that claims none.
-func attested(mode string) string {
-	if mode == "bypassPermissions" {
+// which reads a message only from a sender in its own mode, and none to the rest or for anyone else's words.
+func attested(mode string, owner bool) string {
+	if owner && mode == "bypassPermissions" {
 		return "bypass"
 	}
 	return ""

@@ -257,7 +257,7 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 	if claimed, err := c.Store.ClaimDelivery(it.Seq); err != nil || !claimed {
 		return Queued
 	}
-	switch err := c.message(s.Session, text); {
+	switch err := c.message(s.Session, text, true); {
 	case err == nil:
 		return Sent
 	case errors.Is(err, ErrPendingApproval) && c.Store.MarkHeld(it.Seq) == nil:

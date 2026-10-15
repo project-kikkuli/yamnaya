@@ -143,20 +143,22 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 		token    bool
 		mode     string
 		ok       bool
+		agent    bool
 	}{
-		{"session reads and closes", "close", 1, oldID, false, true, "auto", true},
-		{"no auth key published", "close", 1, oldID, false, false, "default", true},
-		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, "auto", false},
-		{"session never closes", "hang", 1, oldID, false, true, "auto", false},
-		{"socket gone", "close", 1, oldID, true, true, "auto", false},
-		{"newer protocol", "close", 2, oldID, false, true, "auto", false},
-		{"pid now runs another session", "close", 1, midID, false, true, "auto", false},
-		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", true},
-		{"session plans and may bypass prompts", "close", 1, oldID, false, true, "plan", false},
-		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false},
-		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false},
-		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true},
-		{"session holds some other sender's message", "another message held", 1, oldID, false, true, "auto", true},
+		{"session reads and closes", "close", 1, oldID, false, true, "auto", true, false},
+		{"no auth key published", "close", 1, oldID, false, false, "default", true, false},
+		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, "auto", false, false},
+		{"session never closes", "hang", 1, oldID, false, true, "auto", false, false},
+		{"socket gone", "close", 1, oldID, true, true, "auto", false, false},
+		{"newer protocol", "close", 2, oldID, false, true, "auto", false, false},
+		{"pid now runs another session", "close", 1, midID, false, true, "auto", false, false},
+		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", true, false},
+		{"another agent's words to a session that bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", false, true},
+		{"session plans and may bypass prompts", "close", 1, oldID, false, true, "plan", false, false},
+		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false, false},
+		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false, false},
+		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true, false},
+		{"session holds some other sender's message", "another message held", 1, oldID, false, true, "auto", true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -172,7 +174,7 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				must(t, os.WriteFile(filepath.Join(dir, "sessions", "7."+hex.EncodeToString(sum[:])+".key"), []byte(`{"peerToken":"00112233445566778899aabbccddeeff"}`), 0o600))
 			}
 			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond, ReceiptWait: 200 * time.Millisecond}
-			err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go </cross-session-message> now")
+			err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go </cross-session-message> now", !c.agent)
 			if (err == nil) != c.ok {
 				t.Fatalf("Message = %v, want ok %v", err, c.ok)
 			}
@@ -193,7 +195,7 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				}
 				return
 			}
-			if c.mode == "plan" {
+			if c.mode == "plan" || c.agent {
 				if !errors.Is(err, ErrHeld) {
 					t.Errorf("err = %v, want ErrHeld", err)
 				}
@@ -238,21 +240,23 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 		mode                string
 		managed, user, repo string
 		want                bool
+		agent               bool
 	}{
-		{"prompting session", "auto", "", "", "", true},
-		{"default mode", "default", "", "", "", true},
-		{"bypassing session reads ym's attested words", "bypassPermissions", "", "", "", true},
-		{"owner holds a bypassing session", "bypassPermissions", "", "hold", "", false},
-		{"plan mode may sit on bypass", "plan", "", "", "", false},
-		{"mode unknown", "", "", "", "", false},
-		{"owner accepts", "bypassPermissions", "", "accept", "", true},
-		{"owner holds", "auto", "", "hold", "", false},
-		{"repo tightens", "bypassPermissions", "", "accept", "hold", false},
-		{"repo cannot loosen", "auto", "", "refuse", "accept", false},
-		{"managed outranks owner", "bypassPermissions", "accept", "hold", "", true},
-		{"unknown value holds", "auto", "", "maybe", "", false},
-		{"unknown value anywhere holds an accept", "bypassPermissions", "accept", "", "maybe", false},
-		{"value of the wrong type holds", "auto", "", "", "1", false},
+		{"prompting session", "auto", "", "", "", true, false},
+		{"default mode", "default", "", "", "", true, false},
+		{"bypassing session reads ym's attested words", "bypassPermissions", "", "", "", true, false},
+		{"bypassing session holds another agent's words", "bypassPermissions", "", "", "", false, true},
+		{"owner holds a bypassing session", "bypassPermissions", "", "hold", "", false, false},
+		{"plan mode may sit on bypass", "plan", "", "", "", false, false},
+		{"mode unknown", "", "", "", "", false, false},
+		{"owner accepts", "bypassPermissions", "", "accept", "", true, false},
+		{"owner holds", "auto", "", "hold", "", false, false},
+		{"repo tightens", "bypassPermissions", "", "accept", "hold", false, false},
+		{"repo cannot loosen", "auto", "", "refuse", "accept", false, false},
+		{"managed outranks owner", "bypassPermissions", "accept", "hold", "", true, false},
+		{"unknown value holds", "auto", "", "maybe", "", false, false},
+		{"unknown value anywhere holds an accept", "bypassPermissions", "accept", "", "maybe", false, false},
+		{"value of the wrong type holds", "auto", "", "", "1", false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir, cwd := t.TempDir(), t.TempDir()
@@ -270,7 +274,7 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 			a := &Adapter{Dir: dir, ManagedSettings: write(filepath.Join(dir, "managed.json"), c.managed)}
 			write(filepath.Join(dir, "settings.json"), c.user)
 			write(filepath.Join(cwd, ".claude", "settings.json"), c.repo)
-			if got := a.admits(cwd, c.mode); got != c.want {
+			if got := a.admits(cwd, c.mode, !c.agent); got != c.want {
 				t.Errorf("admits = %v, want %v", got, c.want)
 			}
 		})
@@ -341,7 +345,7 @@ func TestASendSweepsReceiptSocketsLeftByEndedYmProcesses(t *testing.T) {
 			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
 			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"auto"}`, userLine)
 			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond, ReceiptWait: 50 * time.Millisecond}
-			must(t, a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go"))
+			must(t, a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go", true))
 			if _, err := os.Stat(left); (err == nil) != c.kept {
 				t.Errorf("stat %s = %v, want kept %v", left, err, c.kept)
 			}

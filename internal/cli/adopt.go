@@ -74,9 +74,12 @@ func (l launcher) takeOver(from core.Live, harnessName, id string) (launch.Recor
 	return rec, l.records.Save(rec)
 }
 
-// Send types text into s when it runs on ym's server, holding it while a permission prompt shows; any other session gets it
-// through its own inbox when its harness has one, else from ym item inbox.
-func (l launcher) Send(s core.Live, text string) (string, error) {
+// Send types the owner's text into s when it runs on ym's server, holding it while a permission prompt shows; any other session
+// gets it through its own inbox when its harness has one, else from ym item inbox.
+func (l launcher) Send(s core.Live, text string) (string, error) { return l.sendFrom(s, text, true) }
+
+// sendFrom is Send for text that is the owner's own words only when owner is set.
+func (l launcher) sendFrom(s core.Live, text string, owner bool) (string, error) {
 	if s.ID == "" {
 		return "", fmt.Errorf("pid %d has no session id yet", s.PID)
 	}
@@ -86,7 +89,7 @@ func (l launcher) Send(s core.Live, text string) (string, error) {
 	}
 	var inbox func(string) bool
 	if len(s.Copies) <= 1 {
-		inbox = func(text string) bool { return l.core.Direct(s.Session, "msg: "+text) }
+		inbox = func(text string) bool { return l.core.Direct(s.Session, "msg: "+text, owner) }
 	}
 	return l.send(s.ID, pane, text, inbox)
 }
@@ -218,7 +221,8 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			s, err := e.core.Find(args[0])
 			switch {
 			case err == nil:
-				msg, err = l.Send(s, text)
+				_, callErr := e.core.Calling(os.Getpid(), os.Getenv)
+				msg, err = l.sendFrom(s, text, errors.Is(callErr, core.ErrNotFound))
 			case errors.Is(err, core.ErrNotFound) && len(args[0]) >= 32:
 				msg, err = l.send(args[0], nil, text, nil)
 			}

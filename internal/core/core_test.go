@@ -27,7 +27,7 @@ var errNoInbox = errors.New("no inbox")
 
 func (f *fakeHarness) Successor(id, near string) string { return f.next[id] }
 
-func (f *fakeHarness) Message(s Session, text string) error {
+func (f *fakeHarness) Message(s Session, text string, owner bool) error {
 	err, ok := f.inbox[s.ID]
 	if !ok {
 		return errNoInbox
