@@ -7,9 +7,17 @@ description: Use in any Claude Code or Codex session to file open questions for 
 
 `ym` finds the session you run in by walking up from its own process to your claude or codex process. Every command below works from any session, in any terminal, with no setup.
 
+## The bar: file rarely
+
+File an item only when the answer changes what gets built, spends money, touches the owner's accounts or permissions, or picks between product directions the owner owns. Anything else you decide and do: implementation details, naming, library or tool choices, and anything with a conventional default. Do not file it, and do not ask about it in chat. If you could pick a default and move on, that is the answer.
+
+Always the owner's, so file them: authorization to build, merging (except where his standing rules delegate it), PR split, fold or retarget, core-capability or parity gaps, deploys outside what he has delegated, and messages to other people on his behalf. Never decide these silently.
+
+`default` is for real product defaults only, never for an engineering choice you could just make. `chore` is only for actions that need the owner's own hands. Before filing one, try the action yourself; file it only if it truly needs the owner's hands (logins, payments, his approvals, anything your safety rules forbid you to do).
+
 ## Open questions are items, never chat blocks
 
-Never print an open-questions block in chat. File each question:
+Never print an open-questions block in chat. File each question that clears the bar:
 
 ```
 ym item add --kind decision|default|chore --question "<one line>" \
