@@ -74,7 +74,7 @@ func resumeArgv(rec launch.Record) ([]string, error) {
 	return append(append([]string{b, "resume"}, codexDirs(rec)...), rec.Session), nil
 }
 
-// codexDirs lets Codex's sandbox write ym's state, so ym item works, and the repository's git dir, so the worktree can commit.
+// codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
 // A state dir set by $YAMNAYA_STATE_DIR is passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
 	var args []string
@@ -84,10 +84,24 @@ func codexDirs(rec launch.Record) []string {
 	if dir := os.Getenv("YAMNAYA_STATE_DIR"); dir != "" {
 		args = append(args, "-c", "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(dir))
 	}
-	if rec.Worktree.GitDir != "" {
-		args = append(args, "--add-dir", rec.Worktree.GitDir)
+	for _, dir := range commitDirs(rec.Worktree) {
+		args = append(args, "--add-dir", dir)
 	}
 	return args
+}
+
+// commitDirs are the parts of w's git dir a commit, branch or fetch writes, leaving its hooks and config out of the sandbox's reach.
+func commitDirs(w launch.Worktree) []string {
+	if w.GitDir == "" {
+		return nil
+	}
+	dirs := []string{filepath.Join(w.GitDir, "objects"), filepath.Join(w.GitDir, "refs"), filepath.Join(w.GitDir, "logs")}
+	if b, err := os.ReadFile(filepath.Join(w.Path, ".git")); err == nil {
+		if admin, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: "); ok {
+			dirs = append(dirs, admin)
+		}
+	}
+	return dirs
 }
 
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.

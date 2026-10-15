@@ -19,7 +19,16 @@ func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
 	}
 	t.Setenv("PATH", bins)
 	t.Setenv("YAMNAYA_STATE_DIR", state)
-	wt := launch.Worktree{Path: "/src/app-wt-x", Branch: "x", GitDir: "/src/app/.git"}
+	src := t.TempDir()
+	gitDir, admin := filepath.Join(src, "app", ".git"), filepath.Join(src, "app", ".git", "worktrees", "app-wt-x")
+	wt := launch.Worktree{Path: filepath.Join(src, "app-wt-x"), Branch: "x", GitDir: gitDir}
+	if err := os.MkdirAll(wt.Path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt.Path, ".git"), []byte("gitdir: "+admin+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commits := []string{filepath.Join(gitDir, "objects"), filepath.Join(gitDir, "refs"), filepath.Join(gitDir, "logs"), admin}
 	for _, c := range []struct {
 		name   string
 		rec    launch.Record
@@ -42,8 +51,15 @@ func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
 				}
 			}
 			passes := slices.Contains(argv, "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(state))
-			if got := dirs[state] && dirs["/src/app/.git"] && passes; got != c.writes {
-				t.Fatalf("argv %q: writable state and git dir, state dir in its shells = %v, want %v", argv, got, c.writes)
+			got := dirs[state] && passes
+			for _, d := range commits {
+				got = got && dirs[d]
+			}
+			if got != c.writes {
+				t.Fatalf("argv %q: writable state and commit dirs, state dir in its shells = %v, want %v", argv, got, c.writes)
+			}
+			if dirs[gitDir] || dirs[filepath.Join(gitDir, "hooks")] {
+				t.Fatalf("argv %q opens the git dir's hooks and config to the sandbox", argv)
 			}
 			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Session {
 				t.Fatalf("argv %q must end with the prompt or session", argv)
