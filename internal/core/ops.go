@@ -37,6 +37,30 @@ func (c *Core) Identify(pid int) (Caller, error) {
 	return Caller{}, fmt.Errorf("no claude or codex process above pid %d: %w", pid, ErrNotFound)
 }
 
+// CallerOf is the session ref names: a live session's full id or an unambiguous prefix of at least six characters, else ref itself.
+func (c *Core) CallerOf(ref string) (Caller, error) {
+	b, err := c.Board()
+	if err != nil {
+		return Caller{}, err
+	}
+	var hits []Live
+	for _, s := range b.Sessions {
+		if s.Key() == ref {
+			return Caller{Harness: s.Harness, Session: s.Key(), PID: s.PID}, nil
+		}
+		if len(ref) >= 6 && strings.HasPrefix(s.Key(), ref) {
+			hits = append(hits, s)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return Caller{Session: ref}, nil
+	case 1:
+		return Caller{Harness: hits[0].Harness, Session: hits[0].Key(), PID: hits[0].PID}, nil
+	}
+	return Caller{}, fmt.Errorf("session %q is ambiguous: %s and %s", ref, hits[0].Key(), hits[1].Key())
+}
+
 // Target is one place a session can be opened.
 type Target struct {
 	Session Session

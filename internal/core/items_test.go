@@ -139,3 +139,29 @@ func TestItemsGoInTheFilingSessionsRepoWhateverWorktreeItRunsIn(t *testing.T) {
 		}
 	}
 }
+
+func TestASessionPrefixFilesAsTheLiveSessionItNames(t *testing.T) {
+	w := newWorld(t)
+	w.core.Git = func(dir string) GitInfo { return GitInfo{Top: dir, Common: "/src/app/.git"} }
+	w.procs = append(w.procs, procOf(10, "claude"), procOf(11, "claude"))
+	w.claude.sessions[10] = Session{ID: "c5c2b21b-51c6-4f26-b989-73dd80b07792", Cwd: "/src/app", Status: Idle}
+	w.claude.sessions[11] = Session{ID: "c5c2b2ff-0000-4000-8000-000000000000", Cwd: "/src/app", Status: Idle}
+	for ref, want := range map[string]string{
+		"c5c2b21b":                             "c5c2b21b-51c6-4f26-b989-73dd80b07792",
+		"c5c2b21b-51c6-4f26-b989-73dd80b07792": "c5c2b21b-51c6-4f26-b989-73dd80b07792",
+		"0ended-session":                       "0ended-session",
+	} {
+		c, err := w.core.CallerOf(ref)
+		if err != nil || c.Session != want {
+			t.Errorf("CallerOf(%q) = %+v, %v; want session %q", ref, c, err, want)
+		}
+	}
+	c, _ := w.core.CallerOf("c5c2b21b")
+	it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: c.Session, Harness: c.Harness})
+	if err != nil || it.Scope != "/src/app/.git" || it.Harness != "claude" {
+		t.Errorf("filed %+v (%v), want it scoped to the session's repo", it, err)
+	}
+	if _, err := w.core.CallerOf("c5c2b2"); err == nil {
+		t.Error("a prefix two live sessions share resolved, want an error")
+	}
+}

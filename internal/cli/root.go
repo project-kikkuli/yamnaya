@@ -112,7 +112,7 @@ func NewRoot() *cobra.Command {
 // caller is the session ym was run from: --session, else the nearest claude or codex ancestor process.
 func (e *env) caller() (core.Caller, error) {
 	if e.session != "" {
-		return core.Caller{Session: e.session}, nil
+		return e.core.CallerOf(e.session)
 	}
 	c, err := e.core.Identify(os.Getpid())
 	if errors.Is(err, core.ErrNotFound) {
