@@ -18,10 +18,12 @@ const (
 	Waiting
 	Idle
 	Done
+	// Moved is a session whose conversation continues under another id, such as a Claude session sent to the background.
+	Moved
 )
 
 func (s Status) String() string {
-	return [...]string{"unknown", "busy", "waiting", "idle", "done"}[s]
+	return [...]string{"unknown", "busy", "waiting", "idle", "done", "moved"}[s]
 }
 
 // Prompt is a harness dialog waiting for the owner, such as a tool permission.
@@ -122,8 +124,10 @@ type Session struct {
 	Status     Status
 	WaitingFor string
 	Since      time.Time
-	Crew       []Member
-	Prompt     *Prompt
+	// Successor is the session this one continued in, set when Status is Moved.
+	Successor string
+	Crew      []Member
+	Prompt    *Prompt
 	Facts
 	// CheckScreen asks core to look for a prompt on screen because the harness files cannot show one.
 	CheckScreen bool
@@ -157,6 +161,18 @@ type Harness interface {
 // Waiter is a harness whose own files say when a process waits on a dialog, even one drawn past the screen's edge.
 type Waiter interface {
 	Waiting(pid int) bool
+}
+
+// Continuer is a harness whose conversations can continue under a new session id.
+type Continuer interface {
+	// Successor is the session id continues in, "" when it has not moved.
+	Successor(id string) string
+}
+
+// Messenger is a harness that hands text straight to a running session's own inbox, busy or idle.
+type Messenger interface {
+	// Message returns nil only once the session's inbox took text.
+	Message(s Session, text string) error
 }
 
 // Handle points at one terminal inside a host.

@@ -59,27 +59,42 @@ func CallerFromEnv(getenv func(string) string) (Caller, bool) {
 }
 
 // CallerOf is the session ref names: a live session's full id or an unambiguous prefix of at least six characters, else ref itself.
+// A session that continued under another id stands for the one it continued in.
 func (c *Core) CallerOf(ref string) (Caller, error) {
 	b, err := c.Board()
 	if err != nil {
 		return Caller{}, err
 	}
-	var hits []Live
+	keys := make([]string, 0, len(b.Sessions)+len(b.moved))
 	for _, s := range b.Sessions {
-		if s.Key() == ref {
-			return Caller{Harness: s.Harness, Session: s.Key(), PID: s.PID}, nil
+		keys = append(keys, s.Key())
+	}
+	for old := range b.moved {
+		keys = append(keys, old)
+	}
+	id := ref
+	var hits []string
+	for _, k := range keys {
+		if k == ref {
+			hits = []string{k}
+			break
 		}
-		if len(ref) >= 6 && strings.HasPrefix(s.Key(), ref) {
-			hits = append(hits, s)
+		if len(ref) >= 6 && strings.HasPrefix(k, ref) && !contains(hits, k) {
+			hits = append(hits, k)
 		}
 	}
 	switch len(hits) {
 	case 0:
-		return Caller{Session: ref}, nil
 	case 1:
-		return Caller{Harness: hits[0].Harness, Session: hits[0].Key(), PID: hits[0].PID}, nil
+		id = hits[0]
+	default:
+		return Caller{}, fmt.Errorf("session %q is ambiguous: %s and %s", ref, hits[0], hits[1])
 	}
-	return Caller{}, fmt.Errorf("session %q is ambiguous: %s and %s", ref, hits[0].Key(), hits[1].Key())
+	id = c.Resolve(id)
+	if s, ok := b.Session(id); ok {
+		return Caller{Harness: s.Harness, Session: s.Key(), PID: s.PID}, nil
+	}
+	return Caller{Session: id}, nil
 }
 
 // Target is one place a session can be opened.
@@ -199,16 +214,16 @@ type Delivery int
 const (
 	Queued Delivery = iota
 	Typed
+	// Sent went straight to the session's own inbox, which reads it after the current turn.
+	Sent
 )
 
 func (d Delivery) String() string {
-	if d == Typed {
-		return "typed into the agent's terminal"
-	}
-	return "queued for the agent's next turn"
+	return [...]string{"queued for the agent's next turn", "typed into the agent's terminal", "sent to the agent's session inbox"}[d]
 }
 
-// Answer records the answer and types it into the source agent when that agent sits idle at its prompt in a host that accepts input.
+// Answer records the answer and hands it to the source agent, wherever its conversation runs now: through the session's own inbox,
+// else typed in when it sits idle at its prompt in a host that accepts input.
 func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	it, err := c.Store.Transition(id, ItemAnswered, text)
 	if err != nil {
@@ -218,7 +233,7 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	return it, d, nil
 }
 
-// Dismiss closes the item for good and tells an idle agent.
+// Dismiss closes the item for good and tells the agent the way Answer does.
 func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	it, err := c.Store.Transition(id, ItemDismissed, reason)
 	if err != nil {
@@ -233,8 +248,17 @@ func (c *Core) Snooze(id string) (Item, error) { return c.Store.Transition(id, I
 func (c *Core) Reopen(id string) (Item, error) { return c.Store.Transition(id, ItemOpen, "") }
 
 func (c *Core) deliver(b Board, it Item, text string) Delivery {
-	s, ok := b.Session(it.Session)
-	if !ok || s.Status != Idle || len(s.Copies) > 1 || s.Handle == nil {
+	s, ok := b.Session(c.Resolve(it.Session))
+	if !ok || len(s.Copies) > 1 {
+		return Queued
+	}
+	if c.Direct(s.Session, text) {
+		if c.Store.MarkDelivered(it.Key()) != nil {
+			return Queued
+		}
+		return Sent
+	}
+	if s.Status != Idle || s.Handle == nil {
 		return Queued
 	}
 	host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
@@ -249,18 +273,48 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// Inbox returns the session's answered and dismissed items it has not received, and marks them received.
+// Inbox returns the answered and dismissed items the session has not received, including those filed under sessions it continues, and marks them received.
 func (c *Core) Inbox(session string) ([]Item, error) {
-	items, err := c.Store.Items(ItemFilter{Sessions: []string{session}, Undelivered: true})
+	items, err := c.Store.Items(ItemFilter{Undelivered: true})
 	if err != nil {
 		return nil, err
 	}
+	mine := c.carries(session)
+	out := []Item{}
 	for _, it := range items {
+		if !mine(it.Session) {
+			continue
+		}
 		if err := c.Store.MarkDelivered(it.Key()); err != nil {
 			return nil, err
 		}
+		out = append(out, it)
 	}
-	return items, nil
+	return out, nil
+}
+
+// TakeMessages hands the session its pending messages, including those sent to sessions it continues, and marks them delivered by the inbox.
+func (c *Core) TakeMessages(session string) ([]Message, error) {
+	pending, err := c.Store.PendingMessages()
+	if err != nil {
+		return nil, err
+	}
+	mine := c.carries(session)
+	var out []Message
+	for _, m := range pending {
+		if !mine(m.Session) {
+			continue
+		}
+		ok, err := c.Store.Claim(m.Seq, MsgInbox)
+		if err != nil {
+			return out, err
+		}
+		if ok {
+			m.State = MsgInbox
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 // ProjectKey resolves a project by key, name, or any of its session ids.

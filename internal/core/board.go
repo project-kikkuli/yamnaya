@@ -121,9 +121,15 @@ type Board struct {
 
 	parents map[string]string
 	lin     Lineage
+	// moved maps each live process's session that continued under another id to the session carrying it now.
+	moved map[string]string
 }
 
+// Session is the live session key names, or the one key's conversation continued in.
 func (b Board) Session(key string) (Live, bool) {
+	if next, ok := b.moved[key]; ok {
+		key = next
+	}
 	for _, s := range b.Sessions {
 		if s.Key() == key {
 			return s, true
@@ -225,7 +231,12 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	table := proc.Index(procs)
+	b.moved = map[string]string{}
 	for _, s := range found {
+		if s.Status == Moved {
+			b.moved[s.ID] = c.Resolve(s.ID)
+			continue
+		}
 		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.ID]}
 		h, host := c.locate(s.TTY)
 		if host == nil {
@@ -246,12 +257,20 @@ func (c *Core) Board() (Board, error) {
 		b.Sessions = append(b.Sessions, l)
 	}
 	c.attachPRs(b.Sessions)
-	if err := c.attachMessages(b.Sessions); err != nil {
+	if err := c.attachMessages(b.Sessions, b.moved); err != nil {
 		return b, err
 	}
 	lin, err := c.Store.Lineage()
 	if err != nil {
 		return b, err
+	}
+	for old, now := range b.moved {
+		if _, ok := lin.Parent[now]; !ok && now != old {
+			if err := c.Store.Link(now, old); err != nil {
+				return b, err
+			}
+			lin.Parent[now] = old
+		}
 	}
 	parents := processParents(b.Sessions, table)
 	for _, s := range b.Sessions {
@@ -268,7 +287,7 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	dormant := c.dormant(b.Sessions)
+	dormant := c.dormant(b.Sessions, b.moved)
 	for _, d := range dormant {
 		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
 			parents[d.ID()] = d.Parent
@@ -546,13 +565,16 @@ func projectOf(key string, parents map[string]string, lin Lineage) string {
 }
 
 // dormant lists launched sessions that exited and run nowhere else, placed in their repos.
-func (c *Core) dormant(live []Live) []Dormant {
+func (c *Core) dormant(live []Live, moved map[string]string) []Dormant {
 	if c.Launches == nil {
 		return nil
 	}
 	running := map[string]bool{}
 	for _, s := range live {
 		running[s.Key()] = true
+	}
+	for old := range moved {
+		running[old] = true
 	}
 	var out []Dormant
 	for _, d := range c.Launches.Dormant() {

@@ -8,7 +8,23 @@ import (
 )
 
 // Find reads the one live session whose id is ref or starts with a ref of six or more characters, without reading the whole board.
+// A session that continued under another id yields the live session it continued in.
 func (c *Core) Find(ref string) (Live, error) {
+	l, err := c.find(ref)
+	id := ref
+	if err == nil {
+		if l.Status != Moved {
+			return l, nil
+		}
+		id = l.ID
+	}
+	if next := c.Resolve(id); next != id {
+		return c.find(next)
+	}
+	return l, err
+}
+
+func (c *Core) find(ref string) (Live, error) {
 	procs, err := c.Procs()
 	if err != nil {
 		return Live{}, err

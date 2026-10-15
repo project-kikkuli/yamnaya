@@ -31,22 +31,30 @@ const (
 	Held
 	// Queued waits for the agent to read it from ym item inbox.
 	Queued
+	// Sent went straight to the session's own inbox, which reads it after the current turn.
+	Sent
 )
 
 func (o Outcome) String() string {
-	return [...]string{"typed into its pane", "held until its permission prompt clears", "queued for its next ym item inbox"}[o]
+	return [...]string{"typed into its pane", "held until its permission prompt clears", "queued for its next ym item inbox", "sent to its session inbox"}[o]
 }
 
-// Sender delivers follow-up messages: typed into a ym-server pane even mid-turn, otherwise left for the agent's inbox.
+// Sender delivers follow-up messages: typed into a ym-server pane even mid-turn, else handed to the session's own inbox, else left for ym item inbox.
 type Sender struct {
 	Box  Mailbox
 	Poll time.Duration
+	// Inbox hands text to the session's own inbox when it runs off ym's server; nil or false leaves it for ym item inbox.
+	Inbox func(text string) bool
 }
 
 // Send delivers text to session; pane is nil when the session does not run on ym's server.
 func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outcome, error) {
 	text = strings.Join(strings.Fields(text), " ")
 	if pane == nil {
+		if s.Inbox != nil && s.Inbox(text) {
+			m, err := s.Box.AddMessage(session, text, core.MsgSent)
+			return m, Sent, err
+		}
 		m, err := s.Box.AddMessage(session, text, core.MsgPending)
 		return m, Queued, err
 	}

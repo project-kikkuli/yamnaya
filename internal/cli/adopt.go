@@ -74,7 +74,8 @@ func (l launcher) takeOver(from core.Live, harnessName, id string) (launch.Recor
 	return rec, l.records.Save(rec)
 }
 
-// Send types text into s when it runs on ym's server, holding it while a permission prompt shows; any other session gets it from ym item inbox.
+// Send types text into s when it runs on ym's server, holding it while a permission prompt shows; any other session gets it
+// through its own inbox when its harness has one, else from ym item inbox.
 func (l launcher) Send(s core.Live, text string) (string, error) {
 	if s.ID == "" {
 		return "", fmt.Errorf("pid %d has no session id yet", s.PID)
@@ -83,11 +84,15 @@ func (l launcher) Send(s core.Live, text string) (string, error) {
 	if s.Handle != nil && s.Handle.Host == l.srv.Name() {
 		pane = l.pane(s.Handle.ID, s.Harness)
 	}
-	return l.send(s.ID, pane, text)
+	var inbox func(string) bool
+	if len(s.Copies) <= 1 {
+		inbox = func(text string) bool { return l.core.Direct(s.Session, "msg: "+text) }
+	}
+	return l.send(s.ID, pane, text, inbox)
 }
 
-func (l launcher) send(session string, pane *serverPane, text string) (string, error) {
-	snd := launch.Sender{Box: l.core.Store}
+func (l launcher) send(session string, pane *serverPane, text string, inbox func(string) bool) (string, error) {
+	snd := launch.Sender{Box: l.core.Store, Inbox: inbox}
 	var p launch.Pane
 	if pane != nil {
 		p = pane
@@ -203,7 +208,7 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				if state == "running" {
 					p = l.pane(pane.ID, rec.Harness)
 				}
-				msg, err := l.send(rec.Session, p, text)
+				msg, err := l.send(rec.Session, p, text, nil)
 				if err != nil {
 					return err
 				}
@@ -215,7 +220,7 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			case err == nil:
 				msg, err = l.Send(s, text)
 			case errors.Is(err, core.ErrNotFound) && len(args[0]) >= 32:
-				msg, err = l.send(args[0], nil, text)
+				msg, err = l.send(args[0], nil, text, nil)
 			}
 			if err != nil {
 				return err

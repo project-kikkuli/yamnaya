@@ -13,6 +13,8 @@ const (
 	MsgTyped = "typed"
 	// MsgInbox was handed to the agent by ym item inbox.
 	MsgInbox = "inbox"
+	// MsgSent went straight to the session's own inbox.
+	MsgSent = "sent"
 )
 
 // Message is a follow-up the owner sent to a session.
@@ -113,32 +115,23 @@ func (s *Store) Unclaim(seq int64) error {
 	return err
 }
 
-// TakeMessages hands the session its pending messages and marks them delivered by the inbox.
-func (s *Store) TakeMessages(session string) ([]Message, error) {
-	pending, err := s.messages(`WHERE session = ? AND state = ?`, session, MsgPending)
-	if err != nil {
-		return nil, err
-	}
-	var out []Message
-	for _, m := range pending {
-		ok, err := s.Claim(m.Seq, MsgInbox)
-		if err != nil {
-			return out, err
-		}
-		if ok {
-			m.State = MsgInbox
-			out = append(out, m)
-		}
-	}
-	return out, nil
+// PendingMessages lists every message still waiting for its session, oldest first.
+func (s *Store) PendingMessages() ([]Message, error) {
+	return s.messages(`WHERE state = ?`, MsgPending)
 }
 
-func (c *Core) attachMessages(sessions []Live) error {
+func (c *Core) attachMessages(sessions []Live, moved map[string]string) error {
+	owner := map[string]string{}
 	var ids []string
 	for _, s := range sessions {
 		if s.ID != "" {
 			ids = append(ids, s.ID)
+			owner[s.ID] = s.ID
 		}
+	}
+	for old, now := range moved {
+		ids = append(ids, old)
+		owner[old] = now
 	}
 	ms, err := c.Store.Messages(ids...)
 	if err != nil {
@@ -146,7 +139,7 @@ func (c *Core) attachMessages(sessions []Live) error {
 	}
 	by := map[string][]Message{}
 	for _, m := range ms {
-		by[m.Session] = append(by[m.Session], m)
+		by[owner[m.Session]] = append(by[owner[m.Session]], m)
 	}
 	for i := range sessions {
 		sessions[i].Messages = by[sessions[i].ID]

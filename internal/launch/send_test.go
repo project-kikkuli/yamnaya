@@ -2,6 +2,7 @@ package launch
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -58,6 +59,8 @@ func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
 		{"agent exited", &pane{dead: true}, Queued, core.MsgPending, 0},
 		{"input box hidden", &pane{prompts: []bool{false}, fails: 1}, Held, core.MsgPending, 0},
 		{"not on ym's server", nil, Queued, core.MsgPending, 0},
+		{"not on ym's server, its inbox takes it", nil, Sent, core.MsgSent, 0},
+		{"not on ym's server, its inbox refuses", nil, Queued, core.MsgPending, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := store(t)
@@ -65,14 +68,25 @@ func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
 			if c.pane != nil {
 				p = c.pane
 			}
-			m, out, err := Sender{Box: st}.Send("s1", p, "  also\n rebase  ")
+			snd := Sender{Box: st}
+			var handed []string
+			if strings.HasPrefix(c.name, "not on ym's server, ") {
+				snd.Inbox = func(text string) bool {
+					handed = append(handed, text)
+					return c.out == Sent
+				}
+			}
+			m, out, err := snd.Send("s1", p, "  also\n rebase  ")
 			if err != nil || out != c.out || m.State != c.state || m.Text != "also rebase" {
 				t.Fatalf("Send = %+v, %v, %v", m, out, err)
+			}
+			if snd.Inbox != nil && (len(handed) != 1 || handed[0] != "also rebase") {
+				t.Fatalf("handed the session inbox %q", handed)
 			}
 			if c.pane != nil && len(c.pane.typed) != c.typed {
 				t.Fatalf("typed %q", c.pane.typed)
 			}
-			taken, _ := st.TakeMessages("s1")
+			taken, _ := (&core.Core{Store: st}).TakeMessages("s1")
 			if want := c.state == core.MsgPending; (len(taken) == 1) != want {
 				t.Fatalf("inbox took %v; pending message should go to the inbox exactly when not typed", taken)
 			}
@@ -99,7 +113,7 @@ func TestHoldTypesOnceThePromptClears(t *testing.T) {
 			snd := Sender{Box: st}
 			m, _ := st.AddMessage("s1", "also rebase", core.MsgPending)
 			if c.inbox {
-				st.TakeMessages("s1")
+				(&core.Core{Store: st}).TakeMessages("s1")
 			}
 			ok, err := snd.Hold(m.Seq, c.pane)
 			if err != nil || ok != c.claimed {

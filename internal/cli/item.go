@@ -199,7 +199,7 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
 			}
-			msgs, err := e.core.Store.TakeMessages(c.Session)
+			msgs, err := e.core.TakeMessages(c.Session)
 			for _, m := range msgs {
 				fmt.Fprintf(cmd.OutOrStdout(), "msg: %s\n", m.Text)
 			}

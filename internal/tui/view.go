@@ -812,7 +812,7 @@ func (m Model) sessionView() string {
 	if len(s.Messages) > 0 {
 		b.WriteString("\n" + pal.bold.Render(" MESSAGES") + "\n")
 		for _, msg := range s.Messages {
-			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgInbox: "via inbox"}[msg.State]
+			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgInbox: "via inbox", core.MsgSent: "sent"}[msg.State]
 			when := age(m.board.At, msg.CreatedAt)
 			if !msg.Delivered.IsZero() {
 				when = "delivered " + age(m.board.At, msg.Delivered)
