@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -312,7 +313,7 @@ func (m *Meter) apply(b batch) {
 
 // build prices every sum and rolls subagents and child threads into their sessions.
 func (m *Meter) build(now time.Time) core.Fleet {
-	f := core.Fleet{Ready: true, At: now, Sessions: map[string]core.SessionSpend{}}
+	f := core.Fleet{Ready: true, At: now, Sessions: map[string]core.SessionSpend{}, Agents: map[string]core.Spend{}}
 	today := day(now)
 	weekStart := day(now.AddDate(0, 0, -6))
 	sessions := map[string]*core.SessionSpend{}
@@ -353,6 +354,10 @@ func (m *Meter) build(now time.Time) core.Fleet {
 			s.Own = s.Own.Plus(sp)
 		}
 		s.ByModel[k.Model] = s.ByModel[k.Model].Plus(sp)
+		if !fl.Root && fl.Harness == claudeName {
+			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.Path), "agent-"), ".jsonl")
+			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
+		}
 		if k.Day == today {
 			f.Today = f.Today.Plus(sp)
 		}

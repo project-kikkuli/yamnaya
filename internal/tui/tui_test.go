@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -326,5 +327,41 @@ func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
 	}
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemOpen {
 		t.Errorf("a live item was dismissed with the stale ones")
+	}
+}
+
+type meter struct{ f core.Fleet }
+
+func (m meter) Fleet(time.Time) core.Fleet { return m.f }
+
+func TestSpendShowsAtEveryLevel(t *testing.T) {
+	m, c, _ := setup(t)
+	c.Meter = meter{core.Fleet{Ready: true,
+		Sessions: map[string]core.SessionSpend{
+			"lead": {ID: "lead", Total: core.Spend{USD: 3}},
+			"twin": {ID: "twin", Total: core.Spend{USD: 40}},
+		},
+		Agents: map[string]core.Spend{"lead/a1": {USD: 1.25}},
+	}}
+	m = refresh(t, m)
+	board := m.View()
+	for _, want := range []string{"$43.00", "$3.00", "$40.00"} {
+		if !strings.Contains(board, want) {
+			t.Fatalf("board lacks %s (repo total, then each mission):\n%s", want, board)
+		}
+	}
+	levels := []struct {
+		keys []string
+		want string
+	}{
+		{[]string{"down", "down", "enter", "enter"}, "$1.25"},
+		{[]string{"enter"}, "$3.00"},
+		{[]string{"enter"}, "$1.25"},
+	}
+	for _, l := range levels {
+		m = press(t, m, l.keys...)
+		if !strings.Contains(m.View(), l.want) {
+			t.Fatalf("mode %v lacks %s:\n%s", m.mode, l.want, m.View())
+		}
 	}
 }

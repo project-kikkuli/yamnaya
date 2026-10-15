@@ -275,14 +275,14 @@ func (c *Core) Board() (Board, error) {
 			b.Projects[i].Repo, b.Projects[i].RepoName = c.crewRepo(b.Projects[i], b.At)
 		}
 	}
-	b.Repos = repos(b.Projects)
-	b.Needs, b.Stale = needs(b)
 	if c.Meter != nil {
 		b.Fleet = c.Meter.Fleet(b.At)
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}
 	}
+	b.Repos = repos(b.Projects)
+	b.Needs, b.Stale = needs(b)
 	return b, nil
 }
 

@@ -231,7 +231,7 @@ func (m Model) repoLine(i int, r core.Repo) string {
 	if pr := prSummary(prsOf(sessions)); pr != "" {
 		parts = append(parts, pr)
 	}
-	if sp := m.spend(sessions...); sp != "" {
+	if sp := m.missionSpend(r.Missions...); sp != "" {
 		parts = append(parts, sp)
 	}
 	return m.mark(i) + bold.Render(pad(r.Name, min(28, max(12, m.width/5)))) + "  " + strings.Join(parts, " · ") + "\n"
@@ -274,7 +274,7 @@ func (m Model) missionLine(i int, p core.Project, indent string) string {
 	}
 	nw := m.nameWidth() - len(indent)
 	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
-	if sp := m.spend(p.Sessions...); sp != "" {
+	if sp := m.missionSpend(p); sp != "" {
 		line += " " + pad(sp, 8)
 	}
 	if len(p.Sessions) > 0 {
@@ -451,8 +451,61 @@ func memberDoing(now time.Time, c core.Member) string {
 	return c.Doing.String() + " " + age(now, c.Doing.At)
 }
 
-// spend is the usage column; it stays empty until a usage source is wired in.
-func (m Model) spend(sessions ...core.Live) string { return "" }
+// spend is what the sessions cost at API prices, subagents and child threads included, or "" until usage is read.
+// A session started by another in the list counts only through it.
+func (m Model) spend(sessions ...core.Live) string {
+	f := m.board.Fleet
+	if !f.Ready || len(sessions) == 0 {
+		return ""
+	}
+	in := map[string]bool{}
+	for _, s := range sessions {
+		in[s.Key()] = true
+	}
+	var total core.Spend
+	for key := range in {
+		counted := false
+		seen := map[string]bool{key: true}
+		for at := f.Sessions[key].Parent; at != "" && !seen[at]; at = f.Sessions[at].Parent {
+			seen[at] = true
+			if in[at] {
+				counted = true
+				break
+			}
+		}
+		if !counted {
+			total = total.Plus(f.Sessions[key].Total)
+		}
+	}
+	return total.Dollars()
+}
+
+// missionSpend is a mission's spend; a repo's is its missions' sum.
+func (m Model) missionSpend(ps ...core.Project) string {
+	if !m.board.Fleet.Ready {
+		return ""
+	}
+	var total core.Spend
+	for _, p := range ps {
+		total = total.Plus(p.Spend)
+	}
+	return total.Dollars()
+}
+
+// memberSpend is one crew member's own spend: a Claude subagent's transcript, or a Codex child thread with its own children.
+func (m Model) memberSpend(s core.Live, c core.Member) string {
+	f := m.board.Fleet
+	if !f.Ready {
+		return ""
+	}
+	if sp, ok := f.Agents[s.Key()+"/"+c.ID]; ok {
+		return sp.Dollars()
+	}
+	if ss, ok := f.Sessions[c.ID]; ok {
+		return ss.Total.Dollars()
+	}
+	return core.Spend{}.Dollars()
+}
 
 func (m Model) needLines(i int, n core.Need) string {
 	name := pad(m.projectName(n.Project), min(32, max(16, m.width/4)))
@@ -627,7 +680,7 @@ func (m Model) detailView() string {
 		}
 		i++
 		for _, c := range s.Crew {
-			b.WriteString(m.crewLine(i, c))
+			b.WriteString(m.crewLine(i, s, c))
 			i++
 		}
 	}
@@ -654,7 +707,7 @@ func (m Model) detailView() string {
 	return b.String()
 }
 
-func (m Model) crewLine(i int, c core.Member) string {
+func (m Model) crewLine(i int, s core.Live, c core.Member) string {
 	kind := c.Type
 	if kind == "" {
 		kind = "subagent"
@@ -663,8 +716,8 @@ func (m Model) crewLine(i int, c core.Member) string {
 		}
 	}
 	l := m.mark(i) + "  └ " + pad(c.Name, max(16, m.nameWidth()-4)) + " " + pad(kind, 16) + " " + pad(c.Status.String(), 8) + " " + pad(shortModel(c.Model), 10)
-	if sp := m.spend(); sp != "" {
-		l += " " + sp
+	if sp := m.memberSpend(s, c); sp != "" {
+		l += " " + pad(sp, 8)
 	}
 	if c.Status != core.Done {
 		l += " " + memberDoing(m.board.At, c)
@@ -767,7 +820,7 @@ func (m Model) sessionView() string {
 	b.WriteString("\n" + bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
 	i := 0
 	for _, c := range s.Crew {
-		b.WriteString(m.crewLine(i, c))
+		b.WriteString(m.crewLine(i, *s, c))
 		i++
 	}
 	if len(s.Crew) == 0 {
@@ -826,7 +879,7 @@ func (m Model) agentView() string {
 	}
 	m.field(&b, "status", status)
 	m.field(&b, "model", c.Model)
-	m.field(&b, "spend", m.spend())
+	m.field(&b, "spend", m.memberSpend(*s, *c))
 	m.field(&b, "worktree", c.Worktree)
 	if c.Doing.Tool != "" {
 		label := "doing now"

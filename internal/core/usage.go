@@ -92,6 +92,8 @@ type Fleet struct {
 	Today    Spend
 	Week     Spend
 	Sessions map[string]SessionSpend
+	// Agents is each Claude subagent's own spend, keyed "<session>/<agent id>".
+	Agents map[string]Spend
 }
 
 // Meter reads usage and limits without blocking the board; Ready is false until its first scan lands.

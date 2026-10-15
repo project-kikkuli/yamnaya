@@ -8,8 +8,6 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-const spendWidth = 8
-
 // staleAfter is how old a limit report may be before the header shows its age.
 const staleAfter = 10 * time.Minute
 
@@ -49,12 +47,4 @@ func fleetLine(f core.Fleet, now time.Time) string {
 		parts = append(parts, "api spend today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
 	}
 	return " " + strings.Join(parts, "   ")
-}
-
-// spendCol is the mission's spend cell, or nothing until usage is read.
-func (m Model) spendCol(s string) string {
-	if !m.board.Fleet.Ready {
-		return ""
-	}
-	return pad(s, spendWidth) + " "
 }
