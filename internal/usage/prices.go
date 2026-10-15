@@ -186,7 +186,7 @@ func (p *Prices) Cost(name string, t core.Tokens, c class) (float64, bool) {
 		usd *= multiplier(m.mult, "us", 1.1)
 	}
 	if c.Fast {
-		usd *= multiplier(m.mult, "fast", 1)
+		usd *= multiplier(m.mult, "fast", 6)
 	}
 	return usd, true
 }

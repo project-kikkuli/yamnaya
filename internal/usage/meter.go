@@ -228,7 +228,7 @@ func (m *Meter) parse(work []*parsed) {
 
 // merge turns parsed lines into ledger writes, counting each Claude response once across all files at its largest reported usage.
 func (m *Meter) merge(work []*parsed) (batch, error) {
-	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}}
+	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}, limits: map[string]core.Limit{}}
 	var ids []string
 	for _, p := range work {
 		if p.reset {
@@ -275,8 +275,12 @@ func (m *Meter) merge(work []*parsed) (batch, error) {
 			add(sumKey{File: p.f.ID, Model: t.Model, Day: t.Day, Class: t.Class}, t.Tokens)
 		}
 		for _, l := range p.codex.limits {
-			if old, ok := m.limits[l.Harness+"/"+l.Name]; !ok || !old.Seen.After(l.Seen) {
-				b.limits = append(b.limits, l)
+			key := l.Harness + "/" + l.Name
+			if old, ok := m.limits[key]; ok && old.Seen.After(l.Seen) {
+				continue
+			}
+			if old, ok := b.limits[key]; !ok || !old.Seen.After(l.Seen) {
+				b.limits[key] = l
 			}
 		}
 	}

@@ -196,7 +196,7 @@ type batch struct {
 	files     []*file
 	responses map[string]*stored
 	sums      map[sumKey]core.Tokens
-	limits    []core.Limit
+	limits    map[string]core.Limit
 }
 
 func (l *ledger) commit(b batch) error {
@@ -244,10 +244,10 @@ func (l *ledger) commit(b batch) error {
 		}
 	}
 	st.Close()
-	for _, lim := range b.limits {
+	for key, lim := range b.limits {
 		body, _ := json.Marshal(lim)
 		if _, err := tx.Exec(`INSERT INTO ym_usage_limits (name, harness, body) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET body = excluded.body`,
-			lim.Harness+"/"+lim.Name, lim.Harness, string(body)); err != nil {
+			key, lim.Harness, string(body)); err != nil {
 			return err
 		}
 	}

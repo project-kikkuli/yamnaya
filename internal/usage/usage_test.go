@@ -236,7 +236,7 @@ func TestLimitsDropExpiredWindowsAndKeepTheLatest(t *testing.T) {
 	cases := []struct {
 		name   string
 		claude string
-		codex  []string
+		codex  map[string][]string
 		want   []string
 	}{
 		{
@@ -246,12 +246,20 @@ func TestLimitsDropExpiredWindowsAndKeepTheLatest(t *testing.T) {
 		},
 		{
 			name: "codex windows by limit, latest report wins",
-			codex: []string{
+			codex: map[string][]string{threadA: {
 				fmt.Sprintf(`{"timestamp":"2026-10-15T12:00:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":5,"window_minutes":299,"resets_at":%d},"secondary":{"used_percent":30,"window_minutes":10079,"resets_at":%d},"plan_type":"pro"}}}`+"\n", now.Add(time.Hour).Unix(), now.Add(72*time.Hour).Unix()),
 				fmt.Sprintf(`{"timestamp":"2026-10-15T12:05:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":9,"window_minutes":299,"resets_at":%d},"secondary":null,"plan_type":"pro"}}}`+"\n", now.Add(time.Hour).Unix()),
 				fmt.Sprintf(`{"timestamp":"2026-10-15T12:06:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"premium","primary":{"used_percent":80,"window_minutes":10080,"resets_at":%d}}}}`+"\n", now.Add(-time.Hour).Unix()),
-			},
+			}},
 			want: []string{"codex codex 5h 9", "codex codex 7d 30"},
+		},
+		{
+			name: "the latest report wins across rollouts read in one scan",
+			codex: map[string][]string{
+				threadA: {fmt.Sprintf(`{"timestamp":"2026-10-15T12:10:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":40,"window_minutes":299,"resets_at":%d}}}}`+"\n", now.Add(time.Hour).Unix())},
+				threadB: {fmt.Sprintf(`{"timestamp":"2026-10-15T12:00:00Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":10,"window_minutes":299,"resets_at":%d}}}}`+"\n", now.Add(time.Hour).Unix())},
+			},
+			want: []string{"codex codex 5h 40"},
 		},
 	}
 	for _, c := range cases {
@@ -265,18 +273,22 @@ func TestLimitsDropExpiredWindowsAndKeepTheLatest(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if c.codex != nil {
-				write(t, filepath.Join(m.CodexHome, "sessions", "rollout-2026-10-15T12-00-00-"+threadA+".jsonl"), c.codex...)
+			for thread, lines := range c.codex {
+				write(t, filepath.Join(m.CodexHome, "sessions", "rollout-2026-10-15T12-00-00-"+thread+".jsonl"), lines...)
 			}
-			if _, err := m.Scan(now); err != nil {
-				t.Fatal(err)
-			}
-			var got []string
-			for _, l := range m.Fleet(now).Limits {
-				got = append(got, fmt.Sprintf("%s %s %.0f", l.Harness, l.Name, l.Used))
-			}
-			if strings.Join(got, ",") != strings.Join(c.want, ",") {
-				t.Errorf("limits = %v, want %v", got, c.want)
+			reopened := &Meter{ClaudeDir: m.ClaudeDir, CodexHome: m.CodexHome, StateDir: m.StateDir, Every: time.Hour}
+			t.Cleanup(func() { reopened.Close() })
+			for _, mm := range []*Meter{m, reopened} {
+				if _, err := mm.Scan(now); err != nil {
+					t.Fatal(err)
+				}
+				var got []string
+				for _, l := range mm.Fleet(now).Limits {
+					got = append(got, fmt.Sprintf("%s %s %.0f", l.Harness, l.Name, l.Used))
+				}
+				if strings.Join(got, ",") != strings.Join(c.want, ",") {
+					t.Errorf("limits = %v, want %v", got, c.want)
+				}
 			}
 		})
 	}
