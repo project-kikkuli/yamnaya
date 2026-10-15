@@ -84,10 +84,19 @@ func TestOldGlobalItemsMigrateToPerScopeIDsKeepingAliases(t *testing.T) {
 	if it, err := st.Item("D35"); err != nil || it.Question != "app two" {
 		t.Fatalf("before renumbering, D35 = %+v, %v", it, err)
 	}
+	for _, q := range []string{
+		`INSERT INTO ym_items (id, kind, question, session, created_at, state) VALUES ('D36', 'decision', 'filed by an old ym', 'lib-lead', '2026-10-03T00:00:00Z', 'open')`,
+		`INSERT INTO ym_item_events (item, at, from_state, to_state) VALUES ('D36', '2026-10-03T00:00:00Z', '', 'open')`,
+	} {
+		if _, err := st.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := st.Renumber(map[string]string{"app-lead": "/src/app/.git", "lib-lead": "/src/lib.git"}); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]struct{ scope, id string }{"D1": {"/src/app/.git", "D1"}, "C2": {"/src/lib.git", "C1"}, "D35": {"/src/app/.git", "D2"}}
+	want := map[string]struct{ scope, id string }{"D1": {"/src/app/.git", "D1"}, "C2": {"/src/lib.git", "C1"}, "D35": {"/src/app/.git", "D2"},
+		"D36": {"/src/lib.git", "D2"}}
 	for alias, w := range want {
 		it, err := st.Find("/src/app/.git", alias)
 		if alias == "D1" {
@@ -97,9 +106,11 @@ func TestOldGlobalItemsMigrateToPerScopeIDsKeepingAliases(t *testing.T) {
 			t.Errorf("%s = %s in %q (%v), want %s in %q", alias, it.ID, it.Scope, err, w.id, w.scope)
 		}
 	}
-	it, _ := st.Find("/src/app/.git", "D35")
-	if it.Spoken() != "D35" || len(it.History) != 1 {
-		t.Errorf("migrated item speaks as %q with %d events, want its old ID and its history", it.Spoken(), len(it.History))
+	for _, alias := range []string{"D35", "D36"} {
+		it, _ := st.Item(alias)
+		if it.Spoken() != alias || len(it.History) != 1 {
+			t.Errorf("migrated %s speaks as %q with %d events, want its old ID and its history", alias, it.Spoken(), len(it.History))
+		}
 	}
 	next, err := st.AddItem(Item{Scope: "/src/app/.git", Kind: KindChore, Question: "new", Session: "app-lead"})
 	if err != nil || next.ID != "C3" || next.Spoken() != "C3" {

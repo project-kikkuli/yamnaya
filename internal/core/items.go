@@ -36,16 +36,16 @@ func ScopeName(scope string) string {
 // scopeItems moves a database from one global item sequence to per-scope IDs: old rows keep their ID as an alias
 // and wait, unnumbered, for Renumber to place them in their scopes. Events then point at items by key.
 func scopeItems(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	var has int
-	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name = 'scope'`).Scan(&has); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name = 'scope'`).Scan(&has); err != nil {
 		return err
 	}
 	if has == 0 {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
 		for _, q := range []string{
 			`CREATE TABLE ym_items_scoped (
 				seq INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL DEFAULT '', num INTEGER, id TEXT NOT NULL, alias TEXT NOT NULL DEFAULT '',
@@ -61,18 +61,21 @@ func scopeItems(db *sql.DB) error {
 				WHERE item NOT LIKE '#%' AND EXISTS (SELECT 1 FROM ym_items i WHERE i.id = ym_item_events.item)`,
 			`DROP TABLE ym_items`,
 			`ALTER TABLE ym_items_scoped RENAME TO ym_items`,
-			`CREATE INDEX IF NOT EXISTS ym_items_session ON ym_items(session, state)`,
 		} {
 			if _, err := tx.Exec(q); err != nil {
 				return err
 			}
 		}
-		if err := tx.Commit(); err != nil {
+	}
+	for _, q := range []string{
+		`CREATE INDEX IF NOT EXISTS ym_items_session ON ym_items(session, state)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ym_items_scope_id ON ym_items(scope, id) WHERE num IS NOT NULL`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
 			return err
 		}
 	}
-	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS ym_items_scope_id ON ym_items(scope, id) WHERE num IS NOT NULL`)
-	return err
+	return tx.Commit()
 }
 
 // Unscoped lists the sessions that filed items still waiting for per-scope numbers.
@@ -100,18 +103,18 @@ func (s *Store) Renumber(scopeOf map[string]string) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT seq, kind, session FROM ym_items WHERE num IS NULL ORDER BY seq`)
+	rows, err := tx.Query(`SELECT seq, id, kind, session FROM ym_items WHERE num IS NULL ORDER BY seq`)
 	if err != nil {
 		return err
 	}
 	type legacy struct {
-		seq           int64
-		kind, session string
+		seq               int64
+		id, kind, session string
 	}
 	var all []legacy
 	for rows.Next() {
 		var l legacy
-		if err := rows.Scan(&l.seq, &l.kind, &l.session); err != nil {
+		if err := rows.Scan(&l.seq, &l.id, &l.kind, &l.session); err != nil {
 			rows.Close()
 			return err
 		}
@@ -124,7 +127,11 @@ func (s *Store) Renumber(scopeOf map[string]string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`UPDATE ym_items SET scope = ?, num = ?, id = ? WHERE seq = ?`, scope, num, idFor(l.kind, num), l.seq); err != nil {
+		if _, err := tx.Exec(`UPDATE ym_items SET scope = ?, num = ?, id = ?, alias = CASE alias WHEN '' THEN ? ELSE alias END WHERE seq = ?`,
+			scope, num, idFor(l.kind, num), l.id, l.seq); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE ym_item_events SET item = ? WHERE item = ?`, "#"+strconv.FormatInt(l.seq, 10), l.id); err != nil {
 			return err
 		}
 	}
