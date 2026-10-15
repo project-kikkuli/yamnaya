@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -74,10 +75,14 @@ func resumeArgv(rec launch.Record) ([]string, error) {
 }
 
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and the repository's git dir, so the worktree can commit.
+// A state dir set by $YAMNAYA_STATE_DIR is passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
 	var args []string
 	if path, err := core.DefaultStorePath(); err == nil {
 		args = append(args, "--add-dir", filepath.Dir(path))
+	}
+	if dir := os.Getenv("YAMNAYA_STATE_DIR"); dir != "" {
+		args = append(args, "-c", "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(dir))
 	}
 	if rec.Worktree.GitDir != "" {
 		args = append(args, "--add-dir", rec.Worktree.GitDir)

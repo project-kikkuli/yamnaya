@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/launch"
@@ -39,8 +41,9 @@ func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
 					dirs[argv[i+1]] = true
 				}
 			}
-			if got := dirs[state] && dirs["/src/app/.git"]; got != c.writes {
-				t.Fatalf("argv %q: writable state and git dir = %v, want %v", argv, got, c.writes)
+			passes := slices.Contains(argv, "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(state))
+			if got := dirs[state] && dirs["/src/app/.git"] && passes; got != c.writes {
+				t.Fatalf("argv %q: writable state and git dir, state dir in its shells = %v, want %v", argv, got, c.writes)
 			}
 			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Session {
 				t.Fatalf("argv %q must end with the prompt or session", argv)
