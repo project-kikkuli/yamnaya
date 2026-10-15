@@ -171,13 +171,17 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 	case path != "":
 		s.Status, s.Since = core.Idle, sc.modified
 	}
+	delegated := s.Status == core.Busy
+	if delegated && sc.ended(s.Since) {
+		s.Status, s.Since = core.Idle, sc.LastAt
+	}
 	s.Facts = sc.Facts
 	s.Task = sc.First
 	if s.Ask == "" {
 		s.Ask = sc.LastPrompt
 	}
 	if path != "" {
-		s.Crew = a.crew(filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents"), s.Status == core.Busy, now)
+		s.Crew = a.crew(filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents"), delegated, now)
 	}
 	return s
 }

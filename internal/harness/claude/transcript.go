@@ -134,6 +134,7 @@ type scan struct {
 	LastType   string
 	LastStop   string
 	Stopped    bool
+	LastAt     time.Time
 	// Creating holds tool calls that run gh pr create, until their results arrive.
 	Creating map[string]bool
 	Facts    core.Facts
@@ -171,7 +172,7 @@ func (t *scan) add(r record) {
 			t.Open = false
 		}
 	case "user", "assistant":
-		t.LastType = r.Type
+		t.LastType, t.LastAt = r.Type, r.Timestamp
 		t.LastStop, t.Stopped = "", false
 		if r.Message != nil && r.Message.StopReason != nil {
 			t.LastStop, t.Stopped = *r.Message.StopReason, true
@@ -258,6 +259,11 @@ func (t scan) pending(quiet time.Duration) bool {
 		return t.LastStop == "tool_use"
 	}
 	return false
+}
+
+// ended reports whether the transcript's last record, written after since, is a reply that ended its turn.
+func (t scan) ended(since time.Time) bool {
+	return t.LastType == "assistant" && t.LastStop == "end_turn" && t.LastAt.After(since)
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

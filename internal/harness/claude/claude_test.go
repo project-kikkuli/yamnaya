@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -186,4 +187,34 @@ func must(t *testing.T, err error) {
 func write(t *testing.T, path, data string) {
 	t.Helper()
 	must(t, os.WriteFile(path, []byte(data), 0o644))
+}
+
+func TestALeadWhoseTurnEndedIsIdleWhileItsCrewWorks(t *testing.T) {
+	busySince := time.Date(2026, 10, 15, 15, 22, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name  string
+		reply time.Time
+		want  core.Status
+	}{
+		{"reply after claude went busy", busySince.Add(25 * time.Minute), core.Idle},
+		{"reply before claude went busy", busySince.Add(-time.Minute), core.Busy},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			sub := filepath.Join(dir, "projects", "-Users-me-x", "55555555-eeee-4eee-8eee-555555555555", "subagents")
+			must(t, os.MkdirAll(sub, 0o755))
+			must(t, os.MkdirAll(filepath.Join(dir, "sessions"), 0o755))
+			write(t, filepath.Join(dir, "sessions", "8.json"), fmt.Sprintf(`{"pid":8,"sessionId":"55555555-eeee-4eee-8eee-555555555555","cwd":"/Users/me/x","status":"busy","statusUpdatedAt":%d}`, busySince.UnixMilli()))
+			write(t, filepath.Join(dir, "projects", "-Users-me-x", "55555555-eeee-4eee-8eee-555555555555.jsonl"),
+				fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"go"}}`+"\n"+`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"text","text":"Open for you"}],"stop_reason":"end_turn"}}`+"\n",
+					c.reply.Add(-time.Minute).Format(time.RFC3339), c.reply.Format(time.RFC3339)))
+			write(t, filepath.Join(sub, "agent-b1.meta.json"), `{"description":"Build it"}`)
+			write(t, filepath.Join(sub, "agent-b1.jsonl"), `{"type":"assistant","message":{"content":[],"stop_reason":"tool_use"}}`+"\n")
+			a := &Adapter{Dir: dir, Now: time.Now}
+			s := a.Discover([]proc.Proc{p(8, "claude")})[0]
+			if s.Status != c.want || len(s.Crew) != 1 || s.Crew[0].Status != core.Busy {
+				t.Fatalf("lead %v since %v, crew %+v; want lead %v and its agent busy", s.Status, s.Since, s.Crew, c.want)
+			}
+		})
+	}
 }
