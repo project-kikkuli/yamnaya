@@ -165,8 +165,8 @@ type Waiter interface {
 
 // Continuer is a harness whose conversations can continue under a new session id.
 type Continuer interface {
-	// Successor is the session id continues in, "" when it has not moved.
-	Successor(id string) string
+	// Successor is the session id continues in, "" when it has not moved; a non-empty near, a running session, limits the look to sessions stored beside it.
+	Successor(id, near string) string
 }
 
 // Messenger is a harness that hands text straight to a running session's own inbox, busy or idle.

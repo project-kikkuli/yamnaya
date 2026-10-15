@@ -211,6 +211,8 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 		{"repo cannot loosen", "auto", "", "refuse", "accept", false},
 		{"managed outranks owner", "bypassPermissions", "accept", "hold", "", true},
 		{"unknown value holds", "auto", "", "maybe", "", false},
+		{"unknown value anywhere holds an accept", "bypassPermissions", "accept", "", "maybe", false},
+		{"value of the wrong type holds", "auto", "", "", "1", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir, cwd := t.TempDir(), t.TempDir()
@@ -219,7 +221,10 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 					return path
 				}
 				must(t, os.MkdirAll(filepath.Dir(path), 0o755))
-				must(t, os.WriteFile(path, []byte(`{"crossSessionInbound":"`+v+`"}`), 0o644))
+				if v != "1" {
+					v = `"` + v + `"`
+				}
+				must(t, os.WriteFile(path, []byte(`{"crossSessionInbound":`+v+`}`), 0o644))
 				return path
 			}
 			a := &Adapter{Dir: dir, ManagedSettings: write(filepath.Join(dir, "managed.json"), c.managed)}
@@ -229,5 +234,48 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 				t.Errorf("admits = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestModeIsTheLatestOfMetadataAndPrompts(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"metadata only", []string{`{"type":"permission-mode","permissionMode":"auto"}`}, "auto"},
+		{"a prompt after the metadata", []string{`{"type":"permission-mode","permissionMode":"auto"}`, `{"type":"user","permissionMode":"bypassPermissions","message":{"role":"user","content":"go"}}`}, "bypassPermissions"},
+		{"metadata after the prompt", []string{`{"type":"user","permissionMode":"bypassPermissions","message":{"role":"user","content":"go"}}`, `{"type":"permission-mode","permissionMode":"default"}`}, "default"},
+		{"a tool result without a mode", []string{`{"type":"user","permissionMode":"auto","message":{"role":"user","content":"go"}}`, `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`}, "auto"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeTranscript(t, dir, oldID, c.lines...)
+			a := &Adapter{Dir: dir}
+			if got := a.scan(a.transcript("", oldID)).Mode; got != c.want {
+				t.Errorf("mode = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestSuccessorBesideARunningSessionLooksOnlyInItsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	writeTranscript(t, dir, oldID, userLine, continued(newID))
+	writeTranscript(t, dir, newID, userLine, doneLine)
+	other := filepath.Join(dir, "projects", "-elsewhere", midID+".jsonl")
+	must(t, os.MkdirAll(filepath.Dir(other), 0o755))
+	must(t, os.WriteFile(other, []byte(userLine+"\n"+continued(newID)+"\n"), 0o644))
+	writeState(t, dir, 9, map[string]any{"pid": 9, "sessionId": newID, "cwd": "/w"})
+	a := &Adapter{Dir: dir}
+	for _, c := range []struct{ id, near, want string }{
+		{oldID, newID, newID},
+		{midID, newID, ""},
+		{midID, "", newID},
+		{oldID, midID, ""},
+	} {
+		if got := a.Successor(c.id, c.near); got != c.want {
+			t.Errorf("Successor(%.8s, near %.8s) = %q, want %q", c.id, c.near, got, c.want)
+		}
 	}
 }

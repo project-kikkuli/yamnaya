@@ -23,7 +23,7 @@ type fakeHarness struct {
 
 var errNoInbox = errors.New("no inbox")
 
-func (f *fakeHarness) Successor(id string) string { return f.next[id] }
+func (f *fakeHarness) Successor(id, near string) string { return f.next[id] }
 
 func (f *fakeHarness) Message(s Session, text string) error {
 	err, ok := f.inbox[s.ID]

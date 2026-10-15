@@ -116,7 +116,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 3
+const scanFormat = 4
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -144,7 +144,7 @@ type scan struct {
 	Facts    core.Facts
 	// Next is the session the conversation continued in, until a later turn shows it resumed here.
 	Next string
-	// Mode is the session's latest permission mode.
+	// Mode is the session's latest permission mode, from its metadata records and the mode stamped on each prompt.
 	Mode string
 
 	modified time.Time
@@ -185,6 +185,9 @@ func (t *scan) add(r record) {
 		}
 	case "user", "assistant":
 		t.Next = ""
+		if r.Permission != "" {
+			t.Mode = r.Permission
+		}
 		t.LastType, t.LastAt = r.Type, r.Timestamp
 		if r.Type == "user" && r.Timestamp.After(t.UserAt) {
 			t.UserAt = r.Timestamp

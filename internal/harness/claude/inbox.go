@@ -46,10 +46,8 @@ type body struct {
 	Content string `json:"content"`
 }
 
-// Message queues text as the next prompt of the session, through the messaging socket Claude Code keeps per process.
-// The session reads it after its current turn, or at once when idle. Claude Code never replies on the socket and sends a
-// receipt only for a message it holds, so ym sends only to a session that admits it and counts the delivery once the
-// session read the whole frame and closed its side.
+// Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym,
+// and counts it delivered once the session read the frame and closed its side; the socket never acknowledges.
 func (a *Adapter) Message(s core.Session, text string) error {
 	st, ok := a.state(s.PID)
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
@@ -91,19 +89,29 @@ var promptingModes = map[string]bool{"default": true, "acceptEdits": true, "auto
 // admits mirrors Claude Code's inbound gate for a sender that attests no permission mode: the crossSessionInbound
 // setting decides when set, else a session that bypasses permission prompts holds the message.
 func (a *Adapter) admits(cwd, mode string) bool {
-	policy := ""
+	policy, invalid := "", false
+	read := func(path string) string {
+		v, set := inbound(path)
+		if _, known := inboundRank[v]; set && !known {
+			invalid = true
+			return ""
+		}
+		return v
+	}
 	for _, f := range []string{a.ManagedSettings, filepath.Join(a.Dir, "settings.json")} {
-		if v, ok := inbound(f); ok {
+		if v := read(f); v != "" && policy == "" {
 			policy = v
-			break
 		}
 	}
 	if cwd != "" {
 		for _, f := range []string{filepath.Join(cwd, ".claude", "settings.local.json"), filepath.Join(cwd, ".claude", "settings.json")} {
-			if v, ok := inbound(f); ok && inboundRank[v] > inboundRank[policy] {
+			if v := read(f); v != "" && inboundRank[v] > inboundRank[policy] {
 				policy = v
 			}
 		}
+	}
+	if invalid && inboundRank[policy] < inboundRank["hold"] {
+		policy = "hold"
 	}
 	if policy != "" {
 		return policy == "accept"
@@ -111,8 +119,9 @@ func (a *Adapter) admits(cwd, mode string) bool {
 	return promptingModes[mode]
 }
 
-// inbound reads crossSessionInbound from a settings file; a value Claude Code does not know reads as hold, as Claude Code treats it.
-func inbound(path string) (string, bool) {
+// inbound reads crossSessionInbound from a settings file; set is true when the key is present, whatever its value.
+// Claude Code ignores a value it does not know and holds messages while any file carries one.
+func inbound(path string) (value string, set bool) {
 	if path == "" {
 		return "", false
 	}
@@ -120,16 +129,14 @@ func inbound(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	var set struct {
-		CrossSessionInbound *string `json:"crossSessionInbound"`
+	var file struct {
+		CrossSessionInbound json.RawMessage `json:"crossSessionInbound"`
 	}
-	if json.Unmarshal(b, &set) != nil || set.CrossSessionInbound == nil {
+	if json.Unmarshal(b, &file) != nil || file.CrossSessionInbound == nil || string(file.CrossSessionInbound) == "null" {
 		return "", false
 	}
-	if _, known := inboundRank[*set.CrossSessionInbound]; !known {
-		return "hold", true
-	}
-	return *set.CrossSessionInbound, true
+	json.Unmarshal(file.CrossSessionInbound, &value)
+	return value, true
 }
 
 // wrap puts text in the envelope Claude Code's own senders use, so the session shows it as a message from ym.

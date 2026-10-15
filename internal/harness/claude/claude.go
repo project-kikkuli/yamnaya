@@ -34,6 +34,7 @@ type Adapter struct {
 
 	mu    sync.Mutex
 	scans map[string]*scan
+	dirs  map[string]string
 }
 
 func New() *Adapter {
@@ -93,6 +94,21 @@ func (a *Adapter) state(pid int) (state, bool) {
 		return state{}, false
 	}
 	return st, true
+}
+
+// liveCwd is the cwd a running process gives for session id, "" when none runs it.
+func (a *Adapter) liveCwd(id string) string {
+	files, _ := filepath.Glob(filepath.Join(a.Dir, "sessions", "*.json"))
+	for _, f := range files {
+		pid, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(f), ".json"))
+		if err != nil {
+			continue
+		}
+		if st, ok := a.state(pid); ok && st.SessionID == id {
+			return st.Cwd
+		}
+	}
+	return ""
 }
 
 // Waiting reports whether Claude Code at pid says it waits on a permission or other dialog.
@@ -202,12 +218,43 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 }
 
 // Successor is the session id's conversation continued in, as its transcript's last continued-in record says.
-func (a *Adapter) Successor(id string) string {
-	path := a.transcript("", id)
+// With near set, a running session, it reads only a transcript in near's project directory, so a miss costs one stat.
+func (a *Adapter) Successor(id, near string) string {
+	path := ""
+	if near == "" {
+		path = a.transcript("", id)
+	} else if dir := a.projectDir(near); dir != "" {
+		path = filepath.Join(dir, id+".jsonl")
+		if _, err := os.Stat(path); err != nil {
+			return ""
+		}
+	}
 	if path == "" {
 		return ""
 	}
 	return a.scan(path).Next
+}
+
+// projectDir is the directory holding the transcript of running session id, "" when no process runs it; looked up once per adapter.
+func (a *Adapter) projectDir(id string) string {
+	a.mu.Lock()
+	dir, ok := a.dirs[id]
+	a.mu.Unlock()
+	if ok {
+		return dir
+	}
+	if cwd := a.liveCwd(id); cwd != "" {
+		if path := a.transcript(cwd, id); path != "" {
+			dir = filepath.Dir(path)
+		}
+	}
+	a.mu.Lock()
+	if a.dirs == nil {
+		a.dirs = map[string]string{}
+	}
+	a.dirs[id] = dir
+	a.mu.Unlock()
+	return dir
 }
 
 func msTime(ms int64) time.Time {
