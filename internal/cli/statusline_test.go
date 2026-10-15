@@ -18,7 +18,7 @@ func TestWireStatusline(t *testing.T) {
 		want     string
 	}{
 		{"no settings", "", "", "#!/bin/sh\ninput=$(cat)\n" + limitsLine(ym) + "\n"},
-		{"settings without statusline", `{"model":"opus"}`, "", "#!/bin/sh\ninput=$(cat)\n" + limitsLine(ym) + "\n"},
+		{"settings without statusline", `{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"a && b > /dev/null"}]}]}}`, "", "#!/bin/sh\ninput=$(cat)\n" + limitsLine(ym) + "\n"},
 		{"script reads input", `{"statusLine":{"type":"command","command":"sh ~/.claude/sl.sh"}}`, "#!/bin/sh\ninput=$(cat)\necho hi\n",
 			"#!/bin/sh\ninput=$(cat)\n" + limitsLine(ym) + "\necho hi\n"},
 		{"already records", `{"statusLine":{"type":"command","command":"sh ~/.claude/sl.sh"}}`, "input=$(cat)\nprintf '%s' \"$input\" | ym limits record &\n",
@@ -54,7 +54,7 @@ func TestWireStatusline(t *testing.T) {
 			if cmd, _ := sl["command"].(string); !strings.Contains(cmd, filepath.Base(script)) {
 				t.Errorf("statusLine = %v", doc["statusLine"])
 			}
-			if strings.Contains(c.settings, "opus") && doc["model"] != "opus" {
+			if strings.Contains(c.settings, "opus") && (doc["model"] != "opus" || !strings.Contains(string(b), "a && b > /dev/null")) {
 				t.Errorf("settings lost model: %s", b)
 			}
 		})

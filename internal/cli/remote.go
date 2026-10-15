@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya"
@@ -37,7 +38,7 @@ func remoteCmd() *cobra.Command {
 				remote += " " + shellQuote(a)
 			}
 			flags := []string{args[0], remote}
-			if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
 				flags = append([]string{"-t"}, flags...)
 			}
 			c := exec.Command("ssh", flags...)
@@ -64,7 +65,9 @@ func remoteInstallCmd() *cobra.Command {
 			host, out := args[0], cmd.OutOrStdout()
 			start := time.Now()
 			probe, err := exec.Command("ssh", host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
-			if err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				return fmt.Errorf("ssh %s: %w: %s", host, err, bytes.TrimSpace(exit.Stderr))
+			} else if err != nil {
 				return fmt.Errorf("ssh %s: %w", host, err)
 			}
 			lines := strings.Fields(string(probe))

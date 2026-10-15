@@ -24,8 +24,7 @@ func fleetLine(f core.Fleet, host string, now time.Time) string {
 			if l.Harness != h {
 				continue
 			}
-			name := strings.TrimPrefix(l.Name, "codex ")
-			w := fmt.Sprintf("%s %.0f%% ↻%s", name, l.Used, core.Span(l.ResetsAt.Sub(now)))
+			w := fmt.Sprintf("%s %.0f%% ↻%s", l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)))
 			if l.Used >= 80 {
 				w = alarm.Render(w)
 			}

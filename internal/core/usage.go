@@ -86,6 +86,9 @@ type Limit struct {
 	Seen     time.Time
 }
 
+// Label names the window without repeating the harness: Codex limit ids start with "codex".
+func (l Limit) Label() string { return strings.TrimPrefix(l.Name, "codex ") }
+
 // Fleet is what every session costs and how close each subscription is to its limits.
 type Fleet struct {
 	Ready    bool

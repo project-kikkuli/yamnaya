@@ -128,7 +128,7 @@ func writeLimits(out io.Writer, ls []core.Limit, now time.Time) {
 		return
 	}
 	for _, l := range ls {
-		fmt.Fprintf(out, "limit: %s %s %.0f%% resets in %s (seen %s ago)", l.Harness, l.Name, l.Used, core.Span(l.ResetsAt.Sub(now)), core.Span(now.Sub(l.Seen)))
+		fmt.Fprintf(out, "limit: %s %s %.0f%% resets in %s (seen %s ago)", l.Harness, l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)), core.Span(now.Sub(l.Seen)))
 		if l.Plan != "" {
 			fmt.Fprintf(out, " plan %s", l.Plan)
 		}

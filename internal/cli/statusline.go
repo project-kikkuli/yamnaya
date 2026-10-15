@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,11 +40,14 @@ func wireStatusline(home, ym string) (string, error) {
 			return "", err
 		}
 		doc["statusLine"] = map[string]any{"type": "command", "command": "sh " + shellQuote(script)}
-		out, err := json.MarshalIndent(doc, "", "  ")
-		if err != nil {
+		var out bytes.Buffer
+		enc := json.NewEncoder(&out)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(doc); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(settings, append(out, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(settings, out.Bytes(), 0o644); err != nil {
 			return "", err
 		}
 		return "statusline: added " + script, nil
