@@ -114,7 +114,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 1
+const scanFormat = 2
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -135,6 +135,8 @@ type scan struct {
 	LastStop   string
 	Stopped    bool
 	LastAt     time.Time
+	// UserAt is the latest user record's time; Claude can write a new turn's prompt before the last turn's final reply.
+	UserAt time.Time
 	// Creating holds tool calls that run gh pr create, until their results arrive.
 	Creating map[string]bool
 	Facts    core.Facts
@@ -173,6 +175,9 @@ func (t *scan) add(r record) {
 		}
 	case "user", "assistant":
 		t.LastType, t.LastAt = r.Type, r.Timestamp
+		if r.Type == "user" && r.Timestamp.After(t.UserAt) {
+			t.UserAt = r.Timestamp
+		}
 		t.LastStop, t.Stopped = "", false
 		if r.Message != nil && r.Message.StopReason != nil {
 			t.LastStop, t.Stopped = *r.Message.StopReason, true
@@ -261,9 +266,9 @@ func (t scan) pending(quiet time.Duration) bool {
 	return false
 }
 
-// ended reports whether the transcript's last record, written after since, is a reply that ended its turn.
+// ended reports whether the transcript's last record, written after since and after every user record, is a reply that ended its turn.
 func (t scan) ended(since time.Time) bool {
-	return t.LastType == "assistant" && t.LastStop == "end_turn" && t.LastAt.After(since)
+	return t.LastType == "assistant" && t.LastStop == "end_turn" && t.LastAt.After(since) && !t.UserAt.After(t.LastAt)
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

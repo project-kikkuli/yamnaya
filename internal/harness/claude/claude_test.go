@@ -194,10 +194,12 @@ func TestALeadWhoseTurnEndedIsIdleWhileItsCrewWorks(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		reply time.Time
+		next  string
 		want  core.Status
 	}{
-		{"reply after claude went busy", busySince.Add(25 * time.Minute), core.Idle},
-		{"reply before claude went busy", busySince.Add(-time.Minute), core.Busy},
+		{"reply after claude went busy", busySince.Add(25 * time.Minute), "", core.Idle},
+		{"reply before claude went busy", busySince.Add(-time.Minute), "", core.Busy},
+		{"next prompt written before the reply", busySince.Add(25 * time.Minute), "teammate message", core.Busy},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -206,8 +208,7 @@ func TestALeadWhoseTurnEndedIsIdleWhileItsCrewWorks(t *testing.T) {
 			must(t, os.MkdirAll(filepath.Join(dir, "sessions"), 0o755))
 			write(t, filepath.Join(dir, "sessions", "8.json"), fmt.Sprintf(`{"pid":8,"sessionId":"55555555-eeee-4eee-8eee-555555555555","cwd":"/Users/me/x","status":"busy","statusUpdatedAt":%d}`, busySince.UnixMilli()))
 			write(t, filepath.Join(dir, "projects", "-Users-me-x", "55555555-eeee-4eee-8eee-555555555555.jsonl"),
-				fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"go"}}`+"\n"+`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"text","text":"Open for you"}],"stop_reason":"end_turn"}}`+"\n",
-					c.reply.Add(-time.Minute).Format(time.RFC3339), c.reply.Format(time.RFC3339)))
+				transcript(c.reply, c.next))
 			write(t, filepath.Join(sub, "agent-b1.meta.json"), `{"description":"Build it"}`)
 			write(t, filepath.Join(sub, "agent-b1.jsonl"), `{"type":"assistant","message":{"content":[],"stop_reason":"tool_use"}}`+"\n")
 			a := &Adapter{Dir: dir, Now: time.Now}
@@ -217,4 +218,12 @@ func TestALeadWhoseTurnEndedIsIdleWhileItsCrewWorks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func transcript(reply time.Time, next string) string {
+	out := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"go"}}`+"\n", reply.Add(-time.Minute).Format(time.RFC3339))
+	if next != "" {
+		out += fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":%q}}`+"\n", reply.Add(time.Second).Format(time.RFC3339), next)
+	}
+	return out + fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"text","text":"Open for you"}],"stop_reason":"end_turn"}}`+"\n", reply.Format(time.RFC3339))
 }
