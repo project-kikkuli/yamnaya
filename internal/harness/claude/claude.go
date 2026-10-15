@@ -27,6 +27,8 @@ type Adapter struct {
 	Cwd   func(pid int) string
 	Now   func() time.Time
 	Cache core.ScanCache
+	// SendTimeout bounds one delivery to a session's messaging socket; zero means two seconds.
+	SendTimeout time.Duration
 
 	mu    sync.Mutex
 	scans map[string]*scan
@@ -75,6 +77,8 @@ type state struct {
 	Status          string `json:"status"`
 	WaitingFor      string `json:"waitingFor"`
 	StatusUpdatedAt int64  `json:"statusUpdatedAt"`
+	PeerProtocol    int    `json:"peerProtocol"`
+	MessagingSocket string `json:"messagingSocketPath"`
 }
 
 func (a *Adapter) state(pid int) (state, bool) {
@@ -177,6 +181,9 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 	case path != "":
 		s.Status, s.Since = core.Idle, sc.modified
 	}
+	if sc.Next != "" {
+		s.Status, s.Successor, s.Since = core.Moved, sc.Next, sc.modified
+	}
 	delegated := s.Status == core.Busy
 	if delegated && sc.ended(s.Since) {
 		s.Status, s.Since = core.Idle, sc.LastAt
@@ -190,6 +197,15 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 		s.Crew = a.crew(filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents"), delegated, now)
 	}
 	return s
+}
+
+// Successor is the session id's conversation continued in, as its transcript's last continued-in record says.
+func (a *Adapter) Successor(id string) string {
+	path := a.transcript("", id)
+	if path == "" {
+		return ""
+	}
+	return a.scan(path).Next
 }
 
 func msTime(ms int64) time.Time {

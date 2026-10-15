@@ -36,7 +36,7 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 Usage is read incrementally from `~/.claude/projects` and `~/.codex/sessions` into the ym database; prices come from LiteLLM, refreshed daily into the state directory, with an embedded snapshot offline.
 
-An answer is typed into the agent's tmux pane as `re D4: <answer>` when the agent sits idle; otherwise the agent reads it with `ym item inbox` on its next turn.
+An answer goes to the session carrying the conversation now, following Claude's continued-in record when a session moved to the background. A Claude session gets `re D4: <answer>` through its own messaging socket (the one cross-session messages use), as its next prompt, busy or idle, wherever it runs; `ym send` messages arrive the same way as `msg: <text>`. Without one, an idle agent in a tmux pane gets it typed in; otherwise it reads it with `ym item inbox` on its next turn.
 
 ## Commands
 

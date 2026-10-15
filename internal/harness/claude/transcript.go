@@ -27,6 +27,7 @@ type record struct {
 	PRNumber    int       `json:"prNumber"`
 	PRRepo      string    `json:"prRepository"`
 	Cwd         string    `json:"cwd"`
+	ContinuedIn string    `json:"continuedInSessionId"`
 	Timestamp   time.Time `json:"timestamp"`
 	Origin      *struct {
 		Kind string `json:"kind"`
@@ -114,7 +115,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 2
+const scanFormat = 3
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -140,6 +141,8 @@ type scan struct {
 	// Creating holds tool calls that run gh pr create, until their results arrive.
 	Creating map[string]bool
 	Facts    core.Facts
+	// Next is the session the conversation continued in, until a later turn shows it resumed here.
+	Next string
 
 	modified time.Time
 }
@@ -165,6 +168,8 @@ func (t *scan) add(r record) {
 		t.AI = r.AITitle
 	case "last-prompt":
 		t.LastPrompt = oneLine(r.LastPrompt)
+	case "continued-in":
+		t.Next = r.ContinuedIn
 	case "pr-link":
 		if r.PRURL != "" {
 			t.Facts.Opened(core.PR{URL: r.PRURL, Repo: r.PRRepo, Number: r.PRNumber})
@@ -174,6 +179,7 @@ func (t *scan) add(r record) {
 			t.Open = false
 		}
 	case "user", "assistant":
+		t.Next = ""
 		t.LastType, t.LastAt = r.Type, r.Timestamp
 		if r.Type == "user" && r.Timestamp.After(t.UserAt) {
 			t.UserAt = r.Timestamp

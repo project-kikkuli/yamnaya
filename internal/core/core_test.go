@@ -14,6 +14,26 @@ type fakeHarness struct {
 	name     string
 	sessions map[int]Session
 	cwds     map[string]string
+	// next maps a session to the one it continued in.
+	next map[string]string
+	// inbox is what each session's own inbox does with a message; a session missing from it has none.
+	inbox  map[string]error
+	handed []string
+}
+
+var errNoInbox = errors.New("no inbox")
+
+func (f *fakeHarness) Successor(id string) string { return f.next[id] }
+
+func (f *fakeHarness) Message(s Session, text string) error {
+	err, ok := f.inbox[s.ID]
+	if !ok {
+		return errNoInbox
+	}
+	if err == nil {
+		f.handed = append(f.handed, s.ID+": "+text)
+	}
+	return err
 }
 
 func (f *fakeHarness) SessionCwd(id string) string { return f.cwds[id] }
