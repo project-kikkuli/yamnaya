@@ -85,10 +85,15 @@ type Member struct {
 	Description string
 	Teammate    bool
 	Status      Status
-	Last        time.Time
+	// Cut reports that the agent ended mid-turn: killed, or failed before it answered.
+	Cut  bool
+	Last time.Time
 	// Brief is the full instruction the agent started from.
 	Brief    string
 	Worktree string
+	// Branch is checked out in Worktree; Ahead counts its commits past the default branch.
+	Branch string
+	Ahead  int
 	Facts
 }
 
@@ -102,10 +107,12 @@ type Session struct {
 	TTY    string
 	Cwd    string
 	// Repo names the repository; RepoKey is its git common dir, shared by all its worktrees.
-	Repo       string
-	RepoKey    string
-	Worktree   string
-	Branch     string
+	Repo     string
+	RepoKey  string
+	Worktree string
+	Branch   string
+	// Ahead counts Branch's commits past the default branch.
+	Ahead      int
 	Title      string
 	Status     Status
 	WaitingFor string

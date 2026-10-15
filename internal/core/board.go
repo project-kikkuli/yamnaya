@@ -289,9 +289,18 @@ func (c *Core) Board() (Board, error) {
 // place fills each session's repository and its crew's worktrees, asking git once per directory at a time.
 func (c *Core) place(found []Session, now time.Time) {
 	var want []string
-	for _, s := range found {
+	for i := range found {
+		s := &found[i]
 		if !contains(want, s.Cwd) {
 			want = append(want, s.Cwd)
+		}
+		for j := range s.Crew {
+			if s.Crew[j].Worktree == "" {
+				s.Crew[j].Worktree = c.worktree(s.Crew[j].Files)
+			}
+			if w := s.Crew[j].Worktree; w != "" && !contains(want, w) {
+				want = append(want, w)
+			}
 		}
 	}
 	dirs := map[string]GitInfo{}
@@ -313,12 +322,12 @@ func (c *Core) place(found []Session, now time.Time) {
 		if g := dirs[s.Cwd]; g.Common != "" {
 			s.Repo, s.RepoKey, s.Worktree = g.Name(), g.Common, g.Top
 			if g.Branch != "" && g.Branch != "HEAD" {
-				s.Branch = g.Branch
+				s.Branch, s.Ahead = g.Branch, g.Ahead
 			}
 		}
 		for j := range s.Crew {
-			if s.Crew[j].Worktree == "" {
-				s.Crew[j].Worktree = c.worktree(s.Crew[j].Files)
+			if g := dirs[s.Crew[j].Worktree]; g.Branch != "" && g.Branch != "HEAD" {
+				s.Crew[j].Branch, s.Crew[j].Ahead = g.Branch, g.Ahead
 			}
 		}
 	}

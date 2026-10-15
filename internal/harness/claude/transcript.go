@@ -385,7 +385,7 @@ func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Membe
 		case m.Teammate:
 			m.Status = core.Idle
 		default:
-			m.Status = core.Done
+			m.Status, m.Cut = core.Done, pending
 		}
 		crew = append(crew, m)
 	}

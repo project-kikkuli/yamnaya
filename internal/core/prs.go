@@ -14,7 +14,13 @@ type PRStatus struct {
 	Passed  int
 	Failed  int
 	Pending int
-	Fetched time.Time
+	// Head is the pull request's branch; Commits counts its commits.
+	Head    string
+	Commits int
+	// Threads counts review threads; Unresolved those still open.
+	Threads    int
+	Unresolved int
+	Fetched    time.Time
 }
 
 // Closed reports whether the pull request can no longer change.

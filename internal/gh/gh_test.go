@@ -1,47 +1,49 @@
 package gh
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 const url = "https://github.com/me/app/pull/7"
 
-func TestStatusFoldsChecksAndPrefersAFreshSharedCache(t *testing.T) {
-	shared := filepath.Join(t.TempDir(), "cache.json")
-	if err := os.WriteFile(shared, []byte(`{"`+url+`":{"state":"OPEN","review":"APPROVED","checks":{"passed":5,"failed":0,"pending":1}}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	modified := time.Now()
-	if err := os.Chtimes(shared, modified, modified); err != nil {
-		t.Fatal(err)
-	}
-	ran := 0
-	view := `{"state":"OPEN","reviewDecision":"","title":"Retries","statusCheckRollup":[
-		{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},
-		{"status":"COMPLETED","conclusion":"FAILURE"},{"status":"IN_PROGRESS","conclusion":""},{"state":"PENDING"},{"state":"ERROR"}]}`
+func TestStatusFoldsChecksAndCountsUnresolvedThreads(t *testing.T) {
 	cases := []struct {
 		name                    string
-		age                     time.Duration
+		body                    string
 		passed, failed, pending int
-		review                  string
-		ranGH                   bool
+		threads, unresolved     int
+		head                    string
 	}{
-		{"fresh shared cache", time.Minute, 5, 0, 1, "APPROVED", false},
-		{"stale shared cache", 3 * time.Minute, 2, 2, 2, "", true},
+		{"checks and threads", `{"data":{"resource":{"state":"OPEN","title":"Retries","headRefName":"retries","commits":{"totalCount":3},
+			"reviewThreads":{"totalCount":3,"nodes":[{"isResolved":true},{"isResolved":false},{"isResolved":true}]},
+			"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+			{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},
+			{"status":"COMPLETED","conclusion":"FAILURE"},{"status":"IN_PROGRESS","conclusion":""},{"state":"PENDING"},{"state":"ERROR"}]}}}}]}}}}`,
+			2, 2, 2, 3, 1, "retries"},
+		{"no checks, threads past the first page", `{"data":{"resource":{"state":"MERGED","headRefName":"x","commits":{"totalCount":1},
+			"reviewThreads":{"totalCount":102,"nodes":[` + resolved(100) + `]},"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}`,
+			0, 0, 0, 102, 2, "x"},
 	}
 	for _, c := range cases {
-		ran = 0
-		s := &Source{Shared: shared, Now: func() time.Time { return modified.Add(c.age) },
-			Run: func(string) ([]byte, error) { ran++; return []byte(view), nil }}
+		s := &Source{Now: time.Now, Run: func(string) ([]byte, error) { return []byte(c.body), nil }}
 		st, err := s.PRStatus(url)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", c.name, err)
 		}
-		if st.Passed != c.passed || st.Failed != c.failed || st.Pending != c.pending || st.Review != c.review || (ran > 0) != c.ranGH {
-			t.Errorf("%s: status %+v, ran gh %d times", c.name, st, ran)
+		if st.Passed != c.passed || st.Failed != c.failed || st.Pending != c.pending || st.Threads != c.threads || st.Unresolved != c.unresolved || st.Head != c.head {
+			t.Errorf("%s: status %+v", c.name, st)
 		}
 	}
+}
+
+func resolved(n int) string {
+	out := ""
+	for i := range n {
+		if i > 0 {
+			out += ","
+		}
+		out += `{"isResolved":true}`
+	}
+	return out
 }

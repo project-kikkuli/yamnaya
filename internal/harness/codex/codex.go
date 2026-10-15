@@ -337,7 +337,7 @@ func (a *Adapter) member(c child, now time.Time) core.Member {
 		case c.open:
 			m.Status = core.Idle
 		default:
-			m.Status = core.Done
+			m.Status, m.Cut = core.Done, sc.Open
 		}
 	}
 	m.Task = firstNonEmpty(oneLine(c.task), firstLine(m.Brief), c.path)

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/progress"
 )
 
 var (
@@ -273,7 +274,7 @@ func (m Model) missionLine(i int, p core.Project, indent string) string {
 		status = alarm.Render(pad(copiesText(p), 8))
 	}
 	nw := m.nameWidth() - len(indent)
-	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
+	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + m.barCol(p) + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
 	if sp := m.missionSpend(p); sp != "" {
 		line += " " + pad(sp, 8)
 	}
@@ -654,6 +655,11 @@ func (m Model) detailView() string {
 	if pr := prSummary(prsOf(p.Sessions)); pr != "" {
 		b.WriteString(" prs     " + pr + "\n")
 	}
+	pg := progress.Of(p)
+	if f, ok := pg.Fraction(); ok {
+		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + dim.Render(pg.Parts()) + "\n")
+	}
+	b.WriteString(units(pg.Units))
 	b.WriteString("\n" + bold.Render(" SESSIONS AND CREW") + "\n")
 	i := 0
 	for _, s := range p.Sessions {
@@ -817,6 +823,9 @@ func (m Model) sessionView() string {
 			b.WriteString("   " + pad(fmt.Sprintf("%s#%d", pr.Repo, pr.Number), 34) + " " + prStatus(pr) + "\n")
 		}
 	}
+	if us := progress.Units([]core.Live{*s}); len(us) > 0 {
+		b.WriteString("\n" + bold.Render(" PIPELINE") + "\n" + units(us))
+	}
 	b.WriteString("\n" + bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
 	i := 0
 	for _, c := range s.Crew {
@@ -840,6 +849,28 @@ func (m Model) sessionView() string {
 				i++
 			}
 		}
+	}
+	return b.String()
+}
+
+// barCol is a mission's progress bar and percent, or nothing when no mission has anything to measure.
+func (m Model) barCol(p core.Project) string {
+	if f, ok := progress.Of(p).Fraction(); ok {
+		return progress.Bar(f, 8) + fmt.Sprintf(" %3.0f%% ", f*100)
+	}
+	for _, q := range m.board.Projects {
+		if _, ok := progress.Of(q).Fraction(); ok {
+			return pad("", 14)
+		}
+	}
+	return ""
+}
+
+// units is one line per branch of work: its gate strip and the raw facts behind it.
+func units(us []progress.Unit) string {
+	var b strings.Builder
+	for _, u := range us {
+		b.WriteString("   " + pad(u.Label, 34) + " " + progress.Strip(u) + dim.Render("  "+u.Detail) + "\n")
 	}
 	return b.String()
 }

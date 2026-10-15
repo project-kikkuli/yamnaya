@@ -133,6 +133,10 @@ CREATE TABLE IF NOT EXISTS ym_prs (
 	passed INTEGER NOT NULL DEFAULT 0,
 	failed INTEGER NOT NULL DEFAULT 0,
 	pending INTEGER NOT NULL DEFAULT 0,
+	head TEXT NOT NULL DEFAULT '',
+	commits INTEGER NOT NULL DEFAULT 0,
+	threads INTEGER NOT NULL DEFAULT 0,
+	unresolved INTEGER NOT NULL DEFAULT 0,
 	fetched_at TEXT NOT NULL
 );
 `
@@ -168,6 +172,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := scopeItems(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate items: %w", err)
+	}
+	if err := prThreads(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate prs: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -326,7 +334,7 @@ func (s *Store) SaveScan(path string, offset int64, data []byte) error {
 
 // PRStatuses returns the last fetched status of every pull request ym knows.
 func (s *Store) PRStatuses() (map[string]PRStatus, error) {
-	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, fetched_at FROM ym_prs`)
+	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at FROM ym_prs`)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +344,7 @@ func (s *Store) PRStatuses() (map[string]PRStatus, error) {
 		var url string
 		var st PRStatus
 		var at sql.NullString
-		if err := rows.Scan(&url, &st.State, &st.Title, &st.Review, &st.Passed, &st.Failed, &st.Pending, &at); err != nil {
+		if err := rows.Scan(&url, &st.State, &st.Title, &st.Review, &st.Passed, &st.Failed, &st.Pending, &st.Head, &st.Commits, &st.Threads, &st.Unresolved, &at); err != nil {
 			return nil, err
 		}
 		st.Fetched = parseTime(at)
@@ -346,9 +354,32 @@ func (s *Store) PRStatuses() (map[string]PRStatus, error) {
 }
 
 func (s *Store) SavePRStatus(url string, st PRStatus) error {
-	_, err := s.db.Exec(`INSERT INTO ym_prs (url, state, title, review, passed, failed, pending, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO ym_prs (url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url) DO UPDATE SET state = excluded.state, title = excluded.title, review = excluded.review,
-		passed = excluded.passed, failed = excluded.failed, pending = excluded.pending, fetched_at = excluded.fetched_at`,
-		url, st.State, st.Title, st.Review, st.Passed, st.Failed, st.Pending, st.Fetched.UTC().Format(time.RFC3339Nano))
+		passed = excluded.passed, failed = excluded.failed, pending = excluded.pending, head = excluded.head, commits = excluded.commits,
+		threads = excluded.threads, unresolved = excluded.unresolved, fetched_at = excluded.fetched_at`,
+		url, st.State, st.Title, st.Review, st.Passed, st.Failed, st.Pending, st.Head, st.Commits, st.Threads, st.Unresolved,
+		st.Fetched.UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+// prThreads adds the head, commit and review thread columns to an older ym_prs and marks every row due again.
+func prThreads(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_prs') WHERE name = 'unresolved'`).Scan(&has); err != nil || has > 0 {
+		return err
+	}
+	for _, q := range []string{
+		`ALTER TABLE ym_prs ADD COLUMN head TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE ym_prs ADD COLUMN commits INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ym_prs ADD COLUMN threads INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ym_prs ADD COLUMN unresolved INTEGER NOT NULL DEFAULT 0`,
+		`DELETE FROM ym_prs`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }

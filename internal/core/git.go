@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +15,12 @@ type GitInfo struct {
 	Top    string
 	Common string
 	Branch string
+	// Ahead counts the branch's commits past the default branch.
+	Ahead int
 }
+
+// DefaultBranch reports whether a branch is the one work merges into.
+func DefaultBranch(b string) bool { return b == "main" || b == "master" }
 
 // Name is the repository's name: its main checkout's directory, or the bare repo's.
 func (g GitInfo) Name() string {
@@ -37,7 +43,22 @@ func ReadGit(dir string) GitInfo {
 	if len(lines) != 3 {
 		return GitInfo{}
 	}
-	return GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
+	g := GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
+	if g.Branch != "HEAD" && !DefaultBranch(g.Branch) {
+		g.Ahead = ahead(dir)
+	}
+	return g
+}
+
+func ahead(dir string) int {
+	for _, base := range []string{"origin/HEAD", "origin/main", "origin/master", "main", "master"} {
+		out, err := exec.Command("git", "-C", dir, "rev-list", "--count", base+"..HEAD").Output()
+		if err == nil {
+			n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+			return n
+		}
+	}
+	return 0
 }
 
 const gitTTL = 30 * time.Second
