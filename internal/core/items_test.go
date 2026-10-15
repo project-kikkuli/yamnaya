@@ -2,8 +2,11 @@ package core
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 
 	_ "modernc.org/sqlite"
 )
@@ -163,5 +166,30 @@ func TestASessionPrefixFilesAsTheLiveSessionItNames(t *testing.T) {
 	}
 	if _, err := w.core.CallerOf("c5c2b2"); err == nil {
 		t.Error("a prefix two live sessions share resolved, want an error")
+	}
+}
+
+func TestASandboxedCodexFilesIntoItsRepoByItsThreadEnv(t *testing.T) {
+	w := newWorld(t)
+	w.core.Procs = func() ([]proc.Proc, error) { return nil, errors.New("exec: ps: operation not permitted") }
+	w.core.Git = func(dir string) GitInfo { return GitInfo{Top: dir, Common: "/src/app/.git"} }
+	w.codex.cwds = map[string]string{"thread-1": "/src/app-wt-x"}
+	for _, c := range []struct {
+		env     map[string]string
+		want    Caller
+		inShell bool
+	}{
+		{map[string]string{"CODEX_THREAD_ID": "thread-1"}, Caller{Harness: "codex", Session: "thread-1"}, true},
+		{map[string]string{"CLAUDE_CODE_SESSION_ID": "s-1"}, Caller{Harness: "claude", Session: "s-1"}, true},
+		{map[string]string{"HOME": "/home/me"}, Caller{}, false},
+	} {
+		got, ok := CallerFromEnv(func(k string) string { return c.env[k] })
+		if ok != c.inShell || got != c.want {
+			t.Errorf("CallerFromEnv(%v) = %+v, %v; want %+v, %v", c.env, got, ok, c.want, c.inShell)
+		}
+	}
+	it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "thread-1", Harness: "codex"})
+	if err != nil || it.Scope != "/src/app/.git" {
+		t.Fatalf("filed %+v (%v) with no process table, want it in the thread's repo", it, err)
 	}
 }

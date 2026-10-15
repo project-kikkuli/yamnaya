@@ -37,6 +37,16 @@ func (c *Core) Identify(pid int) (Caller, error) {
 	return Caller{}, fmt.Errorf("no claude or codex process above pid %d: %w", pid, ErrNotFound)
 }
 
+// CallerFromEnv is the session a harness names in its shells' environment, for when the process table cannot be read, as in Codex's sandbox.
+func CallerFromEnv(getenv func(string) string) (Caller, bool) {
+	for _, v := range []struct{ harness, key string }{{"codex", "CODEX_THREAD_ID"}, {"claude", "CLAUDE_CODE_SESSION_ID"}} {
+		if id := getenv(v.key); id != "" {
+			return Caller{Harness: v.harness, Session: id}, true
+		}
+	}
+	return Caller{}, false
+}
+
 // CallerOf is the session ref names: a live session's full id or an unambiguous prefix of at least six characters, else ref itself.
 func (c *Core) CallerOf(ref string) (Caller, error) {
 	b, err := c.Board()
@@ -166,10 +176,7 @@ func (c *Core) Focus(t Target) error {
 // AddItem files an item against a session, in the session's scope unless it names one.
 func (c *Core) AddItem(it Item) (Item, error) {
 	if it.Scope == "" {
-		b, err := c.Board()
-		if err != nil {
-			return it, err
-		}
+		b, _ := c.Board()
 		it.Scope = c.ScopeOf(b, it.Session)
 	}
 	return c.Store.AddItem(it)
