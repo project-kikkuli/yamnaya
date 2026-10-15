@@ -15,12 +15,22 @@ type GitInfo struct {
 	Top    string
 	Common string
 	Branch string
+	// Default is the repository's default branch, "" when it cannot be told.
+	Default string
 	// Ahead counts the branch's commits past the default branch.
 	Ahead int
 }
 
-// DefaultBranch reports whether a branch is the one work merges into.
+// DefaultBranch reports whether a branch is the conventional default, main or master.
 func DefaultBranch(b string) bool { return b == "main" || b == "master" }
+
+// IsDefault reports whether b is the repository's default branch, falling back to main or master.
+func (g GitInfo) IsDefault(b string) bool {
+	if g.Default != "" {
+		return b == g.Default
+	}
+	return DefaultBranch(b)
+}
 
 // Name is the repository's name: its main checkout's directory, or the bare repo's.
 func (g GitInfo) Name() string {
@@ -39,8 +49,8 @@ func ReadGit(dir string) GitInfo {
 	if !ok {
 		g = revParse(dir)
 	}
-	if g.Branch != "" && g.Branch != "HEAD" && !DefaultBranch(g.Branch) {
-		g.Ahead = ahead(dir)
+	if g.Branch != "" && g.Branch != "HEAD" && !g.IsDefault(g.Branch) {
+		g.Ahead = ahead(dir, g.Default)
 	}
 	return g
 }
@@ -54,7 +64,21 @@ func revParse(dir string) GitInfo {
 	if len(lines) != 3 {
 		return GitInfo{}
 	}
-	return GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
+	g := GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
+	if out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Output(); err == nil {
+		g.Default = strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/")
+	}
+	return g
+}
+
+// originHead reads the default branch from the symref a clone leaves at origin/HEAD.
+func originHead(common string) string {
+	b, err := os.ReadFile(filepath.Join(common, "refs", "remotes", "origin", "HEAD"))
+	if err != nil {
+		return ""
+	}
+	name, _ := strings.CutPrefix(strings.TrimSpace(string(b)), "ref: refs/remotes/origin/")
+	return name
 }
 
 // readGitFiles walks up to the nearest .git and reads its HEAD and commondir.
@@ -94,7 +118,8 @@ func readGitFiles(dir string) (GitInfo, bool) {
 			if ref, ok := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: refs/heads/"); ok {
 				branch = ref
 			}
-			return GitInfo{Top: d, Common: filepath.Clean(common), Branch: branch}, true
+			common = filepath.Clean(common)
+			return GitInfo{Top: d, Common: common, Branch: branch, Default: originHead(common)}, true
 		}
 		if p := filepath.Dir(d); p == d {
 			return GitInfo{}, true
@@ -103,9 +128,12 @@ func readGitFiles(dir string) (GitInfo, bool) {
 }
 
 // ahead counts HEAD's commits on none of the branches work merges into.
-func ahead(dir string) int {
-	out, err := exec.Command("git", "-C", dir, "rev-list", "--ignore-missing", "--count", "HEAD", "--not",
-		"origin/HEAD", "origin/main", "origin/master", "main", "master").Output()
+func ahead(dir, def string) int {
+	not := []string{"origin/HEAD", "origin/main", "origin/master", "main", "master"}
+	if def != "" {
+		not = append(not, "origin/"+def, def)
+	}
+	out, err := exec.Command("git", append([]string{"-C", dir, "rev-list", "--ignore-missing", "--count", "HEAD", "--not"}, not...)...).Output()
 	if err != nil {
 		return 0
 	}

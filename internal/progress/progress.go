@@ -4,6 +4,7 @@ package progress
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -124,7 +125,9 @@ func (c *Crew) add(s core.Status, cut bool) {
 func Units(sessions []core.Live) []Unit {
 	var out []Unit
 	seen := map[string]bool{}
-	heads := map[string]bool{}
+	type head struct{ repo, branch string }
+	heads := map[head]bool{}
+	headed := map[string]bool{}
 	for _, s := range sessions {
 		for _, pr := range s.AllPRs() {
 			if seen[pr.URL] {
@@ -132,21 +135,28 @@ func Units(sessions []core.Live) []Unit {
 			}
 			seen[pr.URL] = true
 			u := PRUnit(pr)
-			heads[u.Branch] = true
+			heads[head{path.Base(pr.Repo), u.Branch}] = true
+			headed[u.Branch] = true
 			out = append(out, u)
 		}
 	}
-	branch := func(name string, ahead int) {
-		if name == "" || name == "HEAD" || core.DefaultBranch(name) || heads[name] {
+	listed := map[head]bool{}
+	branch := func(repoKey, def, name string, ahead int) {
+		g := core.GitInfo{Common: repoKey, Default: def}
+		if name == "" || name == "HEAD" || g.IsDefault(name) {
 			return
 		}
-		heads[name] = true
+		repo := g.Name()
+		if listed[head{repoKey, name}] || heads[head{repo, name}] || (repo == "" && headed[name]) {
+			return
+		}
+		listed[head{repoKey, name}] = true
 		out = append(out, BranchUnit(name, ahead))
 	}
 	for _, s := range sessions {
-		branch(s.Branch, s.Ahead)
+		branch(s.RepoKey, s.Default, s.Branch, s.Ahead)
 		for _, c := range s.Crew {
-			branch(c.Branch, c.Ahead)
+			branch(c.RepoKey, c.Default, c.Branch, c.Ahead)
 		}
 	}
 	return out

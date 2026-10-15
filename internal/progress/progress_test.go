@@ -1,6 +1,9 @@
 package progress
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"unicode/utf8"
 
@@ -122,3 +125,70 @@ func TestBarFillsItsWidth(t *testing.T) {
 }
 
 func abs(f float64) float64 { return max(f, -f) }
+
+func repoAt(t *testing.T, defaultBranch, checkout string, commits int) core.GitInfo {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", defaultBranch)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	git("update-ref", "refs/remotes/origin/"+defaultBranch, "HEAD")
+	git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
+	if checkout != defaultBranch {
+		git("checkout", "-q", "-b", checkout)
+		for range commits {
+			git("commit", "-q", "--allow-empty", "-m", "work")
+		}
+	}
+	return core.ReadGit(dir)
+}
+
+func inRepo(g core.GitInfo) core.Live {
+	return core.Live{Session: core.Session{Repo: g.Name(), RepoKey: g.Common, Branch: g.Branch, Ahead: g.Ahead, Default: g.Default}}
+}
+
+func TestBranchUnitsAreKeyedByRepoAndSkipTheDefaultBranch(t *testing.T) {
+	cases := []struct {
+		name  string
+		repos []struct{ def, checkout string }
+		units int
+	}{
+		{"same branch name in two repos", []struct{ def, checkout string }{{"main", "feat"}, {"main", "feat"}}, 2},
+		{"same branch name twice in one repo is one unit", nil, 1},
+		{"develop default checked out", []struct{ def, checkout string }{{"develop", "develop"}}, 0},
+		{"develop default beside a feature in another repo", []struct{ def, checkout string }{{"develop", "develop"}, {"main", "feat"}}, 1},
+		{"main checked out", []struct{ def, checkout string }{{"main", "main"}}, 0},
+	}
+	for _, c := range cases {
+		var lives []core.Live
+		for _, r := range c.repos {
+			lives = append(lives, inRepo(repoAt(t, r.def, r.checkout, 2)))
+		}
+		if c.repos == nil {
+			l := inRepo(repoAt(t, "main", "feat", 2))
+			lives = []core.Live{l, l}
+		}
+		if got := Units(lives); len(got) != c.units {
+			t.Errorf("%s: %d units, want %d", c.name, len(got), c.units)
+		}
+	}
+}
+
+func TestCrewBranchUnitsCarryTheirOwnRepo(t *testing.T) {
+	a, b := repoAt(t, "main", "feat", 1), repoAt(t, "develop", "feat", 3)
+	l := inRepo(a)
+	l.Crew = []core.Member{{Branch: b.Branch, Ahead: b.Ahead, RepoKey: b.Common, Default: b.Default}}
+	if got := Units([]core.Live{l}); len(got) != 2 {
+		t.Errorf("%d units, want 2", len(got))
+	}
+}

@@ -94,6 +94,9 @@ type Member struct {
 	// Branch is checked out in Worktree; Ahead counts its commits past the default branch.
 	Branch string
 	Ahead  int
+	// RepoKey is the git common dir of Worktree's repository; Default its default branch.
+	RepoKey string
+	Default string
 	Facts
 }
 
@@ -111,6 +114,8 @@ type Session struct {
 	RepoKey  string
 	Worktree string
 	Branch   string
+	// Default is the repository's default branch, "" when unknown.
+	Default string
 	// Ahead counts Branch's commits past the default branch.
 	Ahead      int
 	Title      string

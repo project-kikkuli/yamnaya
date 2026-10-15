@@ -324,12 +324,13 @@ func (c *Core) place(found []Session, now time.Time) {
 		if g := dirs[s.Cwd]; g.Common != "" {
 			s.Repo, s.RepoKey, s.Worktree = g.Name(), g.Common, g.Top
 			if g.Branch != "" && g.Branch != "HEAD" {
-				s.Branch, s.Ahead = g.Branch, g.Ahead
+				s.Branch, s.Ahead, s.Default = g.Branch, g.Ahead, g.Default
 			}
 		}
 		for j := range s.Crew {
 			if g := dirs[s.Crew[j].Worktree]; g.Branch != "" && g.Branch != "HEAD" {
 				s.Crew[j].Branch, s.Crew[j].Ahead = g.Branch, g.Ahead
+				s.Crew[j].RepoKey, s.Crew[j].Default = g.Common, g.Default
 			}
 		}
 	}
