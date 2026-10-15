@@ -29,6 +29,8 @@ type Adapter struct {
 	Cache core.ScanCache
 	// SendTimeout bounds one delivery to a session's messaging socket; zero means two seconds.
 	SendTimeout time.Duration
+	// ManagedSettings is the organization's settings file, which outranks the owner's own.
+	ManagedSettings string
 
 	mu    sync.Mutex
 	scans map[string]*scan
@@ -44,7 +46,7 @@ func New() *Adapter {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now}
+	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: "/Library/Application Support/ClaudeCode/managed-settings.json"}
 }
 
 func (a *Adapter) Name() string { return Name }

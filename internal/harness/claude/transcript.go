@@ -28,6 +28,7 @@ type record struct {
 	PRRepo      string    `json:"prRepository"`
 	Cwd         string    `json:"cwd"`
 	ContinuedIn string    `json:"continuedInSessionId"`
+	Permission  string    `json:"permissionMode"`
 	Timestamp   time.Time `json:"timestamp"`
 	Origin      *struct {
 		Kind string `json:"kind"`
@@ -143,6 +144,8 @@ type scan struct {
 	Facts    core.Facts
 	// Next is the session the conversation continued in, until a later turn shows it resumed here.
 	Next string
+	// Mode is the session's latest permission mode.
+	Mode string
 
 	modified time.Time
 }
@@ -170,6 +173,8 @@ func (t *scan) add(r record) {
 		t.LastPrompt = oneLine(r.LastPrompt)
 	case "continued-in":
 		t.Next = r.ContinuedIn
+	case "permission-mode":
+		t.Mode = r.Permission
 	case "pr-link":
 		if r.PRURL != "" {
 			t.Facts.Opened(core.PR{URL: r.PRURL, Repo: r.PRRepo, Number: r.PRNumber})

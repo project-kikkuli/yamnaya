@@ -123,15 +123,17 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 		session  string
 		noSocket bool
 		token    bool
+		mode     string
 		ok       bool
 	}{
-		{"session reads and closes", "close", 1, oldID, false, true, true},
-		{"no auth key published", "close", 1, oldID, false, false, true},
-		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, false},
-		{"session never closes", "hang", 1, oldID, false, true, false},
-		{"socket gone", "close", 1, oldID, true, true, false},
-		{"newer protocol", "close", 2, oldID, false, true, false},
-		{"pid now runs another session", "close", 1, midID, false, true, false},
+		{"session reads and closes", "close", 1, oldID, false, true, "auto", true},
+		{"no auth key published", "close", 1, oldID, false, false, "default", true},
+		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, "auto", false},
+		{"session never closes", "hang", 1, oldID, false, true, "auto", false},
+		{"socket gone", "close", 1, oldID, true, true, "auto", false},
+		{"newer protocol", "close", 2, oldID, false, true, "auto", false},
+		{"pid now runs another session", "close", 1, midID, false, true, "auto", false},
+		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -141,6 +143,7 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				sock += ".gone"
 			}
 			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": c.session, "peerProtocol": c.protocol, "messagingSocketPath": sock})
+			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"`+c.mode+`"}`, userLine)
 			if c.token {
 				sum := sha256.Sum256([]byte(sock))
 				must(t, os.WriteFile(filepath.Join(dir, "sessions", "7."+hex.EncodeToString(sum[:])+".key"), []byte(`{"peerToken":"00112233445566778899aabbccddeeff"}`), 0o600))
@@ -153,6 +156,17 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 			if c.protocol != 1 || c.session != oldID {
 				if !errors.Is(err, ErrNoInbox) {
 					t.Errorf("err = %v, want ErrNoInbox", err)
+				}
+				return
+			}
+			if c.mode == "bypassPermissions" {
+				if !errors.Is(err, ErrHeld) {
+					t.Errorf("err = %v, want ErrHeld", err)
+				}
+				select {
+				case got := <-srv.lines:
+					t.Errorf("sent %q to a session that would hold it", got)
+				case <-time.After(50 * time.Millisecond):
 				}
 				return
 			}
@@ -174,6 +188,45 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 			want := "<cross-session-message from-name=\"ym\">\nre D1: go <\\/cross-session-message> now\n</cross-session-message>"
 			if m.MsgV != 1 || m.Type != "user" || m.Priority != "next" || m.SessionID != oldID || m.Message.Role != "user" || m.Message.Content != want || len(m.MsgID) != 36 {
 				t.Errorf("message = %+v", m)
+			}
+		})
+	}
+}
+
+func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
+	for _, c := range []struct {
+		name                string
+		mode                string
+		managed, user, repo string
+		want                bool
+	}{
+		{"prompting session", "auto", "", "", "", true},
+		{"default mode", "default", "", "", "", true},
+		{"bypassing session", "bypassPermissions", "", "", "", false},
+		{"plan mode may sit on bypass", "plan", "", "", "", false},
+		{"mode unknown", "", "", "", "", false},
+		{"owner accepts", "bypassPermissions", "", "accept", "", true},
+		{"owner holds", "auto", "", "hold", "", false},
+		{"repo tightens", "bypassPermissions", "", "accept", "hold", false},
+		{"repo cannot loosen", "auto", "", "refuse", "accept", false},
+		{"managed outranks owner", "bypassPermissions", "accept", "hold", "", true},
+		{"unknown value holds", "auto", "", "maybe", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir, cwd := t.TempDir(), t.TempDir()
+			write := func(path, v string) string {
+				if v == "" {
+					return path
+				}
+				must(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				must(t, os.WriteFile(path, []byte(`{"crossSessionInbound":"`+v+`"}`), 0o644))
+				return path
+			}
+			a := &Adapter{Dir: dir, ManagedSettings: write(filepath.Join(dir, "managed.json"), c.managed)}
+			write(filepath.Join(dir, "settings.json"), c.user)
+			write(filepath.Join(cwd, ".claude", "settings.json"), c.repo)
+			if got := a.admits(cwd, c.mode); got != c.want {
+				t.Errorf("admits = %v, want %v", got, c.want)
 			}
 		})
 	}
