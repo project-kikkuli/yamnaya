@@ -12,7 +12,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-const scanFormat = 3
+const scanFormat = 4
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -126,6 +126,9 @@ func (t *scan) add(l rolloutLine, cwd string) {
 				files = core.PatchFiles(p.Input+p.Arguments, cwd)
 			}
 			t.Facts.Did(a, files...)
+			for _, pr := range core.PRsChanged(p.Input+p.Arguments, cwd) {
+				t.Facts.Opened(pr)
+			}
 			if strings.Contains(p.Input+p.Arguments, "gh pr create") {
 				if t.Creating == nil {
 					t.Creating = map[string]bool{}
