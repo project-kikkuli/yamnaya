@@ -706,8 +706,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "T":
 		if s := m.sessionOf(r); s != nil {
-			live, to, board := *s, core.Other(s.Harness), m.board
-			m.confirm("port "+live.Label()+" to "+to+"?", m.do(func() (string, error) { return m.core.Switch(board, live, to) }))
+			live, to := *s, core.Other(s.Harness)
+			m.confirm("end "+live.Label()+" and relaunch it in "+to+"?", m.do(func() (string, error) { return m.core.Relaunch(live, to) }))
 		}
 	case "p":
 		if p := m.projectOf(r); p != nil {

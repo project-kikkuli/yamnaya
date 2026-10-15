@@ -294,7 +294,18 @@ type launches struct {
 	started []core.NewLaunch
 	landed  []string
 	// startErr is what Start fails with, if anything.
-	startErr error
+	startErr   error
+	relaunched []string
+	// relaunchErr is what Relaunch fails with, if anything.
+	relaunchErr error
+}
+
+func (l *launches) Relaunch(from core.Live, harness, id string) (string, error) {
+	l.relaunched = append(l.relaunched, from.Key()+" "+harness+" "+id+" "+from.Cwd)
+	if l.relaunchErr != nil {
+		return "", l.relaunchErr
+	}
+	return "revived adopt-" + id, nil
 }
 
 func (l *launches) Start(n core.NewLaunch) (string, error) {

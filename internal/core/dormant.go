@@ -41,6 +41,8 @@ type Launches interface {
 	Start(n NewLaunch) (string, error)
 	// Land ends a launched session and removes its worktree, only when its branch is clean and merged or pushed.
 	Land(ref string) (string, error)
+	// Relaunch resumes session id of harness on ym's server in from's directory, taking over from's launch record when it has one.
+	Relaunch(from Live, harness, id string) (string, error)
 	Launched() []Launched
 }
 

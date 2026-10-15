@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -84,30 +85,41 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var to string
+	var relaunch bool
 	cmd := &cobra.Command{
-		Use:   "switch <session> --to claude|codex",
-		Short: "Port an idle session to the other harness with cs and print the command that resumes it",
+		Use:   "switch <session> --to claude|codex [--relaunch]",
+		Short: "Port an idle session to the other harness with cs; --relaunch also ends it and starts the port on ym's server",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			b, err := e.core.Board()
-			if err != nil {
-				return err
-			}
-			s, ok := sessionByPrefix(b, args[0])
-			if !ok {
-				return fmt.Errorf("no live session %q", args[0])
-			}
-			msg, err := e.core.Switch(b, s, to)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), msg)
-			return nil
+			return switchSession(e.core, args[0], to, relaunch, cmd.OutOrStdout())
 		}),
 	}
 	cmd.Flags().StringVar(&to, "to", "", "claude or codex")
+	cmd.Flags().BoolVar(&relaunch, "relaunch", false, "end the session and resume the port on ym's server in the same directory")
 	cmd.MarkFlagRequired("to")
 	return cmd
+}
+
+func switchSession(k *core.Core, ref, to string, relaunch bool, out io.Writer) error {
+	b, err := k.Board()
+	if err != nil {
+		return err
+	}
+	s, ok := sessionByPrefix(b, ref)
+	if !ok {
+		return fmt.Errorf("no live session %q", ref)
+	}
+	var msg string
+	if relaunch {
+		msg, err = k.Relaunch(s, to)
+	} else {
+		msg, err = k.Switch(b, s, to)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(out, msg)
+	return nil
 }
 
 // port rebuilds a session in the other harness with cs and returns the new session id.

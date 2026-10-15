@@ -1042,7 +1042,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean
                 and merged or pushed (asks y/n)
-   T            switch the idle session to the other harness with cs (asks y/n)
+   T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated
    v            set the mission's vibe, as a place from North Dakota (rough) to Hawaii (great): "place: why"

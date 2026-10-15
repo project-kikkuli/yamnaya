@@ -54,6 +54,20 @@ func (l launcher) Adopt(s core.Live, say func(string)) (core.Target, error) {
 	return core.Target{Session: last.Session, Handle: &core.Handle{Host: l.srv.Name(), ID: pane.ID, Label: pane.Session}}, nil
 }
 
+// Relaunch resumes session id of harness on ym's server in from's directory, so the board shows it as launched and ym revive brings it back.
+func (l launcher) Relaunch(from core.Live, harnessName, id string) (string, error) {
+	rec, ok := l.records.Find(from.ID)
+	if !ok {
+		rec = launch.Adopted(from, time.Now())
+		rec.Key = launch.AdoptKey(id)
+	}
+	rec.Harness, rec.Session = harnessName, id
+	if err := l.records.Save(rec); err != nil {
+		return "", err
+	}
+	return l.revive(rec)
+}
+
 // Send types text into s when it runs on ym's server, holding it while a permission prompt shows; any other session gets it from ym item inbox.
 func (l launcher) Send(s core.Live, text string) (string, error) {
 	if s.ID == "" {

@@ -145,12 +145,6 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			}
 			return ""
 		}},
-		{"T ports the session to the other harness", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"T", "y"}, func(t *testing.T, f fixture) string {
-			if !slices.Equal(f.ported, []string{"lead codex"}) || !strings.HasPrefix(f.m.message, "ported to codex session lead2") {
-				return "ported " + strings.Join(f.ported, ",") + " message " + f.m.message
-			}
-			return ""
-		}},
 		{"P sets phases, p advances them", []func(row) bool{mission("lead")}, []string{"P", "plan, build, ship", "enter", "p", "y"}, func(t *testing.T, f fixture) string {
 			ph, err := f.c.Store.Phases(projectKey(f, "lead"))
 			if err != nil || !slices.Equal(ph.Names, []string{"plan", "build", "ship"}) || ph.Current != 1 {
@@ -338,6 +332,74 @@ func TestBoardKeysWaitWhileAMergeIsPicked(t *testing.T) {
 			}
 			if m = press(t, m, "esc"); m.mode != modeList || m.message != "merge cancelled" {
 				t.Fatalf("esc after %s: mode %v message %q", key, m.mode, m.message)
+			}
+		})
+	}
+}
+
+// rooted runs the fixture's sessions in /src/w.
+type rooted struct{ core.Harness }
+
+func (h rooted) Discover(procs []proc.Proc) []core.Session {
+	out := h.Harness.Discover(procs)
+	for i := range out {
+		out[i].Cwd = "/src/w"
+	}
+	return out
+}
+
+// codexResumes stands in for Codex only to say how to resume a Codex session.
+type codexResumes struct{ core.Harness }
+
+func (codexResumes) Name() string                        { return "codex" }
+func (codexResumes) Owns(proc.Proc) bool                 { return false }
+func (codexResumes) Discover([]proc.Proc) []core.Session { return nil }
+func (codexResumes) Resume(id string) []string           { return []string{"codex", "resume", id} }
+
+func TestTEndsTheSessionPortsItAndRelaunchesItInTheOtherHarness(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		keys      []string
+		stubborn  bool
+		portErr   error
+		launchErr error
+		sent      []int
+		ported    []string
+		relaunch  []string
+		message   string
+	}{
+		{"y relaunches in the same directory", []string{"y"}, false, nil, nil, []int{1}, []string{"/src/w lead codex"}, []string{"lead codex lead2 /src/w"}, "relaunched lead as codex lead2: revived adopt-lead2"},
+		{"n cancels", []string{"n"}, false, nil, nil, nil, nil, nil, "cancelled"},
+		{"esc cancels", []string{"esc"}, false, nil, nil, nil, nil, nil, "cancelled"},
+		{"still running after SIGTERM", []string{"y"}, true, nil, nil, []int{1}, nil, nil, "still running (pid 1) after SIGTERM; not relaunched"},
+		{"port fails", []string{"y"}, false, errors.New("cs broke"), nil, []int{1}, []string{"/src/w lead codex"}, nil, "porting failed: cs broke; resume it with: cd /src/w && claude --resume lead"},
+		{"launch fails", []string{"y"}, false, nil, errors.New("no tmux"), []int{1}, []string{"/src/w lead codex"}, []string{"lead codex lead2 /src/w"}, "starting it failed: no tmux; resume it with: cd /src/w && codex resume lead2"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			k.Harnesses = []core.Harness{rooted{k.Harnesses[0]}, codexResumes{k.Harnesses[0]}}
+			sent := signals(k, c.stubborn)
+			l := &launches{relaunchErr: c.launchErr}
+			k.Launches = l
+			var ported []string
+			k.Port = func(cwd, id, to string) (string, error) {
+				ported = append(ported, cwd+" "+id+" "+to)
+				return id + "2", c.portErr
+			}
+			m = refresh(t, m)
+			m = to(t, m, mission("lead"))
+			m = press(t, m, "enter")
+			m = to(t, m, isSession("lead"))
+			m = press(t, m, "T")
+			if v := m.View(); m.mode != modeConfirm || !strings.Contains(v, "end claude lead (Lead work) and relaunch it in codex? y/n") {
+				t.Fatalf("T should ask y/n first:\n%s", v)
+			}
+			m = press(t, m, c.keys...)
+			if !slices.Equal(*sent, c.sent) || !slices.Equal(ported, c.ported) || !slices.Equal(l.relaunched, c.relaunch) {
+				t.Fatalf("signalled %v ported %v relaunched %v; want %v %v %v", *sent, ported, l.relaunched, c.sent, c.ported, c.relaunch)
+			}
+			if !strings.Contains(m.message, c.message) {
+				t.Fatalf("message %q, want %q", m.message, c.message)
 			}
 		})
 	}
