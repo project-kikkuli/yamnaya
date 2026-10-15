@@ -99,7 +99,7 @@ func (m Model) header() string {
 		h += "  " + alarm.Render("refresh failed: "+m.err.Error())
 	}
 	if m.core != nil && m.core.Meter != nil {
-		h += "\n" + fleetLine(m.board.Fleet, m.board.At)
+		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
 	}
 	return h
 }

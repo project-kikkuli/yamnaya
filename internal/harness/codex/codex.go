@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,7 +44,7 @@ func New() *Adapter {
 	if bin == "" {
 		bin = "codex"
 	}
-	return &Adapter{Home: home, Bin: bin, OpenFiles: lsofFiles, Cwd: lsofCwd, Now: time.Now}
+	return &Adapter{Home: home, Bin: bin, OpenFiles: proc.Files, Cwd: proc.Cwd, Now: time.Now}
 }
 
 func (a *Adapter) Name() string { return Name }
@@ -365,29 +363,6 @@ func firstLine(s string) string {
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
-
-func lsof(pid int, args ...string) []string {
-	out, err := exec.Command("lsof", append([]string{"-a", "-Fn", "-p", strconv.Itoa(pid)}, args...)...).Output()
-	if err != nil && len(out) == 0 {
-		return nil
-	}
-	var names []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "n") {
-			names = append(names, line[1:])
-		}
-	}
-	return names
-}
-
-func lsofFiles(pid int) []string { return lsof(pid) }
-
-func lsofCwd(pid int) string {
-	if names := lsof(pid, "-d", "cwd"); len(names) > 0 {
-		return names[0]
-	}
-	return ""
-}
 
 // SessionCwd is where thread session worked, from Codex's thread table.
 func (a *Adapter) SessionCwd(session string) string {

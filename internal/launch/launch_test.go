@@ -147,3 +147,26 @@ func TestRecordsFindByKeyBranchOrSessionPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateWithoutWtUsesGitWorktree(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	run(t, base, "git", "init", "-q", "-b", "main", "repo")
+	repo := filepath.Join(base, "repo")
+	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
+	t.Setenv("YAMNAYA_WT_BIN", "")
+	t.Setenv("PATH", filepath.Dir(gitBin))
+	w, err := Create(repo, "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Path != WorktreePath(repo, "task") || w.Branch != "task" {
+		t.Fatalf("worktree = %+v", w)
+	}
+	if got := Head(w.Path); got == "" || got != Head(repo) {
+		t.Errorf("worktree head %q, repo head %q", got, Head(repo))
+	}
+}

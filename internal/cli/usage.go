@@ -64,7 +64,7 @@ func usageCmd() *cobra.Command {
 			}
 			fmt.Fprintf(out, "scan: %d files, %d changed, %.1f MB, %d responses, %s (parse %s, store %s)\n", st.Files, st.Changed, float64(st.Bytes)/1e6, st.Responses,
 				st.Took.Round(time.Millisecond), st.Parse.Round(time.Millisecond), st.Commit.Round(time.Millisecond))
-			fmt.Fprintf(out, "spend: today %s   7d %s\n", f.Today.Dollars(), f.Week.Dollars())
+			fmt.Fprintf(out, "spend on %s: today %s   7d %s\n", core.ThisHost(), f.Today.Dollars(), f.Week.Dollars())
 			writeLimits(out, f.Limits, f.At)
 			var ours, theirs float64
 			n := 0

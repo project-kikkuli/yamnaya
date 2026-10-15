@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -123,4 +125,16 @@ func projectSpend(p Project, f Fleet) Spend {
 		}
 	}
 	return out
+}
+
+// ThisHost is the short hostname. Spend covers only the transcripts on this host; limits are account-wide.
+func ThisHost() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "this host"
+	}
+	if i := strings.IndexByte(h, '.'); i > 0 {
+		h = h[:i]
+	}
+	return h
 }

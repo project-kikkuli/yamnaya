@@ -1,0 +1,162 @@
+package cli
+
+import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/project-kikkuli/yamnaya"
+)
+
+// remoteBin is where ym lives on a remote host, so nothing outside the user's home changes.
+const remoteBin = "~/.local/bin/ym"
+
+func remoteCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:                "remote <host> [ym args...]",
+		Short:              "Run ym on a host over ssh: the board by default, or any ym command",
+		Args:               cobra.MinimumNArgs(1),
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if args[0] == "-h" || args[0] == "--help" {
+				return cmd.Help()
+			}
+			remote := remoteBin
+			for _, a := range args[1:] {
+				remote += " " + shellQuote(a)
+			}
+			flags := []string{args[0], remote}
+			if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+				flags = append([]string{"-t"}, flags...)
+			}
+			c := exec.Command("ssh", flags...)
+			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if err := c.Run(); err != nil {
+				if exit, ok := err.(*exec.ExitError); ok {
+					os.Exit(exit.ExitCode())
+				}
+				return err
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(remoteInstallCmd())
+	return cmd
+}
+
+func remoteInstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "install <host>",
+		Short: "Build ym for a host, copy it to ~/.local/bin/ym there, and run ym install --statusline on it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			host, out := args[0], cmd.OutOrStdout()
+			start := time.Now()
+			probe, err := exec.Command("ssh", host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
+			if err != nil {
+				return fmt.Errorf("ssh %s: %w", host, err)
+			}
+			lines := strings.Fields(string(probe))
+			if len(lines) == 0 {
+				return fmt.Errorf("ssh %s uname -m printed nothing", host)
+			}
+			arch, err := goArch(lines[0])
+			if err != nil {
+				return err
+			}
+			bin, err := buildFor("linux", arch)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(bin)
+			current := len(lines) > 1 && lines[1] == hex.EncodeToString(sum[:])
+			setup := `mkdir -p ~/.local/bin && ` +
+				`{ bash -lc 'command -v ym' >/dev/null 2>&1 || { f=~/.profile; [ -f ~/.bash_profile ] && f=~/.bash_profile; printf '\n[ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH"\n' >> "$f"; }; } && ` +
+				remoteBin + ` install --statusline`
+			var stdin io.Reader
+			if !current {
+				var gz bytes.Buffer
+				w, _ := gzip.NewWriterLevel(&gz, gzip.BestSpeed)
+				w.Write(bin)
+				w.Close()
+				stdin = &gz
+				setup = `mkdir -p ~/.local/bin && gzip -dc > ~/.local/bin/ym.new && chmod 755 ~/.local/bin/ym.new && mv ~/.local/bin/ym.new ` + remoteBin + ` && ` + setup
+			}
+			c := exec.Command("ssh", host, setup)
+			c.Stdin, c.Stdout, c.Stderr = stdin, out, cmd.ErrOrStderr()
+			if err := c.Run(); err != nil {
+				return fmt.Errorf("install on %s: %w", host, err)
+			}
+			verb := "copied"
+			if current {
+				verb = "already current"
+			}
+			fmt.Fprintf(out, "ym linux/%s %s on %s in %s; run it with: ym remote %s\n", arch, verb, host, time.Since(start).Round(100*time.Millisecond), host)
+			return nil
+		},
+	}
+}
+
+func goArch(machine string) (string, error) {
+	switch machine {
+	case "x86_64", "amd64":
+		return "amd64", nil
+	case "aarch64", "arm64":
+		return "arm64", nil
+	}
+	return "", fmt.Errorf("unsupported host architecture %q", machine)
+}
+
+// buildFor returns a ym binary for goos/goarch: this executable when it already is one, else a build of ym's embedded source.
+func buildFor(goos, goarch string) ([]byte, error) {
+	if runtime.GOOS == goos && runtime.GOARCH == goarch {
+		if self, err := os.Executable(); err == nil {
+			return os.ReadFile(self)
+		}
+	}
+	gobin, err := exec.LookPath("go")
+	if err != nil {
+		return nil, fmt.Errorf("building ym for %s/%s needs the go toolchain on PATH: %w", goos, goarch, err)
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	src := filepath.Join(cache, "yamnaya", "src")
+	if err := os.RemoveAll(src); err != nil {
+		return nil, err
+	}
+	if err := os.CopyFS(src, yamnaya.Source); err != nil {
+		return nil, err
+	}
+	dst := filepath.Join(cache, "yamnaya", "ym-"+goos+"-"+goarch)
+	c := exec.Command(gobin, "build", "-trimpath", "-o", dst, "./cmd/ym")
+	c.Dir = src
+	c.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod")
+	if out, err := c.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build for %s/%s: %w: %s", goos, goarch, err, bytes.TrimSpace(out))
+	}
+	return os.ReadFile(dst)
+}
+
+// shellQuote quotes s for a POSIX shell.
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '.' || r == '/' || r == '=' || r == ':' || r == ',' || r == '@' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}

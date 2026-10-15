@@ -25,6 +25,12 @@ Claude Code reports its limits only to the statusline, so pipe the statusline in
 
     printf '%s' "$input" | ym limits record >/dev/null 2>&1 &
 
+Spend covers the transcripts on the host ym runs on, and the board names that host; limits are account-wide.
+
+## Remote hosts
+
+`ym remote install <host>` cross-compiles ym from the source embedded in the local binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host over ssh, runs `ym install --statusline` there, and touches nothing outside the remote home. `--statusline` adds a statusline that records limits when Claude Code has none, and otherwise adds the record line to the existing statusline script after it reads `$input`. Re-running upgrades; an unchanged binary is not copied again. Without `wt` on the host, `ym new` creates worktrees with `git worktree add`.
+
 Usage is read incrementally from `~/.claude/projects` and `~/.codex/sessions` into the ym database; prices come from LiteLLM, refreshed daily into the state directory, with an embedded snapshot offline.
 
 An answer is typed into the agent's tmux pane as `re D4: <answer>` when the agent sits idle; otherwise the agent reads it with `ym item inbox` on its next turn.
@@ -50,6 +56,8 @@ An answer is typed into the agent's tmux pane as `re D4: <answer>` when the agen
     ym usage [--top N] [--json]         API-priced spend per session, today and 7d, and limits
     ym limits                           Claude and Codex limit windows
     ym limits record                    save Claude limits from statusline JSON on stdin
+    ym remote install <host>            build ym for the host, copy it to ~/.local/bin/ym there, link the skill and wire the statusline
+    ym remote <host> [ym args...]       run ym on the host over ssh: the board by default
 
 Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; pass `--session` to override.
 

@@ -102,6 +102,7 @@ func NewRoot() *cobra.Command {
 		installCmd(),
 		usageCmd(),
 		limitsCmd(),
+		remoteCmd(),
 	)
 	return root
 }

@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -43,7 +42,7 @@ func New() *Adapter {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Bin: bin, Cwd: cwdOf, Now: time.Now}
+	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now}
 }
 
 func (a *Adapter) Name() string { return Name }
@@ -188,20 +187,6 @@ func msTime(ms int64) time.Time {
 		return time.Time{}
 	}
 	return time.UnixMilli(ms)
-}
-
-// cwdOf reads a process's working directory with lsof.
-func cwdOf(pid int) string {
-	out, err := exec.Command("lsof", "-a", "-d", "cwd", "-Fn", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.HasPrefix(line, "n") {
-			return line[1:]
-		}
-	}
-	return ""
 }
 
 // SessionCwd is where session worked, from the first transcript record that names a directory.

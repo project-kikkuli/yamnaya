@@ -144,7 +144,8 @@ func port(cwd, id, to string) (string, error) {
 }
 
 func installCmd() *cobra.Command {
-	return &cobra.Command{
+	var statusline bool
+	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install the ym skill for Claude Code and Codex",
 		Args:  cobra.NoArgs,
@@ -176,9 +177,23 @@ func installCmd() *cobra.Command {
 			if err := os.Remove(old); err == nil {
 				fmt.Fprintf(out, "removed %s; drop any source-file line for it from your tmux config\n", old)
 			}
+			if !statusline {
+				return nil
+			}
+			self, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			msg, err := wireStatusline(home, self)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(out, msg)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&statusline, "statusline", false, "also make Claude Code's statusline record limits with ym")
+	return cmd
 }
 
 func writeSkill(dst string) error {

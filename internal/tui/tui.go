@@ -58,6 +58,7 @@ type frame struct {
 
 type Model struct {
 	core      *core.Core
+	host      string
 	board     core.Board
 	loaded    bool
 	err       error
@@ -90,7 +91,7 @@ type Model struct {
 }
 
 func New(c *core.Core) Model {
-	return Model{core: c, width: 100, height: 40, interval: time.Second}
+	return Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second}
 }
 
 func Run(c *core.Core) error {

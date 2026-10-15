@@ -68,18 +68,23 @@ func Create(dir, slug string) (Worktree, error) {
 		_, err := git(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+b)
 		return err == nil
 	})
+	w := Worktree{Path: WorktreePath(root, slug), Branch: slug, GitDir: filepath.Join(root, ".git")}
 	bin := os.Getenv("YAMNAYA_WT_BIN")
 	if bin == "" {
-		if bin, err = exec.LookPath("wt"); err != nil {
-			return Worktree{}, fmt.Errorf("wt not found on PATH: %w", err)
+		bin, _ = exec.LookPath("wt")
+	}
+	if bin == "" {
+		if _, err := git(root, "worktree", "add", "-b", slug, w.Path); err != nil {
+			return Worktree{}, err
 		}
+		return w, nil
 	}
 	cmd := exec.Command(bin, "add", slug)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return Worktree{}, fmt.Errorf("wt add %s in %s: %w: %s", slug, root, err, strings.TrimSpace(string(out)))
 	}
-	return Worktree{Path: WorktreePath(root, slug), Branch: slug, GitDir: filepath.Join(root, ".git")}, nil
+	return w, nil
 }
 
 // Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too.

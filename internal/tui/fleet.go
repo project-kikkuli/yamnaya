@@ -11,8 +11,8 @@ import (
 // staleAfter is how old a limit report may be before the header shows its age.
 const staleAfter = 10 * time.Minute
 
-// fleetLine shows each harness's limit windows and the API-priced spend of today and the last seven days.
-func fleetLine(f core.Fleet, now time.Time) string {
+// fleetLine shows each harness's account-wide limit windows and this host's API-priced spend of today and the last seven days.
+func fleetLine(f core.Fleet, host string, now time.Time) string {
 	if !f.Ready && len(f.Limits) == 0 {
 		return dim.Render(" usage: reading transcripts…")
 	}
@@ -44,7 +44,7 @@ func fleetLine(f core.Fleet, now time.Time) string {
 		parts = append(parts, p)
 	}
 	if f.Ready {
-		parts = append(parts, "api spend today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
+		parts = append(parts, "api spend on "+host+" today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
 	}
 	return " " + strings.Join(parts, "   ")
 }
