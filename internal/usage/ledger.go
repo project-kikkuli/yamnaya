@@ -263,6 +263,8 @@ type batch struct {
 	sums      map[sumKey]core.Tokens
 	slices    map[sliceKey]core.Tokens
 	limits    map[string]core.Limit
+	// from is the oldest slice bucket kept.
+	from int64
 }
 
 func (l *ledger) commit(b batch) error {
@@ -271,6 +273,9 @@ func (l *ledger) commit(b batch) error {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM ym_usage_slices WHERE bucket < ?`, b.from); err != nil {
+		return err
+	}
 	for _, id := range b.reset {
 		for _, q := range []string{`DELETE FROM ym_usage_sums WHERE file = ?`, `DELETE FROM ym_usage_responses WHERE file = ?`, `DELETE FROM ym_usage_slices WHERE file = ?`} {
 			if _, err := tx.Exec(q, id); err != nil {

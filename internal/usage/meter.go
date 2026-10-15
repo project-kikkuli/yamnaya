@@ -238,7 +238,7 @@ func (m *Meter) parse(work []*parsed) {
 // merge turns parsed lines into ledger writes, counting each Claude response once across all files at its largest reported usage.
 // Usage logged before bucket from adds to the sums but not to the slices.
 func (m *Meter) merge(work []*parsed, from int64) (batch, error) {
-	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}, slices: map[sliceKey]core.Tokens{}, limits: map[string]core.Limit{}}
+	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}, slices: map[sliceKey]core.Tokens{}, limits: map[string]core.Limit{}, from: from}
 	var ids []string
 	for _, p := range work {
 		if p.reset {
@@ -312,6 +312,11 @@ func (m *Meter) apply(b batch) {
 			if k.File == id {
 				delete(m.slices, k)
 			}
+		}
+	}
+	for k := range m.slices {
+		if k.Bucket < b.from {
+			delete(m.slices, k)
 		}
 	}
 	for k, t := range b.sums {

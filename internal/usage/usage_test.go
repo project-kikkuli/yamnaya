@@ -374,3 +374,34 @@ func TestLimitSharesSplitEachWindowByAPIPricedUsageInside(t *testing.T) {
 		})
 	}
 }
+
+func TestSlicesOlderThanTheLongestWindowDropWhileTheMeterRuns(t *testing.T) {
+	cases := []struct {
+		name  string
+		later time.Duration
+		want  int
+	}{
+		{"a scan within 8 days keeps both slices", 7 * 24 * time.Hour, 2},
+		{"a scan past 8 days drops the first slice", 9 * 24 * time.Hour, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := meter(t)
+			session := filepath.Join(m.ClaudeDir, "projects", "-Users-me-app")
+			write(t, filepath.Join(session, parentID+".jsonl"), reply("msg_1", "claude-sonnet-5", 1000, 1000, 0, 0, 0))
+			scan(t, m)
+			now := ts.Add(c.later)
+			write(t, filepath.Join(session, otherID+".jsonl"), strings.Replace(reply("msg_2", "claude-sonnet-5", 1000, 1000, 0, 0, 0), ts.Format(time.RFC3339), now.Format(time.RFC3339), 1))
+			if _, err := m.Scan(now); err != nil {
+				t.Fatal(err)
+			}
+			var stored int
+			if err := m.ledger.db.QueryRow(`SELECT count(*) FROM ym_usage_slices`).Scan(&stored); err != nil {
+				t.Fatal(err)
+			}
+			if len(m.slices) != c.want || stored != c.want {
+				t.Errorf("slices in memory %d, stored %d, want %d", len(m.slices), stored, c.want)
+			}
+		})
+	}
+}
