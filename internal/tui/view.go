@@ -56,7 +56,7 @@ func (m Model) View() string {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
-		lines = m.scroll(lines, room)
+		lines = m.scroll(lines, room, top)
 	}
 	for len(lines) < room {
 		lines = append(lines, "")
@@ -68,16 +68,20 @@ func (m Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
-// scroll keeps the cursor's line on screen when the list outgrows it.
-func (m Model) scroll(lines []string, room int) []string {
+// scroll keeps the header's top lines and the cursor's line on screen when the view outgrows it, moving no further from the top than that needs.
+func (m Model) scroll(lines []string, room, top int) []string {
+	if room <= top+1 {
+		top = 0
+	}
+	body, space := lines[top:], room-top
 	at := 0
-	for i, l := range lines {
+	for i, l := range body {
 		if strings.HasPrefix(ansi.Strip(l), " >") {
 			at = i
 		}
 	}
-	start := max(0, min(at-room/3, len(lines)-room))
-	return lines[start : start+room]
+	start := max(0, min(at+4-space, len(body)-space))
+	return append(lines[:top:top], body[start:start+space]...)
 }
 
 func (m Model) header() string {
@@ -708,8 +712,9 @@ func (m Model) detailView() string {
 	if len(p.Items) == 0 {
 		b.WriteString(dim.Render("   none") + "\n")
 	}
+	ids := itemIDs(p.Items)
 	for _, it := range p.Items {
-		b.WriteString(m.itemLines(i, it))
+		b.WriteString(m.itemLines(i, it, ids))
 		i++
 	}
 	return b.String()
@@ -736,8 +741,28 @@ func (m Model) crewLine(i int, s core.Live, c core.Member) string {
 	return l + "\n"
 }
 
-func (m Model) itemLines(i int, it core.Item) string {
-	line := m.mark(i) + pad(it.ID, 5) + " " + pad(it.State, 10) + " " + it.Question
+// itemIDs labels each item by its bare ID, or by project and ID when the items come from more than one project, padded to one width.
+func itemIDs(items []core.Item) map[string]string {
+	label := func(it core.Item) string { return it.ID }
+	for _, it := range items {
+		if it.Scope != items[0].Scope {
+			label = core.Item.Qualified
+			break
+		}
+	}
+	w := 5
+	for _, it := range items {
+		w = max(w, len(label(it)))
+	}
+	ids := map[string]string{}
+	for _, it := range items {
+		ids[it.Key()] = pad(label(it), w)
+	}
+	return ids
+}
+
+func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
+	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " " + it.Question
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = dim.Render(line)
 	}
@@ -846,8 +871,9 @@ func (m Model) sessionView() string {
 		}
 		if len(items) > 0 {
 			b.WriteString("\n" + bold.Render(" ITEMS") + "\n")
+			ids := itemIDs(items)
 			for _, it := range items {
-				b.WriteString(m.itemLines(i, it))
+				b.WriteString(m.itemLines(i, it, ids))
 				i++
 			}
 		}

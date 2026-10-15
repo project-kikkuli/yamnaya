@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -376,5 +377,45 @@ func TestHealthOpensOnHAndEscReturns(t *testing.T) {
 	m = press(t, m, "esc")
 	if m.mode != modeList {
 		t.Fatalf("esc left mode %v", m.mode)
+	}
+}
+
+func TestALongCrewKeepsTheHeaderAndSessionTitleOnScreen(t *testing.T) {
+	m, c, _ := setup(t)
+	lead := c.Harnesses[0].(harness).sessions[1]
+	for i := range 60 {
+		lead.Crew = append(lead.Crew, core.Member{ID: fmt.Sprint("w", i), Name: fmt.Sprint("worker ", i), Status: core.Busy})
+	}
+	c.Harnesses[0].(harness).sessions[1] = lead
+	m.height = 30
+	m = refresh(t, m)
+	m = press(t, m, "down", "down", "enter", "enter", "enter")
+	v := m.View()
+	if m.mode != modeSession || !strings.Contains(v, " ym ") || !strings.Contains(v, "Lead work") || !strings.Contains(v, "worker 0") {
+		t.Fatalf("session view with 61 crew lost its header, title or first worker:\n%s", v)
+	}
+	m = press(t, m, strings.Split(strings.Repeat("j", 50), "")...)
+	if v := m.View(); !strings.Contains(v, " ym ") || !strings.Contains(v, "worker 49") || strings.Count(v, "\n") >= m.height {
+		t.Fatalf("scrolled to worker 49, want it on screen under the header in %d lines:\n%s", m.height, v)
+	}
+}
+
+func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
+	m, c, _ := setup(t)
+	if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
+		t.Fatal(err)
+	}
+	m = press(t, refresh(t, m), "down", "down", "down", "enter", "enter")
+	v := m.View()
+	if m.mode != modeDetail || !strings.Contains(v, "other:D1") || strings.Count(v, " D1 ") != 1 {
+		t.Fatalf("mission items from two projects should name the project where IDs repeat:\n%s", v)
+	}
+}
+
+func TestHeaderSaysSpendIsStillLoading(t *testing.T) {
+	now := time.Now()
+	f := core.Fleet{Limits: []core.Limit{{Harness: "claude", Name: "5h", Used: 30, Window: 5 * time.Hour, ResetsAt: now.Add(time.Hour), Seen: now}}}
+	if l := fleetLine(f, "mac", now); !strings.Contains(l, "claude") || !strings.Contains(l, "reading transcripts") {
+		t.Fatalf("header before the first usage scan = %q, want the claude limits and a note that spend is loading", l)
 	}
 }

@@ -47,6 +47,8 @@ func fleetLine(f core.Fleet, host string, now time.Time) string {
 		if len(f.Windows) > 0 {
 			parts = append(parts, dim.Render("≈ limit shares see only "+host+"'s usage, so work on other hosts like Forge VMs makes them run high"))
 		}
+	} else {
+		parts = append(parts, dim.Render("spend and codex limits: reading transcripts…"))
 	}
 	return " " + strings.Join(parts, "   ")
 }
