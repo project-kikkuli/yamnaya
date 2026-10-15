@@ -150,6 +150,8 @@ type Harness interface {
 	Resume(id string) []string
 	// ParsePrompt finds a live permission dialog on a terminal screen.
 	ParsePrompt(screen string) (Prompt, bool)
+	// Composer reads the input box the agent takes a message in; ok is false when the screen does not show it.
+	Composer(screen string) (text string, ok bool)
 }
 
 // Waiter is a harness whose own files say when a process waits on a dialog, even one drawn past the screen's edge.
@@ -170,7 +172,9 @@ type Host interface {
 	Locate(tty string) (Handle, bool)
 	// Focus brings the terminal forward. When another terminal shows this one, Focus returns that terminal's tty.
 	Focus(h Handle) (outer string, err error)
-	Type(h Handle, text string) error
+	// Paste pastes text as one bracketed paste, without pressing Enter.
+	Paste(h Handle, text string) error
+	Enter(h Handle) error
 	Screen(h Handle) (string, error)
 }
 

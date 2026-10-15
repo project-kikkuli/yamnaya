@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Dormant is a session ym launched whose agent no longer runs; reviving it resumes it in its worktree.
 type Dormant struct {
@@ -36,5 +39,18 @@ type Launches interface {
 	Send(s Live, text string) (string, error)
 }
 
-// Adoptable reports whether ym can move s onto its own server: it runs in a terminal no host of ym's reaches.
-func (l Live) Adoptable() bool { return l.Handle == nil && l.PID != 0 && l.ID != "" }
+// Adoptable reports whether ym can move s onto its own server: it runs in a terminal app no host of ym's reaches.
+func (l Live) Adoptable() bool { return l.Unadoptable() == "" }
+
+// Unadoptable says why ym cannot move s onto its own server, or is empty when it can.
+func (l Live) Unadoptable() string {
+	switch {
+	case l.Handle != nil:
+		return fmt.Sprintf("%s runs in %s; ym open %s reaches it there", Short(l.Key()), l.Location(), Short(l.Key()))
+	case l.PID == 0 || l.ID == "":
+		return fmt.Sprintf("%s has no session id yet", Short(l.Key()))
+	case l.Muxed:
+		return fmt.Sprintf("%s runs under a tmux server ym does not reach; quit it there and ym revive or resume it", Short(l.Key()))
+	}
+	return ""
+}

@@ -27,7 +27,7 @@ type Outcome int
 
 const (
 	Typed Outcome = iota
-	// Held waits for a permission prompt to clear before it is typed.
+	// Held waits for a permission prompt, or anything else that hides the input box, to clear before it is typed.
 	Held
 	// Queued waits for the agent to read it from ym item inbox.
 	Queued
@@ -61,7 +61,7 @@ func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outc
 	}
 	if pane.Type(text) != nil {
 		m, err := s.Box.AddMessage(session, text, core.MsgPending)
-		return m, Queued, err
+		return m, Held, err
 	}
 	m, err := s.Box.AddMessage(session, text, core.MsgTyped)
 	return m, Typed, err
@@ -83,10 +83,12 @@ func (s Sender) Hold(seq int64, pane Pane) (bool, error) {
 			if err != nil || !ok {
 				return false, err
 			}
-			if err := pane.Type(m.Text); err != nil {
-				return false, s.Box.Unclaim(seq)
+			if pane.Type(m.Text) == nil {
+				return true, nil
 			}
-			return true, nil
+			if err := s.Box.Unclaim(seq); err != nil {
+				return false, err
+			}
 		}
 		time.Sleep(s.Poll)
 	}

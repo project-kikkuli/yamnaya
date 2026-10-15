@@ -20,6 +20,7 @@ func (h harness) Owns(p proc.Proc) bool                  { return p.Args[0] == "
 func (h harness) SessionID(p proc.Proc) string           { return h.sessions[p.PID].ID }
 func (h harness) Resume(id string) []string              { return []string{"claude", "--resume", id} }
 func (h harness) ParsePrompt(string) (core.Prompt, bool) { return core.Prompt{}, false }
+func (h harness) Composer(screen string) (string, bool)  { return screen, true }
 func (h harness) Discover(procs []proc.Proc) []core.Session {
 	var out []core.Session
 	for _, p := range procs {
@@ -31,6 +32,7 @@ func (h harness) Discover(procs []proc.Proc) []core.Session {
 }
 
 type host struct {
+	box     map[string]string
 	typed   []string
 	focused []string
 	// away are terminals no host reaches, like an iTerm window.
@@ -48,11 +50,19 @@ func (h *host) Focus(hd core.Handle) (string, error) {
 	h.focused = append(h.focused, hd.ID)
 	return "", nil
 }
-func (h *host) Type(hd core.Handle, text string) error {
-	h.typed = append(h.typed, hd.ID+" "+text)
+func (h *host) Paste(hd core.Handle, text string) error {
+	if h.box == nil {
+		h.box = map[string]string{}
+	}
+	h.box[hd.ID] += text
 	return nil
 }
-func (h *host) Screen(core.Handle) (string, error) { return "", nil }
+func (h *host) Enter(hd core.Handle) error {
+	h.typed = append(h.typed, hd.ID+" "+h.box[hd.ID])
+	delete(h.box, hd.ID)
+	return nil
+}
+func (h *host) Screen(hd core.Handle) (string, error) { return h.box[hd.ID], nil }
 
 func setup(t *testing.T) (Model, *core.Core, *host) {
 	t.Helper()

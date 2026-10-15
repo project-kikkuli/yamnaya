@@ -57,7 +57,8 @@ func (c *Core) Find(ref string) (Live, error) {
 			}
 		}
 	} else {
-		l.App = appOf(proc.Index(procs), l.PID)
+		table := proc.Index(procs)
+		l.App, l.Muxed = appOf(table, l.PID), muxed(table, l.PID)
 	}
 	return l, nil
 }

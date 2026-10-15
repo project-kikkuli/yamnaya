@@ -18,8 +18,8 @@ import (
 
 // Adopt waits until s sits idle, ends its agent in its current terminal and resumes the conversation on ym's server.
 func (l launcher) Adopt(s core.Live, say func(string)) (core.Target, error) {
-	if !s.Adoptable() {
-		return core.Target{}, fmt.Errorf("%s runs in %s; ym open reaches it there", core.Short(s.Key()), s.Location())
+	if why := s.Unadoptable(); why != "" {
+		return core.Target{}, errors.New(why)
 	}
 	st := launch.Stopper{
 		Look:   func() (core.Live, error) { return l.core.Find(s.ID) },
@@ -115,7 +115,13 @@ func (p *serverPane) Prompt() (bool, bool) {
 	return shown, true
 }
 
-func (p *serverPane) Type(text string) error { return p.l.srv.Type(core.Handle{ID: p.id}, text) }
+func (p *serverPane) Type(text string) error {
+	pid, ok := p.l.srv.Running(p.id)
+	if !ok {
+		return fmt.Errorf("pane %s no longer runs its agent", p.id)
+	}
+	return core.Type(p.l.srv, core.Handle{ID: p.id}, p.harness, pid, text)
+}
 
 func adoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
@@ -131,8 +137,8 @@ func adoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			if err != nil {
 				return err
 			}
-			if !s.Adoptable() {
-				fmt.Fprintf(out, "%s runs in %s; ym open %s reaches it there\n", core.Short(s.ID), s.Location(), core.Short(s.ID))
+			if why := s.Unadoptable(); why != "" {
+				fmt.Fprintln(out, why)
 				return nil
 			}
 			t, err := e.core.Launches.Adopt(s, func(msg string) { fmt.Fprintln(out, msg) })

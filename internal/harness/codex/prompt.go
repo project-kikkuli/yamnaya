@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"strings"
+
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/screen"
 )
@@ -34,4 +36,34 @@ func ParsePrompt(text string) (core.Prompt, bool) {
 func OpenElsewhere(text string) bool {
 	lines := screen.Lines(text)
 	return screen.Has(lines, "This conversation is open in another app") && screen.FooterNear(lines, footerLines, "r retry")
+}
+
+// Composer reads Codex's input box: the › line and its wrapped lines up to the blank line above the footer.
+func (a *Adapter) Composer(text string) (string, bool) { return Composer(text) }
+
+func Composer(text string) (string, bool) {
+	raw := strings.Split(strings.TrimRight(text, "\n "), "\n")
+	start := -1
+	for i := len(raw) - 1; i >= 0; i-- {
+		if strings.HasPrefix(raw[i], "› ") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	end := start + 1
+	for end < len(raw) && strings.TrimSpace(raw[end]) != "" && strings.HasPrefix(raw[end], "  ") {
+		end++
+	}
+	footer := screen.Lines(strings.Join(raw[end:], "\n"))
+	if len(footer) > 3 || (end < len(raw) && strings.TrimSpace(raw[end]) != "") || screen.FooterNear(footer, 3, "esc to cancel", "enter continue") {
+		return "", false
+	}
+	box := make([]string, 0, end-start)
+	for _, l := range raw[start:end] {
+		box = append(box, strings.TrimSpace(l))
+	}
+	return strings.TrimSpace(strings.TrimPrefix(strings.Join(box, " "), "›")), true
 }

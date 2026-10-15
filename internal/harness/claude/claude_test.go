@@ -227,3 +227,26 @@ func transcript(reply time.Time, next string) string {
 	}
 	return out + fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"text","text":"Open for you"}],"stop_reason":"end_turn"}}`+"\n", reply.Format(time.RFC3339))
 }
+
+func TestComposerReadsTheInputBoxOnlyWhenNoDialogShows(t *testing.T) {
+	cases := map[string]struct {
+		box string
+		ok  bool
+	}{
+		"claude-idle":         {"", true},
+		"claude-busy-pasted":  {"marker alpha $HOME `pwd` \"quoted\" 'single' end", true},
+		"claude-busy-long":    {"marker alpha $HOME `pwd` \"quoted\" 'single' end[Pasted text #1]", true},
+		"claude-fetch-dialog": {"", false},
+		"claude-bash":         {"", false},
+		"claude-trust":        {"", false},
+	}
+	for name, want := range cases {
+		b, err := os.ReadFile(filepath.Join("testdata", name+".txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if box, ok := Composer(string(b)); box != want.box || ok != want.ok {
+			t.Errorf("%s: Composer = %q, %v; want %q, %v", name, box, ok, want.box, want.ok)
+		}
+	}
+}

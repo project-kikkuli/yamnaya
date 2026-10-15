@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -152,8 +153,17 @@ func DefaultStorePath() (string, error) {
 	return filepath.Join(home, ".local", "state", "yamnaya", "ym.db"), nil
 }
 
+// OpenStore opens the store, one process at a time: SQLite fails a switch to WAL as busy, without waiting, while another process opens the file.
 func OpenStore(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(path+".open.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return nil, err
 	}
 	q := url.Values{}

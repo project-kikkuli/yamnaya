@@ -268,3 +268,27 @@ func TestOpenElsewhereReadsOnlyTheLiveNotice(t *testing.T) {
 		}
 	}
 }
+
+func TestComposerReadsTheInputBoxOnlyWhenNoDialogShows(t *testing.T) {
+	cases := map[string]struct {
+		box string
+		ok  bool
+	}{
+		"codex-idle":           {"Ask Codex to do anything", true},
+		"codex-busy-pasted":    {"marker alpha $HOME `pwd` \"quoted\" 'single' end", true},
+		"codex-busy-long":      {"marker alpha $HOME `pwd` \"quoted\" 'single' end[Pasted Content 2289 chars]", true},
+		"codex-approval":       {"", false},
+		"codex-exec":           {"", false},
+		"codex-trust":          {"", false},
+		"codex-open-elsewhere": {"", false},
+	}
+	for name, want := range cases {
+		b, err := os.ReadFile(filepath.Join("testdata", name+".txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if box, ok := Composer(string(b)); box != want.box || ok != want.ok {
+			t.Errorf("%s: Composer = %q, %v; want %q, %v", name, box, ok, want.box, want.ok)
+		}
+	}
+}

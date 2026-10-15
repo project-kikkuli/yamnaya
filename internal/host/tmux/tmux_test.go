@@ -55,7 +55,10 @@ func TestLocateTypeAndScreenByPaneTTY(t *testing.T) {
 	if _, ok := h.Locate("/dev/nope"); ok {
 		t.Fatal("located an unknown tty")
 	}
-	if err := h.Type(hd, "re D1: ship it"); err != nil {
+	if err := h.Paste(hd, "re D1: ship it"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Enter(hd); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "cat to echo the typed line back", func() bool {

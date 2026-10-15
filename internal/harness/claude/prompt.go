@@ -50,3 +50,20 @@ func ParsePrompt(text string) (core.Prompt, bool) {
 	}
 	return p, true
 }
+
+// Composer reads Claude Code's input box: the ❯ lines between the last two rules, with only the status footer below.
+func (a *Adapter) Composer(text string) (string, bool) { return Composer(text) }
+
+func Composer(text string) (string, bool) {
+	lines := screen.Lines(text)
+	bottom := screen.LastIndex(lines, func(l string) bool { return screen.IsRule(l, '─') })
+	if bottom < 1 || len(lines)-1-bottom > footerLines {
+		return "", false
+	}
+	top := screen.LastIndex(lines[:bottom], func(l string) bool { return screen.IsRule(l, '─') })
+	if top < 0 || top+1 >= bottom || !strings.HasPrefix(lines[top+1], "❯") {
+		return "", false
+	}
+	box := strings.Join(lines[top+1:bottom], " ")
+	return strings.TrimSpace(strings.TrimPrefix(box, "❯")), true
+}

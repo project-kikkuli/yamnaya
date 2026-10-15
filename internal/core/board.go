@@ -1,6 +1,7 @@
 package core
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -34,7 +35,9 @@ type Live struct {
 	Session
 	Handle *Handle
 	// App is the program the session's terminal belongs to when no host adapter knows it, such as iTerm2.
-	App     string
+	App string
+	// Muxed is set when a tmux server ym does not reach runs the session's terminal.
+	Muxed   bool
 	Copies  []Session
 	Project string
 	// Messages are the follow-ups the owner sent this session.
@@ -218,7 +221,7 @@ func (c *Core) Board() (Board, error) {
 		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.ID]}
 		h, host := c.locate(s.TTY)
 		if host == nil {
-			l.App = appOf(table, s.PID)
+			l.App, l.Muxed = appOf(table, s.PID), muxed(table, s.PID)
 		}
 		if host != nil {
 			l.Handle = &h
@@ -450,6 +453,15 @@ func (c *Core) locate(tty string) (Handle, Host) {
 	return Handle{}, nil
 }
 
+func (c *Core) harness(name string) Harness {
+	for _, h := range c.Harnesses {
+		if h.Name() == name {
+			return h
+		}
+	}
+	return nil
+}
+
 func (c *Core) host(name string) Host {
 	for _, h := range c.Hosts {
 		if h.Name() == name {
@@ -469,6 +481,16 @@ func appOf(table proc.Table, pid int) string {
 		}
 	}
 	return ""
+}
+
+// muxed reports whether a tmux server is among the process's ancestors.
+func muxed(table proc.Table, pid int) bool {
+	for _, a := range table.Ancestors(pid) {
+		if len(a.Args) > 0 && filepath.Base(a.Args[0]) == "tmux" {
+			return true
+		}
+	}
+	return false
 }
 
 // processParents links each session to the nearest ancestor process that runs another session.

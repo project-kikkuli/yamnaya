@@ -237,8 +237,8 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 	if !ok || s.Status != Idle || len(s.Copies) > 1 || s.Handle == nil {
 		return Queued
 	}
-	host := c.host(s.Handle.Host)
-	if host == nil || host.Type(*s.Handle, text) != nil {
+	host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
+	if host == nil || hn == nil || Type(host, *s.Handle, hn, s.PID, text) != nil {
 		return Queued
 	}
 	if c.Store.MarkDelivered(it.Key()) != nil {

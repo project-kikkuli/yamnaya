@@ -37,6 +37,7 @@ func (f *fakeHarness) ParsePrompt(screen string) (Prompt, bool) {
 	tool, ok := strings.CutPrefix(screen, "DIALOG ")
 	return Prompt{Tool: tool}, ok
 }
+func (f *fakeHarness) Composer(screen string) (string, bool) { return strings.CutPrefix(screen, "> ") }
 
 type fakeHost struct {
 	name    string
@@ -46,6 +47,8 @@ type fakeHost struct {
 	focused []string
 	typed   []string
 	typeErr error
+	// opens is the dialog that opens on the pane right as a paste lands in it.
+	opens map[string]string
 }
 
 func (f *fakeHost) Name() string { return f.name }
@@ -57,14 +60,32 @@ func (f *fakeHost) Focus(h Handle) (string, error) {
 	f.focused = append(f.focused, h.ID)
 	return f.outer, nil
 }
-func (f *fakeHost) Type(h Handle, text string) error {
+func (f *fakeHost) Paste(h Handle, text string) error {
 	if f.typeErr != nil {
 		return f.typeErr
 	}
-	f.typed = append(f.typed, h.ID+": "+text)
+	if d, ok := f.opens[h.ID]; ok {
+		f.screens[h.ID] = "DIALOG " + d
+		return nil
+	}
+	screen, _ := f.Screen(h)
+	if box, ok := strings.CutPrefix(screen, "> "); ok {
+		f.screens[h.ID] = "> " + box + text
+	}
 	return nil
 }
-func (f *fakeHost) Screen(h Handle) (string, error) { return f.screens[h.ID], nil }
+func (f *fakeHost) Enter(h Handle) error {
+	box, _ := strings.CutPrefix(f.screens[h.ID], "> ")
+	f.typed = append(f.typed, h.ID+": "+box)
+	f.screens[h.ID] = "> "
+	return nil
+}
+func (f *fakeHost) Screen(h Handle) (string, error) {
+	if s, ok := f.screens[h.ID]; ok {
+		return s, nil
+	}
+	return "> ", nil
+}
 
 type world struct {
 	core   *Core
@@ -226,9 +247,13 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 	w.run(30, 1, "/dev/t3", "claude", "nohost", Idle)
 	w.run(40, 1, "/dev/t4", "claude", "twice", Idle)
 	w.run(41, 1, "/dev/t5", "claude", "twice", Idle)
-	for tty, id := range map[string]string{"/dev/t1": "%1", "/dev/t2": "%2", "/dev/t4": "%4", "/dev/t5": "%5"} {
+	w.run(50, 1, "/dev/t6", "claude", "dialog", Idle)
+	w.run(60, 1, "/dev/t7", "claude", "opens", Idle)
+	for tty, id := range map[string]string{"/dev/t1": "%1", "/dev/t2": "%2", "/dev/t4": "%4", "/dev/t5": "%5", "/dev/t6": "%6", "/dev/t7": "%7"} {
 		w.tmux.ttys[tty] = id
 	}
+	w.tmux.screens["%6"] = "DIALOG Fetch"
+	w.tmux.opens = map[string]string{"%7": "Bash"}
 	cases := []struct {
 		session string
 		want    Delivery
@@ -238,6 +263,8 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 		{"nohost", Queued},
 		{"twice", Queued},
 		{"ended", Queued},
+		{"dialog", Queued},
+		{"opens", Queued},
 	}
 	for _, c := range cases {
 		it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q " + c.session, Session: c.session})
@@ -372,5 +399,31 @@ func TestPhasesAdvanceAndReplacingFollowsTheCurrentPhaseByName(t *testing.T) {
 	st.NextPhase("q")
 	if _, err := st.NextPhase("q"); err == nil {
 		t.Error("advanced past the last phase")
+	}
+}
+
+func TestOnlySessionsInATerminalAppAreAdoptable(t *testing.T) {
+	w := newWorld(t)
+	w.run(100, 1, "", "/opt/homebrew/bin/tmux", "", Idle)
+	w.run(101, 100, "/dev/t1", "zsh", "", Idle)
+	w.run(102, 101, "/dev/t1", "claude", "untracked-tmux", Idle)
+	w.run(200, 1, "", "/Applications/iTerm.app/Contents/MacOS/iTerm2", "", Idle)
+	w.run(201, 200, "/dev/t2", "zsh", "", Idle)
+	w.run(202, 201, "/dev/t2", "claude", "iterm", Idle)
+	w.run(300, 1, "", "/Applications/Claude.app/Contents/MacOS/Claude", "", Idle)
+	w.run(302, 300, "", "claude", "desktop", Idle)
+	w.run(402, 1, "/dev/t4", "claude", "tracked-tmux", Idle)
+	w.tmux.ttys["/dev/t4"] = "%4"
+	if _, err := w.core.Find("desktop"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a session with no terminal, as Claude Desktop runs, was found: %v", err)
+	}
+	for id, want := range map[string]bool{"untracked-tmux": false, "iterm": true, "tracked-tmux": false} {
+		s, err := w.core.Find(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Adoptable(); got != want {
+			t.Errorf("%s: Adoptable = %v (%s), want %v", id, got, s.Unadoptable(), want)
+		}
 	}
 }

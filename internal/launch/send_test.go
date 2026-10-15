@@ -1,18 +1,17 @@
 package launch
 
 import (
-	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-// pane is a fake ym-server pane: whether a permission prompt shows on each read, and what was typed.
+// pane is a fake ym-server pane: whether a permission prompt shows on each read, how many typings find no input box, and what was typed.
 type pane struct {
 	prompts []bool
 	dead    bool
-	fail    bool
+	fails   int
 	typed   []string
 }
 
@@ -28,8 +27,9 @@ func (p *pane) Prompt() (bool, bool) {
 }
 
 func (p *pane) Type(text string) error {
-	if p.fail {
-		return errors.New("tmux failed")
+	if p.fails > 0 {
+		p.fails--
+		return core.ErrNotComposing
 	}
 	p.typed = append(p.typed, text)
 	return nil
@@ -56,7 +56,7 @@ func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
 		{"idle or busy pane", &pane{prompts: []bool{false}}, Typed, core.MsgTyped, 1},
 		{"permission prompt", &pane{prompts: []bool{true}}, Held, core.MsgPending, 0},
 		{"agent exited", &pane{dead: true}, Queued, core.MsgPending, 0},
-		{"typing failed", &pane{prompts: []bool{false}, fail: true}, Queued, core.MsgPending, 0},
+		{"input box hidden", &pane{prompts: []bool{false}, fails: 1}, Held, core.MsgPending, 0},
 		{"not on ym's server", nil, Queued, core.MsgPending, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -92,7 +92,7 @@ func TestHoldTypesOnceThePromptClears(t *testing.T) {
 		{"prompt clears", &pane{prompts: []bool{true, true, true, false}}, false, true, core.MsgTyped, true},
 		{"agent exits first", &pane{dead: true}, false, false, core.MsgPending, false},
 		{"inbox took it first", &pane{prompts: []bool{false}}, true, false, core.MsgInbox, false},
-		{"typing fails", &pane{prompts: []bool{false}, fail: true}, false, false, core.MsgPending, false},
+		{"input box hidden until it shows", &pane{prompts: []bool{false}, fails: 2}, false, true, core.MsgTyped, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := store(t)

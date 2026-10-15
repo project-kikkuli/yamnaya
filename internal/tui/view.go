@@ -1093,7 +1093,7 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
    ↑ ↓ or k j   move
    enter        an item: expand it; a permission prompt: go to its session; anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
-                a session in another terminal (iTerm, Claude Desktop) is adopted: once idle, ym ends
+                a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    s            send the session a follow-up: typed in on ym's server even mid-turn, held while a
                 permission prompt shows; other sessions read it from ym item inbox
