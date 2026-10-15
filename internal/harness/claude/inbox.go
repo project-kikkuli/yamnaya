@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -245,8 +244,7 @@ func inbound(path string) (value string, set bool) {
 
 // wrap puts text in the envelope Claude Code's own senders use, so the session shows it as a message from ym.
 func wrap(text, mode string) string {
-	text = strings.ReplaceAll(text, "<"+envelope, `<\`+envelope)
-	text = strings.ReplaceAll(text, "</"+envelope, `<\/`+envelope)
+	text = escapeClose(text)
 	attrs := ` from-name="ym"`
 	if mode != "" {
 		attrs += ` from-mode="` + mode + `"`
