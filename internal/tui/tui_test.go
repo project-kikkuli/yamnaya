@@ -315,7 +315,7 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	}}
 	c.Launches = l
 	m = refresh(t, m)
-	if v := m.View(); !strings.Contains(v, "Docs pass") || !strings.Contains(v, "1 exited") {
+	if v := m.View(); !strings.Contains(v, "Docs pass") || !strings.Contains(v, "2 exited") {
 		t.Fatalf("a mission with only an exited launch is missing from the board:\n%s", v)
 	}
 	m = press(t, m, "down", "down", "down", "enter")
@@ -376,9 +376,9 @@ func TestSpendShowsAtEveryLevel(t *testing.T) {
 	}}
 	m = refresh(t, m)
 	board := m.View()
-	for _, want := range []string{"$43.00", "$3.00", "$40.00"} {
+	for _, want := range []string{"$3.00", "$40.00"} {
 		if !strings.Contains(board, want) {
-			t.Fatalf("board lacks %s (repo total, then each mission):\n%s", want, board)
+			t.Fatalf("board lacks %s (each mission):\n%s", want, board)
 		}
 	}
 	levels := []struct {

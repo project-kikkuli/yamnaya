@@ -6,18 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/progress"
-)
-
-var (
-	bold  = lipgloss.NewStyle().Bold(true)
-	dim   = lipgloss.NewStyle().Faint(true)
-	loud  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
-	alarm = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 )
 
 func (m Model) View() string {
@@ -101,9 +93,9 @@ func (m Model) header() string {
 			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
 		}
 	}
-	h := bold.Render(" ym") + "    " + strings.Join(parts, "  ")
+	h := pal.bold.Render(" ym") + "    " + strings.Join(parts, "  ")
 	if m.err != nil {
-		h += "  " + alarm.Render("refresh failed: "+m.err.Error())
+		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
 	if m.core != nil && m.core.Meter != nil {
 		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
@@ -114,28 +106,28 @@ func (m Model) header() string {
 func (m Model) footer() []string {
 	var lines []string
 	if m.mode == modeInput && m.inKind == inAdopt {
-		lines = append(lines, " "+bold.Render("move "+m.inLabel+" into ym?")+" it ends the process in its current terminal")
-		lines = append(lines, dim.Render(" enter yes   esc no"))
+		lines = append(lines, " "+pal.bold.Render("move "+m.inLabel+" into ym?")+" it ends the process in its current terminal")
+		lines = append(lines, pal.dim.Render(" enter yes   esc no"))
 		return lines
 	}
 	if m.mode == modeInput {
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel}[m.inKind]
 		if m.fresh {
-			lines = append(lines, " "+bold.Render(label+":")+" "+dim.Render(string(m.input))+"█")
-			lines = append(lines, dim.Render(" enter accepts the default   type to replace it   esc cancel"))
+			lines = append(lines, " "+pal.bold.Render(label+":")+" "+pal.dim.Render(string(m.input))+"█")
+			lines = append(lines, pal.dim.Render(" enter accepts the default   type to replace it   esc cancel"))
 			return lines
 		}
-		lines = append(lines, " "+bold.Render(label+":")+" "+string(m.input)+"█")
-		lines = append(lines, dim.Render(" enter save   esc cancel   ctrl+u clear"))
+		lines = append(lines, " "+pal.bold.Render(label+":")+" "+string(m.input)+"█")
+		lines = append(lines, pal.dim.Render(" enter save   esc cancel   ctrl+u clear"))
 		return lines
 	}
 	if m.message != "" {
 		lines = append(lines, " "+m.message)
 	}
 	if m.filter != "" {
-		lines = append(lines, dim.Render(" filter: "+m.filter+"   esc clears"))
+		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
 	}
-	lines = append(lines, dim.Render(" "+m.hints()))
+	lines = append(lines, pal.dim.Render(" "+m.hints()))
 	return lines
 }
 
@@ -180,33 +172,34 @@ func (m Model) listView() string {
 			needs++
 		}
 	}
-	b.WriteString(bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
+	b.WriteString(pal.bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
 	if needs == 0 {
-		b.WriteString(dim.Render("   nothing") + "\n")
+		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
 	repos := false
+	cols := m.missionCols(2)
 	for i, r := range rows {
 		if (r.repo != nil || r.project != nil) && !repos {
 			repos = true
-			b.WriteString("\n" + bold.Render(" REPOS AND MISSIONS") + "\n")
+			b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n")
 		}
 		switch {
 		case r.stale:
-			line := m.mark(i) + loud.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + dim.Render(" open items whose sessions ended")
+			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
 			if i == m.cursor {
-				line += dim.Render("   enter expand   x dismiss all")
+				line += pal.dim.Render("   enter expand   x dismiss all")
 			}
 			b.WriteString(line + "\n")
 		case r.need != nil:
 			b.WriteString(m.needLines(i, *r.need))
 		case r.project == nil:
-			b.WriteString(m.repoLine(i, *r.repo))
+			b.WriteString(m.repoLine(i, *r.repo, cols))
 		default:
-			b.WriteString(m.missionLine(i, *r.project, "  "))
+			b.WriteString(m.missionLine(i, *r.project, cols))
 		}
 	}
 	if !repos {
-		b.WriteString("\n" + bold.Render(" REPOS AND MISSIONS") + "\n" + dim.Render("   no sessions found") + "\n")
+		b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n" + pal.dim.Render("   no sessions found") + "\n")
 	}
 	return b.String()
 }
@@ -218,40 +211,6 @@ func (m Model) isStale(n *core.Need) bool {
 		}
 	}
 	return false
-}
-
-// repoLine sums a repo's missions: sessions by status, running crew, open needs and pull requests.
-func (m Model) repoLine(i int, r core.Repo) string {
-	var sessions []core.Live
-	for _, p := range r.Missions {
-		sessions = append(sessions, p.Sessions...)
-	}
-	parts := []string{plural(len(r.Missions), "mission"), sessionCounts(sessions)}
-	exited := 0
-	for _, p := range r.Missions {
-		exited += len(p.Dormant)
-	}
-	if exited > 0 {
-		parts = append(parts, fmt.Sprintf("%d exited", exited))
-	}
-	if run := runningCrew(sessions); run > 0 {
-		parts = append(parts, plural(run, "agent")+" running")
-	}
-	if n := m.needsIn(r); n > 0 {
-		parts = append(parts, loud.Render(fmt.Sprintf("%d need you", n)))
-	}
-	if pr := prSummary(prsOf(sessions)); pr != "" {
-		parts = append(parts, pr)
-	}
-	if sp := m.missionSpend(r.Missions...); sp != "" {
-		parts = append(parts, sp)
-	}
-	if len(r.Missions) == 1 {
-		if v, ok := r.Missions[0].Vibe(); ok {
-			parts = append(parts, v.Place)
-		}
-	}
-	return m.mark(i) + bold.Render(pad(r.Name, min(28, max(12, m.width/5)))) + "  " + strings.Join(parts, " · ") + "\n"
 }
 
 func (m Model) needsIn(r core.Repo) int {
@@ -268,73 +227,17 @@ func (m Model) needsIn(r core.Repo) int {
 	return n
 }
 
-// missionLine is one mission: name, phase, status, crew, pull requests, then what its lead does now.
-func (m Model) missionLine(i int, p core.Project, indent string) string {
-	phase := ""
-	if len(p.Phases.Names) > 0 {
-		dots := ""
-		for j := range p.Phases.Names {
-			if j <= p.Phases.Current {
-				dots += "●"
-			} else {
-				dots += "○"
-			}
-		}
-		phase = p.Phases.Names[p.Phases.Current] + " " + dots
-	}
-	status := pad(p.Status.String(), 8)
-	if len(p.Sessions) == 0 && len(p.Dormant) > 0 {
-		status = pad("exited", 8)
-	}
-	if p.Duplicated() {
-		status = alarm.Render(pad(copiesText(p), 8))
-	}
-	nw := m.nameWidth() - len(indent)
-	dimmed := p.Status != core.Waiting && i != m.cursor && !p.Duplicated()
-	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + m.barCol(p) + m.vibeCol(p, dimmed) + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
-	if sp := m.missionSpend(p); sp != "" {
-		line += " " + pad(sp, 8)
-	}
-	if len(p.Sessions) > 0 {
-		line += " " + doingText(m.board.At, p.Sessions[0].Session)
-	}
-	if p.Duplicated() {
-		return line + "  " + alarm.Render(copiesWhere(p)) + "\n"
-	}
-	if dimmed {
-		return dim.Render(line) + "\n"
-	}
-	return line + "\n"
-}
-
-// vibeCol is a mission's latest vibe, dim once stale, or nothing when no mission has one.
-func (m Model) vibeCol(p core.Project, dimmed bool) string {
-	if v, ok := p.Vibe(); ok {
-		place := pad(v.Place, 16) + " "
-		if p.VibeStale(m.board.At) && !dimmed {
-			return dim.Render(place)
-		}
-		return place
-	}
-	for _, q := range m.board.Projects {
-		if len(q.Vibes) > 0 {
-			return pad("", 17)
-		}
-	}
-	return ""
-}
-
 // vibeLines are a mission's latest vibe, who set it, and its recent place changes.
 func (m Model) vibeLines(p core.Project) string {
 	v, ok := p.Vibe()
 	if !ok {
 		return ""
 	}
-	place := bold.Render(v.Place)
+	place := pal.bold.Render(v.Place)
 	if p.VibeStale(m.board.At) {
-		place = dim.Render(v.Place)
+		place = pal.dim.Render(v.Place)
 	}
-	line := " vibe    " + dim.Render("says: ") + place
+	line := " vibe    " + pal.dim.Render("says: ") + place
 	if v.Why != "" {
 		line += "  " + v.Why
 	}
@@ -342,13 +245,13 @@ func (m Model) vibeLines(p core.Project) string {
 	if v.Session != "" {
 		by = v.Harness + " " + core.Short(v.Session) + ", " + by
 	}
-	line += dim.Render("  " + by)
+	line += pal.dim.Render("  " + by)
 	if ps := p.Places(5); len(ps) > 1 {
 		var hist []string
 		for _, h := range ps {
-			hist = append(hist, h.Place+dim.Render(" "+age(m.board.At, h.At)))
+			hist = append(hist, h.Place+pal.dim.Render(" "+age(m.board.At, h.At)))
 		}
-		line += "\n" + dim.Render(" was     ") + strings.Join(hist[1:], dim.Render(" ← "))
+		line += "\n" + pal.dim.Render(" was     ") + strings.Join(hist[1:], pal.dim.Render(" ← "))
 	}
 	return line + "\n"
 }
@@ -356,16 +259,6 @@ func (m Model) vibeLines(p core.Project) string {
 // nameWidth gives mission names what the fixed columns leave, between 20 and 44 cells.
 func (m Model) nameWidth() int {
 	return min(44, max(20, m.width/3))
-}
-
-// phaseCol is a phase cell, or nothing when no mission has phases.
-func (m Model) phaseCol(s string) string {
-	for _, p := range m.board.Projects {
-		if len(p.Phases.Names) > 0 {
-			return pad(s, 12) + " "
-		}
-	}
-	return ""
 }
 
 func crewCounts(p core.Project) (running, idle, done int) {
@@ -382,24 +275,6 @@ func crewCounts(p core.Project) (running, idle, done int) {
 		}
 	}
 	return
-}
-
-func crewText(p core.Project) string {
-	running, idle, _ := crewCounts(p)
-	var parts []string
-	if n := len(p.Sessions); n > 1 {
-		parts = append(parts, fmt.Sprintf("%d sess", n))
-	}
-	if running > 0 {
-		parts = append(parts, fmt.Sprintf("%d run", running))
-	}
-	if idle > 0 {
-		parts = append(parts, fmt.Sprintf("%d idle", idle))
-	}
-	if n := len(p.Dormant); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d exited", n))
-	}
-	return strings.Join(parts, " · ")
 }
 
 func runningCrew(sessions []core.Live) int {
@@ -481,13 +356,13 @@ func prSummary(prs []core.PR) string {
 		s := plural(open, "PR")
 		var ci []string
 		if fail > 0 {
-			ci = append(ci, alarm.Render(fmt.Sprintf("✗%d", fail)))
+			ci = append(ci, pal.red.Render(fmt.Sprintf("✗%d", fail)))
 		}
 		if run > 0 {
-			ci = append(ci, fmt.Sprintf("…%d", run))
+			ci = append(ci, pal.yellow.Render(fmt.Sprintf("…%d", run)))
 		}
 		if pass > 0 {
-			ci = append(ci, fmt.Sprintf("✓%d", pass))
+			ci = append(ci, pal.green.Render(fmt.Sprintf("✓%d", pass)))
 		}
 		if len(ci) > 0 {
 			s += " " + strings.Join(ci, " ")
@@ -505,7 +380,7 @@ func doingText(now time.Time, s core.Session) string {
 	if s.Doing.Tool == "" {
 		return ""
 	}
-	return s.Doing.String() + dim.Render(" "+age(now, s.Doing.At))
+	return s.Doing.String() + pal.dim.Render(" "+age(now, s.Doing.At))
 }
 
 func memberDoing(now time.Time, c core.Member) string {
@@ -580,22 +455,22 @@ func (m Model) needLines(i int, n core.Need) string {
 		if n.Session.Prompt != nil {
 			what = n.Session.Prompt.String()
 		}
-		b.WriteString(m.mark(i) + alarm.Render("PERM ") + " " + name + " " + what + "\n")
+		b.WriteString(m.mark(i) + pal.yellow.Render("PERM ") + " " + name + " " + what + "\n")
 		if sel {
-			b.WriteString(dim.Render("         enter "+goVerb(*n.Session)+"   s send") + "\n")
+			b.WriteString(pal.dim.Render("         enter "+goVerb(*n.Session)+"   s send") + "\n")
 		}
 		return b.String()
 	}
 	it := n.Item
-	b.WriteString(m.mark(i) + loud.Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
+	b.WriteString(m.mark(i) + pal.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
 	}
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
-		b.WriteString(dim.Render("         "+strings.Join(meta, " | ")) + "\n")
-		b.WriteString(dim.Render("         enter expand   a answer   l later   x dismiss   o go to session") + "\n")
+		b.WriteString(pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n")
+		b.WriteString(pal.dim.Render("         enter expand   a answer   l later   x dismiss   o go to session") + "\n")
 	}
 	return b.String()
 }
@@ -666,18 +541,19 @@ func copiesWhere(p core.Project) string {
 func (m Model) repoView() string {
 	r, ok := m.board.Repo(m.repo)
 	if !ok {
-		return dim.Render("   this repo has no live sessions now; esc back")
+		return pal.dim.Render("   this repo has no live sessions now; esc back")
 	}
 	var b strings.Builder
 	key := r.Key
 	if key == "" {
 		key = "sessions outside any git repo"
 	}
-	b.WriteString(bold.Render(" "+r.Name) + dim.Render("  "+key) + "\n")
-	b.WriteString(" " + strings.TrimSpace(ansi.Strip(m.repoLine(-1, r))[len(r.Name)+3:]) + "\n")
-	b.WriteString("\n" + bold.Render(" MISSIONS") + "\n")
+	b.WriteString(pal.bold.Render(" "+r.Name) + pal.dim.Render("  "+key) + "\n")
+	b.WriteString(" " + m.repoCounts(r) + "\n")
+	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
+	cols := m.missionCols(0)
 	for i, p := range r.Missions {
-		b.WriteString(m.missionLine(i, p, ""))
+		b.WriteString(m.missionLine(i, p, cols))
 		if len(p.Sessions) > 0 {
 			lead := p.Sessions[0]
 			var meta []string
@@ -688,7 +564,7 @@ func (m Model) repoView() string {
 			if lead.Branch != "" {
 				meta = append(meta, lead.Branch)
 			}
-			b.WriteString(dim.Render("     "+strings.Join(meta, " | ")) + "\n")
+			b.WriteString(pal.dim.Render("     "+strings.Join(meta, " | ")) + "\n")
 		}
 	}
 	return b.String()
@@ -697,18 +573,18 @@ func (m Model) repoView() string {
 func (m Model) detailView() string {
 	p, ok := m.board.Project(m.detail)
 	if !ok {
-		return dim.Render("   this mission has no live sessions now; esc back")
+		return pal.dim.Render("   this mission has no live sessions now; esc back")
 	}
 	var b strings.Builder
-	b.WriteString(bold.Render(" "+p.Name) + dim.Render("  "+p.RepoName+"  "+p.Key) + "\n")
+	b.WriteString(pal.bold.Render(" "+p.Name) + pal.dim.Render("  "+p.RepoName+"  "+p.Key) + "\n")
 	if len(p.Phases.Names) > 0 {
 		var ps []string
 		for j, name := range p.Phases.Names {
 			switch {
 			case j < p.Phases.Current:
-				ps = append(ps, dim.Render("✓ "+name))
+				ps = append(ps, pal.dim.Render("✓ "+name))
 			case j == p.Phases.Current:
-				ps = append(ps, bold.Render("▶ "+name))
+				ps = append(ps, pal.bold.Render("▶ "+name))
 			default:
 				ps = append(ps, "○ "+name)
 			}
@@ -720,18 +596,18 @@ func (m Model) detailView() string {
 	}
 	pg := progress.Of(p)
 	if f, ok := pg.Fraction(); ok {
-		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + dim.Render(pg.Parts()) + "\n")
+		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + pal.dim.Render(pg.Parts()) + "\n")
 	}
 	b.WriteString(units(pg.Units))
 	b.WriteString(m.vibeLines(p))
-	b.WriteString("\n" + bold.Render(" SESSIONS AND CREW") + "\n")
+	b.WriteString("\n" + pal.bold.Render(" SESSIONS AND CREW") + "\n")
 	i := 0
 	for _, s := range p.Sessions {
 		title := s.Title
 		if title == "" {
 			title = core.Short(s.Key())
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pad(s.Status.String(), 9) + pad(s.Location(), 18)
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(s.Status.String()).Render(pad(s.Status.String(), 9)) + pad(s.Location(), 18)
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}
@@ -739,17 +615,17 @@ func (m Model) detailView() string {
 			line += "  " + sp
 		}
 		if s.Prompt != nil {
-			line += "  " + alarm.Render(s.Prompt.String())
+			line += "  " + pal.yellow.Render(s.Prompt.String())
 		}
 		if len(s.Copies) > 1 {
-			line += "  " + alarm.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
+			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
 		if i == m.cursor && s.Adoptable() {
-			line += dim.Render("   o adopt")
+			line += pal.dim.Render("   o adopt")
 		}
 		b.WriteString(line + "\n")
 		if d := doingText(m.board.At, s.Session); d != "" {
-			b.WriteString(dim.Render("     now: ") + d + "\n")
+			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
 		}
 		i++
 		for _, c := range s.Crew {
@@ -762,16 +638,16 @@ func (m Model) detailView() string {
 		if title == "" {
 			title = d.Key
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + alarm.Render(pad(d.State, 9)) + pad(d.Key, 18) + " " + d.Branch
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + pal.dim.Render(pad(d.State, 9)) + pad(d.Key, 18) + " " + d.Branch
 		if i == m.cursor {
-			line += dim.Render("   enter revive")
+			line += pal.dim.Render("   enter revive")
 		}
 		b.WriteString(line + "\n")
 		i++
 	}
-	b.WriteString("\n" + bold.Render(" ITEMS") + "\n")
+	b.WriteString("\n" + pal.bold.Render(" ITEMS") + "\n")
 	if len(p.Items) == 0 {
-		b.WriteString(dim.Render("   none") + "\n")
+		b.WriteString(pal.dim.Render("   none") + "\n")
 	}
 	ids := itemIDs(p.Items)
 	for _, it := range p.Items {
@@ -797,7 +673,7 @@ func (m Model) crewLine(i int, s core.Live, c core.Member) string {
 		l += " " + memberDoing(m.board.At, c)
 	}
 	if c.Status != core.Busy && i != m.cursor {
-		l = dim.Render(l)
+		l = pal.dim.Render(l)
 	}
 	return l + "\n"
 }
@@ -825,14 +701,14 @@ func itemIDs(items []core.Item) map[string]string {
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
 	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " " + it.Question
 	if it.State != core.ItemOpen && i != m.cursor {
-		line = dim.Render(line)
+		line = pal.dim.Render(line)
 	}
 	out := line + "\n"
 	if it.Answer != "" {
-		out += dim.Render("         answer: "+it.Answer+delivered(it)) + "\n"
+		out += pal.dim.Render("         answer: "+it.Answer+delivered(it)) + "\n"
 	}
 	if it.Reason != "" {
-		out += dim.Render("         dismissed: "+it.Reason+delivered(it)) + "\n"
+		out += pal.dim.Render("         dismissed: "+it.Reason+delivered(it)) + "\n"
 	}
 	return out
 }
@@ -854,7 +730,7 @@ func (m Model) field(b *strings.Builder, label, value string) {
 	lines := strings.Split(ansi.Wrap(value, width, " "), "\n")
 	for i, l := range lines {
 		if i == 0 {
-			b.WriteString(" " + bold.Render(pad(label, 11)) + " " + l + "\n")
+			b.WriteString(" " + pal.bold.Render(pad(label, 11)) + " " + l + "\n")
 		} else {
 			b.WriteString("             " + l + "\n")
 		}
@@ -873,14 +749,14 @@ func clip(text string, n int) string {
 func (m Model) sessionView() string {
 	s, ok := m.session()
 	if !ok {
-		return dim.Render("   this session is gone; esc back")
+		return pal.dim.Render("   this session is gone; esc back")
 	}
 	var b strings.Builder
 	title := s.Title
 	if title == "" {
 		title = core.Short(s.Key())
 	}
-	b.WriteString(bold.Render(" "+title) + dim.Render("  "+s.Harness+" "+s.Key()) + "\n\n")
+	b.WriteString(pal.bold.Render(" "+title) + pal.dim.Render("  "+s.Harness+" "+s.Key()) + "\n\n")
 	status := s.Status.String()
 	if !s.Since.IsZero() {
 		status += " since " + age(m.board.At, s.Since)
@@ -906,34 +782,34 @@ func (m Model) sessionView() string {
 	}
 	m.field(&b, "last reply", clip(s.Result, 6))
 	if prs := s.AllPRs(); len(prs) > 0 {
-		b.WriteString("\n" + bold.Render(" PULL REQUESTS") + "\n")
+		b.WriteString("\n" + pal.bold.Render(" PULL REQUESTS") + "\n")
 		for _, pr := range prsOf([]core.Live{*s}) {
 			b.WriteString("   " + pad(fmt.Sprintf("%s#%d", pr.Repo, pr.Number), 34) + " " + prStatus(pr) + "\n")
 		}
 	}
 	if us := progress.Units([]core.Live{*s}); len(us) > 0 {
-		b.WriteString("\n" + bold.Render(" PIPELINE") + "\n" + units(us))
+		b.WriteString("\n" + pal.bold.Render(" PIPELINE") + "\n" + units(us))
 	}
-	b.WriteString("\n" + bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
+	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
 	i := 0
 	for _, c := range s.Crew {
 		b.WriteString(m.crewLine(i, *s, c))
 		i++
 	}
 	if len(s.Crew) == 0 {
-		b.WriteString(dim.Render("   none") + "\n")
+		b.WriteString(pal.dim.Render("   none") + "\n")
 	}
 	if len(s.Messages) > 0 {
-		b.WriteString("\n" + bold.Render(" MESSAGES") + "\n")
+		b.WriteString("\n" + pal.bold.Render(" MESSAGES") + "\n")
 		for _, msg := range s.Messages {
 			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgInbox: "via inbox"}[msg.State]
 			when := age(m.board.At, msg.CreatedAt)
 			if !msg.Delivered.IsZero() {
 				when = "delivered " + age(m.board.At, msg.Delivered)
 			}
-			line := "   " + pad(state, 10) + " " + msg.Text + dim.Render("  "+when)
+			line := "   " + pad(state, 10) + " " + msg.Text + pal.dim.Render("  "+when)
 			if msg.State != core.MsgPending {
-				line = dim.Render(line)
+				line = pal.dim.Render(line)
 			}
 			b.WriteString(line + "\n")
 		}
@@ -946,7 +822,7 @@ func (m Model) sessionView() string {
 			}
 		}
 		if len(items) > 0 {
-			b.WriteString("\n" + bold.Render(" ITEMS") + "\n")
+			b.WriteString("\n" + pal.bold.Render(" ITEMS") + "\n")
 			ids := itemIDs(items)
 			for _, it := range items {
 				b.WriteString(m.itemLines(i, it, ids))
@@ -957,38 +833,29 @@ func (m Model) sessionView() string {
 	return b.String()
 }
 
-// barCol is a mission's progress bar and percent, or nothing when no mission has anything to measure.
-func (m Model) barCol(p core.Project) string {
-	if f, ok := progress.Of(p).Fraction(); ok {
-		return progress.Bar(f, 8) + fmt.Sprintf(" %3.0f%% ", f*100)
-	}
-	for _, q := range m.board.Projects {
-		if _, ok := progress.Of(q).Fraction(); ok {
-			return pad("", 14)
-		}
-	}
-	return ""
-}
-
 // units is one line per branch of work: its gate strip and the raw facts behind it.
 func units(us []progress.Unit) string {
 	var b strings.Builder
 	for _, u := range us {
-		b.WriteString("   " + pad(u.Label, 34) + " " + progress.Strip(u) + dim.Render("  "+u.Detail) + "\n")
+		b.WriteString("   " + pad(u.Label, 34) + " " + progress.Strip(u) + pal.dim.Render("  "+u.Detail) + "\n")
 	}
 	return b.String()
 }
 
 func prStatus(pr core.PR) string {
 	if pr.Status == nil {
-		return dim.Render("status not fetched yet")
+		return pal.dim.Render("status not fetched yet")
 	}
 	st := pr.Status.String()
-	if pr.Status.CI() == "failing" && !pr.Status.Closed() {
-		st = alarm.Render(st)
+	switch {
+	case pr.Status.Closed():
+	case pr.Status.CI() == "failing":
+		st = pal.red.Render(st)
+	case pr.Status.CI() == "passing":
+		st = pal.green.Render(st)
 	}
 	if pr.Status.Title != "" {
-		st += dim.Render("  " + pr.Status.Title)
+		st += pal.dim.Render("  " + pr.Status.Title)
 	}
 	return st
 }
@@ -996,10 +863,10 @@ func prStatus(pr core.PR) string {
 func (m Model) agentView() string {
 	s, c, ok := m.member()
 	if !ok {
-		return dim.Render("   this agent is gone; esc back")
+		return pal.dim.Render("   this agent is gone; esc back")
 	}
 	var b strings.Builder
-	b.WriteString(bold.Render(" "+c.Name) + dim.Render("  in "+s.Title+"  "+c.ID) + "\n\n")
+	b.WriteString(pal.bold.Render(" "+c.Name) + pal.dim.Render("  in "+s.Title+"  "+c.ID) + "\n\n")
 	kind := c.Type
 	if c.Teammate {
 		kind = strings.TrimSpace(kind + " teammate")
@@ -1042,7 +909,7 @@ func (m Model) agentView() string {
 		if strings.TrimSpace(text) == "" {
 			return
 		}
-		b.WriteString("\n" + bold.Render(" "+name) + "\n")
+		b.WriteString("\n" + pal.bold.Render(" "+name) + "\n")
 		for _, l := range strings.Split(ansi.Wrap(strings.TrimSpace(text), max(20, m.width-4), " "), "\n") {
 			b.WriteString("   " + l + "\n")
 		}
@@ -1050,13 +917,13 @@ func (m Model) agentView() string {
 	section("BRIEF", c.Brief)
 	section("RESULT", c.Result)
 	if len(c.Trail) > 0 {
-		b.WriteString("\n" + bold.Render(fmt.Sprintf(" TRAIL (last %d actions)", len(c.Trail))) + "\n")
+		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" TRAIL (last %d actions)", len(c.Trail))) + "\n")
 		for _, a := range c.Trail {
 			at := ""
 			if !a.At.IsZero() {
 				at = a.At.Local().Format("15:04:05")
 			}
-			b.WriteString(dim.Render("   "+pad(at, 9)) + a.String() + "\n")
+			b.WriteString(pal.dim.Render("   "+pad(at, 9)) + a.String() + "\n")
 		}
 	}
 	return b.String()
@@ -1094,10 +961,10 @@ func delivered(it core.Item) string {
 func (m Model) whyView() string {
 	it := m.why
 	var b strings.Builder
-	b.WriteString(bold.Render(" "+it.ID+"  "+it.Kind+"  "+it.State) + "\n " + it.Question + "\n\n")
+	b.WriteString(pal.bold.Render(" "+it.ID+"  "+it.Kind+"  "+it.State) + "\n " + it.Question + "\n\n")
 	field := func(k, v string) {
 		if v != "" {
-			b.WriteString(" " + bold.Render(k) + "  " + v + "\n")
+			b.WriteString(" " + pal.bold.Render(k) + "  " + v + "\n")
 		}
 	}
 	field("rec", it.Rec)
@@ -1111,7 +978,7 @@ func (m Model) whyView() string {
 	field("answer", it.Answer)
 	field("dismissed", it.Reason)
 	if len(it.History) > 1 {
-		b.WriteString("\n" + bold.Render(" history") + "\n")
+		b.WriteString("\n" + pal.bold.Render(" history") + "\n")
 		for _, e := range it.History[1:] {
 			line := "   " + e.At.Local().Format("01-02 15:04") + "  " + e.From + " -> " + e.To
 			if e.Text != "" {
@@ -1125,7 +992,7 @@ func (m Model) whyView() string {
 
 func (m Model) pickView() string {
 	var b strings.Builder
-	b.WriteString(alarm.Render(" This session runs in more than one process. Pick one to open.") + "\n\n")
+	b.WriteString(pal.red.Render(" This session runs in more than one process. Pick one to open.") + "\n\n")
 	for i, t := range m.targets {
 		mark := "   "
 		if i == m.cursor2 {
@@ -1160,6 +1027,11 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
    /            filter
    h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    q            back or quit
+
+ A mission's ≈ shares are its part of each current limit window. They count only this host's
+ usage, so work on other hosts makes them run high.
+ Colors: red needs you or fails, yellow waits, green runs or passes, faint is stale or exited;
+ each project keeps one color of its own. NO_COLOR turns color off.
 `
 
 func pad(s string, n int) string {
