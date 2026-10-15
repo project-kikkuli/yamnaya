@@ -13,7 +13,10 @@ import (
 type fakeHarness struct {
 	name     string
 	sessions map[int]Session
+	cwds     map[string]string
 }
+
+func (f *fakeHarness) SessionCwd(id string) string { return f.cwds[id] }
 
 func (f *fakeHarness) Name() string { return f.name }
 func (f *fakeHarness) Owns(p proc.Proc) bool {

@@ -388,3 +388,14 @@ func lsofCwd(pid int) string {
 	}
 	return ""
 }
+
+// SessionCwd is where thread session worked, from Codex's thread table.
+func (a *Adapter) SessionCwd(session string) string {
+	db, ok := a.db()
+	if !ok {
+		return ""
+	}
+	defer db.Close()
+	t, _ := threadByID(db, session)
+	return t.cwd
+}

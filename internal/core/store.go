@@ -33,9 +33,15 @@ type Option struct {
 	Effect string `json:"effect"`
 }
 
-// Item is a question an agent filed for the owner. IDs come from one sequence and are never reused.
+// Item is a question an agent filed for the owner. IDs are numbered per scope, one sequence across kinds, and never reused.
 type Item struct {
-	ID         string
+	// Seq is the item's number across every scope; Key() names the item uniquely with it.
+	Seq int64
+	// Scope is the repository identity of the filing session: its git common dir, else its directory.
+	Scope string
+	ID    string
+	// Alias is the ID the item had before IDs were numbered per scope.
+	Alias      string
 	Kind       string
 	Question   string
 	Rec        string
@@ -69,7 +75,10 @@ type Store struct {
 const schema = `
 CREATE TABLE IF NOT EXISTS ym_items (
 	seq INTEGER PRIMARY KEY AUTOINCREMENT,
-	id TEXT NOT NULL UNIQUE,
+	scope TEXT NOT NULL DEFAULT '',
+	num INTEGER,
+	id TEXT NOT NULL,
+	alias TEXT NOT NULL DEFAULT '',
 	kind TEXT NOT NULL,
 	question TEXT NOT NULL,
 	rec TEXT NOT NULL DEFAULT '',
@@ -85,7 +94,6 @@ CREATE TABLE IF NOT EXISTS ym_items (
 	answered_at TEXT,
 	delivered_at TEXT
 );
-CREATE INDEX IF NOT EXISTS ym_items_session ON ym_items(session, state);
 CREATE TABLE IF NOT EXISTS ym_item_events (
 	seq INTEGER PRIMARY KEY AUTOINCREMENT,
 	item TEXT NOT NULL,
@@ -157,6 +165,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := scopeItems(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate items: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -170,187 +182,6 @@ func parseTime(s sql.NullString) time.Time {
 	}
 	t, _ := time.Parse(time.RFC3339Nano, s.String)
 	return t
-}
-
-const itemCols = `id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at`
-
-func scanItem(row interface{ Scan(...any) error }) (Item, error) {
-	var it Item
-	var opts string
-	var created, answered, delivered sql.NullString
-	if err := row.Scan(&it.ID, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness, &created, &it.State, &it.Answer, &it.Reason, &answered, &delivered); err != nil {
-		return it, err
-	}
-	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
-		return it, err
-	}
-	it.CreatedAt, it.AnsweredAt, it.Delivered = parseTime(created), parseTime(answered), parseTime(delivered)
-	return it, nil
-}
-
-func (s *Store) AddItem(it Item) (Item, error) {
-	prefix, ok := kindPrefix[it.Kind]
-	if !ok {
-		return it, fmt.Errorf("unknown kind %q (want decision, default, or chore)", it.Kind)
-	}
-	if strings.TrimSpace(it.Question) == "" {
-		return it, errors.New("question is required")
-	}
-	if it.Session == "" {
-		return it, errors.New("item needs a source session")
-	}
-	if it.Options == nil {
-		it.Options = []Option{}
-	}
-	opts, err := json.Marshal(it.Options)
-	if err != nil {
-		return it, err
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return it, err
-	}
-	defer tx.Rollback()
-	it.State = ItemOpen
-	it.CreatedAt = time.Now().UTC()
-	var seq int64
-	err = tx.QueryRow(`INSERT INTO ym_items (id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state)
-		VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
-		it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.Blocks, it.Session, it.Harness, it.CreatedAt.Format(time.RFC3339Nano), it.State).Scan(&seq)
-	if err != nil {
-		return it, err
-	}
-	it.ID = fmt.Sprintf("%s%d", prefix, seq)
-	if _, err := tx.Exec(`UPDATE ym_items SET id = ? WHERE seq = ?`, it.ID, seq); err != nil {
-		return it, err
-	}
-	if err := addEvent(tx, it.ID, "", ItemOpen, ""); err != nil {
-		return it, err
-	}
-	it.History = []Event{{At: it.CreatedAt, To: ItemOpen}}
-	return it, tx.Commit()
-}
-
-func addEvent(tx *sql.Tx, item, from, to, text string) error {
-	_, err := tx.Exec(`INSERT INTO ym_item_events (item, at, from_state, to_state, text) VALUES (?, ?, ?, ?, ?)`, item, now(), from, to, text)
-	return err
-}
-
-func (s *Store) Item(id string) (Item, error) {
-	it, err := scanItem(s.db.QueryRow(`SELECT `+itemCols+` FROM ym_items WHERE id = ?`, strings.ToUpper(id)))
-	if errors.Is(err, sql.ErrNoRows) {
-		return it, fmt.Errorf("item %s: %w", id, ErrNotFound)
-	}
-	if err != nil {
-		return it, err
-	}
-	rows, err := s.db.Query(`SELECT at, from_state, to_state, text FROM ym_item_events WHERE item = ? ORDER BY seq`, it.ID)
-	if err != nil {
-		return it, err
-	}
-	defer rows.Close()
-	it.History = []Event{}
-	for rows.Next() {
-		var e Event
-		var at sql.NullString
-		if err := rows.Scan(&at, &e.From, &e.To, &e.Text); err != nil {
-			return it, err
-		}
-		e.At = parseTime(at)
-		it.History = append(it.History, e)
-	}
-	return it, rows.Err()
-}
-
-// ItemFilter selects items; empty fields match everything.
-type ItemFilter struct {
-	States   []string
-	Sessions []string
-	// Undelivered keeps answered or dismissed items the agent has not received.
-	Undelivered bool
-}
-
-func (s *Store) Items(f ItemFilter) ([]Item, error) {
-	q := `SELECT ` + itemCols + ` FROM ym_items WHERE 1=1`
-	var args []any
-	in := func(col string, vals []string) {
-		if len(vals) == 0 {
-			return
-		}
-		q += ` AND ` + col + ` IN (?` + strings.Repeat(`, ?`, len(vals)-1) + `)`
-		for _, v := range vals {
-			args = append(args, v)
-		}
-	}
-	in("state", f.States)
-	in("session", f.Sessions)
-	if f.Undelivered {
-		q += ` AND state IN ('answered', 'dismissed') AND delivered_at IS NULL`
-	}
-	rows, err := s.db.Query(q+` ORDER BY seq`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Item{}
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
-}
-
-var transitions = map[string]map[string]bool{
-	ItemAnswered:  {ItemOpen: true, ItemSnoozed: true},
-	ItemDismissed: {ItemOpen: true, ItemSnoozed: true},
-	ItemSnoozed:   {ItemOpen: true},
-	ItemOpen:      {ItemAnswered: true, ItemDismissed: true, ItemSnoozed: true},
-}
-
-func (s *Store) Transition(id, to, text string) (Item, error) {
-	it, err := s.Item(id)
-	if err != nil {
-		return it, err
-	}
-	if !transitions[to][it.State] {
-		return it, fmt.Errorf("item %s is %s; cannot move it to %s", it.ID, it.State, to)
-	}
-	var answer, reason string
-	var answeredAt any
-	switch to {
-	case ItemAnswered:
-		answer, answeredAt = text, now()
-	case ItemDismissed:
-		reason, answeredAt = text, now()
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return it, err
-	}
-	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL WHERE id = ? AND state = ?`,
-		to, answer, reason, answeredAt, it.ID, it.State)
-	if err != nil {
-		return it, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return it, fmt.Errorf("item %s changed concurrently; retry", it.ID)
-	}
-	if err := addEvent(tx, it.ID, it.State, to, text); err != nil {
-		return it, err
-	}
-	if err := tx.Commit(); err != nil {
-		return it, err
-	}
-	return s.Item(it.ID)
-}
-
-func (s *Store) MarkDelivered(id string) error {
-	_, err := s.db.Exec(`UPDATE ym_items SET delivered_at = ? WHERE id = ?`, now(), strings.ToUpper(id))
-	return err
 }
 
 // Phases are a project's ordered steps and the index of the current one.

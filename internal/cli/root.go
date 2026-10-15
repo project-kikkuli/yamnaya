@@ -30,7 +30,7 @@ func Wire(path string) (*core.Core, error) {
 	if l, err := newLauncher(); err == nil {
 		launches = l
 	}
-	return &core.Core{
+	c := &core.Core{
 		Launches:  launches,
 		Store:     st,
 		Harnesses: []core.Harness{cl, cx},
@@ -38,7 +38,8 @@ func Wire(path string) (*core.Core, error) {
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
-	}, nil
+	}
+	return c, c.ScopeItems()
 }
 
 type env struct {

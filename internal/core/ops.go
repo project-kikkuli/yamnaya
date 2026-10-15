@@ -139,8 +139,17 @@ func (c *Core) Focus(t Target) error {
 	return err
 }
 
-// AddItem files an item against a session.
-func (c *Core) AddItem(it Item) (Item, error) { return c.Store.AddItem(it) }
+// AddItem files an item against a session, in the session's scope unless it names one.
+func (c *Core) AddItem(it Item) (Item, error) {
+	if it.Scope == "" {
+		b, err := c.Board()
+		if err != nil {
+			return it, err
+		}
+		it.Scope = c.ScopeOf(b, it.Session)
+	}
+	return c.Store.AddItem(it)
+}
 
 // Delivery says how an answer reached, or will reach, its agent.
 type Delivery int
@@ -163,7 +172,7 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	d := c.deliver(b, it, fmt.Sprintf("re %s: %s", it.ID, oneLine(text)))
+	d := c.deliver(b, it, fmt.Sprintf("re %s: %s", it.Spoken(), oneLine(text)))
 	return it, d, nil
 }
 
@@ -173,7 +182,7 @@ func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	d := c.deliver(b, it, fmt.Sprintf("re %s: dismissed: %s", it.ID, oneLine(reason)))
+	d := c.deliver(b, it, fmt.Sprintf("re %s: dismissed: %s", it.Spoken(), oneLine(reason)))
 	return it, d, nil
 }
 
@@ -190,7 +199,7 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 	if host == nil || host.Type(*s.Handle, text) != nil {
 		return Queued
 	}
-	if c.Store.MarkDelivered(it.ID) != nil {
+	if c.Store.MarkDelivered(it.Key()) != nil {
 		return Queued
 	}
 	return Typed
@@ -205,7 +214,7 @@ func (c *Core) Inbox(session string) ([]Item, error) {
 		return nil, err
 	}
 	for _, it := range items {
-		if err := c.Store.MarkDelivered(it.ID); err != nil {
+		if err := c.Store.MarkDelivered(it.Key()); err != nil {
 			return nil, err
 		}
 	}

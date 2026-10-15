@@ -24,7 +24,11 @@ func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if err != nil {
 				return err
 			}
-			it, d, err := e.core.Answer(b, args[0], strings.Join(args[1:], " "))
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, d, err := e.core.Answer(b, found.Key(), strings.Join(args[1:], " "))
 			if err != nil {
 				return err
 			}
@@ -40,7 +44,11 @@ func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if err != nil {
 				return err
 			}
-			it, d, err := e.core.Dismiss(b, args[0], strings.Join(args[1:], " "))
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, d, err := e.core.Dismiss(b, found.Key(), strings.Join(args[1:], " "))
 			if err != nil {
 				return err
 			}
@@ -52,7 +60,15 @@ func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Short: "Snooze an open item",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			it, err := e.core.Snooze(args[0])
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, err := e.core.Snooze(found.Key())
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
 			}
@@ -63,7 +79,15 @@ func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Short: "Return an item to open",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			it, err := e.core.Reopen(args[0])
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, err := e.core.Reopen(found.Key())
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
 			}
@@ -170,9 +194,9 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			}
 			for _, it := range items {
 				if it.State == core.ItemAnswered {
-					fmt.Fprintf(cmd.OutOrStdout(), "re %s: %s\n", it.ID, it.Answer)
+					fmt.Fprintf(cmd.OutOrStdout(), "re %s: %s\n", it.Spoken(), it.Answer)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.ID, it.Reason)
+					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
 			}
 			return nil
@@ -189,7 +213,11 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		Short: "Show one item with its history",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			it, err := e.core.Store.Item(args[0])
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			it, err := e.item(b, args[0])
 			if err != nil {
 				return err
 			}
@@ -197,7 +225,11 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return writeJSON(cmd.OutOrStdout(), toJSON(it))
 			}
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "%s  %s  %s\n%s\n", it.ID, it.Kind, it.State, it.Question)
+			id := it.Qualified()
+			if it.Alias != "" && it.Alias != it.ID {
+				id += " (was " + it.Alias + ")"
+			}
+			fmt.Fprintf(w, "%s  %s  %s\n%s\n", id, it.Kind, it.State, it.Question)
 			line := func(k, v string) {
 				if v != "" {
 					fmt.Fprintf(w, "%s: %s\n", k, v)
@@ -228,6 +260,9 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 type itemJSON struct {
 	ID         string        `json:"id"`
+	Project    string        `json:"project"`
+	Scope      string        `json:"scope"`
+	Alias      string        `json:"alias,omitempty"`
 	Kind       string        `json:"kind"`
 	State      string        `json:"state"`
 	Question   string        `json:"question"`
@@ -252,7 +287,7 @@ func ts(t time.Time) string {
 }
 
 func toJSON(it core.Item) itemJSON {
-	return itemJSON{ID: it.ID, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }
@@ -265,8 +300,16 @@ func printItems(w io.Writer, items []core.Item, asJSON bool) error {
 		}
 		return writeJSON(w, out)
 	}
+	scopes := map[string]bool{}
 	for _, it := range items {
-		line := fmt.Sprintf("%-5s %-8s %-9s %s", it.ID, it.Kind, it.State, it.Question)
+		scopes[it.Scope] = true
+	}
+	for _, it := range items {
+		id := it.ID
+		if len(scopes) > 1 {
+			id = it.Qualified()
+		}
+		line := fmt.Sprintf("%-5s %-8s %-9s %s", id, it.Kind, it.State, it.Question)
 		if it.Rec != "" {
 			line += "  rec: " + it.Rec
 		}
@@ -282,4 +325,30 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// item resolves an item ID within the scope of -p, else of the calling session; from outside any session, within no scope.
+func (e *env) item(b core.Board, ref string) (core.Item, error) {
+	return e.core.Store.Find(e.itemScope(b), ref)
+}
+
+func (e *env) itemScope(b core.Board) string {
+	if e.project != "" {
+		for _, r := range b.Repos {
+			if r.Key == e.project || strings.EqualFold(r.Name, e.project) {
+				return r.Key
+			}
+		}
+		if key, err := b.ProjectKey(e.project); err == nil {
+			if p, ok := b.Project(key); ok && p.Repo != "" {
+				return p.Repo
+			}
+			return e.core.ScopeOf(b, key)
+		}
+		return e.project
+	}
+	if c, err := e.caller(); err == nil {
+		return e.core.ScopeOf(b, c.Session)
+	}
+	return ""
 }

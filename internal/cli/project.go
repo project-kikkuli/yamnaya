@@ -174,7 +174,7 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				return err
 			}
 			key, harness := args[0], ""
-			if it, err := e.core.Store.Item(args[0]); err == nil {
+			if it, err := e.item(b, args[0]); err == nil {
 				key, harness = it.Session, it.Harness
 			} else if s, ok := sessionByPrefix(b, args[0]); ok {
 				key, harness = s.Key(), s.Harness

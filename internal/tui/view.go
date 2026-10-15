@@ -107,7 +107,7 @@ func (m Model) header() string {
 func (m Model) footer() []string {
 	var lines []string
 	if m.mode == modeInput {
-		label := map[inputKind]string{inAnswer: "answer " + m.inItem, inDismiss: "dismiss " + m.inItem + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because"}[m.inKind]
+		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because"}[m.inKind]
 		if m.fresh {
 			lines = append(lines, " "+bold.Render(label+":")+" "+dim.Render(string(m.input))+"█")
 			lines = append(lines, dim.Render(" enter accepts the default   type to replace it   esc cancel"))
@@ -470,7 +470,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		return b.String()
 	}
 	it := n.Item
-	b.WriteString(m.mark(i) + loud.Render(pad(it.ID, 5)) + " " + name + " " + it.Question + "\n")
+	b.WriteString(m.mark(i) + loud.Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
@@ -481,6 +481,40 @@ func (m Model) needLines(i int, n core.Need) string {
 		b.WriteString(dim.Render("         enter expand   a answer   l later   x dismiss   o go to session") + "\n")
 	}
 	return b.String()
+}
+
+// itemID names an item, with its project where the needs list mixes projects.
+func (m Model) itemID(it core.Item) string {
+	if m.mixed() {
+		return it.Qualified()
+	}
+	return it.ID
+}
+
+func (m Model) mixed() bool {
+	scopes := map[string]bool{}
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+		for _, n := range ns {
+			if n.Item != nil {
+				scopes[n.Item.Scope] = true
+			}
+		}
+	}
+	return len(scopes) > 1
+}
+
+func (m Model) idWidth() int {
+	w := 5
+	if m.mixed() {
+		for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+			for _, n := range ns {
+				if n.Item != nil {
+					w = max(w, len(n.Item.Qualified()))
+				}
+			}
+		}
+	}
+	return min(w, 24)
 }
 
 func (m Model) sourceName(it core.Item) string {

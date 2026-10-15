@@ -2,6 +2,7 @@
 package claude
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -198,6 +199,33 @@ func cwdOf(pid int) string {
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "n") {
 			return line[1:]
+		}
+	}
+	return ""
+}
+
+// SessionCwd is where session worked, from the first transcript record that names a directory.
+func (a *Adapter) SessionCwd(session string) string {
+	path := a.transcript("", session)
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 1<<16)
+	for range 200 {
+		line, err := r.ReadBytes('\n')
+		var rec struct {
+			Cwd string `json:"cwd"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.Cwd != "" {
+			return rec.Cwd
+		}
+		if err != nil {
+			break
 		}
 	}
 	return ""

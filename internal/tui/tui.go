@@ -76,6 +76,7 @@ type Model struct {
 	fresh     bool
 	inKind    inputKind
 	inItem    string
+	inLabel   string
 	inProj    string
 	filter    string
 	targets   []core.Target
@@ -201,7 +202,7 @@ func (m *Model) follow(key string) {
 func rowKey(r row) string {
 	switch {
 	case r.item != nil:
-		return "item:" + r.item.ID
+		return "item:" + r.item.Key()
 	case r.member != nil:
 		return "member:" + r.session.Key() + "/" + r.member.ID
 	case r.dormant != nil:
@@ -399,8 +400,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "a", "l", "x", "u", "o":
 			m.mode = m.back
-			m.follow("item:" + m.why.ID)
-			if r, ok := m.selected(); !ok || r.item == nil || r.item.ID != m.why.ID {
+			m.follow("item:" + m.why.Key())
+			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
 				m.message = m.why.ID + " is no longer on this list"
 				return m, nil
 			}
@@ -499,7 +500,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		switch {
 		case r.item != nil:
-			return m.expand(r.item.ID)
+			return m.expand(r.item.Key())
 		case r.need != nil:
 			return m.open(r)
 		case r.dormant != nil:
@@ -528,31 +529,33 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.open(r)
 	case "a":
 		if r.item != nil && r.item.State == core.ItemOpen {
-			m.startInput(inAnswer, r.item.ID, "", r.item.Rec, true)
+			m.startInput(inAnswer, r.item.Key(), "", r.item.Rec, true)
+			m.inLabel = r.item.ID
 		}
 	case "x":
 		if r.item != nil && (r.item.State == core.ItemOpen || r.item.State == core.ItemSnoozed) {
-			m.startInput(inDismiss, r.item.ID, "", "", false)
+			m.startInput(inDismiss, r.item.Key(), "", "", false)
+			m.inLabel = r.item.ID
 		}
 	case "l":
 		if r.item != nil && r.item.State == core.ItemOpen {
-			id := r.item.ID
+			key, id := r.item.Key(), r.item.ID
 			return m, m.do(func() (string, error) {
-				_, err := m.core.Snooze(id)
+				_, err := m.core.Snooze(key)
 				return id + " snoozed", err
 			})
 		}
 	case "u":
 		if r.item != nil && r.item.State == core.ItemSnoozed {
-			id := r.item.ID
+			key, id := r.item.Key(), r.item.ID
 			return m, m.do(func() (string, error) {
-				_, err := m.core.Reopen(id)
+				_, err := m.core.Reopen(key)
 				return id + " reopened", err
 			})
 		}
 	case "w":
 		if r.item != nil {
-			return m.expand(r.item.ID)
+			return m.expand(r.item.Key())
 		}
 	case "r":
 		if p := m.projectOf(r); p != nil {
@@ -673,14 +676,14 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			id, board := m.inItem, m.board
 			return m, m.do(func() (string, error) {
-				_, d, err := m.core.Answer(board, id, text)
-				return id + " answered, " + d.String(), err
+				it, d, err := m.core.Answer(board, id, text)
+				return it.ID + " answered, " + d.String(), err
 			})
 		case inDismiss:
 			id, board := m.inItem, m.board
 			return m, m.do(func() (string, error) {
-				_, d, err := m.core.Dismiss(board, id, text)
-				return id + " dismissed, " + d.String(), err
+				it, d, err := m.core.Dismiss(board, id, text)
+				return it.ID + " dismissed, " + d.String(), err
 			})
 		case inDismissStale:
 			if text == "" {
@@ -688,7 +691,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			var ids []string
 			for _, n := range m.board.Stale {
-				ids = append(ids, n.Item.ID)
+				ids = append(ids, n.Item.Key())
 			}
 			board := m.board
 			return m, m.do(func() (string, error) {
