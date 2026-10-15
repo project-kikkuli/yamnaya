@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -379,8 +380,16 @@ func (s *Store) SetPhases(project string, names []string) (Phases, error) {
 	if err != nil {
 		return Phases{}, err
 	}
-	_, err = s.db.Exec(`INSERT INTO ym_phases (project, phases, idx) VALUES (?, ?, 0)
-		ON CONFLICT(project) DO UPDATE SET phases = excluded.phases, idx = max(0, min(idx, ? - 1))`, project, string(raw), len(names))
+	old, err := s.Phases(project)
+	if err != nil {
+		return Phases{}, err
+	}
+	idx := 0
+	if old.Current < len(old.Names) {
+		idx = max(0, slices.Index(names, old.Names[old.Current]))
+	}
+	_, err = s.db.Exec(`INSERT INTO ym_phases (project, phases, idx) VALUES (?, ?, ?)
+		ON CONFLICT(project) DO UPDATE SET phases = excluded.phases, idx = excluded.idx`, project, string(raw), idx)
 	if err != nil {
 		return Phases{}, err
 	}

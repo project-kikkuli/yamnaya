@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -338,18 +339,32 @@ func TestItemIDsAreNeverReusedAcrossKinds(t *testing.T) {
 	}
 }
 
-func TestPhasesAdvanceAndClampOnReplace(t *testing.T) {
-	w := newWorld(t)
-	st := w.core.Store
-	if p, err := st.SetPhases("p", []string{"spec", "build", "ship"}); err != nil || p.Current != 0 {
-		t.Fatalf("set = %+v, %v", p, err)
+func TestPhasesAdvanceAndReplacingFollowsTheCurrentPhaseByName(t *testing.T) {
+	cases := []struct {
+		name    string
+		next    []string
+		current string
+	}{
+		{"current phase survives at a new position", []string{"plan", "spec", "build", "ship"}, "build"},
+		{"current phase is gone", []string{"design", "launch"}, "design"},
+		{"list shrinks past the old index", []string{"build"}, "build"},
 	}
-	st.NextPhase("p")
-	st.NextPhase("p")
-	if _, err := st.NextPhase("p"); err == nil {
+	for i, c := range cases {
+		st := newWorld(t).core.Store
+		key := fmt.Sprint("p", i)
+		if p, err := st.SetPhases(key, []string{"spec", "build", "ship"}); err != nil || p.Current != 0 {
+			t.Fatalf("set = %+v, %v", p, err)
+		}
+		st.NextPhase(key)
+		p, err := st.SetPhases(key, c.next)
+		if err != nil || p.Names[p.Current] != c.current {
+			t.Errorf("%s: current = %d in %v, want %q", c.name, p.Current, p.Names, c.current)
+		}
+	}
+	st := newWorld(t).core.Store
+	st.SetPhases("q", []string{"a", "b"})
+	st.NextPhase("q")
+	if _, err := st.NextPhase("q"); err == nil {
 		t.Error("advanced past the last phase")
-	}
-	if p, _ := st.SetPhases("p", []string{"spec", "build"}); p.Current != 1 {
-		t.Errorf("replace kept index %d, want 1", p.Current)
 	}
 }
