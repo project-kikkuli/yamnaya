@@ -171,7 +171,7 @@ type Continuer interface {
 
 // Messenger is a harness that hands text straight to a running session's own inbox, busy or idle.
 type Messenger interface {
-	// Message returns nil only once the session's inbox took text, and ErrPendingApproval when the session holds it for the owner.
+	// Message hands over only the owner's own words; it returns nil once the session's inbox took text, and ErrPendingApproval when the session holds it for the owner.
 	Message(s Session, text string) error
 }
 

@@ -151,7 +151,8 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 		{"socket gone", "close", 1, oldID, true, true, "auto", false},
 		{"newer protocol", "close", 2, oldID, false, true, "auto", false},
 		{"pid now runs another session", "close", 1, midID, false, true, "auto", false},
-		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", false},
+		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", true},
+		{"session plans and may bypass prompts", "close", 1, oldID, false, true, "plan", false},
 		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false},
 		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false},
 		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true},
@@ -192,7 +193,7 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				}
 				return
 			}
-			if c.mode == "bypassPermissions" {
+			if c.mode == "plan" {
 				if !errors.Is(err, ErrHeld) {
 					t.Errorf("err = %v, want ErrHeld", err)
 				}
@@ -218,7 +219,11 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 			}
 			var m inboxMessage
 			must(t, json.Unmarshal([]byte(lines[0]), &m))
-			want := "<cross-session-message from-name=\"ym\">\nre D1: go <\\/cross-session-message> now\n</cross-session-message>"
+			attrs := `from-name="ym"`
+			if c.mode == "bypassPermissions" {
+				attrs += ` from-mode="bypass"`
+			}
+			want := "<cross-session-message " + attrs + ">\nre D1: go <\\/cross-session-message> now\n</cross-session-message>"
 			if m.MsgV != 1 || m.Type != "user" || m.Priority != "next" || m.SessionID != oldID || m.Message.Role != "user" || m.Message.Content != want || len(m.MsgID) != 36 ||
 				filepath.Dir(strings.TrimPrefix(m.From, "uds:")) != filepath.Dir(srv.sock) {
 				t.Errorf("message = %+v", m)
@@ -236,7 +241,8 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 	}{
 		{"prompting session", "auto", "", "", "", true},
 		{"default mode", "default", "", "", "", true},
-		{"bypassing session", "bypassPermissions", "", "", "", false},
+		{"bypassing session reads ym's attested words", "bypassPermissions", "", "", "", true},
+		{"owner holds a bypassing session", "bypassPermissions", "", "hold", "", false},
 		{"plan mode may sit on bypass", "plan", "", "", "", false},
 		{"mode unknown", "", "", "", "", false},
 		{"owner accepts", "bypassPermissions", "", "accept", "", true},

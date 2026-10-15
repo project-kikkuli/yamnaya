@@ -76,7 +76,8 @@ func (a *Adapter) message(s core.Session, text string, gate bool) error {
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
 		return ErrNoInbox
 	}
-	if gate && !a.admits(st.Cwd, a.scan(a.transcript(st.Cwd, s.ID)).Mode) {
+	mode := a.scan(a.transcript(st.Cwd, s.ID)).Mode
+	if gate && !a.admits(st.Cwd, mode) {
 		return ErrHeld
 	}
 	back, err := listenReceipts(filepath.Dir(st.MessagingSocket))
@@ -94,7 +95,7 @@ func (a *Adapter) message(s core.Session, text string, gate bool) error {
 		MsgV:      peerProtocol,
 		MsgID:     id,
 		Type:      "user",
-		Message:   body{Role: "user", Content: wrap(text)},
+		Message:   body{Role: "user", Content: wrap(text, attested(mode))},
 		Priority:  "next",
 		From:      "uds:" + back.Addr().String(),
 		SessionID: s.ID,
@@ -173,8 +174,8 @@ var inboundRank = map[string]int{"accept": 0, "hold": 1, "refuse": 2}
 // promptingModes are the permission modes Claude Code does not count as bypassing prompts.
 var promptingModes = map[string]bool{"default": true, "acceptEdits": true, "auto": true, "dontAsk": true}
 
-// admits mirrors Claude Code's inbound gate for a sender that attests no permission mode: the crossSessionInbound
-// setting decides when set, else a session that bypasses permission prompts holds the message.
+// admits mirrors Claude Code's inbound gate for ym's sends: the crossSessionInbound setting decides when set,
+// else the session reads it while it prompts for permissions or bypasses them under ym's attestation.
 func (a *Adapter) admits(cwd, mode string) bool {
 	policy, invalid := "", false
 	read := func(path string) string {
@@ -203,7 +204,16 @@ func (a *Adapter) admits(cwd, mode string) bool {
 	if policy != "" {
 		return policy == "accept"
 	}
-	return promptingModes[mode]
+	return promptingModes[mode] || attested(mode) != ""
+}
+
+// attested is the permission mode ym claims for the owner's own words: bypass to a session that bypasses prompts,
+// which reads a message only from a sender in its own mode, and none to the rest, which read one that claims none.
+func attested(mode string) string {
+	if mode == "bypassPermissions" {
+		return "bypass"
+	}
+	return ""
 }
 
 // inbound reads crossSessionInbound from a settings file; set is true when the key is present, whatever its value.
@@ -227,10 +237,14 @@ func inbound(path string) (value string, set bool) {
 }
 
 // wrap puts text in the envelope Claude Code's own senders use, so the session shows it as a message from ym.
-func wrap(text string) string {
+func wrap(text, mode string) string {
 	text = strings.ReplaceAll(text, "<"+envelope, `<\`+envelope)
 	text = strings.ReplaceAll(text, "</"+envelope, `<\/`+envelope)
-	return fmt.Sprintf("<%s from-name=\"ym\">\n%s\n</%s>", envelope, text, envelope)
+	attrs := ` from-name="ym"`
+	if mode != "" {
+		attrs += ` from-mode="` + mode + `"`
+	}
+	return fmt.Sprintf("<%s%s>\n%s\n</%s>", envelope, attrs, text, envelope)
 }
 
 // peerToken is the auth token Claude Code publishes beside its pid file for its socket, "" when there is none.
