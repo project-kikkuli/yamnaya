@@ -41,7 +41,7 @@ func vibeCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 					if err != nil {
 						return err
 					}
-					if v.Target, err = b.ProjectKey(e.project); err != nil {
+					if v.Target, err = b.VibeTarget(e.project, v.Session); err != nil {
 						return err
 					}
 				}

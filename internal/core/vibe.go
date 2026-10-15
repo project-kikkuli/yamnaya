@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -127,4 +128,38 @@ func (p Project) Places(n int) []Vibe {
 		}
 	}
 	return out
+}
+
+// VibeTarget is where a vibe set with -p ref goes: the mission ref names, else the setter's own when caller is set, as ym item add files against the caller whatever -p says.
+func (b Board) VibeTarget(ref, caller string) (string, error) {
+	key, err := b.ProjectKey(ref)
+	if err != nil && caller != "" {
+		return "", nil
+	}
+	return key, err
+}
+
+// VibeNudge asks the session to set its mission's vibe when the board shows none or one older than VibeStale; "" while it is fresh.
+func (c *Core) VibeNudge(session string) (string, error) {
+	b, err := c.Board()
+	if err != nil {
+		return "", err
+	}
+	all, err := c.Store.Vibes()
+	if err != nil {
+		return "", err
+	}
+	const run = `run ym vibe "<place>" --why "..."`
+	vs := b.VibesOf(all, b.ProjectOf(session))
+	if len(vs) == 0 {
+		return "none yet, " + run, nil
+	}
+	age := b.At.Sub(vs[0].At)
+	if age <= VibeStale {
+		return "", nil
+	}
+	if age < 24*time.Hour {
+		return fmt.Sprintf("%dh old, %s", int(age.Hours()), run), nil
+	}
+	return fmt.Sprintf("%dd old, %s", int(age.Hours()/24), run), nil
 }

@@ -178,7 +178,7 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "inbox",
-		Short: "Print answers, dismissals and the owner's messages for the calling session that it has not received yet, and mark them received",
+		Short: "Print answers, dismissals and the owner's messages for the calling session that it has not received yet, and mark them received; while its mission's vibe is missing or stale, a vibe: line asks for one",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()
@@ -189,8 +189,15 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
+			nudge, err := e.core.VibeNudge(c.Session)
+			if err != nil {
+				return err
+			}
 			if asJSON {
-				return printItems(cmd.OutOrStdout(), items, true)
+				if err := printItems(cmd.OutOrStdout(), items, true); err != nil || nudge == "" {
+					return err
+				}
+				return writeJSON(cmd.OutOrStdout(), map[string]string{"vibe": nudge})
 			}
 			for _, it := range items {
 				if it.State == core.ItemAnswered {
@@ -202,6 +209,9 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			msgs, err := e.core.Store.TakeMessages(c.Session)
 			for _, m := range msgs {
 				fmt.Fprintf(cmd.OutOrStdout(), "msg: %s\n", m.Text)
+			}
+			if nudge != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "vibe: %s\n", nudge)
 			}
 			return err
 		}),

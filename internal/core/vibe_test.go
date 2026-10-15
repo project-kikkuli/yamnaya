@@ -143,3 +143,69 @@ func TestVibeTableMigratesOnceAndKeepsHistory(t *testing.T) {
 		t.Fatalf("vibes = %d, %v", len(vs), err)
 	}
 }
+
+func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
+	const run = `run ym vibe "<place>" --why "..."`
+	for _, tc := range []struct {
+		name    string
+		vibe    bool
+		later   time.Duration
+		session string
+		want    string
+	}{
+		{"none yet", false, 0, "lead", "none yet, " + run},
+		{"fresh", true, time.Hour, "lead", ""},
+		{"fresh on the mission, asked by its worker", true, time.Hour, "worker", ""},
+		{"hours old", true, 3 * time.Hour, "lead", "3h old, " + run},
+		{"days old", true, 50 * time.Hour, "worker", "2d old, " + run},
+		{"other mission's vibe does not count", true, time.Hour, "other", "none yet, " + run},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.run(10, 1, "/dev/t1", "claude", "lead", Busy)
+			w.run(11, 10, "/dev/t1", "codex", "worker", Busy)
+			w.run(30, 1, "/dev/t3", "claude", "other", Idle)
+			if tc.vibe {
+				if _, err := w.core.Store.AddVibe(Vibe{Place: "Colorado", Session: "lead", Harness: "claude"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.core.Now = func() time.Time { return time.Now().Add(tc.later) }
+			for range 2 {
+				got, err := w.core.VibeNudge(tc.session)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got != tc.want {
+					t.Fatalf("nudge = %q, want %q", got, tc.want)
+				}
+			}
+			if all, _ := w.core.Store.Vibes(); len(all) != map[bool]int{true: 1}[tc.vibe] {
+				t.Errorf("nudging stored vibes: %+v", all)
+			}
+		})
+	}
+}
+
+func TestVibeTargetTakesWhatItemAddTakesFromASession(t *testing.T) {
+	w := newWorld(t)
+	w.run(10, 1, "/dev/t1", "claude", "lead", Busy)
+	w.run(30, 1, "/dev/t3", "claude", "other", Idle)
+	b := w.board(t)
+	for _, tc := range []struct {
+		ref, caller, want string
+		fails             bool
+	}{
+		{"other", "lead", "other", false},
+		{"title other", "lead", "other", false},
+		{"yamnaya", "lead", "", false},
+		{"", "lead", "", false},
+		{"other", "", "other", false},
+		{"yamnaya", "", "", true},
+	} {
+		got, err := b.VibeTarget(tc.ref, tc.caller)
+		if (err != nil) != tc.fails || got != tc.want {
+			t.Errorf("VibeTarget(%q, %q) = %q, %v; want %q, fails %v", tc.ref, tc.caller, got, err, tc.want, tc.fails)
+		}
+	}
+}
