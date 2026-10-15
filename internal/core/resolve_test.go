@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -31,6 +32,8 @@ func TestAnswerReachesTheSessionTheConversationContinuedIn(t *testing.T) {
 		{"its inbox fails and it is busy", Busy, map[string]error{"new": errors.New("reset")}, Queued, nil, nil},
 		{"no inbox and it is busy", Busy, nil, Queued, nil, nil},
 		{"no inbox and it sits idle in tmux", Idle, nil, Typed, nil, []string{"%2: re D1: go"}},
+		{"its inbox holds it for the owner while it sits idle", Idle, map[string]error{"new": fmt.Errorf("receipt: %w", ErrPendingApproval)}, Held, nil, nil},
+		{"its inbox drops it while it sits idle", Idle, map[string]error{"new": errors.New("dropped")}, Typed, nil, []string{"%2: re D1: go"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := continuedWorld(t, c.status)
@@ -52,6 +55,9 @@ func TestAnswerReachesTheSessionTheConversationContinuedIn(t *testing.T) {
 			inbox, err := w.core.Inbox("new")
 			if err != nil || (len(inbox) == 1) != (c.want == Queued) {
 				t.Errorf("successor's inbox = %+v, %v; it should get the answer exactly when nothing delivered it", inbox, err)
+			}
+			if got, _ := w.core.Store.Item(it.Key()); got.Held.IsZero() == (c.want == Held) {
+				t.Errorf("item held at %v, want held %v", got.Held, c.want == Held)
 			}
 		})
 	}

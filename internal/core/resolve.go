@@ -1,5 +1,7 @@
 package core
 
+import "errors"
+
 // Resolve follows a session's continued-in records to the session that carries its conversation now.
 func (c *Core) Resolve(id string) string { return c.resolve(id, "") }
 
@@ -41,7 +43,14 @@ func (c *Core) carries(session string) func(id string) bool {
 }
 
 // Direct hands text to a running session's own inbox; false when its harness has none or the inbox did not take it.
-func (c *Core) Direct(s Session, text string) bool {
+func (c *Core) Direct(s Session, text string) bool { return c.message(s, text) == nil }
+
+func (c *Core) message(s Session, text string) error {
 	m, ok := c.harness(s.Harness).(Messenger)
-	return ok && m.Message(s, text) == nil
+	if !ok {
+		return errNoMessenger
+	}
+	return m.Message(s, text)
 }
+
+var errNoMessenger = errors.New("harness has no session inbox")

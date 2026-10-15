@@ -962,6 +962,9 @@ func toolCounts(tools map[string]int) string {
 }
 
 func delivered(it core.Item) string {
+	if !it.Held.IsZero() {
+		return "  (held in session)"
+	}
 	if it.Delivered.IsZero() {
 		return "  (not yet received)"
 	}

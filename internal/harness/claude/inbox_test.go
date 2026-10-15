@@ -179,6 +179,9 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				if !errors.As(err, new(NotReadError)) {
 					t.Errorf("err = %v, want the session's receipt", err)
 				}
+				if errors.Is(err, core.ErrPendingApproval) != (c.reply == "held") {
+					t.Errorf("err = %v; only a held message waits for the owner's approval", err)
+				}
 				if left, _ := filepath.Glob(filepath.Join(filepath.Dir(srv.sock), "ym-*.sock")); len(left) != 0 {
 					t.Errorf("receipt sockets left behind: %q", left)
 				}

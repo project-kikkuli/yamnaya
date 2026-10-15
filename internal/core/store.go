@@ -58,7 +58,9 @@ type Item struct {
 	AnsweredAt time.Time
 	// Delivered is when the agent received the answer or dismissal.
 	Delivered time.Time
-	History   []Event
+	// Held is when the agent's session took the answer but held it for the owner's approval.
+	Held    time.Time
+	History []Event
 }
 
 type Event struct {
@@ -190,6 +192,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := vibes(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate vibes: %w", err)
+	}
+	if err := heldItems(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate held items: %w", err)
 	}
 	return &Store{db: db}, nil
 }

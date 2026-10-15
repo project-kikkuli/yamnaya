@@ -58,6 +58,10 @@ type NotReadError struct{ Status string }
 
 func (e NotReadError) Error() string { return "the session reported the message " + e.Status }
 
+func (e NotReadError) Is(target error) bool {
+	return target == core.ErrPendingApproval && e.Status == "held"
+}
+
 type body struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

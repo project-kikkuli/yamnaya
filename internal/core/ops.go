@@ -216,10 +216,12 @@ const (
 	Typed
 	// Sent went straight to the session's own inbox, which reads it after the current turn.
 	Sent
+	// Held reached the session's inbox, which shows it to the owner before the agent reads it.
+	Held
 )
 
 func (d Delivery) String() string {
-	return [...]string{"queued for the agent's next turn", "typed into the agent's terminal", "sent to the agent's session inbox"}[d]
+	return [...]string{"queued for the agent's next turn", "typed into the agent's terminal", "sent to the agent's session inbox", "held in the agent's session for your approval"}[d]
 }
 
 // Answer records the answer and hands it to the source agent, wherever its conversation runs now: through the session's own inbox,
@@ -255,8 +257,11 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 	if claimed, err := c.Store.ClaimDelivery(it.Seq); err != nil || !claimed {
 		return Queued
 	}
-	if c.Direct(s.Session, text) {
+	switch err := c.message(s.Session, text); {
+	case err == nil:
 		return Sent
+	case errors.Is(err, ErrPendingApproval) && c.Store.MarkHeld(it.Seq) == nil:
+		return Held
 	}
 	if s.Status == Idle && s.Handle != nil {
 		host, hn := c.host(s.Handle.Host), c.harness(s.Harness)

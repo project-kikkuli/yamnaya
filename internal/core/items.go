@@ -146,20 +146,20 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
 	var opts string
-	var created, answered, delivered sql.NullString
+	var created, answered, delivered, held sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
 		return it, err
 	}
-	it.CreatedAt, it.AnsweredAt, it.Delivered = parseTime(created), parseTime(answered), parseTime(delivered)
+	it.CreatedAt, it.AnsweredAt, it.Delivered, it.Held = parseTime(created), parseTime(answered), parseTime(delivered), parseTime(held)
 	return it, nil
 }
 
@@ -365,7 +365,7 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL WHERE seq = ? AND state = ?`,
+	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL, held_at = NULL WHERE seq = ? AND state = ?`,
 		to, answer, reason, answeredAt, it.Seq, it.State)
 	if err != nil {
 		return it, err
@@ -390,6 +390,22 @@ func (s *Store) ClaimDelivery(seq int64) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// MarkHeld records that the agent's session holds the claimed item for the owner's approval.
+func (s *Store) MarkHeld(seq int64) error {
+	_, err := s.db.Exec(`UPDATE ym_items SET held_at = ? WHERE seq = ?`, now(), seq)
+	return err
+}
+
+// heldItems adds the column recording an answer a session holds for the owner's approval.
+func heldItems(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name = 'held_at'`).Scan(&has); err != nil || has > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE ym_items ADD COLUMN held_at TEXT`)
+	return err
 }
 
 // Undeliver hands a claimed item back to ym item inbox after its delivery failed.
