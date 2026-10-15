@@ -12,16 +12,17 @@ var (
 	prChange = regexp.MustCompile(`\bgh\s+pr\s+(?:edit|ready|merge|close|reopen|comment|review)((?:[ \t]+[^\s;&|"'\x60\\]+)*)`)
 	workdir  = regexp.MustCompile(`\bworkdir\\?"?\s*:\s*\\?"([^"\\]+)`)
 	ghRemote = regexp.MustCompile(`github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?\s*$`)
+	patch    = regexp.MustCompile(`(?s)\*\*\* Begin Patch.*?(?:\*\*\* End Patch|$)`)
 )
 
 // PRsChanged finds the pull requests a tool call edits, readies, merges, closes, reopens, comments on or reviews with gh.
-// A bare number resolves against the repo of the call's workdir, or cwd when it names none.
+// A bare number resolves against the repo of the call's workdir, or cwd when it names none; text a call writes as a patch is not run.
 func PRsChanged(call, cwd string) []PR {
 	if m := workdir.FindStringSubmatch(call); m != nil {
 		cwd = m[1]
 	}
 	var out []PR
-	for _, m := range prChange.FindAllStringSubmatch(call, -1) {
+	for _, m := range prChange.FindAllStringSubmatch(patch.ReplaceAllString(call, ""), -1) {
 		repo, target := "", ""
 		args := strings.Fields(m[1])
 		for i := 0; i < len(args); i++ {

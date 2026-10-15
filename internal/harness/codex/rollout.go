@@ -12,7 +12,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-const scanFormat = 4
+const scanFormat = 5
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.

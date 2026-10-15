@@ -24,6 +24,8 @@ func TestPRsChangedNamesThePRsACallActsOn(t *testing.T) {
 		{"viewing is not working on it", `gh pr view 2991 && gh pr checks 2991`, dir, nil},
 		{"current branch's pr is unnamed", `gh pr ready`, dir, nil},
 		{"no repo to resolve a number", `gh pr merge 5`, t.TempDir(), nil},
+		{"a test fixture written by a patch", `tools.apply_patch("*** Begin Patch\n*** Update File: x_test.go\n+\tif !merged(\"gh pr merge 123\") {\n*** End Patch\n")`, dir, nil},
+		{"a command after a patch", `tools.apply_patch("*** Begin Patch\n+gh pr close 4\n*** End Patch"); tools.exec_command({cmd:"gh pr merge 77"})`, dir, []string{"https://github.com/me/web/pull/77"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
