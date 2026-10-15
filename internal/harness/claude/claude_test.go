@@ -50,8 +50,8 @@ func TestDiscoverReadsStateTranscriptAndCrew(t *testing.T) {
 		waiting.WaitingFor != "permission prompt" || waiting.Cwd != "/Users/me/src/app" || waiting.Repo != "app" {
 		t.Errorf("101 = %+v", waiting)
 	}
-	if len(waiting.Crew) != 2 {
-		t.Fatalf("101 crew = %+v, want the two readable agents", waiting.Crew)
+	if len(waiting.Crew) != 3 {
+		t.Fatalf("101 crew = %+v, want the three readable agents, workflow agent included", waiting.Crew)
 	}
 	crew := map[string]core.Member{}
 	for _, m := range waiting.Crew {
@@ -60,8 +60,10 @@ func TestDiscoverReadsStateTranscriptAndCrew(t *testing.T) {
 	if m := crew["reviewer"]; !m.Teammate || m.Status != core.Idle {
 		t.Errorf("teammate = %+v", m)
 	}
-	if m := crew["Run the test suite"]; m.Teammate || m.Status != core.Done {
-		t.Errorf("subagent = %+v", m)
+	for _, name := range []string{"Run the test suite", "batch-1"} {
+		if m := crew[name]; m.Teammate || m.Status != core.Done {
+			t.Errorf("subagent %q = %+v", name, m)
+		}
 	}
 	if s := got[102]; s.Title != "Release notes" || s.Status != core.Idle {
 		t.Errorf("102 = %+v", s)

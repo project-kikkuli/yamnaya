@@ -15,6 +15,7 @@ type Core struct {
 	Hosts     []Host
 	Procs     func() ([]proc.Proc, error)
 	Now       func() time.Time
+	Meter     Meter
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -49,6 +50,7 @@ type Project struct {
 	Items    []Item
 	Phases   Phases
 	Status   Status
+	Spend    Spend
 }
 
 // Duplicated reports whether any session of the project runs in more than one process.
@@ -73,6 +75,7 @@ type Board struct {
 	Sessions []Live
 	Projects []Project
 	Needs    []Need
+	Fleet    Fleet
 
 	parents map[string]string
 	lin     Lineage
@@ -209,6 +212,12 @@ func (c *Core) Board() (Board, error) {
 		b.Sessions[i].Project = projectOf(b.Sessions[i].Key(), parents, lin)
 	}
 	b.Needs = needs(b)
+	if c.Meter != nil {
+		b.Fleet = c.Meter.Fleet(b.At)
+		for i := range b.Projects {
+			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
+		}
+	}
 	return b, nil
 }
 

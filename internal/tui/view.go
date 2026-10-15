@@ -87,6 +87,9 @@ func (m Model) header() string {
 	if m.err != nil {
 		h += "  " + alarm.Render("refresh failed: "+m.err.Error())
 	}
+	if m.core != nil && m.core.Meter != nil {
+		h += "\n" + fleetLine(m.board.Fleet, m.board.At)
+	}
 	return h
 }
 
@@ -157,7 +160,7 @@ func (m Model) listView() string {
 		if r.need == nil && !missions {
 			missions = true
 			b.WriteString("\n" + bold.Render(" MISSIONS") + "\n")
-			b.WriteString(dim.Render("   "+pad("", m.nameWidth())+" "+m.phaseCol("phase")+pad("crew", 16)+" "+pad("status", 8)+" where") + "\n")
+			b.WriteString(dim.Render("   "+pad("", m.nameWidth())+" "+m.phaseCol("phase")+pad("crew", 16)+" "+pad("status", 8)+" "+m.spendCol("spend")+"where") + "\n")
 		}
 		if r.need != nil {
 			b.WriteString(m.needLines(i, *r.need))
@@ -232,7 +235,7 @@ func (m Model) missionLine(i int, p core.Project) string {
 	if p.Duplicated() {
 		status = alarm.Render(pad(copiesText(p), 8))
 	}
-	line := m.mark(i) + pad(p.Name, m.nameWidth()) + " " + m.phaseCol(phase) + pad(crew, 16) + " " + status + " " + where
+	line := m.mark(i) + pad(p.Name, m.nameWidth()) + " " + m.phaseCol(phase) + pad(crew, 16) + " " + status + " " + m.spendCol(p.Spend.Dollars()) + where
 	if p.Duplicated() {
 		return line + "  " + alarm.Render(copiesWhere(p))
 	}
@@ -244,7 +247,7 @@ func (m Model) missionLine(i int, p core.Project) string {
 
 // nameWidth gives mission names what the fixed columns leave, between 20 and 60 cells.
 func (m Model) nameWidth() int {
-	return min(60, max(20, m.width-3-len(m.phaseCol(""))-16-8-16-3))
+	return min(60, max(20, m.width-3-len(m.phaseCol(""))-len(m.spendCol(""))-16-8-16-3))
 }
 
 // phaseCol is a phase cell, or nothing when no mission has phases.

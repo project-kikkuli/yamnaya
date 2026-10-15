@@ -172,10 +172,12 @@ type agentMeta struct {
 	TaskKind    string `json:"taskKind"`
 }
 
-// crew reads <session>/subagents/agent-<id>.meta.json and each agent's transcript.
+// crew reads <session>/subagents/agent-<id>.meta.json and workflows/<run>/agent-<id>.meta.json, and each agent's transcript.
 // Claude marks a session idle only when no delegated work runs, so a session not busy has no busy crew.
 func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Member {
 	metas, _ := filepath.Glob(filepath.Join(dir, "agent-*.meta.json"))
+	flows, _ := filepath.Glob(filepath.Join(dir, "workflows", "*", "agent-*.meta.json"))
+	metas = append(metas, flows...)
 	type member struct {
 		core.Member
 		last time.Time
