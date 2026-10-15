@@ -26,7 +26,12 @@ func Wire(path string) (*core.Core, error) {
 	}
 	cl, cx := claude.New(), codex.New()
 	cl.Cache, cx.Cache = st, st
+	var launches core.Launches
+	if l, err := newLauncher(); err == nil {
+		launches = l
+	}
 	return &core.Core{
+		Launches:  launches,
 		Store:     st,
 		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), tmux.NewServer()},

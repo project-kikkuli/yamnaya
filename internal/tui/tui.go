@@ -43,6 +43,7 @@ type row struct {
 	project *core.Project
 	session *core.Live
 	member  *core.Member
+	dormant *core.Dormant
 	item    *core.Item
 }
 
@@ -199,6 +200,8 @@ func rowKey(r row) string {
 		return "item:" + r.item.ID
 	case r.member != nil:
 		return "member:" + r.session.Key() + "/" + r.member.ID
+	case r.dormant != nil:
+		return "dormant:" + r.dormant.Key
 	case r.session != nil:
 		return "session:" + r.session.Key()
 	case r.project != nil:
@@ -249,6 +252,9 @@ func (m Model) rows() []row {
 			for j := range s.Crew {
 				out = append(out, row{member: &s.Crew[j], session: s, project: &p})
 			}
+		}
+		for i := range p.Dormant {
+			out = append(out, row{dormant: &p.Dormant[i], project: &p})
 		}
 		for i := range p.Items {
 			out = append(out, row{item: &p.Items[i], project: &p})
@@ -472,6 +478,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.expand(r.item.ID)
 		case r.need != nil:
 			return m.open(r)
+		case r.dormant != nil:
+			return m.revive(*r.dormant)
 		case r.member != nil:
 			m.push(modeAgent)
 			m.sess, m.agent, m.scrollY = r.session.Key(), r.member.ID, 0
@@ -490,6 +498,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "o":
+		if r.dormant != nil {
+			return m.revive(*r.dormant)
+		}
 		return m.open(r)
 	case "a":
 		if r.item != nil && r.item.State == core.ItemOpen {
@@ -546,6 +557,16 @@ func (m *Model) scrollBy(n int) {
 	m.scrollY = max(0, min(m.scrollY+n, total-m.height/2))
 }
 
+// revive resumes a launched session whose agent exited.
+func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
+	if m.core.Launches == nil {
+		m.message = "no launcher to revive " + d.Key
+		return m, nil
+	}
+	l := m.core.Launches
+	return m, m.do(func() (string, error) { return l.Revive(d.Key) })
+}
+
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
 	m.stack = append(m.stack, frame{m.mode, m.cursor})
@@ -574,7 +595,7 @@ func (m Model) projectOf(r row) *core.Project {
 	if r.need != nil {
 		return nil
 	}
-	if r.project != nil && r.session == nil && r.item == nil && r.member == nil {
+	if r.project != nil && r.session == nil && r.item == nil && r.member == nil && r.dormant == nil {
 		return r.project
 	}
 	if m.mode == modeDetail || m.mode == modeSession {

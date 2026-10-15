@@ -262,3 +262,41 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 		t.Fatalf("esc back to the board put the cursor on %+v, want the repo it left from", r)
 	}
 }
+
+type launches struct {
+	dormant []core.Dormant
+	revived []string
+}
+
+func (l *launches) Dormant() []core.Dormant { return l.dormant }
+func (l *launches) Revive(key string) (string, error) {
+	l.revived = append(l.revived, key)
+	return "revived " + key, nil
+}
+
+func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
+	m, c, _ := setup(t)
+	l := &launches{dormant: []core.Dormant{
+		{Key: "fix-login", Harness: "claude", Session: "kid", Parent: "lead", Title: "Fix login", State: "exited 1"},
+		{Key: "docs-pass", Harness: "codex", Title: "Docs pass", State: "gone"},
+	}}
+	c.Launches = l
+	m = refresh(t, m)
+	if v := m.View(); !strings.Contains(v, "Docs pass") || !strings.Contains(v, "1 exited") {
+		t.Fatalf("a mission with only an exited launch is missing from the board:\n%s", v)
+	}
+	m = press(t, m, "down", "enter")
+	if !strings.Contains(m.View(), "exited 1") {
+		t.Fatalf("lead mission lacks its exited launch:\n%s", m.View())
+	}
+	for range 10 {
+		if r, _ := m.selected(); r.dormant != nil {
+			break
+		}
+		m = press(t, m, "down")
+	}
+	m = press(t, m, "enter")
+	if len(l.revived) != 1 || l.revived[0] != "fix-login" || m.message != "revived fix-login" {
+		t.Fatalf("revived %v, message %q", l.revived, m.message)
+	}
+}

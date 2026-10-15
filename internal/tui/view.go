@@ -198,6 +198,13 @@ func (m Model) repoLine(i int, r core.Repo) string {
 		sessions = append(sessions, p.Sessions...)
 	}
 	parts := []string{plural(len(r.Missions), "mission"), sessionCounts(sessions)}
+	exited := 0
+	for _, p := range r.Missions {
+		exited += len(p.Dormant)
+	}
+	if exited > 0 {
+		parts = append(parts, fmt.Sprintf("%d exited", exited))
+	}
 	if run := runningCrew(sessions); run > 0 {
 		parts = append(parts, plural(run, "agent")+" running")
 	}
@@ -242,6 +249,9 @@ func (m Model) missionLine(i int, p core.Project, indent string) string {
 		phase = p.Phases.Names[p.Phases.Current] + " " + dots
 	}
 	status := pad(p.Status.String(), 8)
+	if len(p.Sessions) == 0 && len(p.Dormant) > 0 {
+		status = pad("exited", 8)
+	}
 	if p.Duplicated() {
 		status = alarm.Render(pad(copiesText(p), 8))
 	}
@@ -304,6 +314,9 @@ func crewText(p core.Project) string {
 	}
 	if idle > 0 {
 		parts = append(parts, fmt.Sprintf("%d idle", idle))
+	}
+	if n := len(p.Dormant); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d exited", n))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -566,6 +579,18 @@ func (m Model) detailView() string {
 			b.WriteString(m.crewLine(i, c))
 			i++
 		}
+	}
+	for _, d := range p.Dormant {
+		title := d.Title
+		if title == "" {
+			title = d.Key
+		}
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + alarm.Render(pad(d.State, 9)) + pad(d.Key, 18) + " " + d.Branch
+		if i == m.cursor {
+			line += dim.Render("   enter revive")
+		}
+		b.WriteString(line + "\n")
+		i++
 	}
 	b.WriteString("\n" + bold.Render(" ITEMS") + "\n")
 	if len(p.Items) == 0 {

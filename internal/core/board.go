@@ -21,6 +21,8 @@ type Core struct {
 	Git func(dir string) GitInfo
 	// PRs fetches pull request status for RefreshPRs.
 	PRs PRSource
+	// Launches reports launched sessions that exited; nil shows none.
+	Launches Launches
 
 	gc gitCache
 }
@@ -61,7 +63,12 @@ type Project struct {
 	Phases   Phases
 	Status   Status
 	Spend    Spend
+	// Dormant are launched sessions of the mission whose agents exited.
+	Dormant []Dormant
 }
+
+// Shown reports whether the mission has a session running or one ym can revive.
+func (p Project) Shown() bool { return len(p.Sessions) > 0 || len(p.Dormant) > 0 }
 
 // Duplicated reports whether any session of the project runs in more than one process.
 func (p Project) Duplicated() bool {
@@ -241,8 +248,14 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
+	dormant := c.dormant(b.Sessions)
+	for _, d := range dormant {
+		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
+			parents[d.ID()] = d.Parent
+		}
+	}
 	b.parents, b.lin = parents, lin
-	b.Projects = group(b.Sessions, items, parents, lin)
+	b.Projects = group(b.Sessions, items, parents, lin, dormant)
 	for i := range b.Projects {
 		p := &b.Projects[i]
 		if p.Phases, err = c.Store.Phases(p.Key); err != nil {
@@ -362,7 +375,7 @@ func repos(projects []Project) []Repo {
 	byKey := map[string]*Repo{}
 	var order []string
 	for _, p := range projects {
-		if len(p.Sessions) == 0 {
+		if !p.Shown() {
 			continue
 		}
 		r := byKey[p.Repo]
@@ -474,7 +487,25 @@ func projectOf(key string, parents map[string]string, lin Lineage) string {
 	}
 }
 
-func group(sessions []Live, items []Item, parents map[string]string, lin Lineage) []Project {
+// dormant lists launched sessions that exited and run nowhere else, placed in their repos.
+func (c *Core) dormant(live []Live) []Dormant {
+	if c.Launches == nil {
+		return nil
+	}
+	running := map[string]bool{}
+	for _, s := range live {
+		running[s.Key()] = true
+	}
+	var out []Dormant
+	for _, d := range c.Launches.Dormant() {
+		if !running[d.ID()] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func group(sessions []Live, items []Item, parents map[string]string, lin Lineage, dormant []Dormant) []Project {
 	byKey := map[string]*Project{}
 	var order []string
 	get := func(key string) *Project {
@@ -494,6 +525,10 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 		seen[s.Key()] = true
 		p := get(projectOf(s.Key(), parents, lin))
 		p.Sessions = append(p.Sessions, s)
+	}
+	for _, d := range dormant {
+		p := get(projectOf(d.ID(), parents, lin))
+		p.Dormant = append(p.Dormant, d)
 	}
 	for _, it := range items {
 		key := projectOf(it.Session, parents, lin)
@@ -517,11 +552,16 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 				break
 			}
 		}
+		for _, d := range p.Dormant {
+			if p.Repo == "" && d.RepoKey != "" {
+				p.Repo, p.RepoName = d.RepoKey, GitInfo{Common: d.RepoKey}.Name()
+			}
+		}
 		out = append(out, *p)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if (len(out[i].Sessions) == 0) != (len(out[j].Sessions) == 0) {
-			return len(out[i].Sessions) > 0
+		if out[i].Shown() != out[j].Shown() {
+			return out[i].Shown()
 		}
 		return false
 	})
@@ -542,6 +582,11 @@ func defaultName(p Project) string {
 	for _, s := range p.Sessions {
 		if s.Title != "" {
 			return s.Title
+		}
+	}
+	for _, d := range p.Dormant {
+		if d.Title != "" {
+			return d.Title
 		}
 	}
 	return Short(p.Key)

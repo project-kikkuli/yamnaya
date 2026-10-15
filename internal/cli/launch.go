@@ -281,6 +281,67 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	}
 }
 
+// revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
+func (l launcher) revive(rec launch.Record) (string, error) {
+	pane, st := l.state(rec)
+	if st == "running" {
+		return "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
+	}
+	if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
+		return "", err
+	}
+	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+		return "", err
+	}
+	argv, err := startArgv(rec)
+	if rec.Session != "" {
+		argv, err = resumeArgv(rec)
+	}
+	if err != nil {
+		return "", err
+	}
+	name := tmux.SessionName(rec.Key)
+	if pane.ID != "" {
+		err = l.srv.Respawn(name, rec.Worktree.Path, argv)
+	} else {
+		_, err = l.srv.Start(l.conf, name, rec.Worktree.Path, argv)
+	}
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
+}
+
+// Dormant lists the launched sessions whose agents no longer run.
+func (l launcher) Dormant() []core.Dormant {
+	all, _ := l.records.All()
+	var out []core.Dormant
+	for _, rec := range all {
+		if _, st := l.state(rec); st != "running" {
+			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
+				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started})
+		}
+	}
+	return out
+}
+
+func (l launcher) Revive(key string) (string, error) {
+	rec, err := l.find(key)
+	if err != nil {
+		return "", err
+	}
+	return l.revive(rec)
+}
+
+func cleanDir(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.Clean(p)
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "revive <key|session>",
@@ -295,33 +356,11 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			if err != nil {
 				return err
 			}
-			pane, st := l.state(rec)
-			if st == "running" {
-				return fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
-			}
-			if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
-				return err
-			}
-			if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
-				return err
-			}
-			argv, err := startArgv(rec)
-			if rec.Session != "" {
-				argv, err = resumeArgv(rec)
-			}
+			msg, err := l.revive(rec)
 			if err != nil {
 				return err
 			}
-			name := tmux.SessionName(rec.Key)
-			if pane.ID != "" {
-				err = l.srv.Respawn(name, rec.Worktree.Path, argv)
-			} else {
-				_, err = l.srv.Start(l.conf, name, rec.Worktree.Path, argv)
-			}
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "revived %s: %s\n", rec.Key, strings.Join(argv[1:], " "))
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		}),
 	}
