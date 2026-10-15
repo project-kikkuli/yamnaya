@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,8 +59,7 @@ func Describe(tool string, input json.RawMessage, cwd string, at time.Time) Acti
 			a.Tool = "Edit"
 			a.Detail = strings.Join(patchFiles(string(input), cwd), ", ")
 		case "exec":
-			a.Tool = "Bash"
-			a.Detail = command(execCommand(string(input)))
+			a = describeExec(string(input), cwd, at)
 		default:
 			a.Detail = str("description", "command", "cmd", "file_path", "path", "query", "url", "prompt")
 		}
@@ -86,7 +86,8 @@ func command(c string) string {
 
 var (
 	patchFile = regexp.MustCompile(`\*\*\* (?:Update|Add|Delete) File: ([^\n\\"]+)`)
-	execCmd   = regexp.MustCompile(`cmd:\s*"((?:[^"\\]|\\.)*)"`)
+	execCall  = regexp.MustCompile(`tools\.(\w+)\(`)
+	execKey   = regexp.MustCompile(`\b(\w+)"?\s*[:=]\s*(?:\[\s*)*["'\x60]`)
 )
 
 func patchFiles(input, cwd string) []string {
@@ -110,21 +111,114 @@ func PatchFiles(input, cwd string) []string {
 	return out
 }
 
-// execCommand pulls the first shell command out of a Codex exec script.
-func execCommand(input string) string {
+// describeExec names what a Codex exec script does by its first tool call, and its shell command when it runs one.
+func describeExec(input, cwd string, at time.Time) Action {
 	var script string
 	if json.Unmarshal([]byte(input), &script) != nil {
 		script = input
 	}
-	m := execCmd.FindStringSubmatch(script)
-	if m == nil {
-		return ""
+	calls := execCall.FindAllStringSubmatchIndex(script, -1)
+	pick := -1
+	for i, c := range calls {
+		if script[c[2]:c[3]] != "write_stdin" {
+			pick = i
+			break
+		}
 	}
-	var c string
-	if json.Unmarshal([]byte(`"`+m[1]+`"`), &c) != nil {
-		return m[1]
+	if pick < 0 {
+		if len(calls) > 0 {
+			return Action{Tool: "Bash", Detail: "waiting on a running command", At: at}
+		}
+		return Action{Tool: "exec", Detail: oneLine(command(script)), At: at}
 	}
-	return c
+	name, args := script[calls[pick][2]:calls[pick][3]], script[calls[pick][1]:]
+	switch name {
+	case "exec_command":
+		c := jsString(args, "cmd")
+		if c == "" {
+			c = jsString(script, "cmd", "cmds", "command")
+		}
+		return Action{Tool: "Bash", Detail: oneLine(command(c)), At: at}
+	case "apply_patch":
+		return Action{Tool: "Edit", Detail: oneLine(strings.Join(patchFiles(script, cwd), ", ")), At: at}
+	}
+	a := Describe(name, nil, cwd, at)
+	a.Detail = oneLine(jsString(args, "title", "description", "query", "q", "ref_id", "url", "id", "target", "path", "message", "code"))
+	if a.Detail == "" {
+		a.Detail = oneLine(command(script))
+	}
+	return a
+}
+
+// jsString is the first string literal assigned to one of keys in JavaScript source, unescaped.
+func jsString(src string, keys ...string) string {
+	for _, k := range keys {
+		for _, m := range execKey.FindAllStringSubmatchIndex(src, -1) {
+			if src[m[2]:m[3]] != k {
+				continue
+			}
+			v, _, ok := jsLiteral(src[m[1]-1:])
+			if strings.Count(src[m[0]:m[1]], "[") > 1 {
+				v, ok = lastInRow(src[m[1]-1:])
+			}
+			if ok {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// lastInRow is the last string of the array row starting at src, so ["label", "cmd"] gives the command.
+func lastInRow(src string) (string, bool) {
+	v, n, ok := jsLiteral(src)
+	for ok {
+		rest := strings.TrimLeft(src[n:], " \t\n,")
+		if rest == "" || !strings.ContainsRune(`"'`+"`", rune(rest[0])) {
+			break
+		}
+		next, m, more := jsLiteral(rest)
+		if !more {
+			break
+		}
+		v, src, n = next, rest, m
+	}
+	return v, ok
+}
+
+// jsLiteral reads the quoted string at the start of src and how many bytes it spans.
+func jsLiteral(src string) (string, int, bool) {
+	q := src[0]
+	var b strings.Builder
+	for i := 1; i < len(src); i++ {
+		c := src[i]
+		switch {
+		case c == q:
+			return b.String(), i + 1, true
+		case c == '\\' && i+1 < len(src):
+			i++
+			switch e := src[i]; e {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'u':
+				if i+4 < len(src) {
+					if r, err := strconv.ParseUint(src[i+1:i+5], 16, 32); err == nil {
+						b.WriteRune(rune(r))
+						i += 4
+						continue
+					}
+				}
+				b.WriteByte(e)
+			default:
+				b.WriteByte(e)
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return "", 0, false
 }
 
 // Rel shows path relative to dir when it lies inside it.

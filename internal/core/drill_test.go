@@ -71,6 +71,16 @@ func TestDescribeRendersToolCallsShort(t *testing.T) {
 		{"shell", `{"command":["bash","-lc","ls"]}`, "Bash: bash -lc ls"},
 		{"exec", `"await tools.exec_command({cmd:\"git status --short\"})"`, "Bash: git status --short"},
 		{"apply_patch", `"*** Begin Patch\n*** Update File: /src/app/a.go\n*** Add File: b.go\n"`, "Edit: a.go, b.go"},
+		{"exec", `"text(await tools.exec_command({cmd:` + "`gh pr view ${n} --json state`" + `}))"`, "Bash: gh pr view ${n} --json state"},
+		{"exec", `"const cmd = 'go vet ./...';\ntext(await tools.exec_command({cmd,max_output_tokens:4000}))"`, "Bash: go vet ./..."},
+		{"exec", `"text(await tools.exec_command({\"cmd\":\"cd /src/app && make\\nmake test\"}))"`, "Bash: make"},
+		{"exec", `"text(await tools.write_stdin({session_id:5,chars:\"\"}));\ntext(await tools.exec_command({cmd:\"ls\"}))"`, "Bash: ls"},
+		{"exec", `"text(await tools.write_stdin({session_id:5,chars:\"\"}))"`, "Bash: waiting on a running command"},
+		{"exec", `"const cmds = [\n  [\"STATE\", \"git status --short\"],\n  [\"LOG\", \"git log -3\"]\n];\nawait Promise.all(cmds.map(([k, cmd]) => tools.exec_command({cmd})))"`, "Bash: git status --short"},
+		{"exec", `"const patch = \"*** Begin Patch\\n*** Add File: /src/app/c.go\\n\";\ntext(await tools.apply_patch(patch))"`, "Edit: c.go"},
+		{"exec", `"const tools2 = ALL_TOOLS.filter(x => x.name);\ntext(tools2)"`, "exec: const tools2 = ALL_TOOLS.filter(x => x.name);"},
+		{"exec", `"text(await tools.apply_patch(\"*** Begin Patch\\n*** Update File: /src/app/a.go\\n\"))"`, "Edit: a.go"},
+		{"exec", `"text(await tools.mcp__node_repl__js({title:\"Open the login page\",code:\"x\"}))"`, "node_repl.js: Open the login page"},
 		{"TodoWrite", `{}`, "TodoWrite"},
 	}
 	for _, c := range cases {
