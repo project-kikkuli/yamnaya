@@ -2,14 +2,12 @@
 package codex
 
 import (
-	"bufio"
 	"database/sql"
-	"encoding/json"
-	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +30,7 @@ type Adapter struct {
 	OpenFiles func(pid int) []string
 	Cwd       func(pid int) string
 	Now       func() time.Time
+	Cache     core.ScanCache
 
 	mu    sync.Mutex
 	scans map[string]*scan
@@ -72,8 +71,8 @@ func (a *Adapter) Owns(p proc.Proc) bool {
 func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "resume", id} }
 
 type thread struct {
-	id, rollout, title, cwd string
-	updated                 time.Time
+	id, rollout, title, cwd, task, branch, role, nickname, path, model string
+	updated                                                            time.Time
 }
 
 func argThread(args []string) string {
@@ -95,7 +94,8 @@ func (a *Adapter) db() (*sql.DB, bool) {
 	return db, err == nil
 }
 
-const threadCols = `id, rollout_path, COALESCE(NULLIF(name, ''), NULLIF(title, ''), first_user_message), cwd, updated_at`
+const threadCols = `id, rollout_path, COALESCE(NULLIF(name, ''), NULLIF(title, ''), first_user_message), cwd, updated_at,
+	first_user_message, COALESCE(git_branch, ''), COALESCE(agent_role, ''), COALESCE(agent_nickname, ''), COALESCE(agent_path, ''), COALESCE(model, '')`
 
 func scanThreads(rows *sql.Rows) []thread {
 	defer rows.Close()
@@ -103,7 +103,7 @@ func scanThreads(rows *sql.Rows) []thread {
 	for rows.Next() {
 		var t thread
 		var updated int64
-		if rows.Scan(&t.id, &t.rollout, &t.title, &t.cwd, &updated) == nil {
+		if rows.Scan(&t.id, &t.rollout, &t.title, &t.cwd, &updated, &t.task, &t.branch, &t.role, &t.nickname, &t.path, &t.model) == nil {
 			t.updated = time.Unix(updated, 0)
 			out = append(out, t)
 		}
@@ -111,12 +111,7 @@ func scanThreads(rows *sql.Rows) []thread {
 	return out
 }
 
-func (a *Adapter) threadByID(id string) (thread, bool) {
-	db, ok := a.db()
-	if !ok {
-		return thread{}, false
-	}
-	defer db.Close()
+func threadByID(db *sql.DB, id string) (thread, bool) {
 	rows, err := db.Query(`SELECT `+threadCols+` FROM threads WHERE id = ?`, id)
 	if err != nil {
 		return thread{}, false
@@ -128,47 +123,106 @@ func (a *Adapter) threadByID(id string) (thread, bool) {
 	return ts[0], true
 }
 
-func (a *Adapter) threadsIn(cwd string) []thread {
-	db, ok := a.db()
-	if !ok || cwd == "" {
+func threadsIn(db *sql.DB, cwd string) []thread {
+	if cwd == "" {
 		return nil
 	}
-	defer db.Close()
-	rows, err := db.Query(`SELECT `+threadCols+` FROM threads WHERE cwd = ? AND archived = 0 ORDER BY updated_at DESC`, cwd)
+	rows, err := db.Query(`SELECT `+threadCols+` FROM threads WHERE cwd = ? AND archived = 0
+		AND id NOT IN (SELECT child_thread_id FROM thread_spawn_edges) ORDER BY updated_at DESC`, cwd)
 	if err != nil {
 		return nil
 	}
 	return scanThreads(rows)
 }
 
-// heldThread is the thread whose rollout or writer lock the process holds open.
-func (a *Adapter) heldThread(pid int) string {
-	if a.OpenFiles == nil {
-		return ""
+// child is a thread spawned under a session, with its spawn edge's status.
+type child struct {
+	thread
+	open bool
+}
+
+// spawned lists every thread below id in the spawn tree.
+func spawned(db *sql.DB, id string) []child {
+	rows, err := db.Query(`WITH RECURSIVE tree(id, status) AS (
+		SELECT child_thread_id, status FROM thread_spawn_edges WHERE parent_thread_id = ?
+		UNION SELECT e.child_thread_id, e.status FROM thread_spawn_edges e JOIN tree ON e.parent_thread_id = tree.id)
+		SELECT tree.status, x.* FROM tree JOIN (SELECT `+threadCols+` FROM threads) x ON x.id = tree.id ORDER BY x.updated_at DESC`, id)
+	if err != nil {
+		return nil
 	}
-	for _, f := range a.OpenFiles(pid) {
-		base := filepath.Base(f)
-		switch {
-		case strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl"):
-			name := strings.TrimSuffix(base, ".jsonl")
-			if len(name) >= 36 {
-				return name[len(name)-36:]
-			}
-		case filepath.Base(filepath.Dir(f)) == "thread-writer-locks" && strings.HasSuffix(base, ".lock"):
-			return strings.TrimSuffix(base, ".lock")
+	defer rows.Close()
+	var out []child
+	for rows.Next() {
+		var c child
+		var status string
+		var updated int64
+		if rows.Scan(&status, &c.id, &c.rollout, &c.title, &c.cwd, &updated, &c.task, &c.branch, &c.role, &c.nickname, &c.path, &c.model) == nil {
+			c.updated, c.open = time.Unix(updated, 0), status == "open"
+			out = append(out, c)
 		}
 	}
-	return ""
+	return out
+}
+
+func parentOf(db *sql.DB, id string) string {
+	var p string
+	_ = db.QueryRow(`SELECT parent_thread_id FROM thread_spawn_edges WHERE child_thread_id = ?`, id).Scan(&p)
+	return p
+}
+
+// heldThreads are the threads whose rollouts or writer locks the process holds open; a thread with subagents holds theirs too.
+func (a *Adapter) heldThreads(pid int) []string {
+	if a.OpenFiles == nil {
+		return nil
+	}
+	var out []string
+	for _, f := range a.OpenFiles(pid) {
+		base := filepath.Base(f)
+		id := ""
+		switch {
+		case strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl"):
+			if name := strings.TrimSuffix(base, ".jsonl"); len(name) >= 36 {
+				id = name[len(name)-36:]
+			}
+		case filepath.Base(filepath.Dir(f)) == "thread-writer-locks" && strings.HasSuffix(base, ".lock"):
+			id = strings.TrimSuffix(base, ".lock")
+		}
+		if id != "" && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// heldThread is the root among the held threads: the one no other held thread spawned.
+func (a *Adapter) heldThread(db *sql.DB, pid int) string {
+	ids := a.heldThreads(pid)
+	if len(ids) == 0 {
+		return ""
+	}
+	if db != nil {
+		for _, id := range ids {
+			if p := parentOf(db, id); p == "" || !slices.Contains(ids, p) {
+				return id
+			}
+		}
+	}
+	return ids[0]
 }
 
 func (a *Adapter) SessionID(p proc.Proc) string {
 	if id := argThread(p.Args); id != "" {
 		return id
 	}
-	if id := a.heldThread(p.PID); id != "" {
+	db, ok := a.db()
+	if !ok {
+		return a.heldThread(nil, p.PID)
+	}
+	defer db.Close()
+	if id := a.heldThread(db, p.PID); id != "" {
 		return id
 	}
-	t, ok := a.newestSince(p, a.Now(), nil)
+	t, ok := a.newestSince(db, p, a.Now(), nil)
 	if !ok {
 		return ""
 	}
@@ -176,13 +230,13 @@ func (a *Adapter) SessionID(p proc.Proc) string {
 }
 
 // newestSince is the newest unclaimed thread in the process's directory written since it started.
-func (a *Adapter) newestSince(p proc.Proc, now time.Time, claimed map[string]bool) (thread, bool) {
+func (a *Adapter) newestSince(db *sql.DB, p proc.Proc, now time.Time, claimed map[string]bool) (thread, bool) {
 	cwd := ""
 	if a.Cwd != nil {
 		cwd = a.Cwd(p.PID)
 	}
 	started := p.Started(now).Truncate(time.Second)
-	for _, t := range a.threadsIn(cwd) {
+	for _, t := range threadsIn(db, cwd) {
 		if !claimed[t.id] && !t.updated.Before(started) {
 			return t, true
 		}
@@ -193,31 +247,48 @@ func (a *Adapter) newestSince(p proc.Proc, now time.Time, claimed map[string]boo
 // Discover resolves every thread named by arguments or open files before guessing the rest from their directories.
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	now := a.Now()
+	db, ok := a.db()
+	if ok {
+		defer db.Close()
+	}
 	ids := make([]string, len(procs))
-	claimed := map[string]bool{}
+	var wg sync.WaitGroup
 	for i, p := range procs {
 		if ids[i] = argThread(p.Args); ids[i] == "" {
-			ids[i] = a.heldThread(p.PID)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ids[i] = a.heldThread(db, p.PID)
+			}()
 		}
-		claimed[ids[i]] = ids[i] != ""
+	}
+	wg.Wait()
+	claimed := map[string]bool{}
+	for _, id := range ids {
+		claimed[id] = id != ""
 	}
 	out := make([]core.Session, 0, len(procs))
 	for i, p := range procs {
-		out = append(out, a.read(p, ids[i], now, claimed))
+		out = append(out, a.read(db, p, ids[i], now, claimed))
 	}
 	return out
 }
 
-func (a *Adapter) read(p proc.Proc, id string, now time.Time, claimed map[string]bool) core.Session {
+func (a *Adapter) read(db *sql.DB, p proc.Proc, id string, now time.Time, claimed map[string]bool) core.Session {
 	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY}
 	var t thread
 	var ok bool
-	if id != "" {
-		if t, ok = a.threadByID(id); !ok {
+	switch {
+	case id != "":
+		if db == nil {
+			t, ok = thread{id: id}, true
+		} else if t, ok = threadByID(db, id); !ok {
 			t, ok = thread{id: id}, true
 		}
-	} else if t, ok = a.newestSince(p, now, claimed); ok {
-		claimed[t.id] = true
+	case db != nil:
+		if t, ok = a.newestSince(db, p, now, claimed); ok {
+			claimed[t.id] = true
+		}
 	}
 	if !ok {
 		if a.Cwd != nil {
@@ -225,16 +296,27 @@ func (a *Adapter) read(p proc.Proc, id string, now time.Time, claimed map[string
 		}
 		return s
 	}
-	s.ID, s.Title, s.Cwd = t.id, t.title, t.cwd
+	s.ID, s.Title, s.Cwd, s.Branch = t.id, t.title, t.cwd, t.branch
 	if s.Cwd == "" && a.Cwd != nil {
 		s.Cwd = a.Cwd(p.PID)
+	}
+	if db != nil {
+		s.Parent = parentOf(db, t.id)
+		for _, c := range spawned(db, t.id) {
+			s.Crew = append(s.Crew, a.member(c, now))
+		}
 	}
 	if t.rollout == "" {
 		return s
 	}
-	sc := a.scan(t.rollout)
+	sc := a.scan(t.rollout, t.cwd)
+	s.Facts = sc.Facts
+	s.Task = firstNonEmpty(oneLine(t.task), sc.First)
+	if s.Model == "" {
+		s.Model = t.model
+	}
 	s.Since = sc.modified
-	if sc.open && now.Sub(sc.modified) < staleAfter {
+	if sc.Open && now.Sub(sc.modified) < staleAfter {
 		s.Status = core.Busy
 		s.CheckScreen = true
 	} else if !sc.modified.IsZero() {
@@ -243,64 +325,46 @@ func (a *Adapter) read(p proc.Proc, id string, now time.Time, claimed map[string
 	return s
 }
 
-type scan struct {
-	offset   int64
-	open     bool
-	modified time.Time
+func (a *Adapter) member(c child, now time.Time) core.Member {
+	m := core.Member{ID: c.id, Name: firstNonEmpty(c.nickname, c.role, core.Short(c.id)), Type: c.role, Description: c.path}
+	if c.rollout != "" {
+		sc := a.scan(c.rollout, c.cwd)
+		m.Facts, m.Brief, m.Last = sc.Facts, sc.Brief, sc.modified
+		if m.Model == "" {
+			m.Model = c.model
+		}
+		switch {
+		case c.open && sc.Open && now.Sub(sc.modified) < staleAfter:
+			m.Status = core.Busy
+		case c.open:
+			m.Status = core.Idle
+		default:
+			m.Status = core.Done
+		}
+	}
+	m.Task = firstNonEmpty(oneLine(c.task), firstLine(m.Brief), c.path)
+	return m
 }
 
-func (a *Adapter) scan(path string) scan {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.scans == nil {
-		a.scans = map[string]*scan{}
-	}
-	t := a.scans[path]
-	if t == nil {
-		t = &scan{}
-		a.scans[path] = t
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return *t
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return *t
-	}
-	if info.Size() < t.offset {
-		*t = scan{}
-	}
-	t.modified = info.ModTime()
-	if _, err := f.Seek(t.offset, io.SeekStart); err != nil {
-		return *t
-	}
-	r := bufio.NewReaderSize(f, 1<<16)
-	for {
-		line, err := r.ReadBytes('\n')
-		if err != nil {
-			break
-		}
-		t.offset += int64(len(line))
-		var rec struct {
-			Type    string `json:"type"`
-			Payload struct {
-				Type string `json:"type"`
-			} `json:"payload"`
-		}
-		if json.Unmarshal(line, &rec) != nil || rec.Type != "event_msg" {
-			continue
-		}
-		switch rec.Payload.Type {
-		case "task_started":
-			t.open = true
-		case "task_complete", "turn_aborted":
-			t.open = false
+func firstNonEmpty(xs ...string) string {
+	for _, x := range xs {
+		if x != "" {
+			return x
 		}
 	}
-	return *t
+	return ""
 }
+
+func firstLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func lsof(pid int, args ...string) []string {
 	out, err := exec.Command("lsof", append([]string{"-a", "-Fn", "-p", strconv.Itoa(pid)}, args...)...).Output()

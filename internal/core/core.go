@@ -42,21 +42,69 @@ func (p Prompt) String() string {
 	return s
 }
 
+// Action is one tool call rendered short, such as "Bash: gh pr create".
+type Action struct {
+	Tool   string
+	Detail string
+	At     time.Time
+}
+
+func (a Action) String() string {
+	if a.Detail == "" {
+		return a.Tool
+	}
+	return a.Tool + ": " + a.Detail
+}
+
+// PR is a pull request a session opened, with the last status ym fetched for it.
+type PR struct {
+	URL    string
+	Repo   string
+	Number int
+	Status *PRStatus
+}
+
+// Facts are what a transcript shows about its agent, read without the agent's help.
+type Facts struct {
+	Task   string
+	Ask    string
+	Doing  Action
+	Result string
+	Model  string
+	Tools  map[string]int
+	Files  []string
+	Trail  []Action
+	PRs    []PR
+}
+
 // Member is a subagent or teammate running inside a session.
 type Member struct {
-	Name     string
-	Teammate bool
-	Status   Status
+	ID          string
+	Name        string
+	Type        string
+	Description string
+	Teammate    bool
+	Status      Status
+	Last        time.Time
+	// Brief is the full instruction the agent started from.
+	Brief    string
+	Worktree string
+	Facts
 }
 
 // Session is one harness process. ID is "" when the adapter could not tell.
 type Session struct {
-	Harness    string
-	ID         string
-	PID        int
-	TTY        string
-	Cwd        string
+	Harness string
+	ID      string
+	// Parent is the session that spawned this one, when the harness records it.
+	Parent string
+	PID    int
+	TTY    string
+	Cwd    string
+	// Repo names the repository; RepoKey is its git common dir, shared by all its worktrees.
 	Repo       string
+	RepoKey    string
+	Worktree   string
 	Branch     string
 	Title      string
 	Status     Status
@@ -64,6 +112,7 @@ type Session struct {
 	Since      time.Time
 	Crew       []Member
 	Prompt     *Prompt
+	Facts
 	// CheckScreen asks core to look for a prompt on screen because the harness files cannot show one.
 	CheckScreen bool
 }
@@ -106,6 +155,12 @@ type Host interface {
 	Focus(h Handle) (outer string, err error)
 	Type(h Handle, text string) error
 	Screen(h Handle) (string, error)
+}
+
+// ScanCache keeps what an adapter learned from a file and how far it read, across ym runs.
+type ScanCache interface {
+	LoadScan(path string) (offset int64, data []byte, ok bool)
+	SaveScan(path string, offset int64, data []byte) error
 }
 
 var ErrNotFound = errors.New("not found")

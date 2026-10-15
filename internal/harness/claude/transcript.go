@@ -2,9 +2,9 @@ package claude
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,17 +15,66 @@ import (
 )
 
 type record struct {
-	Type        string `json:"type"`
-	Subtype     string `json:"subtype"`
-	IsMeta      bool   `json:"isMeta"`
-	IsSidechain bool   `json:"isSidechain"`
-	CustomTitle string `json:"customTitle"`
-	AgentName   string `json:"agentName"`
-	AITitle     string `json:"aiTitle"`
-	Message     *struct {
+	Type        string    `json:"type"`
+	Subtype     string    `json:"subtype"`
+	IsMeta      bool      `json:"isMeta"`
+	IsSidechain bool      `json:"isSidechain"`
+	CustomTitle string    `json:"customTitle"`
+	AgentName   string    `json:"agentName"`
+	AITitle     string    `json:"aiTitle"`
+	LastPrompt  string    `json:"lastPrompt"`
+	PRURL       string    `json:"prUrl"`
+	PRNumber    int       `json:"prNumber"`
+	PRRepo      string    `json:"prRepository"`
+	Cwd         string    `json:"cwd"`
+	Timestamp   time.Time `json:"timestamp"`
+	Origin      *struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	Message *struct {
+		Model      string          `json:"model"`
 		Content    json.RawMessage `json:"content"`
 		StopReason *string         `json:"stop_reason"`
 	} `json:"message"`
+}
+
+type block struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
+	Content   json.RawMessage `json:"content"`
+}
+
+func (r record) blocks() []block {
+	if r.Message == nil {
+		return nil
+	}
+	var bs []block
+	if json.Unmarshal(r.Message.Content, &bs) != nil {
+		return nil
+	}
+	return bs
+}
+
+// text is the message's plain text: the string content, or its text blocks joined.
+func (r record) text() string {
+	if r.Message == nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(r.Message.Content, &s) == nil {
+		return s
+	}
+	var parts []string
+	for _, b := range r.blocks() {
+		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // prompt is the text a person typed, or "" for tool results and injected messages.
@@ -35,14 +84,11 @@ func (r record) prompt() string {
 	}
 	var text string
 	if json.Unmarshal(r.Message.Content, &text) != nil {
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(r.Message.Content, &blocks) != nil || len(blocks) == 0 || blocks[0].Type != "text" {
+		bs := r.blocks()
+		if len(bs) == 0 || bs[0].Type != "text" {
 			return ""
 		}
-		text = blocks[0].Text
+		text = bs[0].Text
 	}
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "<") {
@@ -51,19 +97,52 @@ func (r record) prompt() string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
+// resultText is a tool result's text, from a string or text blocks.
+func resultText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var bs []block
+	if json.Unmarshal(raw, &bs) != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range bs {
+		parts = append(parts, b.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+const scanFormat = 1
+
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
+// It is saved whole in the scan cache, so a later ym run resumes from Offset.
 type scan struct {
-	offset    int64
-	custom    string
-	agentName string
-	ai        string
-	first     string
-	open      bool
-	modified  time.Time
+	// V is the scan format; a cached scan of another format is read again from the start.
+	V         int
+	Offset    int64
+	Custom    string
+	AgentName string
+	AI        string
+	First     string
+	Open      bool
+	Brief     string
+	// Marked is set once the transcript tags human prompts with an origin; untagged prompts are then injected.
+	Marked     bool
+	LastPrompt string
+	LastType   string
+	LastStop   string
+	Stopped    bool
+	// Creating holds tool calls that run gh pr create, until their results arrive.
+	Creating map[string]bool
+	Facts    core.Facts
+
+	modified time.Time
 }
 
 func (t scan) title() string {
-	for _, s := range []string{t.custom, t.agentName, t.ai, t.first} {
+	for _, s := range []string{t.Custom, t.AgentName, t.AI, t.First} {
 		if s != "" {
 			return s
 		}
@@ -71,98 +150,185 @@ func (t scan) title() string {
 	return ""
 }
 
+var wrote = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
+
 func (t *scan) add(r record) {
 	switch r.Type {
 	case "custom-title":
-		t.custom = r.CustomTitle
+		t.Custom = r.CustomTitle
 	case "agent-name":
-		t.agentName = r.AgentName
+		t.AgentName = r.AgentName
 	case "ai-title":
-		t.ai = r.AITitle
+		t.AI = r.AITitle
+	case "last-prompt":
+		t.LastPrompt = oneLine(r.LastPrompt)
+	case "pr-link":
+		if r.PRURL != "" {
+			t.Facts.Opened(core.PR{URL: r.PRURL, Repo: r.PRRepo, Number: r.PRNumber})
+		}
 	case "system":
 		if r.Subtype == "turn_duration" {
-			t.open = false
+			t.Open = false
 		}
 	case "user", "assistant":
+		t.LastType = r.Type
+		t.LastStop, t.Stopped = "", false
+		if r.Message != nil && r.Message.StopReason != nil {
+			t.LastStop, t.Stopped = *r.Message.StopReason, true
+		}
+		if t.Brief == "" && r.Type == "user" {
+			t.Brief = strings.TrimSpace(r.text())
+		}
+		if r.Type == "assistant" {
+			t.assistant(r)
+		} else {
+			t.user(r)
+		}
 		if r.IsSidechain {
 			return
 		}
-		if t.first == "" {
-			t.first = r.prompt()
+		if r.Origin != nil {
+			t.Marked = true
 		}
-		t.open = true
+		if p := r.prompt(); p != "" && (!t.Marked || (r.Origin != nil && r.Origin.Kind == "human")) {
+			if t.First == "" {
+				t.First = p
+			}
+			t.Facts.Ask = p
+		}
+		t.Open = true
 	}
 }
+
+func (t *scan) assistant(r record) {
+	if r.Message != nil && r.Message.Model != "" && !strings.HasPrefix(r.Message.Model, "<") {
+		t.Facts.Model = r.Message.Model
+	}
+	for _, b := range r.blocks() {
+		switch b.Type {
+		case "text":
+			if s := strings.TrimSpace(b.Text); s != "" {
+				t.Facts.Result = s
+			}
+		case "tool_use":
+			a := core.Describe(b.Name, b.Input, r.Cwd, r.Timestamp)
+			var files []string
+			if wrote[b.Name] {
+				var in struct {
+					FilePath     string `json:"file_path"`
+					NotebookPath string `json:"notebook_path"`
+				}
+				_ = json.Unmarshal(b.Input, &in)
+				files = append(files, in.FilePath+in.NotebookPath)
+			}
+			t.Facts.Did(a, files...)
+			if a.Tool == "Bash" && strings.Contains(string(b.Input), "gh pr create") {
+				if t.Creating == nil {
+					t.Creating = map[string]bool{}
+				}
+				t.Creating[b.ID] = true
+			}
+		}
+	}
+}
+
+func (t *scan) user(r record) {
+	if len(t.Creating) == 0 {
+		return
+	}
+	for _, b := range r.blocks() {
+		if b.Type == "tool_result" && t.Creating[b.ToolUseID] {
+			delete(t.Creating, b.ToolUseID)
+			for _, pr := range core.PRsIn(resultText(b.Content)) {
+				t.Facts.Opened(pr)
+			}
+		}
+	}
+}
+
+// pending reports whether the transcript's last record leaves work outstanding.
+func (t scan) pending(quiet time.Duration) bool {
+	switch t.LastType {
+	case "user":
+		return true
+	case "assistant":
+		if !t.Stopped {
+			return quiet < 2*time.Minute
+		}
+		return t.LastStop == "tool_use"
+	}
+	return false
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func (a *Adapter) scan(path string) scan {
 	if path == "" {
 		return scan{}
 	}
+	t := a.advance(path)
+	out := *t
+	out.Facts.Tools = maps.Clone(t.Facts.Tools)
+	a.mu.Unlock()
+	return out
+}
+
+// advance brings the path's scan up to date and returns it with a.mu held.
+func (a *Adapter) advance(path string) *scan {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.scans == nil {
 		a.scans = map[string]*scan{}
 	}
 	t := a.scans[path]
 	if t == nil {
-		t = &scan{}
+		t = &scan{V: scanFormat}
+		if a.Cache != nil {
+			if off, data, ok := a.Cache.LoadScan(path); ok && json.Unmarshal(data, t) == nil && t.V == scanFormat {
+				t.Offset = off
+			} else {
+				*t = scan{V: scanFormat}
+			}
+		}
 		a.scans[path] = t
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return *t
+		return t
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return *t
+		return t
 	}
-	if info.Size() < t.offset {
-		*t = scan{}
+	if info.Size() < t.Offset {
+		*t = scan{V: scanFormat}
 	}
 	t.modified = info.ModTime()
-	if _, err := f.Seek(t.offset, io.SeekStart); err != nil {
-		return *t
+	if info.Size() == t.Offset {
+		return t
 	}
+	if _, err := f.Seek(t.Offset, io.SeekStart); err != nil {
+		return t
+	}
+	start := t.Offset
 	r := bufio.NewReaderSize(f, 1<<16)
 	for {
 		line, err := r.ReadBytes('\n')
 		if err != nil {
 			break
 		}
-		t.offset += int64(len(line))
+		t.Offset += int64(len(line))
 		var rec record
 		if json.Unmarshal(line, &rec) == nil {
 			t.add(rec)
 		}
 	}
-	return *t
-}
-
-// lastRecord parses the final complete line of a JSONL file.
-func lastRecord(path string) (record, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return record{}, false
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return record{}, false
-	}
-	start := max(info.Size()-1<<16, 0)
-	buf := make([]byte, info.Size()-start)
-	if _, err := f.ReadAt(buf, start); err != nil && err != io.EOF {
-		return record{}, false
-	}
-	lines := bytes.Split(bytes.TrimRight(buf, "\n"), []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
-		var r record
-		if json.Unmarshal(lines[i], &r) == nil {
-			return r, true
+	if a.Cache != nil && t.Offset != start {
+		if data, err := json.Marshal(t); err == nil {
+			_ = a.Cache.SaveScan(path, t.Offset, data)
 		}
 	}
-	return record{}, false
+	return t
 }
 
 type agentMeta struct {
@@ -170,6 +336,7 @@ type agentMeta struct {
 	Description string `json:"description"`
 	Name        string `json:"name"`
 	TaskKind    string `json:"taskKind"`
+	Model       string `json:"model"`
 }
 
 // crew reads <session>/subagents/agent-<id>.meta.json and workflows/<run>/agent-<id>.meta.json, and each agent's transcript.
@@ -178,11 +345,7 @@ func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Membe
 	metas, _ := filepath.Glob(filepath.Join(dir, "agent-*.meta.json"))
 	flows, _ := filepath.Glob(filepath.Join(dir, "workflows", "*", "agent-*.meta.json"))
 	metas = append(metas, flows...)
-	type member struct {
-		core.Member
-		last time.Time
-	}
-	var crew []member
+	var crew []core.Member
 	for _, mp := range metas {
 		b, err := os.ReadFile(mp)
 		if err != nil {
@@ -192,23 +355,32 @@ func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Membe
 		if json.Unmarshal(b, &meta) != nil {
 			continue
 		}
-		m := member{Member: core.Member{Name: meta.Name, Teammate: meta.Name != "" || meta.TaskKind == "in_process_teammate"}}
+		base := strings.TrimSuffix(mp, ".meta.json")
+		m := core.Member{
+			ID:          strings.TrimPrefix(filepath.Base(base), "agent-"),
+			Name:        meta.Name,
+			Type:        meta.AgentType,
+			Description: meta.Description,
+			Teammate:    meta.Name != "" || meta.TaskKind == "in_process_teammate",
+		}
 		if m.Name == "" {
 			m.Name = meta.Description
 		}
 		if m.Name == "" {
 			m.Name = meta.AgentType
 		}
-		transcript := strings.TrimSuffix(mp, ".meta.json") + ".jsonl"
 		pending := false
-		if info, err := os.Stat(transcript); err == nil {
-			m.last = info.ModTime()
-			if r, ok := lastRecord(transcript); ok {
-				pending = midStep(r, now.Sub(m.last))
-			}
+		if _, err := os.Stat(base + ".jsonl"); err == nil {
+			sc := a.scan(base + ".jsonl")
+			m.Last, m.Brief, m.Facts = sc.modified, sc.Brief, sc.Facts
+			m.Task = firstLine(sc.Brief)
+			pending = sc.pending(now.Sub(m.Last))
+		}
+		if m.Model == "" {
+			m.Model = meta.Model
 		}
 		switch {
-		case pending && sessionBusy && now.Sub(m.last) < staleAfter:
+		case pending && sessionBusy && now.Sub(m.Last) < staleAfter:
 			m.Status = core.Busy
 		case m.Teammate:
 			m.Status = core.Idle
@@ -221,25 +393,16 @@ func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Membe
 		if (crew[i].Status == core.Busy) != (crew[j].Status == core.Busy) {
 			return crew[i].Status == core.Busy
 		}
-		return crew[i].last.After(crew[j].last)
+		return crew[i].Last.After(crew[j].Last)
 	})
-	out := make([]core.Member, len(crew))
-	for i, m := range crew {
-		out[i] = m.Member
-	}
-	return out
+	return crew
 }
 
-// midStep reports whether an agent's last record leaves work outstanding.
-func midStep(r record, quiet time.Duration) bool {
-	switch r.Type {
-	case "user":
-		return true
-	case "assistant":
-		if r.Message == nil || r.Message.StopReason == nil {
-			return quiet < 2*time.Minute
+func firstLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
 		}
-		return *r.Message.StopReason == "tool_use"
 	}
-	return false
+	return ""
 }

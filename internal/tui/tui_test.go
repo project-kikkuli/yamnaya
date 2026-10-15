@@ -56,7 +56,10 @@ func setup(t *testing.T) (Model, *core.Core, *host) {
 	t.Cleanup(func() { st.Close() })
 	h := &host{}
 	sessions := map[int]core.Session{
-		1: {ID: "lead", Title: "Lead work", Status: core.Idle},
+		1: {ID: "lead", Title: "Lead work", Status: core.Idle, Crew: []core.Member{{
+			ID: "a1", Name: "Run the tests", Type: "general-purpose", Status: core.Done, Brief: "Run every test and report failures.",
+			Facts: core.Facts{Result: "All 42 tests pass.", Trail: []core.Action{{Tool: "Bash", Detail: "go test ./..."}}},
+		}}},
 		2: {ID: "twin", Title: "Twin work", Status: core.Busy},
 		3: {ID: "twin", Title: "Twin work", Status: core.Busy},
 	}
@@ -121,7 +124,7 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
 		t.Fatalf("view:\n%s", v)
 	}
-	m = press(t, m, "a", "ctrl+u", "ship", " ", "it", "enter")
+	m = press(t, m, "down", "down", "down", "a", "ctrl+u", "ship", " ", "it", "enter")
 	it, _ := c.Store.Item("D1")
 	if it.State != core.ItemAnswered || it.Answer != "ship it" {
 		t.Fatalf("D1 = %+v", it)
@@ -136,7 +139,7 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 
 func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "a", "enter")
+	m = press(t, m, "down", "down", "down", "a", "enter")
 	if it, _ := c.Store.Item("D1"); it.Answer != "yes" {
 		t.Fatalf("enter on the default answered %q, want the rec", it.Answer)
 	}
@@ -148,7 +151,7 @@ func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 
 func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down", "enter")
+	m = press(t, m, "down", "down", "down", "down", "enter")
 	if m.mode != modeWhy || m.why.ID != "D2" || !strings.Contains(m.View(), "Rename the flag?") {
 		t.Fatalf("enter did not expand D2: mode %v\n%s", m.mode, m.View())
 	}
@@ -167,7 +170,7 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 
 func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "down")
+	m = press(t, m, "down", "down", "down", "down")
 	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +182,7 @@ func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 
 func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "a", "esc", "l")
+	m = press(t, m, "down", "down", "down", "a", "esc", "l")
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemSnoozed {
 		t.Fatalf("D1 = %s", it.State)
 	}
@@ -194,7 +197,7 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 
 func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down", "down")
+	m = press(t, m, "down")
 	r, _ := m.selected()
 	if r.project == nil || r.need != nil {
 		t.Fatalf("cursor on %+v, want the first mission", r)
@@ -226,5 +229,36 @@ func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	}
 	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}); cmd == nil {
 		t.Fatal("q did not quit")
+	}
+}
+
+func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
+	m, _, _ := setup(t)
+	steps := []struct {
+		mode mode
+		want string
+	}{
+		{modeRepo, "MISSIONS"},
+		{modeDetail, "SESSIONS AND CREW"},
+		{modeSession, "CREW (1)"},
+		{modeAgent, "Run every test and report failures."},
+	}
+	for _, st := range steps {
+		m = press(t, m, "enter")
+		if m.mode != st.mode || !strings.Contains(m.View(), st.want) {
+			t.Fatalf("after enter: mode %v, want %v showing %q:\n%s", m.mode, st.mode, st.want, m.View())
+		}
+	}
+	if v := m.View(); !strings.Contains(v, "All 42 tests pass.") || !strings.Contains(v, "Bash: go test ./...") {
+		t.Fatalf("agent view lacks result or trail:\n%s", v)
+	}
+	for _, want := range []mode{modeSession, modeDetail, modeRepo, modeList} {
+		m = press(t, m, "esc")
+		if m.mode != want {
+			t.Fatalf("esc left mode %v, want %v", m.mode, want)
+		}
+	}
+	if r, _ := m.selected(); r.repo == nil || r.project != nil {
+		t.Fatalf("esc back to the board put the cursor on %+v, want the repo it left from", r)
 	}
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -16,6 +17,12 @@ type Core struct {
 	Procs     func() ([]proc.Proc, error)
 	Now       func() time.Time
 	Meter     Meter
+	// Git places a directory in its repository; nil leaves sessions without a repo.
+	Git func(dir string) GitInfo
+	// PRs fetches pull request status for RefreshPRs.
+	PRs PRSource
+
+	gc gitCache
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -43,9 +50,12 @@ func (l Live) Location() string {
 	return l.Handle.Host + " " + l.Handle.Label
 }
 
+// Project is a mission: a root session and the sessions it spawned.
 type Project struct {
 	Key      string
 	Name     string
+	Repo     string
+	RepoName string
 	Sessions []Live
 	Items    []Item
 	Phases   Phases
@@ -70,10 +80,18 @@ type Need struct {
 	Project string
 }
 
+// Repo is every mission whose root session works in one repository, across all its worktrees.
+type Repo struct {
+	Key      string
+	Name     string
+	Missions []Project
+}
+
 type Board struct {
 	At       time.Time
 	Sessions []Live
 	Projects []Project
+	Repos    []Repo
 	Needs    []Need
 	Fleet    Fleet
 
@@ -88,6 +106,15 @@ func (b Board) Session(key string) (Live, bool) {
 		}
 	}
 	return Live{}, false
+}
+
+func (b Board) Repo(key string) (Repo, bool) {
+	for _, r := range b.Repos {
+		if r.Key == key {
+			return r, true
+		}
+	}
+	return Repo{}, false
 }
 
 func (b Board) Project(key string) (Project, bool) {
@@ -148,10 +175,21 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	byHarness := c.owned(procs)
-	var found []Session
+	discovered := make([][]Session, len(c.Harnesses))
+	var wg sync.WaitGroup
 	for i, h := range c.Harnesses {
-		found = append(found, h.Discover(byHarness[i])...)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			discovered[i] = h.Discover(byHarness[i])
+		}()
 	}
+	wg.Wait()
+	var found []Session
+	for _, d := range discovered {
+		found = append(found, d...)
+	}
+	c.place(found, b.At)
 	harnessOf := map[string]Harness{}
 	for _, h := range c.Harnesses {
 		harnessOf[h.Name()] = h
@@ -183,11 +221,17 @@ func (c *Core) Board() (Board, error) {
 		}
 		b.Sessions = append(b.Sessions, l)
 	}
+	c.attachPRs(b.Sessions)
 	lin, err := c.Store.Lineage()
 	if err != nil {
 		return b, err
 	}
 	parents := processParents(b.Sessions, table)
+	for _, s := range b.Sessions {
+		if _, ok := parents[s.Key()]; !ok && s.Parent != "" && s.Parent != s.Key() {
+			parents[s.Key()] = s.Parent
+		}
+	}
 	for child, parent := range lin.Parent {
 		if _, ok := parents[child]; !ok {
 			parents[child] = parent
@@ -211,6 +255,12 @@ func (c *Core) Board() (Board, error) {
 	for i := range b.Sessions {
 		b.Sessions[i].Project = projectOf(b.Sessions[i].Key(), parents, lin)
 	}
+	for i := range b.Projects {
+		if b.Projects[i].Repo == "" {
+			b.Projects[i].Repo, b.Projects[i].RepoName = c.crewRepo(b.Projects[i], b.At)
+		}
+	}
+	b.Repos = repos(b.Projects)
 	b.Needs = needs(b)
 	if c.Meter != nil {
 		b.Fleet = c.Meter.Fleet(b.At)
@@ -219,6 +269,134 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	return b, nil
+}
+
+// place fills each session's repository and its crew's worktrees, asking git once per directory at a time.
+func (c *Core) place(found []Session, now time.Time) {
+	var want []string
+	for _, s := range found {
+		if !contains(want, s.Cwd) {
+			want = append(want, s.Cwd)
+		}
+	}
+	dirs := map[string]GitInfo{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, d := range want {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			g := c.gitFor(d, now)
+			mu.Lock()
+			dirs[d] = g
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	for i := range found {
+		s := &found[i]
+		if g := dirs[s.Cwd]; g.Common != "" {
+			s.Repo, s.RepoKey, s.Worktree = g.Name(), g.Common, g.Top
+			if g.Branch != "" && g.Branch != "HEAD" {
+				s.Branch = g.Branch
+			}
+		}
+		for j := range s.Crew {
+			if s.Crew[j].Worktree == "" {
+				s.Crew[j].Worktree = c.worktree(s.Crew[j].Files)
+			}
+		}
+	}
+}
+
+func (c *Core) attachPRs(sessions []Live) {
+	known, err := c.Store.PRStatuses()
+	if err != nil || len(known) == 0 {
+		return
+	}
+	set := func(prs []PR) {
+		for i := range prs {
+			if st, ok := known[prs[i].URL]; ok {
+				prs[i].Status = &st
+			}
+		}
+	}
+	for i := range sessions {
+		sessions[i].PRs = append([]PR(nil), sessions[i].PRs...)
+		set(sessions[i].PRs)
+		crew := append([]Member(nil), sessions[i].Crew...)
+		for j := range crew {
+			crew[j].PRs = append([]PR(nil), crew[j].PRs...)
+			set(crew[j].PRs)
+		}
+		sessions[i].Crew = crew
+	}
+}
+
+// crewRepo is the repository most of a mission's crew wrote files in, for a mission whose lead works outside any repo.
+func (c *Core) crewRepo(p Project, now time.Time) (string, string) {
+	count := map[string]int{}
+	names := map[string]string{}
+	best := ""
+	for _, s := range p.Sessions {
+		for _, m := range s.Crew {
+			if m.Worktree == "" {
+				continue
+			}
+			g := c.gitFor(m.Worktree, now)
+			if g.Common == "" {
+				continue
+			}
+			count[g.Common]++
+			names[g.Common] = g.Name()
+			if count[g.Common] > count[best] {
+				best = g.Common
+			}
+		}
+	}
+	return best, names[best]
+}
+
+// repos groups missions by their root session's repository, busiest repos first.
+func repos(projects []Project) []Repo {
+	byKey := map[string]*Repo{}
+	var order []string
+	for _, p := range projects {
+		if len(p.Sessions) == 0 {
+			continue
+		}
+		r := byKey[p.Repo]
+		if r == nil {
+			r = &Repo{Key: p.Repo, Name: p.RepoName}
+			if r.Name == "" {
+				r.Name = "(no repo)"
+			}
+			byKey[p.Repo] = r
+			order = append(order, p.Repo)
+		}
+		r.Missions = append(r.Missions, p)
+	}
+	out := make([]Repo, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byKey[k])
+	}
+	rank := func(r Repo) int {
+		best := 0
+		for _, p := range r.Missions {
+			best = max(best, map[Status]int{Waiting: 3, Busy: 2, Idle: 1}[p.Status])
+		}
+		return best
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].Key == "") != (out[j].Key == "") {
+			return out[j].Key == ""
+		}
+		if rank(out[i]) != rank(out[j]) {
+			return rank(out[i]) > rank(out[j])
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func (c *Core) locate(tty string) (Handle, Host) {
@@ -333,6 +511,12 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 			p.Name = defaultName(*p)
 		}
 		p.Status = projectStatus(*p)
+		for _, s := range p.Sessions {
+			if s.RepoKey != "" {
+				p.Repo, p.RepoName = s.RepoKey, s.Repo
+				break
+			}
+		}
 		out = append(out, *p)
 	}
 	sort.SliceStable(out, func(i, j int) bool {

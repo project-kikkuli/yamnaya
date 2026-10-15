@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,9 @@ func setup(t *testing.T) fixture {
 		}
 	}
 	exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, created_at INTEGER, updated_at INTEGER, cwd TEXT, title TEXT,
-		archived INTEGER DEFAULT 0, first_user_message TEXT DEFAULT '', name TEXT)`)
+		archived INTEGER DEFAULT 0, first_user_message TEXT DEFAULT '', name TEXT, git_branch TEXT, agent_role TEXT,
+		agent_nickname TEXT, agent_path TEXT, model TEXT)`)
+	exec(`CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL)`)
 	now := time.Now()
 	rollout := func(id string, lines ...string) string {
 		path := filepath.Join(home, "sessions", "2026", "01", "02", "rollout-2026-01-02T03-04-05-"+id+".jsonl")
@@ -55,9 +58,9 @@ func setup(t *testing.T) fixture {
 	}
 	started := `{"type":"event_msg","payload":{"type":"task_started"}}`
 	complete := `{"type":"event_msg","payload":{"type":"task_complete"}}`
-	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', '', 0, 'add retries', 'Retry work')`, busyID, rollout(busyID, started, "garbage"), now.Add(-time.Hour).Unix())
-	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', 'Docs pass', 0, 'docs', NULL)`, idleID, rollout(idleID, started, complete), now.Add(-time.Hour).Unix())
-	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, 'fresh start', NULL)`, newID, rollout(newID), now.Unix())
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', '', 0, 'add retries', 'Retry work', NULL, NULL, NULL, NULL, NULL)`, busyID, rollout(busyID, started, "garbage"), now.Add(-time.Hour).Unix())
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/api', 'Docs pass', 0, 'docs', NULL, NULL, NULL, NULL, NULL, NULL)`, idleID, rollout(idleID, started, complete), now.Add(-time.Hour).Unix())
+	exec(`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, 'fresh start', NULL, NULL, NULL, NULL, NULL, NULL)`, newID, rollout(newID), now.Unix())
 	f := fixture{open: map[int][]string{}}
 	f.Adapter = &Adapter{
 		Home:      home,
@@ -163,5 +166,83 @@ func TestParsePromptFromRealDialogs(t *testing.T) {
 	}
 	if got, ok := ParsePrompt("› Would you like to run the following command?\n• sure\n"); ok {
 		t.Errorf("quoted prompt read as a dialog: %+v", got)
+	}
+}
+
+func TestSpawnEdgesMakeCrewAndNeverAnswerForTheRoot(t *testing.T) {
+	const root, kid, grandkid = "0190dddd-4444-7444-8444-444444444444", "0190eeee-5555-7555-8555-555555555555", "0190ffff-6666-7666-8666-666666666666"
+	f := setup(t)
+	db, err := sql.Open("sqlite", filepath.Join(f.Home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	write := func(id string, lines ...string) string {
+		path := filepath.Join(f.Home, "sessions", "rollout-"+id+".jsonl")
+		data := ""
+		for _, l := range lines {
+			data += l + "\n"
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	now := time.Now().Unix()
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', 'Ship workstations', 0, 'ship workstations', NULL, 'main', NULL, NULL, NULL, 'gpt-6')`,
+			[]any{root, write(root,
+				`{"type":"event_msg","payload":{"type":"task_started"}}`,
+				`{"type":"event_msg","payload":{"type":"user_message","message":"ship workstations"}}`,
+				`{"type":"response_item","timestamp":"2026-10-15T10:00:00Z","payload":{"type":"custom_tool_call","name":"exec","call_id":"c1","input":"await tools.exec_command({cmd:\"gh pr create --fill\"})"}}`,
+				`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"https://github.com/me/web/pull/9"}}`,
+			), now + 1}},
+		{`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, '', NULL, 'main', NULL, 'Hubble', '/root/shepherd', 'gpt-6')`,
+			[]any{kid, write(kid,
+				`{"type":"event_msg","payload":{"type":"task_started"}}`,
+				`{"type":"response_item","payload":{"type":"agent_message","content":[{"type":"input_text","text":"Task name: /root/shepherd"},{"type":"encrypted_content","encrypted_content":"x"}]}}`,
+				`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"p1","input":"*** Begin Patch\n*** Update File: lib/vms.py\n*** End Patch"}}`,
+				`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Shepherded."}]}}`,
+			), now + 2}},
+		{`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, '', NULL, 'main', 'reviewer', NULL, '/root/shepherd/review', NULL)`,
+			[]any{grandkid, write(grandkid, `{"type":"event_msg","payload":{"type":"task_complete"}}`), now + 2}},
+		{`INSERT INTO thread_spawn_edges VALUES (?, ?, 'open')`, []any{root, kid}},
+		{`INSERT INTO thread_spawn_edges VALUES (?, ?, 'closed')`, []any{kid, grandkid}},
+	} {
+		if _, err := db.Exec(q.sql, q.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.open[5] = []string{filepath.Join(f.Home, "sessions", "rollout-"+kid+".jsonl"), filepath.Join(f.Home, "sessions", "rollout-"+root+".jsonl")}
+	for name, pr := range map[string]proc.Proc{
+		"holds its subagent's rollout first":         cp(5, time.Hour, "codex"),
+		"holds nothing, newest thread is a subagent": cp(6, time.Hour, "codex"),
+	} {
+		s := f.Discover([]proc.Proc{pr})[0]
+		if s.ID != root {
+			t.Errorf("%s: resolved %q, want the root thread", name, s.ID)
+			continue
+		}
+		if s.Task != "ship workstations" || s.Doing.String() != "Bash: gh pr create --fill" || len(s.PRs) != 1 || s.PRs[0].Number != 9 {
+			t.Errorf("%s: facts = %+v", name, s.Facts)
+		}
+		if len(s.Crew) != 2 {
+			t.Fatalf("%s: crew = %+v, want the child and grandchild", name, s.Crew)
+		}
+		crew := map[string]core.Member{}
+		for _, m := range s.Crew {
+			crew[m.ID] = m
+		}
+		hub, rev := crew[kid], crew[grandkid]
+		if hub.Name != "Hubble" || hub.Status != core.Busy || hub.Result != "Shepherded." || !strings.Contains(hub.Brief, "Task name: /root/shepherd") ||
+			len(hub.Files) != 1 || hub.Files[0] != "/Users/me/src/web/lib/vms.py" {
+			t.Errorf("%s: child = %+v", name, hub)
+		}
+		if rev.Name != "reviewer" || rev.Status != core.Done {
+			t.Errorf("%s: grandchild = %+v", name, rev)
+		}
 	}
 }

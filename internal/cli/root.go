@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/gh"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
@@ -23,11 +24,15 @@ func Wire(path string) (*core.Core, error) {
 	if err != nil {
 		return nil, err
 	}
+	cl, cx := claude.New(), codex.New()
+	cl.Cache, cx.Cache = st, st
 	return &core.Core{
 		Store:     st,
-		Harnesses: []core.Harness{claude.New(), codex.New()},
+		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), tmux.NewServer()},
 		Procs:     proc.List,
+		Git:       core.ReadGit,
+		PRs:       gh.New(),
 	}, nil
 }
 
