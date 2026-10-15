@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -535,4 +536,23 @@ func TestMissionShowsItsVibeAndDrillInShowsWhoSaidIt(t *testing.T) {
 			t.Fatalf("detail lacks %q:\n%s", want, view)
 		}
 	}
+}
+
+func TestLongVibePlaceNeverWidensRows(t *testing.T) {
+	m, c, _ := setup(t)
+	long := strings.Repeat("Taliban-occupied Afghanistan ", 8)
+	if _, err := c.Store.AddVibe(core.Vibe{Place: long, Why: long, Session: "lead", Harness: "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	check := func(view string) {
+		for _, l := range strings.Split(view, "\n") {
+			if w := ansi.StringWidth(l); w > m.width {
+				t.Fatalf("line %d cells wide, screen %d: %q", w, m.width, l)
+			}
+		}
+	}
+	check(m.View())
+	m = press(t, m, "down", "down", "down", "enter")
+	check(m.View())
 }
