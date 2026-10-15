@@ -501,7 +501,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	r, ok := m.selected()
 	if !ok {
-		if m.mode == modeAgent && k.String() == "o" {
+		if (m.mode == modeAgent || m.mode == modeSession) && k.String() == "o" {
 			return m.open(row{})
 		}
 		return m, nil

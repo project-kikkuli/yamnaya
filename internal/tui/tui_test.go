@@ -419,3 +419,15 @@ func TestHeaderSaysSpendIsStillLoading(t *testing.T) {
 		t.Fatalf("header before the first usage scan = %q, want the claude limits and a note that spend is loading", l)
 	}
 }
+
+func TestOGoesToASessionWithNoCrewOrItems(t *testing.T) {
+	m, _, _ := setup(t)
+	m = press(t, m, "down", "down", "down", "down", "enter", "enter")
+	if m.mode != modeSession || !strings.Contains(m.View(), "Twin work") {
+		t.Fatalf("want the twin session view, mode %v:\n%s", m.mode, m.View())
+	}
+	m = press(t, m, "o")
+	if m.mode != modePick || len(m.targets) != 2 {
+		t.Fatalf("o in a session view with nothing selected: mode %v, %d targets", m.mode, len(m.targets))
+	}
+}
