@@ -84,6 +84,7 @@ func NewRoot() *cobra.Command {
 		m := usage.New(dir)
 		defer m.Close()
 		e.core.Meter = m
+		e.core.Health = healthText
 		return tui.Run(e.core)
 	})
 	root.AddCommand(
@@ -101,6 +102,7 @@ func NewRoot() *cobra.Command {
 		linkLaunchCmd(with),
 		installCmd(),
 		usageCmd(),
+		healthCmd(),
 		limitsCmd(),
 		remoteCmd(),
 	)

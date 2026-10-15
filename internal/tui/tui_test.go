@@ -365,3 +365,16 @@ func TestSpendShowsAtEveryLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthOpensOnHAndEscReturns(t *testing.T) {
+	m, c, _ := setup(t)
+	c.Health = func() (string, error) { return "week of  answered\n2026-10-12  6", nil }
+	m = press(t, m, "h")
+	if m.mode != modeHealth || !strings.Contains(m.View(), "2026-10-12  6") {
+		t.Fatalf("h did not show health: mode %v\n%s", m.mode, m.View())
+	}
+	m = press(t, m, "esc")
+	if m.mode != modeList {
+		t.Fatalf("esc left mode %v", m.mode)
+	}
+}

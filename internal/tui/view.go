@@ -26,6 +26,8 @@ func (m Model) View() string {
 	switch m.mode {
 	case modeHelp:
 		b.WriteString(ansi.Wrap(help, m.width, " "))
+	case modeHealth:
+		b.WriteString(m.health)
 	case modeWhy:
 		b.WriteString(ansi.Wrap(m.whyView(), m.width, " "))
 	case modePick:
@@ -130,7 +132,7 @@ func (m Model) footer() []string {
 
 func (m Model) hints() string {
 	switch m.mode {
-	case modeHelp:
+	case modeHelp, modeHealth:
 		return "esc back"
 	case modeWhy:
 		return "a answer   l later   x dismiss   u unsnooze   o go to its session   esc back"
@@ -147,7 +149,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   esc back"
 	}
-	return "↑↓ move   enter expand   o go to session   a answer   l later   x dismiss   / filter   ? help   q quit"
+	return "↑↓ move   enter expand   o go to session   a answer   l later   x dismiss   / filter   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -1050,6 +1052,7 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
    m            merge a mission into another
    s            split a merged mission back out
    /            filter
+   h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    q            back or quit
 `
 

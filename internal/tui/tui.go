@@ -25,6 +25,7 @@ const (
 	modePick
 	modeMerge
 	modeHelp
+	modeHealth
 )
 
 type inputKind int
@@ -84,6 +85,7 @@ type Model struct {
 	cursor2   int
 	mergeSrc  string
 	why       *core.Item
+	health    string
 	message   string
 	width     int
 	height    int
@@ -106,6 +108,11 @@ type boardMsg struct {
 }
 
 type tickMsg struct{}
+
+type healthMsg struct {
+	text string
+	err  error
+}
 
 type prMsg struct {
 	n   int
@@ -181,6 +188,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.message
 		}
 		return m, m.refresh(false)
+	case healthMsg:
+		m.health = msg.text
+		if msg.err != nil {
+			m.health = "error: " + msg.err.Error()
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -397,6 +410,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = m.back
 		}
 		return m, nil
+	case modeHealth:
+		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == "h" {
+			m.mode = m.back
+		}
+		return m, nil
 	case modeWhy:
 		switch k.String() {
 		case "a", "l", "x", "u", "o":
@@ -465,6 +483,16 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.back, m.mode = m.mode, modeHelp
 		return m, nil
+	case "h":
+		if m.core.Health == nil {
+			return m, nil
+		}
+		m.back, m.mode, m.health = m.mode, modeHealth, "reading transcripts…"
+		load := m.core.Health
+		return m, func() tea.Msg {
+			text, err := load()
+			return healthMsg{text, err}
+		}
 	case "/":
 		if m.mode == modeList {
 			m.startInput(inFilter, "", "", m.filter, false)

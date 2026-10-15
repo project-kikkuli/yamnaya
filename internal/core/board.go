@@ -23,6 +23,8 @@ type Core struct {
 	PRs PRSource
 	// Launches reports launched sessions that exited; nil shows none.
 	Launches Launches
+	// Health renders the weekly health trend; nil shows none.
+	Health func() (string, error)
 
 	gc gitCache
 }
