@@ -86,11 +86,11 @@ func TestClaudeCountsEachResponseOnceAcrossBlocksFilesAndScans(t *testing.T) {
 		{
 			name: "subagents and workflow agents roll into their session, and a fork's copied history counts once",
 			files: map[string][]string{
-				".jsonl":                                  {reply("msg_1", "claude-opus-5-5", 1, 10, 0, 0, 0)},
-				"/subagents/agent-a1.jsonl":               {reply("msg_2", "claude-sonnet-5", 1, 20, 0, 0, 0)},
-				"/subagents/agent-a2.jsonl":               {reply("msg_2", "claude-sonnet-5", 1, 20, 0, 0, 0), reply("msg_3", "claude-sonnet-5", 1, 30, 0, 0, 0)},
+				".jsonl":                                   {reply("msg_1", "claude-opus-5-5", 1, 10, 0, 0, 0)},
+				"/subagents/agent-a1.jsonl":                {reply("msg_2", "claude-sonnet-5", 1, 20, 0, 0, 0)},
+				"/subagents/agent-a2.jsonl":                {reply("msg_2", "claude-sonnet-5", 1, 20, 0, 0, 0), reply("msg_3", "claude-sonnet-5", 1, 30, 0, 0, 0)},
 				"/subagents/workflows/wf_1/agent-w1.jsonl": {reply("msg_4", "claude-sonnet-5", 1, 40, 0, 0, 0)},
-				"/subagents/agent-a1.meta.json":           {`{"agentType":"general-purpose"}`},
+				"/subagents/agent-a1.meta.json":            {`{"agentType":"general-purpose"}`},
 			},
 			own:   core.Tokens{Input: 1, Output: 10},
 			total: core.Tokens{Input: 4, Output: 100},
