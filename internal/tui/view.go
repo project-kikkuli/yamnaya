@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,9 +18,9 @@ func (m Model) View() string {
 	b.WriteString(m.header() + "\n\n")
 	switch m.mode {
 	case modeHelp:
-		b.WriteString(ansi.Wrap(help, m.width, " "))
-	case modeHealth:
-		b.WriteString(m.health)
+		b.WriteString(ansi.Wrap(Help, m.width, " "))
+	case modeScreen:
+		b.WriteString(m.screen)
 	case modeWhy:
 		b.WriteString(ansi.Wrap(m.whyView(), m.width, " "))
 	case modePick:
@@ -34,6 +35,8 @@ func (m Model) View() string {
 			b.WriteString(m.sessionView())
 		case modeAgent:
 			b.WriteString(m.agentView())
+		case modeItems:
+			b.WriteString(m.itemsView())
 		default:
 			b.WriteString(m.listView())
 		}
@@ -110,8 +113,20 @@ func (m Model) footer() []string {
 		lines = append(lines, pal.dim.Render(" enter yes   esc no"))
 		return lines
 	}
+	if m.mode == modeConfirm {
+		lines = append(lines, " "+pal.bold.Render(m.ask)+" y/n")
+		return lines
+	}
 	if m.mode == modeInput {
-		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel}[m.inKind]
+		repo := filepath.Base(m.newL.Repo)
+		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
+			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel,
+			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
+			inNewSlug: "new " + m.newL.Harness + " session, worktree name (empty: from the prompt)",
+			inPhases:  "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (place: why)"}[m.inKind]
+		if m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inNewSlug {
+			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
+		}
 		if m.fresh {
 			lines = append(lines, " "+pal.bold.Render(label+":")+" "+pal.dim.Render(string(m.input))+"█")
 			lines = append(lines, pal.dim.Render(" enter accepts the default   type to replace it   esc cancel"))
@@ -133,8 +148,10 @@ func (m Model) footer() []string {
 
 func (m Model) hints() string {
 	switch m.mode {
-	case modeHelp, modeHealth:
+	case modeHelp, modeScreen:
 		return "esc back"
+	case modeItems:
+		return "↑↓ move   enter expand   a answer   l later   u unsnooze   x dismiss   esc back"
 	case modeWhy:
 		return "a answer   l later   x dismiss   u unsnooze   o go to its session   esc back"
 	case modePick:
@@ -142,15 +159,15 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return "↑↓ move   enter open mission   o go to session   r rename   m merge   S split   esc back   ? help"
+		return "↑↓ move   enter open mission   o go to session   n new   K kill   p/P phase   v vibe   r rename   m merge   S split   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   a answer   l later   u unsnooze   x dismiss   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   a answer   x dismiss   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   a answer   x dismiss   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   s send   esc back"
+		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   esc back"
 	}
-	return "↑↓ move   enter expand   o go to session   a answer   l later   x dismiss   / filter   h health   ? help   q quit"
+	return "↑↓ move   enter expand   o go to session   n new   K kill   a answer   l later   x dismiss   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -996,7 +1013,7 @@ func (m Model) pickView() string {
 	return b.String()
 }
 
-const help = ` ym shows every Claude Code and Codex session and what needs you.
+const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
  NEEDS YOU lists permission prompts first, then open items, most blocking first.
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
@@ -1004,7 +1021,8 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
 
    ↑ ↓ or k j   move
-   enter        an item: expand it; a permission prompt: go to its session; anything else: open it
+   enter        an item: expand it; a permission prompt: go to its session; an exited launch: revive it;
+                anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
@@ -1014,11 +1032,25 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
    l            later: snooze the item
    u            reopen a snoozed item (detail)
    x            dismiss the item with a reason
-   r            rename a mission
+   w            show the item in full with its history
+   r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
    S            split a merged mission back out
+   n            new session: type the prompt, then the repository (default: the selected row's) and
+                an optional worktree name; tab switches between claude and codex
+   K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
+                worktree and transcript stay, and a session ym launched shows exited, ready to revive
+   L            land a session ym launched: end it and remove its worktree once its branch is clean
+                and merged or pushed (asks y/n)
+   T            switch the idle session to the other harness with cs (asks y/n)
+   p            advance the mission to its next phase (asks y/n)
+   P            set the mission's phases, comma separated
+   v            set the mission's vibe, as a place from North Dakota (rough) to Hawaii (great): "place: why"
+   I            every item, answered, dismissed and snoozed too; in a mission, just its items
    /            filter
    h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you
+   U            usage: spend today and this week, limits, and the top sessions by spend
+   E            every session ym launched and whether its agent still runs
    q            back or quit
 
  A mission's ≈ shares are its part of each current limit window. They count only this host's

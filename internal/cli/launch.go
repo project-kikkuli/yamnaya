@@ -159,6 +159,57 @@ func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
 	return true, e.core.Focus(t)
 }
 
+// Start creates a worktree for the new session, then starts its agent there on ym's server.
+func (l launcher) Start(n core.NewLaunch) (string, error) {
+	slug := n.Slug
+	if slug == "" {
+		slug = launch.Slug(n.Prompt)
+	}
+	rec := launch.Record{Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Started: time.Now()}
+	switch n.Harness {
+	case codex.Name:
+		rec.Harness = codex.Name
+	case "", claude.Name:
+		rec.Session = uuid.NewString()
+	default:
+		return "", fmt.Errorf("unknown harness %q", n.Harness)
+	}
+	if _, err := bin(rec.Harness); err != nil {
+		return "", err
+	}
+	var err error
+	if rec.Worktree, err = launch.Create(n.Repo, slug); err != nil {
+		return "", err
+	}
+	rec.Key, rec.Head = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path)
+	argv, err := startArgv(rec)
+	if err != nil {
+		return "", err
+	}
+	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+		return "", err
+	}
+	if err := l.records.Save(rec); err != nil {
+		return "", err
+	}
+	name := tmux.SessionName(rec.Key)
+	if _, err := l.srv.Start(l.conf, name, rec.Worktree.Path, argv); err != nil {
+		return "", err
+	}
+	if rec.Parent != "" {
+		if rec.Session != "" {
+			if err := l.core.Store.Link(rec.Session, rec.Parent); err != nil {
+				return "", err
+			}
+		} else if err := detach("launch-link", rec.Key); err != nil {
+			return "", err
+		}
+	}
+	var b strings.Builder
+	printLaunch(&b, rec, name, l.srv.Socket)
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var useCodex bool
 	var repo, slug string
@@ -167,60 +218,29 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 		Short: "Start claude (or codex) on a prompt in a new worktree, in ym's own tmux server",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			l, err := newLauncher()
-			if err != nil {
-				return err
+			if e.core.Launches == nil {
+				return errors.New("ym's launcher is unavailable")
 			}
-			if repo == "" {
-				if repo, err = os.Getwd(); err != nil {
+			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug}
+			if useCodex {
+				n.Harness = codex.Name
+			}
+			if n.Repo == "" {
+				var err error
+				if n.Repo, err = os.Getwd(); err != nil {
 					return err
 				}
 			}
-			if slug == "" {
-				slug = launch.Slug(args[0])
-			}
-			rec := launch.Record{Harness: claude.Name, Prompt: args[0], Started: time.Now()}
-			if useCodex {
-				rec.Harness = codex.Name
-			} else {
-				rec.Session = uuid.NewString()
-			}
-			if _, err := bin(rec.Harness); err != nil {
-				return err
-			}
 			if c, err := e.caller(); err == nil {
-				rec.Parent = c.Session
+				n.Parent = c.Session
 			} else if !errors.Is(err, core.ErrNotFound) {
 				return err
 			}
-			if rec.Worktree, err = launch.Create(repo, slug); err != nil {
-				return err
-			}
-			rec.Key, rec.Head = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path)
-			argv, err := startArgv(rec)
+			msg, err := e.core.Launches.Start(n)
 			if err != nil {
 				return err
 			}
-			if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
-				return err
-			}
-			if err := l.records.Save(rec); err != nil {
-				return err
-			}
-			name := tmux.SessionName(rec.Key)
-			if _, err := l.srv.Start(l.conf, name, rec.Worktree.Path, argv); err != nil {
-				return err
-			}
-			if rec.Parent != "" {
-				if rec.Session != "" {
-					if err := e.core.Store.Link(rec.Session, rec.Parent); err != nil {
-						return err
-					}
-				} else if err := detach("launch-link", rec.Key); err != nil {
-					return err
-				}
-			}
-			printLaunch(cmd.OutOrStdout(), rec, name, l.srv.Socket)
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		}),
 	}
@@ -292,24 +312,28 @@ func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	return p, "running"
 }
 
+func (l launcher) Launched() []core.Launched {
+	all, _ := l.records.All()
+	out := make([]core.Launched, 0, len(all))
+	for _, rec := range all {
+		rec = l.settle(rec)
+		_, st := l.state(rec)
+		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path})
+	}
+	return out
+}
+
 func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "launched",
 		Short: "List sessions ym launched, and whether each agent still runs",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			l, err := newLauncher()
-			if err != nil {
-				return err
+			if e.core.Launches == nil {
+				return errors.New("ym's launcher is unavailable")
 			}
-			all, err := l.records.All()
-			if err != nil {
-				return err
-			}
-			for _, rec := range all {
-				rec = l.settle(rec)
-				_, st := l.state(rec)
-				fmt.Fprintf(cmd.OutOrStdout(), "%-6s %-8s %-10s %-28s %s\n", rec.Harness, core.Short(rec.Session), st, rec.Key, rec.Worktree.Path)
+			for _, l := range e.core.Launches.Launched() {
+				fmt.Fprintln(cmd.OutOrStdout(), l)
 			}
 			return nil
 		}),
@@ -406,55 +430,62 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	}
 }
 
+// Land ends a launched session and removes its worktree, refusing while its branch has work that is not clean and merged or pushed.
+func (l launcher) Land(ref string) (string, error) {
+	rec, err := l.find(ref)
+	if err != nil {
+		return "", err
+	}
+	if rec.Adopted {
+		if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
+			return "", err
+		}
+		if err := l.records.Delete(rec.Key); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("landed %s; %s was not ym's, so it stays", rec.Key, rec.Worktree.Path), nil
+	}
+	why := "worktree already gone"
+	_, statErr := os.Stat(rec.Worktree.Path)
+	if statErr == nil {
+		g, err := launch.State(rec.Worktree.Path)
+		if err != nil {
+			return "", err
+		}
+		ok, reason := g.Landable()
+		if !ok {
+			return "", fmt.Errorf("not landing %s: %s %s", rec.Key, rec.Worktree.Path, reason)
+		}
+		why = reason
+	}
+	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
+		return "", err
+	}
+	if statErr == nil {
+		if err := launch.Remove(rec.Worktree); err != nil {
+			return "", err
+		}
+	}
+	if err := l.records.Delete(rec.Key); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("landed %s (%s); branch %s kept", rec.Key, why, rec.Worktree.Branch), nil
+}
+
 func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "land <key|session>",
 		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			l, err := newLauncher()
+			if e.core.Launches == nil {
+				return errors.New("ym's launcher is unavailable")
+			}
+			msg, err := e.core.Launches.Land(args[0])
 			if err != nil {
 				return err
 			}
-			rec, err := l.find(args[0])
-			if err != nil {
-				return err
-			}
-			if rec.Adopted {
-				if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
-					return err
-				}
-				if err := l.records.Delete(rec.Key); err != nil {
-					return err
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "landed %s; %s was not ym's, so it stays\n", rec.Key, rec.Worktree.Path)
-				return nil
-			}
-			why := "worktree already gone"
-			_, statErr := os.Stat(rec.Worktree.Path)
-			if statErr == nil {
-				g, err := launch.State(rec.Worktree.Path)
-				if err != nil {
-					return err
-				}
-				ok, reason := g.Landable()
-				if !ok {
-					return fmt.Errorf("not landing %s: %s %s", rec.Key, rec.Worktree.Path, reason)
-				}
-				why = reason
-			}
-			if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
-				return err
-			}
-			if statErr == nil {
-				if err := launch.Remove(rec.Worktree); err != nil {
-					return err
-				}
-			}
-			if err := l.records.Delete(rec.Key); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "landed %s (%s); branch %s kept\n", rec.Key, why, rec.Worktree.Branch)
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		}),
 	}

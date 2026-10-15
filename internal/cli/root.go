@@ -33,6 +33,7 @@ func Wire(path string) (*core.Core, error) {
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
+		Port:      port,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core = c
@@ -98,6 +99,7 @@ func NewRoot() *cobra.Command {
 		newCmd(with),
 		reviveCmd(with),
 		landCmd(with),
+		killCmd(with),
 		launchedCmd(with),
 		linkLaunchCmd(with),
 		adoptCmd(with),

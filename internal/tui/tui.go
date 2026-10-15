@@ -4,6 +4,8 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,7 +27,10 @@ const (
 	modePick
 	modeMerge
 	modeHelp
-	modeHealth
+	// modeScreen shows a page of text, such as health or usage, until esc.
+	modeScreen
+	modeConfirm
+	modeItems
 )
 
 type inputKind int
@@ -38,6 +43,11 @@ const (
 	inDismissStale
 	inAdopt
 	inSend
+	inNew
+	inNewRepo
+	inNewSlug
+	inPhases
+	inVibe
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -87,7 +97,13 @@ type Model struct {
 	cursor2   int
 	mergeSrc  string
 	why       *core.Item
-	health    string
+	screen    string
+	screenKey string
+	ask       string
+	yes       tea.Cmd
+	newL      core.NewLaunch
+	items     []core.Item
+	itemsOf   string
 	message   string
 	width     int
 	height    int
@@ -111,7 +127,7 @@ type boardMsg struct {
 
 type tickMsg struct{}
 
-type healthMsg struct {
+type screenMsg struct {
 	text string
 	err  error
 }
@@ -170,6 +186,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
+		if m.listMode() == modeItems {
+			m.loadItems()
+		}
 		m.follow(keep)
 		var cmds []tea.Cmd
 		if msg.tick {
@@ -201,10 +220,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refresh(false)
 		}
 		return m, m.focus(msg.target)
-	case healthMsg:
-		m.health = msg.text
+	case screenMsg:
+		m.screen = msg.text
 		if msg.err != nil {
-			m.health = "error: " + msg.err.Error()
+			m.screen = "error: " + msg.err.Error()
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -261,6 +280,10 @@ func (m Model) rows() []row {
 	switch m.listMode() {
 	case modeAgent:
 		return nil
+	case modeItems:
+		for i := range m.items {
+			out = append(out, row{item: &m.items[i]})
+		}
 	case modeSession:
 		p, _ := m.board.Project(m.detail)
 		s, ok := m.session()
@@ -367,7 +390,7 @@ func (m Model) member() (*core.Live, *core.Member, bool) {
 // listMode is the list the cursor moves over, looking through overlays.
 func (m Model) listMode() mode {
 	switch m.mode {
-	case modeInput, modeWhy, modePick, modeHelp, modeMerge:
+	case modeInput, modeWhy, modePick, modeHelp, modeMerge, modeConfirm:
 		return m.back
 	}
 	return m.mode
@@ -423,9 +446,18 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = m.back
 		}
 		return m, nil
-	case modeHealth:
-		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == "h" {
+	case modeScreen:
+		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == m.screenKey {
 			m.mode = m.back
+		}
+		return m, nil
+	case modeConfirm:
+		switch k.String() {
+		case "y":
+			m.mode, m.message = m.back, ""
+			return m, m.yes
+		case "n", "esc", "q":
+			m.mode, m.message = m.back, "cancelled"
 		}
 		return m, nil
 	case modeWhy:
@@ -500,12 +532,35 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.core.Health == nil {
 			return m, nil
 		}
-		m.back, m.mode, m.health = m.mode, modeHealth, "reading transcripts…"
+		m.show("h", "reading transcripts…")
 		load := m.core.Health
 		return m, func() tea.Msg {
 			text, err := load()
-			return healthMsg{text, err}
+			return screenMsg{text, err}
 		}
+	case "U":
+		m.show("U", m.usageText())
+		return m, nil
+	case "E":
+		m.show("E", m.launchedText())
+		return m, nil
+	case "I":
+		m.itemsOf = ""
+		if m.mode == modeDetail || m.mode == modeSession || m.mode == modeAgent {
+			m.itemsOf = m.detail
+		}
+		m.push(modeItems)
+		m.loadItems()
+		return m, nil
+	case "n":
+		if m.core.Launches == nil {
+			m.message = "ym's launcher is unavailable"
+			return m, nil
+		}
+		r, _ := m.selected()
+		m.newL = core.NewLaunch{Harness: "claude", Repo: m.repoOf(r)}
+		m.startInput(inNew, "", "", "", false)
+		return m, nil
 	case "/":
 		if m.mode == modeList {
 			m.startInput(inFilter, "", "", m.filter, false)
@@ -517,7 +572,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if (m.mode == modeAgent || m.mode == modeSession) && k.String() == "o" {
 			return m.open(row{})
 		}
-		if k.String() == "s" && (m.mode == modeAgent || m.mode == modeSession) {
+		if strings.Contains("sKTL", k.String()) && (m.mode == modeAgent || m.mode == modeSession) {
 			r = row{}
 		} else {
 			return m, nil
@@ -619,14 +674,141 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "S":
 		if p := m.projectOf(r); p != nil {
-			key := p.Key
+			key, name := p.Key, p.Name
 			return m, m.do(func() (string, error) {
 				n, err := m.core.Store.Split(key)
+				if err == nil && n == 0 {
+					err = fmt.Errorf("%s has no merges", name)
+				}
 				return fmt.Sprintf("split %d merged missions back out", n), err
 			})
 		}
+	case "K":
+		if s := m.killable(r); s != nil {
+			live := *s
+			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
+		}
+	case "L":
+		ref, label := "", ""
+		if r.dormant != nil {
+			ref, label = r.dormant.Key, r.dormant.Key
+		} else if s := m.sessionOf(r); s != nil && s.ID != "" {
+			ref, label = s.ID, s.Label()
+		}
+		if ref != "" && m.core.Launches != nil {
+			l := m.core.Launches
+			m.confirm("land "+label+"? it ends the agent and removes its worktree once its branch is clean and merged or pushed",
+				m.do(func() (string, error) { return l.Land(ref) }))
+		}
+	case "T":
+		if s := m.sessionOf(r); s != nil {
+			live, to, board := *s, core.Other(s.Harness), m.board
+			m.confirm("port "+live.Label()+" to "+to+"?", m.do(func() (string, error) { return m.core.Switch(board, live, to) }))
+		}
+	case "p":
+		if p := m.projectOf(r); p != nil {
+			key, ph := p.Key, p.Phases
+			if ph.Current+1 >= len(ph.Names) {
+				m.message = p.Name + " has no next phase; P sets its phases"
+				return m, nil
+			}
+			m.confirm("advance "+p.Name+" to "+ph.Names[ph.Current+1]+"?", m.do(func() (string, error) {
+				ph, err := m.core.Store.NextPhase(key)
+				return phaseText(ph), err
+			}))
+		}
+	case "P":
+		if p := m.projectOf(r); p != nil {
+			m.startInput(inPhases, "", p.Key, strings.Join(p.Phases.Names, ", "), false)
+			m.inLabel = p.Name
+		}
+	case "v":
+		if p := m.projectOf(r); p != nil {
+			m.startInput(inVibe, "", p.Key, "", false)
+			m.inLabel = p.Name
+		}
 	}
 	return m, nil
+}
+
+// confirm asks ask on the footer; y runs yes, n or esc cancels.
+func (m *Model) confirm(ask string, yes tea.Cmd) {
+	m.ask, m.yes, m.back, m.mode = ask, yes, m.mode, modeConfirm
+}
+
+func (m *Model) show(key, text string) {
+	m.back, m.mode, m.screenKey, m.screen = m.mode, modeScreen, key, text
+}
+
+func (m *Model) loadItems() {
+	items, err := m.core.ItemsIn(m.board, m.itemsOf, true)
+	if err != nil {
+		m.message = "error: " + err.Error()
+	}
+	m.items = items
+	m.clamp()
+}
+
+// killable is the live session K ends: the selected session, the session an agent runs in, or a mission's only session.
+func (m Model) killable(r row) *core.Live {
+	switch {
+	case r.need != nil || r.dormant != nil || r.stale:
+		return nil
+	case r.session != nil:
+		return r.session
+	case r.project != nil && r.item == nil:
+		if len(r.project.Sessions) == 1 {
+			return &r.project.Sessions[0]
+		}
+		return nil
+	case m.mode == modeSession || m.mode == modeAgent:
+		if s, ok := m.session(); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// repoOf is the directory a new session started from row r branches from: the row's repository, else ym's own directory.
+func (m Model) repoOf(r row) string {
+	key := ""
+	switch {
+	case r.dormant != nil:
+		key = r.dormant.RepoKey
+	case r.session != nil:
+		key = r.session.RepoKey
+	case r.project != nil:
+		key = r.project.Repo
+	case r.repo != nil:
+		key = r.repo.Key
+	}
+	if key == "" && m.mode == modeRepo {
+		key = m.repo
+	}
+	if key == "" {
+		if p, ok := m.board.Project(m.detail); ok && m.mode != modeList {
+			key = p.Repo
+		}
+	}
+	if key != "" {
+		return strings.TrimSuffix(key, string(filepath.Separator)+".git")
+	}
+	dir, _ := os.Getwd()
+	return dir
+}
+
+func phaseText(p core.Phases) string {
+	if len(p.Names) == 0 {
+		return "phases cleared"
+	}
+	parts := make([]string, len(p.Names))
+	for i, n := range p.Names {
+		parts[i] = n
+		if i == p.Current {
+			parts[i] = "> " + n
+		}
+	}
+	return "phases: " + strings.Join(parts, ", ")
 }
 
 // scrollBy moves the agent view by n lines, stopping where its last line reaches the bottom.
@@ -715,6 +897,11 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlU:
 		m.input, m.fresh = nil, false
 		return m, nil
+	case tea.KeyTab:
+		if m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inNewSlug {
+			m.newL.Harness = core.Other(m.newL.Harness)
+		}
+		return m, nil
 	case tea.KeyEnter:
 		text := strings.TrimSpace(string(m.input))
 		m.mode = m.back
@@ -769,6 +956,53 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case inRename:
 			key := m.inProj
 			return m, m.do(func() (string, error) { return "renamed", m.core.Store.Rename(key, text) })
+		case inNew:
+			if text == "" {
+				return m, nil
+			}
+			m.newL.Prompt = text
+			m.startInput(inNewRepo, "", "", m.newL.Repo, true)
+		case inNewRepo:
+			if text == "" {
+				return m, nil
+			}
+			m.newL.Repo = text
+			m.startInput(inNewSlug, "", "", "", false)
+		case inNewSlug:
+			n, l := m.newL, m.core.Launches
+			n.Slug = text
+			m.message = "starting " + n.Harness + "…"
+			return m, m.do(func() (string, error) {
+				msg, err := l.Start(n)
+				first, _, _ := strings.Cut(msg, "\n")
+				return "started " + first, err
+			})
+		case inPhases:
+			var names []string
+			for _, n := range strings.Split(text, ",") {
+				if n = strings.TrimSpace(n); n != "" {
+					names = append(names, n)
+				}
+			}
+			key := m.inProj
+			return m, m.do(func() (string, error) {
+				ph, err := m.core.Store.SetPhases(key, names)
+				return phaseText(ph), err
+			})
+		case inVibe:
+			if text == "" {
+				return m, nil
+			}
+			place, why, _ := strings.Cut(text, ":")
+			key, board := m.inProj, m.board
+			return m, m.do(func() (string, error) {
+				target, err := board.VibeTarget(key, "")
+				if err != nil {
+					return "", err
+				}
+				v, err := m.core.Store.AddVibe(core.Vibe{Place: strings.TrimSpace(place), Why: strings.TrimSpace(why), Target: target})
+				return "vibe: " + v.Place, err
+			})
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -26,6 +27,11 @@ type Core struct {
 	Launches Launches
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
+	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
+	Port func(cwd, id, to string) (string, error)
+	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean syscall.Kill and 3s.
+	Signal    func(pid int, sig syscall.Signal) error
+	KillGrace time.Duration
 
 	gc gitCache
 }

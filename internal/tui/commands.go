@@ -1,0 +1,31 @@
+package tui
+
+// Commands maps each ym command the owner runs to the board key that does the same.
+var Commands = map[string]string{
+	"ym item answer":    "a",
+	"ym item dismiss":   "x",
+	"ym item snooze":    "l",
+	"ym item reopen":    "u",
+	"ym item show":      "w",
+	"ym item list":      "I",
+	"ym phase show":     "enter",
+	"ym phase next":     "p",
+	"ym phase set":      "P",
+	"ym vibe":           "v",
+	"ym project rename": "r",
+	"ym project merge":  "m",
+	"ym project split":  "S",
+	"ym sessions":       "enter",
+	"ym open":           "o",
+	"ym adopt":          "o",
+	"ym revive":         "enter",
+	"ym send":           "s",
+	"ym new":            "n",
+	"ym land":           "L",
+	"ym kill":           "K",
+	"ym switch":         "T",
+	"ym launched":       "E",
+	"ym usage":          "U",
+	"ym limits":         "U",
+	"ym health":         "h",
+}

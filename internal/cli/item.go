@@ -144,26 +144,15 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
-			var f core.ItemFilter
-			if !all {
-				f.States = []string{core.ItemOpen}
-			}
-			items, err := e.core.Store.Items(f)
-			if err != nil {
-				return err
-			}
+			key := ""
 			if !everywhere {
-				key, err := e.projectKey(b)
-				if err != nil {
+				if key, err = e.projectKey(b); err != nil {
 					return err
 				}
-				var kept []core.Item
-				for _, it := range items {
-					if b.ProjectOf(it.Session) == key {
-						kept = append(kept, it)
-					}
-				}
-				items = kept
+			}
+			items, err := e.core.ItemsIn(b, key, all)
+			if err != nil {
+				return err
 			}
 			return printItems(cmd.OutOrStdout(), items, asJSON)
 		}),

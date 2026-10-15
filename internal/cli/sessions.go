@@ -97,21 +97,11 @@ func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			if !ok {
 				return fmt.Errorf("no live session %q", args[0])
 			}
-			if s.Harness == to {
-				return fmt.Errorf("%s already runs %s", core.Short(s.Key()), to)
-			}
-			if s.Status != core.Idle {
-				return fmt.Errorf("%s is %s; switch once it is idle", core.Short(s.Key()), s.Status)
-			}
-			id, err := port(s.Cwd, s.ID, to)
+			msg, err := e.core.Switch(b, s, to)
 			if err != nil {
 				return err
 			}
-			resume := e.core.Targets(b, id, to)
-			fmt.Fprintf(cmd.OutOrStdout(), "ported to %s session %s\n", to, id)
-			if len(resume) > 0 && resume[0].Resume != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "quit the %s session, then run: %s\n", s.Harness, strings.Join(resume[0].Resume, " "))
-			}
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
 			return nil
 		}),
 	}

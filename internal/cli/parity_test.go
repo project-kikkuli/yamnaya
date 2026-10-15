@@ -1,0 +1,50 @@
+package cli
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/project-kikkuli/yamnaya/internal/tui"
+)
+
+// agentOnly are commands agents or setup run, never the owner at the board.
+var agentOnly = map[string]bool{
+	"ym item add": true, "ym item inbox": true, "ym spawn": true, "ym limits record": true,
+	"ym install": true, "ym completion": true, "ym remote": true, "ym remote install": true, "ym help": true,
+}
+
+func TestEveryOwnerCommandHasABoardKeyInHelp(t *testing.T) {
+	var walk func(c *cobra.Command)
+	seen := map[string]bool{}
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			if sub.Hidden {
+				continue
+			}
+			path := sub.CommandPath()
+			if strings.HasPrefix(path, "ym completion") || agentOnly[path] {
+				continue
+			}
+			if sub.Runnable() {
+				seen[path] = true
+				key, ok := tui.Commands[path]
+				if !ok {
+					t.Errorf("%s has no board key", path)
+				} else if !strings.Contains(tui.Help, "\n   "+key+" ") {
+					t.Errorf("%s maps to %q, which ? help does not list", path, key)
+				}
+			}
+			walk(sub)
+		}
+	}
+	root := NewRoot()
+	root.InitDefaultCompletionCmd()
+	walk(root)
+	for path := range tui.Commands {
+		if !seen[path] {
+			t.Errorf("board key for %s, which is no owner command", path)
+		}
+	}
+}

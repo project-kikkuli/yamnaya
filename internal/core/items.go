@@ -448,3 +448,22 @@ func (c *Core) ScopeItems() error {
 	}
 	return c.Store.Renumber(scopes)
 }
+
+// ItemsIn lists the open items of project, or of every project when project is empty; all adds answered, dismissed and snoozed ones.
+func (c *Core) ItemsIn(b Board, project string, all bool) ([]Item, error) {
+	var f ItemFilter
+	if !all {
+		f.States = []string{ItemOpen}
+	}
+	items, err := c.Store.Items(f)
+	if err != nil || project == "" {
+		return items, err
+	}
+	var kept []Item
+	for _, it := range items {
+		if b.ProjectOf(it.Session) == project {
+			kept = append(kept, it)
+		}
+	}
+	return kept, nil
+}

@@ -117,6 +117,8 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			msg = tea.KeyMsg{Type: tea.KeyDown}
 		case "ctrl+u":
 			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
+		case "tab":
+			msg = tea.KeyMsg{Type: tea.KeyTab}
 		default:
 			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		}
@@ -289,6 +291,22 @@ type launches struct {
 	revived []string
 	adopted []string
 	sent    []string
+	started []core.NewLaunch
+	landed  []string
+}
+
+func (l *launches) Start(n core.NewLaunch) (string, error) {
+	l.started = append(l.started, n)
+	return n.Harness + " " + n.Slug + "\nopen: ym open " + n.Slug, nil
+}
+
+func (l *launches) Land(ref string) (string, error) {
+	l.landed = append(l.landed, ref)
+	return "landed " + ref, nil
+}
+
+func (l *launches) Launched() []core.Launched {
+	return []core.Launched{{Key: "fix-login", Harness: "claude", Session: "kid", State: "exited 1", Path: "/src/app-wt-fix-login"}}
 }
 
 func (l *launches) Adopt(s core.Live, say func(string)) (core.Target, error) {
@@ -401,7 +419,7 @@ func TestHealthOpensOnHAndEscReturns(t *testing.T) {
 	m, c, _ := setup(t)
 	c.Health = func() (string, error) { return "week of  answered\n2026-10-12  6", nil }
 	m = press(t, m, "h")
-	if m.mode != modeHealth || !strings.Contains(m.View(), "2026-10-12  6") {
+	if m.mode != modeScreen || !strings.Contains(m.View(), "2026-10-12  6") {
 		t.Fatalf("h did not show health: mode %v\n%s", m.mode, m.View())
 	}
 	m = press(t, m, "esc")
