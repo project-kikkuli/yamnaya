@@ -293,3 +293,84 @@ func TestLimitsDropExpiredWindowsAndKeepTheLatest(t *testing.T) {
 		})
 	}
 }
+
+func TestLimitSharesSplitEachWindowByAPIPricedUsageInside(t *testing.T) {
+	const sub = "a1"
+	at := func(d time.Duration) time.Time { return ts.Add(-d) }
+	claudeAt := func(id string, when time.Time) string {
+		return strings.Replace(reply(id, "claude-sonnet-5", 1000, 1000, 0, 0, 0), ts.Format(time.RFC3339), when.Format(time.RFC3339), 1)
+	}
+	codexAt := func(when time.Time, primary bool) []string {
+		lines := rollout(threadA, "", "gpt-5.5", [3]int64{1000, 0, 1000})
+		for i := range lines {
+			lines[i] = strings.ReplaceAll(lines[i], "2026-10-15T12:00:0", when.Format("2006-01-02T15:04:0"))
+		}
+		p := "null"
+		if primary {
+			p = fmt.Sprintf(`{"used_percent":30,"window_minutes":300,"resets_at":%d}`, ts.Add(3*time.Hour).Unix())
+		}
+		return append(lines, fmt.Sprintf(`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":%s,"secondary":{"used_percent":10,"window_minutes":10080,"resets_at":%d}}}}`+"\n",
+			when.Format(time.RFC3339), p, ts.Add(24*time.Hour).Unix()))
+	}
+	cases := []struct {
+		name       string
+		fiveResets time.Time
+		primary    bool
+		// want is each spend's rendered share: "parent", "parent own", "other", the subagent "agent", and the Codex "thread".
+		want map[string]string
+	}{
+		{
+			name: "a window counts usage from its start, so the 5h window skips the session from 6h ago", fiveResets: ts.Add(time.Hour), primary: true,
+			want: map[string]string{"parent": "≈40.0% 5h · ≈13.3% 7d", "parent own": "≈20.0% 5h · ≈6.7% 7d", "agent": "≈20.0% 5h · ≈6.7% 7d",
+				"other": "≈6.7% 7d", "thread": "≈30.0% 5h · ≈10.0% 7d"},
+		},
+		{
+			name: "usage counts in 5-minute buckets, so a window starting one second into a bucket still counts it", fiveResets: ts.Add(4*time.Hour + time.Second), primary: true,
+			want: map[string]string{"parent own": "≈20.0% 5h · ≈6.7% 7d", "agent": "≈20.0% 5h · ≈6.7% 7d"},
+		},
+		{
+			name: "usage in a bucket that ends before the window starts stays out", fiveResets: ts.Add(4*time.Hour + 5*time.Minute + time.Second), primary: true,
+			want: map[string]string{"parent": "≈40.0% 5h · ≈13.3% 7d", "parent own": "≈6.7% 7d", "agent": "≈40.0% 5h · ≈6.7% 7d"},
+		},
+		{
+			name: "an expired 5h window and a missing Codex 5h window show only the weekly ones", fiveResets: ts.Add(-time.Minute),
+			want: map[string]string{"parent": "≈13.3% 7d", "agent": "≈6.7% 7d", "other": "≈6.7% 7d", "thread": "≈10.0% 7d"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := meter(t)
+			session := filepath.Join(m.ClaudeDir, "projects", "-Users-me-app")
+			write(t, filepath.Join(session, parentID+".jsonl"), claudeAt("msg_1", at(time.Hour)))
+			write(t, filepath.Join(session, parentID, "subagents", "agent-"+sub+".jsonl"), claudeAt("msg_2", at(30*time.Minute)))
+			write(t, filepath.Join(session, otherID+".jsonl"), claudeAt("msg_3", at(6*time.Hour)))
+			write(t, filepath.Join(m.CodexHome, "sessions", "rollout-2026-10-15T10-00-00-"+threadA+".jsonl"), codexAt(at(2*time.Hour), c.primary)...)
+			limits := fmt.Sprintf(`{"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":%d},"seven_day":{"used_percentage":20,"resets_at":%d}}}`, c.fiveResets.Unix(), ts.Add(48*time.Hour).Unix())
+			if err := RecordClaudeLimits(m.StateDir, strings.NewReader(limits), ts); err != nil {
+				t.Fatal(err)
+			}
+			scan(t, m)
+			f := m.Fleet(ts)
+			got := map[string]string{
+				"parent": f.Shares(f.Sessions[parentID].Total), "parent own": f.Shares(f.Sessions[parentID].Own), "agent": f.Shares(f.Agents[parentID+"/"+sub]),
+				"other": f.Shares(f.Sessions[otherID].Total), "thread": f.Shares(f.Sessions[threadA].Total),
+			}
+			for k, want := range c.want {
+				if got[k] != want {
+					t.Errorf("%s = %q, want %q", k, got[k], want)
+				}
+			}
+			for _, l := range f.Limits {
+				sum := 0.0
+				for _, s := range f.Sessions {
+					if s.Parent == "" {
+						sum += s.Total.Share[l.Key()]
+					}
+				}
+				if sum != 0 && math.Abs(sum-1) > 1e-9 {
+					t.Errorf("%s shares sum to %v of its used %%, want all of it", l.Key(), sum)
+				}
+			}
+		})
+	}
+}

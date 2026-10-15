@@ -29,10 +29,26 @@ type Spend struct {
 	USD      float64
 	Tokens   Tokens
 	Unpriced int64
+	// Share is this spend's fraction of the API-priced usage seen inside each current limit window, keyed by Limit.Key.
+	Share map[string]float64
 }
 
 func (s Spend) Plus(o Spend) Spend {
-	return Spend{s.USD + o.USD, s.Tokens.Plus(o.Tokens), s.Unpriced + o.Unpriced}
+	out := Spend{s.USD + o.USD, s.Tokens.Plus(o.Tokens), s.Unpriced + o.Unpriced, s.Share}
+	if len(o.Share) > 0 {
+		if len(s.Share) == 0 {
+			out.Share = o.Share
+		} else {
+			out.Share = make(map[string]float64, len(s.Share)+len(o.Share))
+			for k, v := range s.Share {
+				out.Share[k] = v
+			}
+			for k, v := range o.Share {
+				out.Share[k] += v
+			}
+		}
+	}
+	return out
 }
 
 // Dollars formats the spend, with a + when some tokens had no price.
@@ -89,6 +105,11 @@ type Limit struct {
 // Label names the window without repeating the harness: Codex limit ids start with "codex".
 func (l Limit) Label() string { return strings.TrimPrefix(l.Name, "codex ") }
 
+func (l Limit) Key() string { return l.Harness + "/" + l.Name }
+
+// Start is when the window began.
+func (l Limit) Start() time.Time { return l.ResetsAt.Add(-l.Window) }
+
 // Fleet is what every session costs and how close each subscription is to its limits.
 type Fleet struct {
 	Ready    bool
@@ -99,6 +120,37 @@ type Fleet struct {
 	Sessions map[string]SessionSpend
 	// Agents is each Claude subagent's own spend, keyed "<session>/<agent id>".
 	Agents map[string]Spend
+	// Windows is the start of each limit window that Spend.Share measured, keyed by Limit.Key.
+	Windows map[string]time.Time
+}
+
+// Shares estimates how much of each current limit window the spend used: the window's used percent times the spend's share of
+// the usage seen on this host inside it, such as "≈3.1% 5h · ≈0.8% 7d".
+func (f Fleet) Shares(s Spend) string {
+	var ls []Limit
+	harnesses := map[string]bool{}
+	for _, l := range f.Limits {
+		from, ok := f.Windows[l.Key()]
+		if s.Share[l.Key()] <= 0 || !ok || from.Sub(l.Start()).Abs() > 10*time.Minute {
+			continue
+		}
+		ls = append(ls, l)
+		harnesses[l.Harness] = true
+	}
+	var parts []string
+	for _, l := range ls {
+		label := l.Label()
+		if len(harnesses) > 1 {
+			label = l.Harness + " " + label
+		}
+		pct := l.Used * s.Share[l.Key()]
+		v := fmt.Sprintf("≈%.1f%%", pct)
+		if pct < 0.05 {
+			v = "<0.1%"
+		}
+		parts = append(parts, v+" "+label)
+	}
+	return strings.Join(parts, " · ")
 }
 
 // Meter reads usage and limits without blocking the board; Ready is false until its first scan lands.

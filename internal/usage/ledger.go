@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	_ "modernc.org/sqlite"
@@ -52,6 +53,20 @@ CREATE TABLE IF NOT EXISTS ym_usage_sums (
 	cache_1h INTEGER NOT NULL,
 	PRIMARY KEY (file, model, day, tier, fast, us)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ym_usage_slices (
+	bucket INTEGER NOT NULL,
+	file INTEGER NOT NULL,
+	model TEXT NOT NULL,
+	tier INTEGER NOT NULL,
+	fast INTEGER NOT NULL,
+	us INTEGER NOT NULL,
+	input INTEGER NOT NULL,
+	output INTEGER NOT NULL,
+	cache_read INTEGER NOT NULL,
+	cache_5m INTEGER NOT NULL,
+	cache_1h INTEGER NOT NULL,
+	PRIMARY KEY (bucket, file, model, tier, fast, us)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ym_usage_limits (
 	name TEXT PRIMARY KEY,
 	harness TEXT NOT NULL,
@@ -73,6 +88,22 @@ type sumKey struct {
 	Model, Day string
 	Class      class
 }
+
+// bucketSecs is how finely slices place usage in time.
+const bucketSecs = 300
+
+// keepSlices is how far back slices are kept: as far back as the longest limit window reaches.
+const keepSlices = 8 * 24 * time.Hour
+
+// sliceKey places usage in one bucket of time, so that limit windows can sum what fell inside them.
+type sliceKey struct {
+	File   int64
+	Model  string
+	Class  class
+	Bucket int64
+}
+
+func bucketOf(unix int64) int64 { return unix / bucketSecs }
 
 // stored is a response as the ledger keeps it, under the file that first showed it.
 type stored struct {
@@ -96,9 +127,20 @@ func openLedger(path string) (*ledger, error) {
 	if err != nil {
 		return nil, err
 	}
+	var sliced int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'ym_usage_slices'`).Scan(&sliced); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(ledgerSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init usage schema: %w", err)
+	}
+	if sliced == 0 {
+		if _, err := db.Exec(`DELETE FROM ym_usage_files; DELETE FROM ym_usage_responses; DELETE FROM ym_usage_sums;`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("rescan for slices: %w", err)
+		}
 	}
 	return &ledger{db: db}, nil
 }
@@ -110,6 +152,29 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// loadSlices drops slices older than keepSlices and reads the rest.
+func (l *ledger) loadSlices(now time.Time) (map[sliceKey]core.Tokens, error) {
+	from := bucketOf(now.Add(-keepSlices).Unix())
+	if _, err := l.db.Exec(`DELETE FROM ym_usage_slices WHERE bucket < ?`, from); err != nil {
+		return nil, err
+	}
+	rows, err := l.db.Query(`SELECT bucket, file, model, tier, fast, us, input, output, cache_read, cache_5m, cache_1h FROM ym_usage_slices`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[sliceKey]core.Tokens{}
+	for rows.Next() {
+		var k sliceKey
+		var t core.Tokens
+		if err := rows.Scan(&k.Bucket, &k.File, &k.Model, &k.Class.Tier, &k.Class.Fast, &k.Class.US, &t.Input, &t.Output, &t.CacheRead, &t.CacheWrite5m, &t.CacheWrite1h); err != nil {
+			return nil, err
+		}
+		out[k] = t
+	}
+	return out, rows.Err()
 }
 
 func (l *ledger) load() (map[string]*file, map[sumKey]core.Tokens, map[string]core.Limit, error) {
@@ -196,6 +261,7 @@ type batch struct {
 	files     []*file
 	responses map[string]*stored
 	sums      map[sumKey]core.Tokens
+	slices    map[sliceKey]core.Tokens
 	limits    map[string]core.Limit
 }
 
@@ -206,7 +272,7 @@ func (l *ledger) commit(b batch) error {
 	}
 	defer tx.Rollback()
 	for _, id := range b.reset {
-		for _, q := range []string{`DELETE FROM ym_usage_sums WHERE file = ?`, `DELETE FROM ym_usage_responses WHERE file = ?`} {
+		for _, q := range []string{`DELETE FROM ym_usage_sums WHERE file = ?`, `DELETE FROM ym_usage_responses WHERE file = ?`, `DELETE FROM ym_usage_slices WHERE file = ?`} {
 			if _, err := tx.Exec(q, id); err != nil {
 				return err
 			}
@@ -224,6 +290,19 @@ func (l *ledger) commit(b batch) error {
 	}
 	for k, t := range b.sums {
 		if _, err := st.Exec(k.File, k.Model, k.Day, k.Class.Tier, b2i(k.Class.Fast), b2i(k.Class.US), t.Input, t.Output, t.CacheRead, t.CacheWrite5m, t.CacheWrite1h); err != nil {
+			return err
+		}
+	}
+	st.Close()
+	st, err = tx.Prepare(`INSERT INTO ym_usage_slices (bucket, file, model, tier, fast, us, input, output, cache_read, cache_5m, cache_1h)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(bucket, file, model, tier, fast, us) DO UPDATE SET input = input + excluded.input, output = output + excluded.output,
+		cache_read = cache_read + excluded.cache_read, cache_5m = cache_5m + excluded.cache_5m, cache_1h = cache_1h + excluded.cache_1h`)
+	if err != nil {
+		return err
+	}
+	for k, t := range b.slices {
+		if _, err := st.Exec(k.Bucket, k.File, k.Model, k.Class.Tier, b2i(k.Class.Fast), b2i(k.Class.US), t.Input, t.Output, t.CacheRead, t.CacheWrite5m, t.CacheWrite1h); err != nil {
 			return err
 		}
 	}

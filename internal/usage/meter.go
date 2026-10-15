@@ -1,9 +1,11 @@
 package usage
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -40,6 +42,7 @@ type Meter struct {
 	byID    map[int64]*file
 	nextID  int64
 	sums    map[sumKey]core.Tokens
+	slices  map[sliceKey]core.Tokens
 	limits  map[string]core.Limit
 	edges   map[string]string
 	prices  *Prices
@@ -96,7 +99,7 @@ func (m *Meter) Fleet(now time.Time) core.Fleet {
 	return f
 }
 
-func (m *Meter) open() error {
+func (m *Meter) open(now time.Time) error {
 	if m.ledger != nil {
 		return nil
 	}
@@ -109,7 +112,12 @@ func (m *Meter) open() error {
 		l.close()
 		return err
 	}
-	m.ledger, m.files, m.sums, m.limits = l, files, sums, limits
+	slices, err := l.loadSlices(now)
+	if err != nil {
+		l.close()
+		return err
+	}
+	m.ledger, m.files, m.sums, m.slices, m.limits = l, files, sums, slices, limits
 	m.byID = map[int64]*file{}
 	for _, f := range files {
 		m.byID[f.ID] = f
@@ -137,7 +145,7 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	defer m.scanMu.Unlock()
 	start := time.Now()
 	var st Stats
-	if err := m.open(); err != nil {
+	if err := m.open(now); err != nil {
 		return st, err
 	}
 	var srcs []source
@@ -175,7 +183,7 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	m.parse(work)
 	st.Parse = time.Since(t0)
 	sort.Slice(work, func(i, j int) bool { return work[i].f.Path < work[j].f.Path })
-	b, err := m.merge(work)
+	b, err := m.merge(work, bucketOf(now.Add(-keepSlices).Unix()))
 	if err != nil {
 		return st, err
 	}
@@ -228,8 +236,9 @@ func (m *Meter) parse(work []*parsed) {
 }
 
 // merge turns parsed lines into ledger writes, counting each Claude response once across all files at its largest reported usage.
-func (m *Meter) merge(work []*parsed) (batch, error) {
-	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}, limits: map[string]core.Limit{}}
+// Usage logged before bucket from adds to the sums but not to the slices.
+func (m *Meter) merge(work []*parsed, from int64) (batch, error) {
+	b := batch{responses: map[string]*stored{}, sums: map[sumKey]core.Tokens{}, slices: map[sliceKey]core.Tokens{}, limits: map[string]core.Limit{}}
 	var ids []string
 	for _, p := range work {
 		if p.reset {
@@ -252,8 +261,12 @@ func (m *Meter) merge(work []*parsed) (batch, error) {
 			delete(known, id)
 		}
 	}
-	add := func(k sumKey, t core.Tokens) {
+	add := func(k sumKey, at int64, t core.Tokens) {
 		b.sums[k] = b.sums[k].Plus(t)
+		if bk := bucketOf(at); bk >= from {
+			sk := sliceKey{File: k.File, Model: k.Model, Class: k.Class, Bucket: bk}
+			b.slices[sk] = b.slices[sk].Plus(t)
+		}
 	}
 	for _, p := range work {
 		b.files = append(b.files, p.f)
@@ -261,7 +274,7 @@ func (m *Meter) merge(work []*parsed) (batch, error) {
 			if s, ok := known[r.ID]; ok {
 				grown := most(s.Tokens, r.Tokens)
 				if grown != s.Tokens {
-					add(s.sumKey, minus(grown, s.Tokens))
+					add(s.sumKey, r.At, minus(grown, s.Tokens))
 					s.Tokens = grown
 					b.responses[r.ID] = s
 				}
@@ -270,10 +283,10 @@ func (m *Meter) merge(work []*parsed) (batch, error) {
 			s := &stored{sumKey: sumKey{File: p.f.ID, Model: r.Model, Day: r.Day, Class: r.Class}, Tokens: r.Tokens}
 			known[r.ID] = s
 			b.responses[r.ID] = s
-			add(s.sumKey, r.Tokens)
+			add(s.sumKey, r.At, r.Tokens)
 		}
 		for _, t := range p.codex.turns {
-			add(sumKey{File: p.f.ID, Model: t.Model, Day: t.Day, Class: t.Class}, t.Tokens)
+			add(sumKey{File: p.f.ID, Model: t.Model, Day: t.Day, Class: t.Class}, t.At, t.Tokens)
 		}
 		for _, l := range p.codex.limits {
 			key := l.Harness + "/" + l.Name
@@ -295,9 +308,17 @@ func (m *Meter) apply(b batch) {
 				delete(m.sums, k)
 			}
 		}
+		for k := range m.slices {
+			if k.File == id {
+				delete(m.slices, k)
+			}
+		}
 	}
 	for k, t := range b.sums {
 		m.sums[k] = m.sums[k].Plus(t)
+	}
+	for k, t := range b.slices {
+		m.slices[k] = m.slices[k].Plus(t)
 	}
 	for _, f := range b.files {
 		m.files[f.Path] = f
@@ -313,7 +334,7 @@ func (m *Meter) apply(b batch) {
 
 // build prices every sum and rolls subagents and child threads into their sessions.
 func (m *Meter) build(now time.Time) core.Fleet {
-	f := core.Fleet{Ready: true, At: now, Sessions: map[string]core.SessionSpend{}, Agents: map[string]core.Spend{}}
+	f := core.Fleet{Ready: true, At: now, Sessions: map[string]core.SessionSpend{}, Agents: map[string]core.Spend{}, Windows: map[string]time.Time{}}
 	today := day(now)
 	weekStart := day(now.AddDate(0, 0, -6))
 	sessions := map[string]*core.SessionSpend{}
@@ -365,6 +386,23 @@ func (m *Meter) build(now time.Time) core.Fleet {
 			f.Week = f.Week.Plus(sp)
 		}
 	}
+	var windows []core.Limit
+	for _, l := range current(append(readClaudeLimits(m.StateDir), slices.Collect(maps.Values(m.limits))...), now) {
+		windows = append(windows, l)
+		f.Windows[l.Key()] = l.Start()
+	}
+	for id, share := range m.shares(windows, now) {
+		fl := m.byID[id]
+		sp := core.Spend{Share: share}
+		s := get(fl)
+		s.Total = s.Total.Plus(sp)
+		if fl.Root {
+			s.Own = s.Own.Plus(sp)
+		} else if fl.Harness == claudeName {
+			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.Path), "agent-"), ".jsonl")
+			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
+		}
+	}
 	for child, parent := range m.edges {
 		if s := sessions[child]; s != nil && s.Parent == "" {
 			s.Parent = parent
@@ -393,4 +431,47 @@ func (m *Meter) build(now time.Time) core.Fleet {
 	}
 	sort.Slice(f.Limits, func(i, j int) bool { return f.Limits[i].Name < f.Limits[j].Name })
 	return f
+}
+
+// shares gives each file's fraction of the API-priced usage that fell inside every window between its start and now,
+// counting Claude usage toward Claude windows and Codex usage toward Codex windows.
+func (m *Meter) shares(windows []core.Limit, now time.Time) map[int64]map[string]float64 {
+	if len(windows) == 0 {
+		return nil
+	}
+	upTo := bucketOf(now.Unix())
+	byFile := map[int64]map[string]float64{}
+	totals := map[string]float64{}
+	for k, t := range m.slices {
+		fl := m.byID[k.File]
+		if fl == nil || k.Bucket > upTo {
+			continue
+		}
+		usd, priced := 0.0, false
+		for _, w := range windows {
+			if w.Harness != fl.Harness || (k.Bucket+1)*bucketSecs <= w.Start().Unix() {
+				continue
+			}
+			if !priced {
+				usd, _ = m.prices.Cost(k.Model, t, k.Class)
+				priced = true
+			}
+			if usd <= 0 {
+				break
+			}
+			sh := byFile[k.File]
+			if sh == nil {
+				sh = map[string]float64{}
+				byFile[k.File] = sh
+			}
+			sh[w.Key()] += usd
+			totals[w.Key()] += usd
+		}
+	}
+	for _, sh := range byFile {
+		for key := range sh {
+			sh[key] /= totals[key]
+		}
+	}
+	return byFile
 }

@@ -477,7 +477,7 @@ func (m Model) spend(sessions ...core.Live) string {
 			total = total.Plus(f.Sessions[key].Total)
 		}
 	}
-	return total.Dollars()
+	return spendText(f, total)
 }
 
 // missionSpend is a mission's spend; a repo's is its missions' sum.
@@ -489,7 +489,7 @@ func (m Model) missionSpend(ps ...core.Project) string {
 	for _, p := range ps {
 		total = total.Plus(p.Spend)
 	}
-	return total.Dollars()
+	return spendText(m.board.Fleet, total)
 }
 
 // memberSpend is one crew member's own spend: a Claude subagent's transcript, or a Codex child thread with its own children.
@@ -499,10 +499,10 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 		return ""
 	}
 	if sp, ok := f.Agents[s.Key()+"/"+c.ID]; ok {
-		return sp.Dollars()
+		return spendText(f, sp)
 	}
 	if ss, ok := f.Sessions[c.ID]; ok {
-		return ss.Total.Dollars()
+		return spendText(f, ss.Total)
 	}
 	return core.Spend{}.Dollars()
 }

@@ -44,6 +44,17 @@ func fleetLine(f core.Fleet, host string, now time.Time) string {
 	}
 	if f.Ready {
 		parts = append(parts, "api spend on "+host+" today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
+		if len(f.Windows) > 0 {
+			parts = append(parts, dim.Render("≈ limit shares see only "+host+"'s usage, so work on other hosts like Forge VMs makes them run high"))
+		}
 	}
 	return " " + strings.Join(parts, "   ")
+}
+
+// spendText is the spend at API prices and its approximate share of each current limit window.
+func spendText(f core.Fleet, s core.Spend) string {
+	if sh := f.Shares(s); sh != "" {
+		return s.Dollars() + " " + dim.Render(sh)
+	}
+	return s.Dollars()
 }

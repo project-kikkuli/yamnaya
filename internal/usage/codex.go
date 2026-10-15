@@ -171,6 +171,7 @@ func parseCodex(line []byte, cur *codexCursor, c *codexChunk) {
 		c.turns = append(c.turns, response{
 			Model:  cur.Model,
 			Day:    day(r.Timestamp),
+			At:     r.Timestamp.Unix(),
 			Class:  class{Tier: tierOf(info.Turn.Input)},
 			Tokens: core.Tokens{Input: d.Input - d.Cached, CacheRead: d.Cached, Output: d.Output},
 		})

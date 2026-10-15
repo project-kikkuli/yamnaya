@@ -76,9 +76,11 @@ func stat(path, session string, root bool) (source, bool) {
 
 // response is one model response, which Claude Code writes once per content block with repeated usage.
 type response struct {
-	ID     string
-	Model  string
-	Day    string
+	ID    string
+	Model string
+	Day   string
+	// At is when the harness logged it, in Unix seconds.
+	At     int64
 	Class  class
 	Tokens core.Tokens
 }
@@ -141,6 +143,7 @@ func parseClaude(line []byte, c *claudeChunk) {
 		ID:     r.Message.ID,
 		Model:  r.Message.Model,
 		Day:    day(r.Timestamp),
+		At:     r.Timestamp.Unix(),
 		Class:  class{Tier: tierOf(u.Input + u.CacheRead + u.CacheCreation), Fast: u.Speed == "fast", US: u.Geo == "us"},
 		Tokens: t,
 	})
