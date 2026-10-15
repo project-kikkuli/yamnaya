@@ -323,18 +323,20 @@ func TestSuccessorBesideARunningSessionLooksOnlyInItsDirectory(t *testing.T) {
 func TestASendSweepsReceiptSocketsLeftByEndedYmProcesses(t *testing.T) {
 	ended := exec.Command("true")
 	must(t, ended.Run())
+	dead := strconv.Itoa(ended.Process.Pid)
 	for _, c := range []struct {
-		name string
-		pid  int
-		kept bool
+		name, sock string
+		kept       bool
 	}{
-		{"its process ended", ended.Process.Pid, false},
-		{"its process still runs", os.Getpid(), true},
+		{"its process ended", "ym-" + dead + "-0badf00d.sock", false},
+		{"its process still runs", "ym-" + strconv.Itoa(os.Getpid()) + "-0badf00d.sock", true},
+		{"not a receipt socket's name", "ym-" + dead + "-0badf00d-x.sock", true},
+		{"a session's own socket", dead + ".sock", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			srv := serveInbox(t, "close")
-			left := filepath.Join(filepath.Dir(srv.sock), "ym-"+strconv.Itoa(c.pid)+"-0badf00d.sock")
+			left := filepath.Join(filepath.Dir(srv.sock), c.sock)
 			must(t, os.WriteFile(left, nil, 0o600))
 			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
 			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"auto"}`, userLine)

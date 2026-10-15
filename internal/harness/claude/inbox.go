@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -128,12 +129,18 @@ func listenReceipts(dir string) (*net.UnixListener, error) {
 func sweepReceipts(dir string) {
 	socks, _ := filepath.Glob(filepath.Join(dir, "ym-*-*.sock"))
 	for _, sock := range socks {
-		pid, _, _ := strings.Cut(strings.TrimPrefix(filepath.Base(sock), "ym-"), "-")
-		if n, err := strconv.Atoi(pid); err == nil && n > 0 && errors.Is(syscall.Kill(n, 0), syscall.ESRCH) {
+		m := receiptName.FindStringSubmatch(filepath.Base(sock))
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 && errors.Is(syscall.Kill(n, 0), syscall.ESRCH) {
 			os.Remove(sock)
 		}
 	}
 }
+
+// receiptName is the name listenReceipts gives a receipt socket.
+var receiptName = regexp.MustCompile(`^ym-([1-9][0-9]*)-[0-9a-f]{8}\.sock$`)
 
 // awaitReceipt reads receipts until wait passes; one saying the session did not queue message id is the error.
 func awaitReceipt(ln *net.UnixListener, id string, wait time.Duration) error {
