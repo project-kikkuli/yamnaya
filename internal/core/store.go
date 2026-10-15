@@ -370,6 +370,14 @@ func prThreads(db *sql.DB) error {
 	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_prs') WHERE name = 'unresolved'`).Scan(&has); err != nil || has > 0 {
 		return err
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_prs') WHERE name = 'unresolved'`).Scan(&has); err != nil || has > 0 {
+		return err
+	}
 	for _, q := range []string{
 		`ALTER TABLE ym_prs ADD COLUMN head TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE ym_prs ADD COLUMN commits INTEGER NOT NULL DEFAULT 0`,
@@ -377,9 +385,9 @@ func prThreads(db *sql.DB) error {
 		`ALTER TABLE ym_prs ADD COLUMN unresolved INTEGER NOT NULL DEFAULT 0`,
 		`DELETE FROM ym_prs`,
 	} {
-		if _, err := db.Exec(q); err != nil {
+		if _, err := tx.Exec(q); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }

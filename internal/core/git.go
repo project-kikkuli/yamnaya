@@ -33,8 +33,19 @@ func (g GitInfo) Name() string {
 	return strings.TrimSuffix(filepath.Base(g.Common), ".git")
 }
 
-// ReadGit asks git where dir sits.
+// ReadGit finds where dir sits from the checkout's .git files, asking git only when they are unusual.
 func ReadGit(dir string) GitInfo {
+	g, ok := readGitFiles(dir)
+	if !ok {
+		g = revParse(dir)
+	}
+	if g.Branch != "" && g.Branch != "HEAD" && !DefaultBranch(g.Branch) {
+		g.Ahead = ahead(dir)
+	}
+	return g
+}
+
+func revParse(dir string) GitInfo {
 	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return GitInfo{}
@@ -43,22 +54,63 @@ func ReadGit(dir string) GitInfo {
 	if len(lines) != 3 {
 		return GitInfo{}
 	}
-	g := GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
-	if g.Branch != "HEAD" && !DefaultBranch(g.Branch) {
-		g.Ahead = ahead(dir)
-	}
-	return g
+	return GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
 }
 
-func ahead(dir string) int {
-	for _, base := range []string{"origin/HEAD", "origin/main", "origin/master", "main", "master"} {
-		out, err := exec.Command("git", "-C", dir, "rev-list", "--count", base+"..HEAD").Output()
+// readGitFiles walks up to the nearest .git and reads its HEAD and commondir.
+func readGitFiles(dir string) (GitInfo, bool) {
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return GitInfo{}, true
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		dot := filepath.Join(d, ".git")
+		info, err := os.Lstat(dot)
 		if err == nil {
-			n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-			return n
+			gitDir := dot
+			if !info.IsDir() {
+				b, err := os.ReadFile(dot)
+				line := strings.TrimSpace(string(b))
+				if err != nil || !strings.HasPrefix(line, "gitdir: ") {
+					return GitInfo{}, false
+				}
+				gitDir = strings.TrimPrefix(line, "gitdir: ")
+				if !filepath.IsAbs(gitDir) {
+					gitDir = filepath.Join(d, gitDir)
+				}
+			}
+			common := gitDir
+			if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+				common = strings.TrimSpace(string(b))
+				if !filepath.IsAbs(common) {
+					common = filepath.Join(gitDir, common)
+				}
+			}
+			head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+			if err != nil {
+				return GitInfo{}, false
+			}
+			branch := "HEAD"
+			if ref, ok := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: refs/heads/"); ok {
+				branch = ref
+			}
+			return GitInfo{Top: d, Common: filepath.Clean(common), Branch: branch}, true
+		}
+		if p := filepath.Dir(d); p == d {
+			return GitInfo{}, true
 		}
 	}
-	return 0
+}
+
+// ahead counts HEAD's commits on none of the branches work merges into.
+func ahead(dir string) int {
+	out, err := exec.Command("git", "-C", dir, "rev-list", "--ignore-missing", "--count", "HEAD", "--not",
+		"origin/HEAD", "origin/main", "origin/master", "main", "master").Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
 }
 
 const gitTTL = 30 * time.Second

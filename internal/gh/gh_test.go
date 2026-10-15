@@ -17,10 +17,11 @@ func TestStatusFoldsChecksAndCountsUnresolvedThreads(t *testing.T) {
 	}{
 		{"checks and threads", `{"data":{"resource":{"state":"OPEN","title":"Retries","headRefName":"retries","commits":{"totalCount":3},
 			"reviewThreads":{"totalCount":3,"nodes":[{"isResolved":true},{"isResolved":false},{"isResolved":true}]},
-			"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
-			{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},
-			{"status":"COMPLETED","conclusion":"FAILURE"},{"status":"IN_PROGRESS","conclusion":""},{"state":"PENDING"},{"state":"ERROR"}]}}}}]}}}}`,
-			2, 2, 2, 3, 1, "retries"},
+			"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{
+			"checkRunCountsByState":[{"state":"SUCCESS","count":70},{"state":"SKIPPED","count":45},{"state":"FAILURE","count":1},
+			{"state":"IN_PROGRESS","count":3},{"state":"QUEUED","count":0}],
+			"statusContextCountsByState":[{"state":"PENDING","count":1},{"state":"ERROR","count":1},{"state":"SUCCESS","count":0}]}}}}]}}}}`,
+			115, 2, 4, 3, 1, "retries"},
 		{"no checks, threads past the first page", `{"data":{"resource":{"state":"MERGED","headRefName":"x","commits":{"totalCount":1},
 			"reviewThreads":{"totalCount":102,"nodes":[` + resolved(100) + `]},"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}`,
 			0, 0, 0, 102, 2, "x"},

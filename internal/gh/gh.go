@@ -22,18 +22,17 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   state title reviewDecision headRefName
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
-  last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
-    ... on CheckRun { status conclusion } ... on StatusContext { state } } } } } } }
+  last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
+    checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
 } } }`
 
 func query(url string) ([]byte, error) {
 	return exec.Command("gh", "api", "graphql", "-f", "url="+url, "-f", "query="+prQuery).Output()
 }
 
-type check struct {
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	State      string `json:"state"`
+type count struct {
+	State string `json:"state"`
+	Count int    `json:"count"`
 }
 
 type prJSON struct {
@@ -55,7 +54,8 @@ type prJSON struct {
 			Commit struct {
 				Rollup *struct {
 					Contexts struct {
-						Nodes []check `json:"nodes"`
+						Runs     []count `json:"checkRunCountsByState"`
+						Statuses []count `json:"statusContextCountsByState"`
 					} `json:"contexts"`
 				} `json:"statusCheckRollup"`
 			} `json:"commit"`
@@ -93,27 +93,24 @@ func (s *Source) PRStatus(url string) (core.PRStatus, error) {
 		if n.Commit.Rollup == nil {
 			continue
 		}
-		for _, c := range n.Commit.Rollup.Contexts.Nodes {
-			switch result(c) {
+		ctx := n.Commit.Rollup.Contexts
+		for _, c := range append(ctx.Runs, ctx.Statuses...) {
+			switch result(c.State) {
 			case "pass":
-				st.Passed++
+				st.Passed += c.Count
 			case "fail":
-				st.Failed++
+				st.Failed += c.Count
 			default:
-				st.Pending++
+				st.Pending += c.Count
 			}
 		}
 	}
 	return st, nil
 }
 
-// result folds a check run's conclusion or a status context's state into pass, fail or pending.
-func result(c check) string {
-	v := c.Conclusion
-	if v == "" {
-		v = c.State
-	}
-	switch v {
+// result folds a check run or status context state into pass, fail or pending.
+func result(state string) string {
+	switch state {
 	case "SUCCESS", "NEUTRAL", "SKIPPED":
 		return "pass"
 	case "FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE":
