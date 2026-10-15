@@ -189,15 +189,19 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			nudge, err := e.core.VibeNudge(c.Session)
+			nudge, err := e.core.VibeNudge(c)
 			if err != nil {
 				return err
 			}
 			if asJSON {
-				if err := printItems(cmd.OutOrStdout(), items, true); err != nil || nudge == "" {
-					return err
+				out := struct {
+					Items []itemJSON `json:"items"`
+					Vibe  string     `json:"vibe,omitempty"`
+				}{Items: []itemJSON{}, Vibe: nudge}
+				for _, it := range items {
+					out.Items = append(out.Items, toJSON(it))
 				}
-				return writeJSON(cmd.OutOrStdout(), map[string]string{"vibe": nudge})
+				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			for _, it := range items {
 				if it.State == core.ItemAnswered {

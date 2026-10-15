@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func TestVibesLandOnTheMissionOfWhoeverSetsThem(t *testing.T) {
@@ -144,35 +146,50 @@ func TestVibeTableMigratesOnceAndKeepsHistory(t *testing.T) {
 	}
 }
 
+type discoverCount struct {
+	Harness
+	n *int
+}
+
+func (d discoverCount) Discover(procs []proc.Proc) []Session {
+	*d.n++
+	return d.Harness.Discover(procs)
+}
+
 func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 	const run = `run ym vibe "<place>" --why "..."`
+	pids := map[string]int{"lead": 10, "worker": 11, "other": 30}
 	for _, tc := range []struct {
 		name    string
-		vibe    bool
+		setter  string
 		later   time.Duration
 		session string
 		want    string
+		scans   bool
 	}{
-		{"none yet", false, 0, "lead", "none yet, " + run},
-		{"fresh", true, time.Hour, "lead", ""},
-		{"fresh on the mission, asked by its worker", true, time.Hour, "worker", ""},
-		{"hours old", true, 3 * time.Hour, "lead", "3h old, " + run},
-		{"days old", true, 50 * time.Hour, "worker", "2d old, " + run},
-		{"other mission's vibe does not count", true, time.Hour, "other", "none yet, " + run},
+		{"none yet", "", 0, "lead", "none yet, " + run, true},
+		{"fresh", "lead", time.Hour, "lead", "", false},
+		{"fresh on the mission, asked by its worker", "lead", time.Hour, "worker", "", false},
+		{"fresh from the worker, asked by its lead", "worker", time.Hour, "lead", "", true},
+		{"hours old", "lead", 3 * time.Hour, "lead", "3h old, " + run, true},
+		{"days old", "lead", 50 * time.Hour, "worker", "2d old, " + run, true},
+		{"other mission's vibe does not count", "lead", time.Hour, "other", "none yet, " + run, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t)
 			w.run(10, 1, "/dev/t1", "claude", "lead", Busy)
 			w.run(11, 10, "/dev/t1", "codex", "worker", Busy)
 			w.run(30, 1, "/dev/t3", "claude", "other", Idle)
-			if tc.vibe {
-				if _, err := w.core.Store.AddVibe(Vibe{Place: "Colorado", Session: "lead", Harness: "claude"}); err != nil {
+			scans := 0
+			w.core.Harnesses = []Harness{discoverCount{w.claude, &scans}, discoverCount{w.codex, &scans}}
+			if tc.setter != "" {
+				if _, err := w.core.Store.AddVibe(Vibe{Place: "Colorado", Session: tc.setter, Harness: "claude"}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			w.core.Now = func() time.Time { return time.Now().Add(tc.later) }
 			for range 2 {
-				got, err := w.core.VibeNudge(tc.session)
+				got, err := w.core.VibeNudge(Caller{Session: tc.session, PID: pids[tc.session]})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -180,7 +197,10 @@ func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 					t.Fatalf("nudge = %q, want %q", got, tc.want)
 				}
 			}
-			if all, _ := w.core.Store.Vibes(); len(all) != map[bool]int{true: 1}[tc.vibe] {
+			if (scans > 0) != tc.scans {
+				t.Errorf("board scans = %d, want a scan %v", scans, tc.scans)
+			}
+			if all, _ := w.core.Store.Vibes(); len(all) != map[bool]int{true: 1}[tc.setter != ""] {
 				t.Errorf("nudging stored vibes: %+v", all)
 			}
 		})

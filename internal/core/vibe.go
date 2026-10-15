@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 // VibeStale is how long a vibe reads as current.
@@ -139,18 +141,33 @@ func (b Board) VibeTarget(ref, caller string) (string, error) {
 	return key, err
 }
 
-// VibeNudge asks the session to set its mission's vibe when the board shows none or one older than VibeStale; "" while it is fresh.
-func (c *Core) VibeNudge(session string) (string, error) {
-	b, err := c.Board()
-	if err != nil {
-		return "", err
-	}
+// VibeNudge asks the caller to set its mission's vibe while the mission has none or only ones older than VibeStale; "" while one is fresh.
+func (c *Core) VibeNudge(cl Caller) (string, error) {
 	all, err := c.Store.Vibes()
 	if err != nil {
 		return "", err
 	}
+	lin, err := c.Store.Lineage()
+	if err != nil {
+		return "", err
+	}
+	// A fresh vibe on the caller's own spawn chain settles it without the slow full board.
+	chain := c.spawnChain(cl)
+	root := projectOf(cl.Session, chain, lin)
+	for _, v := range all {
+		if c.now().Sub(v.At) > VibeStale {
+			break
+		}
+		if projectOf(v.on(), chain, lin) == root {
+			return "", nil
+		}
+	}
+	b, err := c.Board()
+	if err != nil {
+		return "", err
+	}
 	const run = `run ym vibe "<place>" --why "..."`
-	vs := b.VibesOf(all, b.ProjectOf(session))
+	vs := b.VibesOf(all, b.ProjectOf(cl.Session))
 	if len(vs) == 0 {
 		return "none yet, " + run, nil
 	}
@@ -162,4 +179,29 @@ func (c *Core) VibeNudge(session string) (string, error) {
 		return fmt.Sprintf("%dh old, %s", int(age.Hours()), run), nil
 	}
 	return fmt.Sprintf("%dd old, %s", int(age.Hours()/24), run), nil
+}
+
+// spawnChain links the caller to each agent session running above it in the process tree, as the board does.
+func (c *Core) spawnChain(cl Caller) map[string]string {
+	chain := map[string]string{}
+	if cl.PID == 0 {
+		return chain
+	}
+	procs, err := c.Procs()
+	if err != nil {
+		return chain
+	}
+	child := cl.Session
+	for _, p := range proc.Index(procs).Ancestors(cl.PID) {
+		for _, h := range c.Harnesses {
+			if !h.Owns(p) {
+				continue
+			}
+			if id := h.SessionID(p); p.TTY != "" && id != "" && id != child {
+				chain[child], child = id, id
+			}
+			break
+		}
+	}
+	return chain
 }
