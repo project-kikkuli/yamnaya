@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -115,7 +116,16 @@ func (p *serverPane) Prompt() (bool, bool) {
 	return shown, true
 }
 
+// Type types into the pane one ym at a time, so one sender's Enter never submits another's paste before it sees it land.
 func (p *serverPane) Type(text string) error {
+	lock, err := os.OpenFile(filepath.Join(filepath.Dir(p.l.conf), "type-"+strings.TrimPrefix(p.id, "%")+".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
 	pid, ok := p.l.srv.Running(p.id)
 	if !ok {
 		return fmt.Errorf("pane %s no longer runs its agent", p.id)
