@@ -101,6 +101,8 @@ type Board struct {
 	Repos    []Repo
 	Needs    []Need
 	Fleet    Fleet
+	// Stale are open items whose mission has no live session left.
+	Stale []Need
 
 	parents map[string]string
 	lin     Lineage
@@ -274,7 +276,7 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	b.Repos = repos(b.Projects)
-	b.Needs = needs(b)
+	b.Needs, b.Stale = needs(b)
 	if c.Meter != nil {
 		b.Fleet = c.Meter.Fleet(b.At)
 		for i := range b.Projects {
@@ -615,8 +617,8 @@ func projectStatus(p Project) Status {
 }
 
 // needs orders permission prompts first, then open items by how much they block, oldest first.
-func needs(b Board) []Need {
-	var out []Need
+// Items whose mission has no live session are stale and listed apart.
+func needs(b Board) (live, stale []Need) {
 	asked := map[string]bool{}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
@@ -624,7 +626,7 @@ func needs(b Board) []Need {
 			continue
 		}
 		if s.Prompt != nil || (s.Status == Waiting && strings.Contains(strings.ToLower(s.WaitingFor), "permission")) {
-			out = append(out, Need{Session: s, Project: s.Project})
+			live = append(live, Need{Session: s, Project: s.Project})
 			asked[s.Key()] = true
 		}
 	}
@@ -633,16 +635,25 @@ func needs(b Board) []Need {
 		p := &b.Projects[i]
 		for j := range p.Items {
 			if p.Items[j].State == ItemOpen {
-				items = append(items, Need{Item: &p.Items[j], Project: p.Key})
+				n := Need{Item: &p.Items[j], Project: p.Key}
+				if len(p.Sessions) > 0 {
+					items = append(items, n)
+				} else {
+					stale = append(stale, n)
+				}
 			}
 		}
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		a, c := items[i].Item, items[j].Item
-		if a.Blocks != c.Blocks {
-			return a.Blocks > c.Blocks
-		}
-		return a.CreatedAt.Before(c.CreatedAt)
-	})
-	return append(out, items...)
+	order := func(ns []Need) {
+		sort.SliceStable(ns, func(i, j int) bool {
+			a, c := ns[i].Item, ns[j].Item
+			if a.Blocks != c.Blocks {
+				return a.Blocks > c.Blocks
+			}
+			return a.CreatedAt.Before(c.CreatedAt)
+		})
+	}
+	order(items)
+	order(stale)
+	return append(live, items...), stale
 }

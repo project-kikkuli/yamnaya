@@ -124,7 +124,7 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
 		t.Fatalf("view:\n%s", v)
 	}
-	m = press(t, m, "down", "down", "down", "a", "ctrl+u", "ship", " ", "it", "enter")
+	m = press(t, m, "a", "ctrl+u", "ship", " ", "it", "enter")
 	it, _ := c.Store.Item("D1")
 	if it.State != core.ItemAnswered || it.Answer != "ship it" {
 		t.Fatalf("D1 = %+v", it)
@@ -139,7 +139,7 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 
 func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "down", "down", "down", "a", "enter")
+	m = press(t, m, "a", "enter")
 	if it, _ := c.Store.Item("D1"); it.Answer != "yes" {
 		t.Fatalf("enter on the default answered %q, want the rec", it.Answer)
 	}
@@ -151,7 +151,7 @@ func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 
 func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down", "down", "down", "down", "enter")
+	m = press(t, m, "down", "enter")
 	if m.mode != modeWhy || m.why.ID != "D2" || !strings.Contains(m.View(), "Rename the flag?") {
 		t.Fatalf("enter did not expand D2: mode %v\n%s", m.mode, m.View())
 	}
@@ -170,7 +170,7 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 
 func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "down", "down", "down", "down")
+	m = press(t, m, "down")
 	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 
 func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "down", "down", "down", "a", "esc", "l")
+	m = press(t, m, "a", "esc", "l")
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemSnoozed {
 		t.Fatalf("D1 = %s", it.State)
 	}
@@ -197,7 +197,7 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 
 func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down")
+	m = press(t, m, "down", "down", "down")
 	r, _ := m.selected()
 	if r.project == nil || r.need != nil {
 		t.Fatalf("cursor on %+v, want the first mission", r)
@@ -243,6 +243,7 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 		{modeSession, "CREW (1)"},
 		{modeAgent, "Run every test and report failures."},
 	}
+	m = press(t, m, "down", "down")
 	for _, st := range steps {
 		m = press(t, m, "enter")
 		if m.mode != st.mode || !strings.Contains(m.View(), st.want) {
@@ -285,7 +286,7 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "Docs pass") || !strings.Contains(v, "1 exited") {
 		t.Fatalf("a mission with only an exited launch is missing from the board:\n%s", v)
 	}
-	m = press(t, m, "down", "enter")
+	m = press(t, m, "down", "down", "down", "enter")
 	if !strings.Contains(m.View(), "exited 1") {
 		t.Fatalf("lead mission lacks its exited launch:\n%s", m.View())
 	}
@@ -298,5 +299,32 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	m = press(t, m, "enter")
 	if len(l.revived) != 1 || l.revived[0] != "fix-login" || m.message != "revived fix-login" {
 		t.Fatalf("revived %v, message %q", l.revived, m.message)
+	}
+}
+
+func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
+	m, c, _ := setup(t)
+	for _, q := range []string{"Old question?", "Older question?"} {
+		if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: q, Session: "ended", Blocks: 9}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = refresh(t, m)
+	v := m.View()
+	if !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "stale (2)") || strings.Contains(v, "Old question?") {
+		t.Fatalf("stale items should sit collapsed below the live ones:\n%s", v)
+	}
+	m = press(t, m, "down", "down", "enter")
+	if !strings.Contains(m.View(), "Older question?") {
+		t.Fatalf("enter on the stale line did not expand it:\n%s", m.View())
+	}
+	m = press(t, m, "x", "enter")
+	for _, id := range []string{"D3", "D4"} {
+		if it, _ := c.Store.Item(id); it.State != core.ItemDismissed {
+			t.Errorf("%s = %s after dismissing every stale item", id, it.State)
+		}
+	}
+	if it, _ := c.Store.Item("D1"); it.State != core.ItemOpen {
+		t.Errorf("a live item was dismissed with the stale ones")
 	}
 }

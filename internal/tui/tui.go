@@ -34,6 +34,7 @@ const (
 	inDismiss
 	inRename
 	inFilter
+	inDismissStale
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -45,6 +46,8 @@ type row struct {
 	member  *core.Member
 	dormant *core.Dormant
 	item    *core.Item
+	// stale is the collapsed line standing for every item whose mission has no live session.
+	stale bool
 }
 
 // frame is a drill level to return to on esc.
@@ -54,34 +57,35 @@ type frame struct {
 }
 
 type Model struct {
-	core     *core.Core
-	board    core.Board
-	loaded   bool
-	err      error
-	mode     mode
-	back     mode
-	cursor   int
-	stack    []frame
-	repo     string
-	detail   string
-	sess     string
-	agent    string
-	scrollY  int
-	prBusy   bool
-	input    []rune
-	fresh    bool
-	inKind   inputKind
-	inItem   string
-	inProj   string
-	filter   string
-	targets  []core.Target
-	cursor2  int
-	mergeSrc string
-	why      *core.Item
-	message  string
-	width    int
-	height   int
-	interval time.Duration
+	core      *core.Core
+	board     core.Board
+	loaded    bool
+	err       error
+	mode      mode
+	back      mode
+	cursor    int
+	stack     []frame
+	repo      string
+	detail    string
+	sess      string
+	agent     string
+	scrollY   int
+	prBusy    bool
+	showStale bool
+	input     []rune
+	fresh     bool
+	inKind    inputKind
+	inItem    string
+	inProj    string
+	filter    string
+	targets   []core.Target
+	cursor2   int
+	mergeSrc  string
+	why       *core.Item
+	message   string
+	width     int
+	height    int
+	interval  time.Duration
 }
 
 func New(c *core.Core) Model {
@@ -202,6 +206,8 @@ func rowKey(r row) string {
 		return "member:" + r.session.Key() + "/" + r.member.ID
 	case r.dormant != nil:
 		return "dormant:" + r.dormant.Key
+	case r.stale:
+		return "stale"
 	case r.session != nil:
 		return "session:" + r.session.Key()
 	case r.project != nil:
@@ -268,6 +274,21 @@ func (m Model) rows() []row {
 			out = append(out, row{project: &r.Missions[i], repo: &r})
 		}
 	default:
+		for i := range m.board.Needs {
+			n := &m.board.Needs[i]
+			if m.matches(m.projectName(n.Project), needText(*n)) {
+				out = append(out, row{need: n, item: n.Item, session: n.Session})
+			}
+		}
+		if len(m.board.Stale) > 0 {
+			out = append(out, row{stale: true})
+			for i := range m.board.Stale {
+				n := &m.board.Stale[i]
+				if m.showStale && m.matches(m.projectName(n.Project), needText(*n)) {
+					out = append(out, row{need: n, item: n.Item})
+				}
+			}
+		}
 		for i := range m.board.Repos {
 			r := &m.board.Repos[i]
 			all := m.matches(r.Name)
@@ -280,12 +301,6 @@ func (m Model) rows() []row {
 			if len(missions) > 0 {
 				out = append(out, row{repo: r})
 				out = append(out, missions...)
-			}
-		}
-		for i := range m.board.Needs {
-			n := &m.board.Needs[i]
-			if m.matches(m.projectName(n.Project), needText(*n)) {
-				out = append(out, row{need: n, item: n.Item, session: n.Session})
 			}
 		}
 	}
@@ -468,6 +483,15 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.do(func() (string, error) {
 				return "merged into " + r.project.Name, m.core.Store.Merge(src, dst)
 			})
+		}
+		return m, nil
+	}
+	if r.stale {
+		switch k.String() {
+		case "enter":
+			m.showStale = !m.showStale
+		case "x":
+			m.startInput(inDismissStale, "", "", "stale: its session ended", true)
 		}
 		return m, nil
 	}
@@ -657,6 +681,23 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.do(func() (string, error) {
 				_, d, err := m.core.Dismiss(board, id, text)
 				return id + " dismissed, " + d.String(), err
+			})
+		case inDismissStale:
+			if text == "" {
+				return m, nil
+			}
+			var ids []string
+			for _, n := range m.board.Stale {
+				ids = append(ids, n.Item.ID)
+			}
+			board := m.board
+			return m, m.do(func() (string, error) {
+				for _, id := range ids {
+					if _, _, err := m.core.Dismiss(board, id, text); err != nil {
+						return "", err
+					}
+				}
+				return fmt.Sprintf("dismissed %d stale items", len(ids)), nil
 			})
 		case inRename:
 			key := m.inProj

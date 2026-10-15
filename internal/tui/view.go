@@ -107,7 +107,7 @@ func (m Model) header() string {
 func (m Model) footer() []string {
 	var lines []string
 	if m.mode == modeInput {
-		label := map[inputKind]string{inAnswer: "answer " + m.inItem, inDismiss: "dismiss " + m.inItem + " because", inRename: "rename to", inFilter: "filter"}[m.inKind]
+		label := map[inputKind]string{inAnswer: "answer " + m.inItem, inDismiss: "dismiss " + m.inItem + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because"}[m.inKind]
 		if m.fresh {
 			lines = append(lines, " "+bold.Render(label+":")+" "+dim.Render(string(m.input))+"█")
 			lines = append(lines, dim.Render(" enter accepts the default   type to replace it   esc cancel"))
@@ -164,19 +164,27 @@ func (m Model) listView() string {
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
-		if r.need != nil {
+		if r.need != nil && !m.isStale(r.need) {
 			needs++
 		}
 	}
-	b.WriteString(bold.Render(" REPOS AND MISSIONS") + "\n")
-	if len(rows) == needs {
-		b.WriteString(dim.Render("   no sessions found") + "\n")
+	b.WriteString(bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
+	if needs == 0 {
+		b.WriteString(dim.Render("   nothing") + "\n")
 	}
+	repos := false
 	for i, r := range rows {
-		if r.need != nil && i == len(rows)-needs {
-			b.WriteString("\n" + bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
+		if (r.repo != nil || r.project != nil) && !repos {
+			repos = true
+			b.WriteString("\n" + bold.Render(" REPOS AND MISSIONS") + "\n")
 		}
 		switch {
+		case r.stale:
+			line := m.mark(i) + loud.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + dim.Render(" open items whose sessions ended")
+			if i == m.cursor {
+				line += dim.Render("   enter expand   x dismiss all")
+			}
+			b.WriteString(line + "\n")
 		case r.need != nil:
 			b.WriteString(m.needLines(i, *r.need))
 		case r.project == nil:
@@ -185,10 +193,19 @@ func (m Model) listView() string {
 			b.WriteString(m.missionLine(i, *r.project, "  "))
 		}
 	}
-	if needs == 0 {
-		b.WriteString("\n" + bold.Render(" NEEDS YOU (0)") + "\n" + dim.Render("   nothing") + "\n")
+	if !repos {
+		b.WriteString("\n" + bold.Render(" REPOS AND MISSIONS") + "\n" + dim.Render("   no sessions found") + "\n")
 	}
 	return b.String()
+}
+
+func (m Model) isStale(n *core.Need) bool {
+	for i := range m.board.Stale {
+		if n == &m.board.Stale[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // repoLine sums a repo's missions: sessions by status, running crew, open needs and pull requests.
