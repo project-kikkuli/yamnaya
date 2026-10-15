@@ -26,18 +26,17 @@ func Wire(path string) (*core.Core, error) {
 	}
 	cl, cx := claude.New(), codex.New()
 	cl.Cache, cx.Cache = st, st
-	var launches core.Launches
-	if l, err := newLauncher(); err == nil {
-		launches = l
-	}
 	c := &core.Core{
-		Launches:  launches,
 		Store:     st,
 		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), tmux.NewServer()},
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
+	}
+	if l, err := newLauncher(); err == nil {
+		l.core = c
+		c.Launches = l
 	}
 	return c, c.ScopeItems()
 }
@@ -100,6 +99,9 @@ func NewRoot() *cobra.Command {
 		landCmd(with),
 		launchedCmd(with),
 		linkLaunchCmd(with),
+		adoptCmd(with),
+		sendCmd(with),
+		sendHoldCmd(with),
 		installCmd(),
 		usageCmd(),
 		healthCmd(),

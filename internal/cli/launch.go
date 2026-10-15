@@ -24,6 +24,7 @@ import (
 )
 
 type launcher struct {
+	core    *core.Core
 	srv     *tmux.Host
 	records launch.Records
 	conf    string
@@ -215,7 +216,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 					if err := e.core.Store.Link(rec.Session, rec.Parent); err != nil {
 						return err
 					}
-				} else if err := detach(rec.Key); err != nil {
+				} else if err := detach("launch-link", rec.Key); err != nil {
 					return err
 				}
 			}
@@ -241,13 +242,13 @@ func printLaunch(w io.Writer, rec launch.Record, name, socket string) {
 	fmt.Fprintf(w, "open: ym open %s   (tmux -L %s attach -t %s)\n", rec.Key, socket, name)
 }
 
-// detach starts a background ym that links a Codex child to its parent once Codex has named its thread.
-func detach(key string) error {
+// detach runs ym with args in the background, outliving this ym.
+func detach(args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	c := exec.Command(self, "launch-link", key)
+	c := exec.Command(self, args...)
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := c.Start(); err != nil {
 		return err
@@ -403,7 +404,7 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "land <key|session>",
-		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed",
+		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			l, err := newLauncher()
@@ -413,6 +414,16 @@ func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			rec, err := l.find(args[0])
 			if err != nil {
 				return err
+			}
+			if rec.Adopted {
+				if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
+					return err
+				}
+				if err := l.records.Delete(rec.Key); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "landed %s; %s was not ym's, so it stays\n", rec.Key, rec.Worktree.Path)
+				return nil
 			}
 			why := "worktree already gone"
 			_, statErr := os.Stat(rec.Worktree.Path)

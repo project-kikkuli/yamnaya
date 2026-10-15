@@ -37,6 +37,8 @@ type Live struct {
 	App     string
 	Copies  []Session
 	Project string
+	// Messages are the follow-ups the owner sent this session.
+	Messages []Message
 }
 
 // Location names where the session runs, for display.
@@ -233,6 +235,9 @@ func (c *Core) Board() (Board, error) {
 		b.Sessions = append(b.Sessions, l)
 	}
 	c.attachPRs(b.Sessions)
+	if err := c.attachMessages(b.Sessions); err != nil {
+		return b, err
+	}
 	lin, err := c.Store.Lineage()
 	if err != nil {
 		return b, err

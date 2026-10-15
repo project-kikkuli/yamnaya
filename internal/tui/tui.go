@@ -36,6 +36,8 @@ const (
 	inRename
 	inFilter
 	inDismissStale
+	inAdopt
+	inSend
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -124,6 +126,11 @@ type doneMsg struct {
 	err     error
 }
 
+type adoptedMsg struct {
+	target core.Target
+	err    error
+}
+
 // refresh reloads the board; only the periodic reload schedules the next one, so actions never start a second loop.
 func (m Model) refresh(tick bool) tea.Cmd {
 	c := m.core
@@ -188,6 +195,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.message
 		}
 		return m, m.refresh(false)
+	case adoptedMsg:
+		if msg.err != nil {
+			m.message = "error: " + msg.err.Error()
+			return m, m.refresh(false)
+		}
+		return m, m.focus(msg.target)
 	case healthMsg:
 		m.health = msg.text
 		if msg.err != nil {
@@ -504,7 +517,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if (m.mode == modeAgent || m.mode == modeSession) && k.String() == "o" {
 			return m.open(row{})
 		}
-		return m, nil
+		if k.String() == "s" && (m.mode == modeAgent || m.mode == modeSession) {
+			r = row{}
+		} else {
+			return m, nil
+		}
 	}
 	if m.mode == modeMerge {
 		if k.Type == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
@@ -596,6 +613,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.message = "pick the mission to merge " + p.Name + " into, then enter; esc cancels"
 		}
 	case "s":
+		if s := m.sessionOf(r); s != nil && s.ID != "" && m.core.Launches != nil {
+			m.startInput(inSend, s.Key(), "", "", false)
+			m.inLabel = titleOf(*s)
+		}
+	case "S":
 		if p := m.projectOf(r); p != nil {
 			key := p.Key
 			return m, m.do(func() (string, error) {
@@ -697,6 +719,19 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		text := strings.TrimSpace(string(m.input))
 		m.mode = m.back
 		switch m.inKind {
+		case inAdopt:
+			return m.adopt(m.inItem)
+		case inSend:
+			if text == "" {
+				return m, nil
+			}
+			s, ok := m.board.Session(m.inItem)
+			if !ok {
+				m.message = m.inLabel + " is gone"
+				return m, nil
+			}
+			l := m.core.Launches
+			return m, m.do(func() (string, error) { return l.Send(s, text) })
 		case inFilter:
 			m.filter, m.cursor = text, 0
 		case inAnswer:
@@ -737,6 +772,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
+		if m.inKind == inAdopt {
+			return m, nil
+		}
 		if m.fresh {
 			m.input, m.fresh = nil, false
 		}
@@ -775,6 +813,11 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 		}
 	}
 	if key == "" {
+		return m, nil
+	}
+	if s, ok := m.board.Session(key); ok && s.Adoptable() && len(s.Copies) <= 1 && m.core.Launches != nil {
+		m.startInput(inAdopt, key, "", "", false)
+		m.inLabel = titleOf(s)
 		return m, nil
 	}
 	ts := m.core.Targets(m.board, key, harness)
@@ -819,4 +862,43 @@ func (m Model) pickKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.focus(m.targets[m.cursor2])
 	}
 	return m, nil
+}
+
+// adopt moves the session onto ym's server in the background, then shows it.
+func (m Model) adopt(key string) (tea.Model, tea.Cmd) {
+	s, ok := m.board.Session(key)
+	if !ok {
+		m.message = m.inLabel + " is gone"
+		return m, nil
+	}
+	m.message = "adopting " + m.inLabel + ": waits until it is idle, then ends it in its terminal"
+	l := m.core.Launches
+	return m, func() tea.Msg {
+		t, err := l.Adopt(s, nil)
+		return adoptedMsg{t, err}
+	}
+}
+
+// sessionOf is the session a row or the open view is about.
+func (m Model) sessionOf(r row) *core.Live {
+	switch {
+	case r.session != nil && r.member == nil:
+		return r.session
+	case r.item != nil:
+		if s, ok := m.board.Session(r.item.Session); ok {
+			return &s
+		}
+	case m.mode == modeSession || m.mode == modeAgent:
+		if s, ok := m.session(); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+func titleOf(s core.Live) string {
+	if s.Title != "" {
+		return s.Title
+	}
+	return core.Short(s.Key())
 }

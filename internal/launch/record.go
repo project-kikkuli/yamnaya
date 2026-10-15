@@ -22,6 +22,8 @@ type Record struct {
 	Worktree Worktree  `json:"worktree"`
 	Head     string    `json:"head,omitempty"`
 	Started  time.Time `json:"started"`
+	// Adopted records a session ym moved in from another terminal; its directory is not ym's to remove.
+	Adopted bool `json:"adopted,omitempty"`
 }
 
 // Records keeps one JSON file per launch under Dir.

@@ -26,8 +26,15 @@ func (d Dormant) ID() string {
 	return "launch:" + d.Key
 }
 
-// Launches lists and revives the sessions ym launched.
+// Launches lists, revives and adopts the sessions on ym's server, and sends sessions follow-ups.
 type Launches interface {
 	Dormant() []Dormant
 	Revive(key string) (string, error)
+	// Adopt waits until s sits idle, ends it in its current terminal and resumes it on ym's server.
+	Adopt(s Live, say func(string)) (Target, error)
+	// Send types text into s on ym's server, or leaves it for the agent's next ym item inbox.
+	Send(s Live, text string) (string, error)
 }
+
+// Adoptable reports whether ym can move s onto its own server: it runs in a terminal no host of ym's reaches.
+func (l Live) Adoptable() bool { return l.Handle == nil && l.PID != 0 && l.ID != "" }

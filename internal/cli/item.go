@@ -178,7 +178,7 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "inbox",
-		Short: "Print answers and dismissals for the calling session that it has not received yet, and mark them received",
+		Short: "Print answers, dismissals and the owner's messages for the calling session that it has not received yet, and mark them received",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()
@@ -199,7 +199,11 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
 			}
-			return nil
+			msgs, err := e.core.Store.TakeMessages(c.Session)
+			for _, m := range msgs {
+				fmt.Fprintf(cmd.OutOrStdout(), "msg: %s\n", m.Text)
+			}
+			return err
 		}),
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")

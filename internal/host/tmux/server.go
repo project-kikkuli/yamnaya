@@ -131,3 +131,9 @@ func (h *Host) Attach(hd core.Handle) *exec.Cmd {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd
 }
+
+// Alive reports whether pane id still exists and its program still runs.
+func (h *Host) Alive(id string) bool {
+	out, err := h.run("display-message", "-p", "-t", id, "#{pane_dead}")
+	return err == nil && out == "0"
+}

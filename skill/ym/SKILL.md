@@ -37,6 +37,7 @@ Always give `--rec`, options with their effects, and `--assumption`. The command
 
 - When you sit idle, an answer arrives typed into your prompt as `re D4: <answer>`. Act on it.
 - At the start of every turn, run `ym item inbox`. It prints `re <id>: <answer>` or `re <id>: dismissed: <reason>` for each answer you have not received, then marks them received. Act on each. A dismissed item is never asked again.
+- `ym item inbox` also prints `msg: <text>` for each follow-up the owner sent you with `ym send`. It is the owner speaking, exactly as if typed into your prompt: act on it in this turn, before or alongside your current work.
 - `ym item list` shows your project's open items; `--all` adds answered, dismissed and snoozed ones.
 
 ## Projects and phases

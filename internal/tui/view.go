@@ -113,8 +113,13 @@ func (m Model) header() string {
 
 func (m Model) footer() []string {
 	var lines []string
+	if m.mode == modeInput && m.inKind == inAdopt {
+		lines = append(lines, " "+bold.Render("move "+m.inLabel+" into ym?")+" it ends the process in its current terminal")
+		lines = append(lines, dim.Render(" enter yes   esc no"))
+		return lines
+	}
 	if m.mode == modeInput {
-		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because"}[m.inKind]
+		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter", inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel}[m.inKind]
 		if m.fresh {
 			lines = append(lines, " "+bold.Render(label+":")+" "+dim.Render(string(m.input))+"█")
 			lines = append(lines, dim.Render(" enter accepts the default   type to replace it   esc cancel"))
@@ -145,13 +150,13 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return "↑↓ move   enter open mission   o go to session   r rename   m merge   s split   esc back   ? help"
+		return "↑↓ move   enter open mission   o go to session   r rename   m merge   S split   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   a answer   l later   u unsnooze   x dismiss   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   a answer   l later   u unsnooze   x dismiss   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   a answer   x dismiss   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   a answer   x dismiss   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   esc back"
+		return "↑↓ scroll   space/b page   o go to its session   s send   esc back"
 	}
 	return "↑↓ move   enter expand   o go to session   a answer   l later   x dismiss   / filter   h health   ? help   q quit"
 }
@@ -525,7 +530,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		}
 		b.WriteString(m.mark(i) + alarm.Render("PERM ") + " " + name + " " + what + "\n")
 		if sel {
-			b.WriteString(dim.Render("         enter go to its session") + "\n")
+			b.WriteString(dim.Render("         enter "+goVerb(*n.Session)+"   s send") + "\n")
 		}
 		return b.String()
 	}
@@ -685,6 +690,9 @@ func (m Model) detailView() string {
 		}
 		if len(s.Copies) > 1 {
 			line += "  " + alarm.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
+		}
+		if i == m.cursor && s.Adoptable() {
+			line += dim.Render("   o adopt")
 		}
 		b.WriteString(line + "\n")
 		if d := doingText(m.board.At, s.Session); d != "" {
@@ -861,6 +869,21 @@ func (m Model) sessionView() string {
 	}
 	if len(s.Crew) == 0 {
 		b.WriteString(dim.Render("   none") + "\n")
+	}
+	if len(s.Messages) > 0 {
+		b.WriteString("\n" + bold.Render(" MESSAGES") + "\n")
+		for _, msg := range s.Messages {
+			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgInbox: "via inbox"}[msg.State]
+			when := age(m.board.At, msg.CreatedAt)
+			if !msg.Delivered.IsZero() {
+				when = "delivered " + age(m.board.At, msg.Delivered)
+			}
+			line := "   " + pad(state, 10) + " " + msg.Text + dim.Render("  "+when)
+			if msg.State != core.MsgPending {
+				line = dim.Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
 	}
 	if p, ok := m.board.Project(m.detail); ok {
 		var items []core.Item
@@ -1069,14 +1092,18 @@ const help = ` ym shows every Claude Code and Codex session and what needs you.
 
    ↑ ↓ or k j   move
    enter        an item: expand it; a permission prompt: go to its session; anything else: open it
-   o            go to the selected row's session: jump to its tmux pane, or say where it runs
+   o            go to the selected row's session: jump to its tmux pane, or say where it runs;
+                a session in another terminal (iTerm, Claude Desktop) is adopted: once idle, ym ends
+                it there and resumes it on its own server
+   s            send the session a follow-up: typed in on ym's server even mid-turn, held while a
+                permission prompt shows; other sessions read it from ym item inbox
    a            answer an item; an idle agent in tmux gets it typed in, others on their next turn
    l            later: snooze the item
    u            reopen a snoozed item (detail)
    x            dismiss the item with a reason
    r            rename a mission
    m            merge a mission into another
-   s            split a merged mission back out
+   S            split a merged mission back out
    /            filter
    h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    q            back or quit
@@ -1104,4 +1131,12 @@ func age(now, t time.Time) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+// goVerb is what going to the session does: adopt one in a terminal ym cannot reach, else go there.
+func goVerb(s core.Live) string {
+	if s.Adoptable() {
+		return "adopt"
+	}
+	return "go to its session"
 }

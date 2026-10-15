@@ -33,10 +33,15 @@ func (h harness) Discover(procs []proc.Proc) []core.Session {
 type host struct {
 	typed   []string
 	focused []string
+	// away are terminals no host reaches, like an iTerm window.
+	away map[string]bool
 }
 
 func (h *host) Name() string { return "tmux" }
 func (h *host) Locate(tty string) (core.Handle, bool) {
+	if h.away[tty] {
+		return core.Handle{}, false
+	}
 	return core.Handle{Host: "tmux", ID: tty, Label: tty}, true
 }
 func (h *host) Focus(hd core.Handle) (string, error) {
@@ -113,7 +118,9 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			}
 			next, cmd = m.Update(out)
 			m = next.(Model)
-			if _, ok := out.(doneMsg); !ok {
+			switch out.(type) {
+			case doneMsg, adoptedMsg:
+			default:
 				cmd = nil
 			}
 		}
@@ -269,6 +276,18 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 type launches struct {
 	dormant []core.Dormant
 	revived []string
+	adopted []string
+	sent    []string
+}
+
+func (l *launches) Adopt(s core.Live, say func(string)) (core.Target, error) {
+	l.adopted = append(l.adopted, s.Key())
+	return core.Target{Session: s.Session, Handle: &core.Handle{Host: "tmux", ID: "/dev/ym", Label: "ym"}}, nil
+}
+
+func (l *launches) Send(s core.Live, text string) (string, error) {
+	l.sent = append(l.sent, s.Key()+" "+text)
+	return "sent to " + s.Key(), nil
 }
 
 func (l *launches) Dormant() []core.Dormant { return l.dormant }
@@ -429,5 +448,53 @@ func TestOGoesToASessionWithNoCrewOrItems(t *testing.T) {
 	m = press(t, m, "o")
 	if m.mode != modePick || len(m.targets) != 2 {
 		t.Fatalf("o in a session view with nothing selected: mode %v, %d targets", m.mode, len(m.targets))
+	}
+}
+
+func TestGoingToASessionInAnotherTerminalAdoptsItOnceConfirmed(t *testing.T) {
+	m, c, h := setup(t)
+	l := &launches{}
+	c.Launches = l
+	h.away = map[string]bool{"/dev/a": true}
+	m = refresh(t, m)
+	m = press(t, m, "down", "down", "down", "enter")
+	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View(), "o adopt") {
+		t.Fatalf("lead session row should offer adopt:\n%s", m.View())
+	}
+	for _, c := range []struct {
+		keys    []string
+		adopted int
+	}{
+		{[]string{"o", "esc"}, 0},
+		{[]string{"o", "y", "enter"}, 1},
+	} {
+		m = press(t, m, c.keys...)
+		if len(l.adopted) != c.adopted {
+			t.Fatalf("after %v adopted %v", c.keys, l.adopted)
+		}
+	}
+	if !strings.Contains(strings.Join(h.focused, " "), "/dev/ym") {
+		t.Fatalf("adopted session was not shown; focused %v", h.focused)
+	}
+	h.away = nil
+	m = refresh(t, m)
+	m = press(t, m, "o")
+	if len(l.adopted) != 1 || !strings.Contains(strings.Join(h.focused, " "), "/dev/a") {
+		t.Fatalf("a session tmux reaches must be focused, not adopted: adopted %v focused %v", l.adopted, h.focused)
+	}
+}
+
+func TestSendComposesAFollowUpForTheSelectedSession(t *testing.T) {
+	m, c, _ := setup(t)
+	l := &launches{}
+	c.Launches = l
+	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, m, "s", "also", " ", "rebase", "enter")
+	if len(l.sent) != 1 || l.sent[0] != "lead also rebase" || m.message != "sent to lead" {
+		t.Fatalf("sent %v, message %q", l.sent, m.message)
+	}
+	m = press(t, m, "enter", "s", "esc")
+	if len(l.sent) != 1 {
+		t.Fatalf("esc should cancel the compose line; sent %v", l.sent)
 	}
 }
