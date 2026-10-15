@@ -424,7 +424,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "down", "j":
 		if m.mode == modeAgent {
-			m.scrollY++
+			m.scrollBy(1)
 		} else if m.cursor < len(m.rows())-1 {
 			m.cursor++
 		}
@@ -436,7 +436,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgdown", " ", "f":
 		if m.mode == modeAgent {
-			m.scrollY += m.height / 2
+			m.scrollBy(m.height / 2)
 		}
 		return m, nil
 	case "?":
@@ -538,6 +538,12 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// scrollBy moves the agent view by n lines, stopping where its last line reaches the bottom.
+func (m *Model) scrollBy(n int) {
+	total := strings.Count(m.agentView(), "\n")
+	m.scrollY = max(0, min(m.scrollY+n, total-m.height/2))
 }
 
 // push enters a deeper level, remembering where esc returns to.

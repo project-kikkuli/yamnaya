@@ -49,9 +49,9 @@ func (m Model) View() string {
 		foot = append(foot, strings.Split(ansi.Wrap(l, max(20, m.width-1), " "), "\n")...)
 	}
 	room := max(1, m.height-len(foot))
-	if m.mode == modeAgent && len(lines) > room {
+	if top := strings.Count(m.header(), "\n") + 2; m.mode == modeAgent && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
-		lines = append(lines[:2:2], lines[2+start:min(len(lines), 2+start+room-2)]...)
+		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
 		lines = m.scroll(lines, room)
 	}
