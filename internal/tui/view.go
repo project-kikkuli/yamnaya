@@ -248,7 +248,7 @@ func (m Model) repoLine(i int, r core.Repo) string {
 	}
 	if len(r.Missions) == 1 {
 		if v, ok := r.Missions[0].Vibe(); ok {
-			parts = append(parts, ansi.Truncate(v.Place, 20, "…"))
+			parts = append(parts, v.Place)
 		}
 	}
 	return m.mark(i) + bold.Render(pad(r.Name, min(28, max(12, m.width/5)))) + "  " + strings.Join(parts, " · ") + "\n"
@@ -343,9 +343,6 @@ func (m Model) vibeLines(p core.Project) string {
 		by = v.Harness + " " + core.Short(v.Session) + ", " + by
 	}
 	line += dim.Render("  " + by)
-	if m.width > 0 {
-		line = ansi.Truncate(line, m.width, "…")
-	}
 	if ps := p.Places(5); len(ps) > 1 {
 		var hist []string
 		for _, h := range ps {
