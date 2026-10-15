@@ -12,7 +12,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-const scanFormat = 2
+const scanFormat = 3
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -25,6 +25,8 @@ type scan struct {
 	Brief    string
 	Creating map[string]bool
 	Facts    core.Facts
+	// Before is the result as it stood before the latest reply, restored when that reply was a compaction summary.
+	Before string
 
 	modified time.Time
 }
@@ -84,6 +86,8 @@ func (t *scan) add(l rolloutLine, cwd string) {
 		return
 	}
 	switch l.Type {
+	case "compacted":
+		t.Facts.Result = t.Before
 	case "event_msg":
 		switch p.Type {
 		case "task_started":
@@ -101,7 +105,7 @@ func (t *scan) add(l rolloutLine, cwd string) {
 				t.prompt(p.text("input_text"))
 			case "assistant":
 				if s := p.text("output_text"); s != "" {
-					t.Facts.Result = s
+					t.Before, t.Facts.Result = t.Facts.Result, s
 				}
 			}
 		case "agent_message":

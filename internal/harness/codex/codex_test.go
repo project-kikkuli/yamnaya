@@ -206,6 +206,8 @@ func TestSpawnEdgesMakeCrewAndNeverAnswerForTheRoot(t *testing.T) {
 				`{"type":"response_item","payload":{"type":"agent_message","content":[{"type":"input_text","text":"Task name: /root/shepherd"},{"type":"encrypted_content","encrypted_content":"x"}]}}`,
 				`{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"p1","input":"*** Begin Patch\n*** Update File: lib/vms.py\n*** End Patch"}}`,
 				`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Shepherded."}]}}`,
+				`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"You are /root/shepherd. Summary of the work so far."}]}}`,
+				`{"type":"compacted","payload":{"message":"Another language model started to solve this problem and produced a summary of its thinking process."}}`,
 			), now + 2}},
 		{`INSERT INTO threads VALUES (?, ?, 0, ?, '/Users/me/src/web', '', 0, '', NULL, 'main', 'reviewer', NULL, '/root/shepherd/review', NULL)`,
 			[]any{grandkid, write(grandkid, `{"type":"event_msg","payload":{"type":"task_complete"}}`), now + 2}},
