@@ -23,7 +23,7 @@ func (c *Core) Switch(b Board, s Live, to string) (string, error) {
 }
 
 // Relaunch ends an idle session, ports it to the other harness and resumes the port on ym's server in the same directory.
-// A failure after the kill says the command that resumes the conversation by hand.
+// Any failure from the kill on says the command that resumes the conversation by hand.
 func (c *Core) Relaunch(s Live, to string) (string, error) {
 	if err := c.switchable(s, to); err != nil {
 		return "", err
@@ -35,7 +35,7 @@ func (c *Core) Relaunch(s Live, to string) (string, error) {
 		return "", fmt.Errorf("%s has no directory ym can read to relaunch it in", Short(s.Key()))
 	}
 	if _, err := c.Kill(s); err != nil {
-		return "", fmt.Errorf("%w; not relaunched", err)
+		return "", fmt.Errorf("%w; not relaunched; if it ended, resume it with: %s", err, c.resumeIn(s.Cwd, s.Harness, s.ID))
 	}
 	id, err := c.Port(s.Cwd, s.ID, to)
 	if err != nil {
