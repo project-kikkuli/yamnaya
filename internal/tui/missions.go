@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -11,21 +12,24 @@ import (
 )
 
 // cols are the widths of a mission row's columns, shared by every row so each column starts at one x.
-// A width of 0 drops the column: phase and bar when no mission has one, spend before usage is read, doing when the screen is too narrow.
+// A width of 0 drops the column: phase and bar when no mission has one, spend before usage is read, work when no mission has any, doing when the screen is too narrow.
 type cols struct {
 	indent, name, phase, state, bar, vibe, spend, doing int
+	// work is the running crew, open pull requests and failing ones, each its own fixed width.
+	work [3]int
 }
 
 const (
 	phaseName = 8
 	phaseDots = 7
 	minName   = 14
-	minDoing  = 12
+	minDoing  = 20
 )
 
-// missionCols sizes the columns to the board: names get their longest, doing what is left; a narrow screen drops doing first, then shortens names, then limit shares.
+// missionCols sizes the columns to the board; on a narrow screen limit shares give way to doing, then doing goes, then names shorten, then the work cell goes.
 func (m Model) missionCols(indent int) cols {
 	c := cols{indent: indent, state: 8, vibe: len("no vibe")}
+	dollars := 0
 	for _, p := range m.board.Projects {
 		c.name = max(c.name, ansi.StringWidth(p.Name))
 		if len(p.Phases.Names) > 0 {
@@ -38,39 +42,61 @@ func (m Model) missionCols(indent int) cols {
 			c.vibe = max(c.vibe, ansi.StringWidth(v.Place))
 		}
 		c.spend = max(c.spend, ansi.StringWidth(m.missionSpend(p)))
+		dollars = max(dollars, ansi.StringWidth(m.dollars(p)))
+		for j, part := range workParts(p) {
+			c.work[j] = max(c.work[j], ansi.StringWidth(part))
+		}
 	}
 	c.name = min(44, max(minName, c.name))
 	c.vibe = min(16, c.vibe)
 	c.spend = min(32, c.spend)
-	c.doing = m.width - 1 - c.fixed()
-	if c.doing < minDoing {
-		c.doing = 0
-		c.name = max(minName, c.name-(c.fixed()-(m.width-1)))
+	room := m.width - 1
+	if free := room - c.fixed() - 1; free >= minDoing {
+		c.doing = free
+	} else if c.spend-dollars >= minDoing-free {
+		c.spend -= minDoing - free
+		c.doing = minDoing
 	}
-	if over := c.fixed() - (m.width - 1); over > 0 && c.spend > 0 {
-		c.spend = max(len("$0.00"), c.spend-over)
+	if over := c.fixed() - room; over > 0 && c.spend > 0 {
+		c.spend = max(dollars, c.spend-over)
+	}
+	if over := c.fixed() - room; over > 0 {
+		c.name = max(minName, c.name-over)
+	}
+	if c.fixed() > room {
+		c.work = [3]int{}
 	}
 	return c
 }
 
-// fixed is every cell but doing's: the cursor mark, indent, columns and the space after each.
+// fixed is every cell but doing's own width: the cursor mark, indent, columns and the space after each.
 func (c cols) fixed() int {
 	w := 3 + c.indent + c.name
-	for _, n := range []int{c.phase, c.state, c.bar, c.vibe, c.spend} {
+	for _, n := range []int{c.phase, c.state, c.bar, c.vibe, c.spend, c.workWidth()} {
 		if n > 0 {
 			w += 1 + n
 		}
 	}
 	if c.doing > 0 {
-		w++
+		w += 1 + c.doing
 	}
 	return w
+}
+
+func (c cols) workWidth() int {
+	w := -1
+	for _, n := range c.work {
+		if n > 0 {
+			w += 1 + n
+		}
+	}
+	return max(0, w)
 }
 
 // missionLine is one mission: name, phase, state, progress, vibe, spend, then what its lead does now.
 func (m Model) missionLine(i int, p core.Project, c cols) string {
 	exited := len(p.Sessions) == 0 && len(p.Dormant) > 0
-	name := pal.hue(p.Key)
+	name := m.hue(p.Key)
 	if exited {
 		name = pal.dim
 	}
@@ -92,7 +118,10 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 	}
 	cells = append(cells, m.vibeCell(p, c.vibe))
 	if c.spend > 0 {
-		cells = append(cells, pad(m.missionSpend(p), c.spend))
+		cells = append(cells, m.spendCell(p, c.spend))
+	}
+	if c.workWidth() > 0 {
+		cells = append(cells, workCell(p, c.work))
 	}
 	if c.doing > 0 {
 		switch {
@@ -103,6 +132,18 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		}
 	}
 	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+}
+
+// hue is the project's color on this board, apart from every other project's while there are colors to spare.
+func (m Model) hue(key string) lipgloss.Style {
+	keys := make([]string, len(m.board.Projects))
+	for i, p := range m.board.Projects {
+		keys[i] = p.Key
+	}
+	if i, ok := hueSlots(keys)[key]; ok {
+		return pal.hues[i]
+	}
+	return pal.hue(key)
 }
 
 // phaseCell is the current phase's name and one dot per phase, each part clipped to its own width, blank without phases.
@@ -143,12 +184,70 @@ func (m Model) vibeCell(p core.Project, w int) string {
 	return pad(v.Place, w)
 }
 
+// dollars is a mission's spend without its limit shares, or "" until usage is read.
+func (m Model) dollars(p core.Project) string {
+	if !m.board.Fleet.Ready {
+		return ""
+	}
+	return p.Spend.Dollars()
+}
+
+// spendCell is the spend and as many whole limit shares as fit in w.
+func (m Model) spendCell(p core.Project, w int) string {
+	if full := m.missionSpend(p); ansi.StringWidth(full) <= w {
+		return pad(full, w)
+	}
+	text, shares := m.dollars(p), ""
+	for _, s := range strings.Split(m.board.Fleet.Shares(p.Spend), " · ") {
+		next := s
+		if shares != "" {
+			next = shares + " · " + s
+		}
+		if ansi.StringWidth(text+" "+next) > w {
+			break
+		}
+		shares = next
+	}
+	if shares != "" {
+		text += " " + pal.dim.Render(shares)
+	}
+	return pad(text, w)
+}
+
+// workParts are a mission's running crew, open pull requests and failing ones, each blank when there are none.
+func workParts(p core.Project) [3]string {
+	var parts [3]string
+	if n := runningCrew(p.Sessions); n > 0 {
+		parts[0] = fmt.Sprintf("%d▶", n)
+	}
+	t := tallyPRs(prsOf(p.Sessions))
+	if t.open > 0 {
+		parts[1] = fmt.Sprintf("%dPR", t.open)
+	}
+	if t.fail > 0 {
+		parts[2] = fmt.Sprintf("✗%d", t.fail)
+	}
+	return parts
+}
+
+// workCell lines each work part up under the same part of every other row.
+func workCell(p core.Project, w [3]int) string {
+	styles := [3]lipgloss.Style{pal.green, pal.plain, pal.red}
+	var cells []string
+	for j, part := range workParts(p) {
+		if w[j] > 0 {
+			cells = append(cells, styles[j].Render(pad(part, w[j])))
+		}
+	}
+	return strings.Join(cells, " ")
+}
+
 // repoLine is a repo's name and its counts.
 func (m Model) repoLine(i int, r core.Repo, c cols) string {
 	return m.mark(i) + pal.bold.Render(pad(r.Name, c.indent+c.name)) + " " + m.repoCounts(r) + "\n"
 }
 
-// repoCounts sums a repo's missions: sessions by status, running crew, pull requests and open needs.
+// repoCounts sums a repo's missions: open needs first so a narrow screen keeps them, then sessions by status, running crew and pull requests.
 func (m Model) repoCounts(r core.Repo) string {
 	var sessions []core.Live
 	exited := 0
@@ -156,7 +255,11 @@ func (m Model) repoCounts(r core.Repo) string {
 		sessions = append(sessions, p.Sessions...)
 		exited += len(p.Dormant)
 	}
-	parts := []string{plural(len(r.Missions), "mission"), sessionCounts(sessions)}
+	parts := []string{plural(len(r.Missions), "mission")}
+	if n := m.needsIn(r); n > 0 {
+		parts = append(parts, pal.red.Render(fmt.Sprintf("%d need you", n)))
+	}
+	parts = append(parts, sessionCounts(sessions))
 	if exited > 0 {
 		parts = append(parts, fmt.Sprintf("%d exited", exited))
 	}
@@ -165,9 +268,6 @@ func (m Model) repoCounts(r core.Repo) string {
 	}
 	if pr := prSummary(prsOf(sessions)); pr != "" {
 		parts = append(parts, pr)
-	}
-	if n := m.needsIn(r); n > 0 {
-		parts = append(parts, pal.red.Render(fmt.Sprintf("%d need you", n)))
 	}
 	return strings.Join(parts, " · ")
 }

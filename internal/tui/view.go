@@ -261,22 +261,6 @@ func (m Model) nameWidth() int {
 	return min(44, max(20, m.width/3))
 }
 
-func crewCounts(p core.Project) (running, idle, done int) {
-	for _, s := range p.Sessions {
-		for _, c := range s.Crew {
-			switch c.Status {
-			case core.Busy:
-				running++
-			case core.Done:
-				done++
-			default:
-				idle++
-			}
-		}
-	}
-	return
-}
-
 func runningCrew(sessions []core.Live) int {
 	n := 0
 	for _, s := range sessions {
@@ -329,28 +313,37 @@ func prsOf(sessions []core.Live) []core.PR {
 	return out
 }
 
-// prSummary counts open pull requests by CI result, then merged ones.
-func prSummary(prs []core.PR) string {
-	var open, fail, run, pass, merged int
+type prTally struct{ open, fail, run, pass, merged int }
+
+// tallyPRs counts open pull requests by CI result, then merged ones; closed ones count nowhere.
+func tallyPRs(prs []core.PR) prTally {
+	var t prTally
 	for _, pr := range prs {
 		switch {
 		case pr.Status != nil && pr.Status.State == "MERGED":
-			merged++
+			t.merged++
 		case pr.Status != nil && pr.Status.State == "CLOSED":
 		default:
-			open++
+			t.open++
 			if pr.Status != nil {
 				switch pr.Status.CI() {
 				case "failing":
-					fail++
+					t.fail++
 				case "running":
-					run++
+					t.run++
 				case "passing":
-					pass++
+					t.pass++
 				}
 			}
 		}
 	}
+	return t
+}
+
+// prSummary counts open pull requests by CI result, then merged ones.
+func prSummary(prs []core.PR) string {
+	t := tallyPRs(prs)
+	open, fail, run, pass, merged := t.open, t.fail, t.run, t.pass, t.merged
 	var parts []string
 	if open > 0 {
 		s := plural(open, "PR")
@@ -462,7 +455,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		return b.String()
 	}
 	it := n.Item
-	b.WriteString(m.mark(i) + pal.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
+	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)

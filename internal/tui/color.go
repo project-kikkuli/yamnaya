@@ -3,6 +3,7 @@ package tui
 import (
 	"hash/fnv"
 	"os"
+	"slices"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -52,6 +53,22 @@ func newPalette(r *lipgloss.Renderer, color bool) palette {
 // hue is the project's own color, derived from its key so it never needs storing.
 func (p palette) hue(key string) lipgloss.Style {
 	return p.hues[hueIndex(key)]
+}
+
+// hueSlots gives each project its own hue, or the next one no other project on the board holds, sharing only once all are taken.
+func hueSlots(keys []string) map[string]int {
+	slots, taken := map[string]int{}, map[int]bool{}
+	for _, k := range slices.Sorted(slices.Values(keys)) {
+		if len(taken) == len(hueColors) {
+			taken = map[int]bool{}
+		}
+		i := hueIndex(k)
+		for taken[i] {
+			i = (i + 1) % len(hueColors)
+		}
+		slots[k], taken[i] = i, true
+	}
+	return slots
 }
 
 func hueIndex(key string) int {

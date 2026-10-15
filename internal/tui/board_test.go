@@ -32,11 +32,19 @@ func missionBoard(now time.Time) core.Board {
 		return core.Live{Session: core.Session{ID: id, Status: st, Facts: core.Facts{Doing: doing}, Cwd: "/wt/" + id, Crew: crew}}
 	}
 	done := core.Member{ID: "a", Name: "a", Status: core.Done}
-	return core.Board{At: now, Fleet: core.Fleet{Ready: true}, Projects: []core.Project{
+	busy := core.Member{ID: "b", Name: "b", Status: core.Busy}
+	pr := func(n int, st *core.PRStatus) core.PR {
+		return core.PR{URL: fmt.Sprint("https://x/pull/", n), Number: n, Status: st}
+	}
+	var many []core.PR
+	for n := range 12 {
+		many = append(many, pr(100+n, nil))
+	}
+	b := core.Board{At: now, Fleet: core.Fleet{Ready: true}, Projects: []core.Project{
 		{Key: "full", Name: "Ship the importer", Status: core.Busy, Spend: core.Spend{USD: 173.4},
 			Phases:   core.Phases{Names: []string{"design", "implement", "validate", "ship"}, Current: 2},
 			Vibes:    []core.Vibe{{Place: "North Dakota", At: now}},
-			Sessions: []core.Live{live("full", core.Busy, core.Action{Tool: "Bash", Detail: "go test ./...", At: now.Add(-5 * time.Minute)}, done)}},
+			Sessions: []core.Live{live("full", core.Busy, core.Action{Tool: "Bash", Detail: "go test ./...", At: now.Add(-5 * time.Minute)}, done, busy)}},
 		{Key: "bare", Name: "x", Status: core.Idle,
 			Sessions: []core.Live{live("bare", core.Idle, core.Action{})}},
 		{Key: "long", Name: strings.Repeat("A very long mission name ", 4), Status: core.Waiting, Spend: core.Spend{USD: 0.5},
@@ -44,6 +52,9 @@ func missionBoard(now time.Time) core.Board {
 			Sessions: []core.Live{live("long", core.Waiting, core.Action{Tool: "Read", Detail: strings.Repeat("x", 300), At: now})}},
 		{Key: "gone", Name: "Gone", Dormant: []core.Dormant{{Key: "gone"}}},
 	}}
+	b.Projects[0].Sessions[0].PRs = []core.PR{pr(1, &core.PRStatus{State: "OPEN", Failed: 1}), pr(2, &core.PRStatus{State: "OPEN", Passed: 1}), pr(3, &core.PRStatus{State: "MERGED"})}
+	b.Projects[2].Sessions[0].PRs = many
+	return b
 }
 
 // x is the cell where want first starts in a rendered row, or -1.
@@ -78,6 +89,9 @@ func TestMissionColumnsStartAtOneXWhateverIsMissing(t *testing.T) {
 				{"state", map[string]string{"full": "busy", "bare": "idle", "long": "waiting", "gone": "exited"}},
 				{"vibe", map[string]string{"full": "North Dakota", "bare": "no vibe", "long": "no vibe", "gone": "no vibe"}},
 				{"spend", map[string]string{"full": "$173", "bare": "$0.00", "long": "$0.50", "gone": "$0.00"}},
+				{"running crew", map[string]string{"full": "1▶"}},
+				{"pull requests", map[string]string{"full": "2PR", "long": "12PR"}},
+				{"failing", map[string]string{"full": "✗1"}},
 			}
 			if c.doing > 0 {
 				columns = append(columns, struct {
@@ -180,7 +194,13 @@ func TestShortActionKeepsWhatTellsActionsApart(t *testing.T) {
 		{core.Action{Tool: "Read", Detail: "/h/notes/a/b/c.md"}, []string{"/wt"}, "Read: ~/…/c.md"},
 		{core.Action{Tool: "SendMessage", Detail: "to aadmit-implementer"}, nil, "SendMessage: to aadmit-implementer"},
 		{core.Action{Tool: "SendMessage", Detail: "to a0bcb2f4-1c2d-4e5f-9a8b-112233445566"}, nil, "SendMessage: to a0bcb2…"},
-		{core.Action{Tool: "Bash", Detail: "ym --session=7fccee8d-d83c-42d6 item inbox"}, nil, "Bash: ym --session=7fccee… item inbox"},
+		{core.Action{Tool: "Bash", Detail: "ym --session=7fccee8d-d83c-42d6 item inbox"}, nil, "Bash: ym item inbox"},
+		{core.Action{Tool: "Bash", Detail: `ym --session "$CODEX_SESSION_ID" phase next`}, nil, "Bash: ym phase next"},
+		{core.Action{Tool: "Bash", Detail: `ym -p "$P" item add`}, nil, "Bash: ym item add"},
+		{core.Action{Tool: "Bash", Detail: `git commit --message "fix the flag" -q`}, nil, "Bash: git commit -q"},
+		{core.Action{Tool: "Bash", Detail: `git commit -m "fix it" --amend`}, nil, `Bash: git commit -m "fix it" --amend`},
+		{core.Action{Tool: "Bash", Detail: "go test -run TestX --count 1 ./..."}, nil, "Bash: go test -run TestX --count 1 ./..."},
+		{core.Action{Tool: "SendMessage", Detail: "to adev1-validate-c7689032a95fae3c"}, nil, "SendMessage: to adev1-validate-c76890…"},
 		{core.Action{Tool: "Bash", Detail: "echo deadbeefcafebabe"}, nil, "Bash: echo deadbeefcafebabe"},
 		{core.Action{Tool: "WebFetch", Detail: "https://example.com/a/b/c/d"}, nil, "WebFetch: https://example.com/a/b/c/d"},
 		{core.Action{Tool: "Read"}, nil, "Read"},
@@ -200,5 +220,28 @@ func TestDoingCellClipsTheActionAndKeepsItsAge(t *testing.T) {
 		if ansi.StringWidth(got) > w || !strings.HasSuffix(got, "3h ago") {
 			t.Errorf("width %d: %q", w, got)
 		}
+	}
+}
+
+func TestProjectsOnOneBoardGetDifferentHuesWhileThereAreSpare(t *testing.T) {
+	for _, n := range []int{2, 4, len(hueColors), len(hueColors) + 3} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			var keys []string
+			for i := range n {
+				keys = append(keys, fmt.Sprintf("/Users/someone/dev/repo-%d", i*7))
+			}
+			slots := hueSlots(keys)
+			slices.Reverse(keys)
+			if again := hueSlots(keys); !maps.Equal(slots, again) {
+				t.Fatalf("hues depend on board order: %v then %v", slots, again)
+			}
+			used := map[int]int{}
+			for _, i := range slots {
+				used[i]++
+			}
+			if len(used) != min(n, len(hueColors)) {
+				t.Fatalf("%d projects share hues %v", n, used)
+			}
+		})
 	}
 }
