@@ -59,7 +59,7 @@ func startArgv(rec launch.Record) ([]string, error) {
 	if rec.Harness == claude.Name {
 		return []string{b, "--session-id", rec.Session, rec.Prompt}, nil
 	}
-	return []string{b, rec.Prompt}, nil
+	return append(append([]string{b}, codexDirs(rec)...), rec.Prompt), nil
 }
 
 func resumeArgv(rec launch.Record) ([]string, error) {
@@ -70,7 +70,19 @@ func resumeArgv(rec launch.Record) ([]string, error) {
 	if rec.Harness == claude.Name {
 		return []string{b, "--resume", rec.Session}, nil
 	}
-	return []string{b, "resume", rec.Session}, nil
+	return append(append([]string{b, "resume"}, codexDirs(rec)...), rec.Session), nil
+}
+
+// codexDirs lets Codex's sandbox write ym's state, so ym item works, and the repository's git dir, so the worktree can commit.
+func codexDirs(rec launch.Record) []string {
+	var args []string
+	if path, err := core.DefaultStorePath(); err == nil {
+		args = append(args, "--add-dir", filepath.Dir(path))
+	}
+	if rec.Worktree.GitDir != "" {
+		args = append(args, "--add-dir", rec.Worktree.GitDir)
+	}
+	return args
 }
 
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
@@ -153,8 +165,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			} else {
 				rec.Session = uuid.NewString()
 			}
-			argv, err := startArgv(rec)
-			if err != nil {
+			if _, err := bin(rec.Harness); err != nil {
 				return err
 			}
 			if c, err := e.caller(); err == nil {
@@ -166,6 +177,10 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 				return err
 			}
 			rec.Key, rec.Head = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path)
+			argv, err := startArgv(rec)
+			if err != nil {
+				return err
+			}
 			if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
 				return err
 			}
