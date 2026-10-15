@@ -159,15 +159,15 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return "↑↓ move   enter open mission   o go to session   n new   K kill   p/P phase   v vibe   r rename   m merge   S split   esc back   ? help"
+		return "↑↓ move   enter open mission   o go to session   n new   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   a answer   x dismiss   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   esc back"
+		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   o go to session   n new   K kill   a answer   l later   x dismiss   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   o go to session   n new   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {

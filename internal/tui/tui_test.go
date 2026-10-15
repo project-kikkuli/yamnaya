@@ -293,10 +293,15 @@ type launches struct {
 	sent    []string
 	started []core.NewLaunch
 	landed  []string
+	// startErr is what Start fails with, if anything.
+	startErr error
 }
 
 func (l *launches) Start(n core.NewLaunch) (string, error) {
 	l.started = append(l.started, n)
+	if l.startErr != nil {
+		return "", l.startErr
+	}
 	return n.Harness + " " + n.Slug + "\nopen: ym open " + n.Slug, nil
 }
 

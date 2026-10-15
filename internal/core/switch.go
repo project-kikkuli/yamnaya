@@ -26,7 +26,7 @@ func (c *Core) Switch(b Board, s Live, to string) (string, error) {
 	}
 	msg := fmt.Sprintf("ported to %s session %s", to, id)
 	if ts := c.Targets(b, id, to); len(ts) > 0 && ts[0].Resume != nil {
-		msg += fmt.Sprintf("; quit the %s session, then run: %s", s.Harness, strings.Join(ts[0].Resume, " "))
+		msg += fmt.Sprintf("\nquit the %s session, then run: %s", s.Harness, strings.Join(ts[0].Resume, " "))
 	}
 	return msg, nil
 }

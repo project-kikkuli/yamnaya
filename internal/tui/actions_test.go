@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -238,4 +239,106 @@ func fmtVibes(vs []core.Vibe) string {
 		out = append(out, v.Place+" "+v.Why+" "+v.Target)
 	}
 	return strings.Join(out, "; ")
+}
+
+// placed runs the fixture's sessions in /src/app-wt of repository /src/app, with session 1 on a permission prompt.
+type placed struct{ core.Harness }
+
+func (h placed) Discover(procs []proc.Proc) []core.Session {
+	out := h.Harness.Discover(procs)
+	for i := range out {
+		out[i].Cwd = "/src/app-wt"
+		if out[i].PID == 1 {
+			out[i].Status, out[i].Prompt = core.Waiting, &core.Prompt{Tool: "Bash", Detail: "rm -rf build"}
+		}
+	}
+	return out
+}
+
+func place(t *testing.T, m Model, c *core.Core) Model {
+	c.Harnesses[0] = placed{c.Harnesses[0]}
+	c.Git = func(string) core.GitInfo { return core.GitInfo{Common: "/src/app/.git", Top: "/src/app-wt"} }
+	m = refresh(t, m)
+	m.cursor = 0
+	return m
+}
+
+func TestKillWorksOnAPermissionPromptButNotOnAnItem(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		at   func(row) bool
+		sent []int
+	}{
+		{"permission prompt", func(r row) bool { return r.need != nil && r.item == nil }, []int{1}},
+		{"open item", func(r row) bool { return r.need != nil && r.item != nil }, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			m = place(t, m, k)
+			sent := signals(k, false)
+			m = press(t, to(t, m, c.at), "K")
+			if asks := m.mode == modeConfirm; asks != (c.sent != nil) {
+				t.Fatalf("K asked %v:\n%s", asks, m.View())
+			}
+			m = press(t, m, "y")
+			if !slices.Equal(*sent, c.sent) {
+				t.Fatalf("signalled %v, want %v", *sent, c.sent)
+			}
+		})
+	}
+}
+
+func TestNewStartsInTheSelectedRowsRepoAndShowsFailuresInline(t *testing.T) {
+	cwd, _ := os.Getwd()
+	for _, c := range []struct {
+		name    string
+		at      func(row) bool
+		keys    []string
+		err     error
+		repo    string
+		message string
+	}{
+		{"mission row", mission("lead"), []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
+		{"repo row", func(r row) bool { return r.repo != nil && r.project == nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
+		{"typed repo", mission("lead"), []string{"n", "go", "enter", "/elsewhere", "enter", "enter"}, nil, "/elsewhere", "started claude "},
+		{"permission prompt", func(r row) bool { return r.need != nil && r.item == nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
+		{"item with no repo", func(r row) bool { return r.need != nil && r.item != nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, cwd, "started claude "},
+		{"not a git repo", mission("lead"), []string{"n", "go", "enter", "enter", "enter"}, errors.New("/src/app is not a git repository"), "/src/app", "error: /src/app is not a git repository"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			l := &launches{startErr: c.err}
+			k.Launches = l
+			m = to(t, place(t, m, k), c.at)
+			for _, key := range c.keys {
+				if len(key) > 1 && key != "enter" {
+					m = press(t, m, strings.Split(key, "")...)
+					continue
+				}
+				m = press(t, m, key)
+			}
+			if len(l.started) != 1 || l.started[0].Repo != c.repo || l.started[0].Harness != "claude" || l.started[0].Prompt != "go" {
+				t.Fatalf("started %s, want claude in %s", fmtLaunches(l.started), c.repo)
+			}
+			if !strings.HasPrefix(m.message, c.message) || m.mode != modeList {
+				t.Fatalf("message %q in mode %v, want %q on the list", m.message, m.mode, c.message)
+			}
+		})
+	}
+}
+
+func TestBoardKeysWaitWhileAMergeIsPicked(t *testing.T) {
+	for _, key := range []string{"?", "h", "n", "I", "U", "E", "K", "p"} {
+		t.Run(key, func(t *testing.T) {
+			m, k, _ := setup(t)
+			k.Launches = &launches{}
+			m = press(t, to(t, m, mission("lead")), "m", key)
+			if m.mode != modeMerge {
+				t.Fatalf("%s left the merge for mode %v", key, m.mode)
+			}
+			if m = press(t, m, "esc"); m.mode != modeList || m.message != "merge cancelled" {
+				t.Fatalf("esc after %s: mode %v message %q", key, m.mode, m.message)
+			}
+		})
+	}
 }

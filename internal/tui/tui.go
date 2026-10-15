@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -478,6 +479,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case modePick:
 		return m.pickKey(k)
 	}
+	if m.mode == modeMerge && !slices.Contains([]string{"q", "esc", "up", "k", "down", "j", "enter"}, k.String()) {
+		return m, nil
+	}
 	m.message = ""
 	switch k.String() {
 	case "q":
@@ -749,9 +753,11 @@ func (m *Model) loadItems() {
 	m.clamp()
 }
 
-// killable is the live session K ends: the selected session, the session an agent runs in, or a mission's only session.
+// killable is the live session K ends: the selected session or permission prompt, the session an agent runs in, or a mission's only session.
 func (m Model) killable(r row) *core.Live {
 	switch {
+	case r.need != nil && r.item == nil:
+		return r.session
 	case r.need != nil || r.dormant != nil || r.stale:
 		return nil
 	case r.session != nil:
