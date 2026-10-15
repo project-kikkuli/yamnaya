@@ -100,8 +100,12 @@ func (l launcher) pane(id, harnessName string) *serverPane {
 }
 
 func (p *serverPane) Prompt() (bool, bool) {
-	if !p.l.srv.Alive(p.id) {
+	pid, ok := p.l.srv.Running(p.id)
+	if !ok {
 		return false, false
+	}
+	if w, ok := p.harness.(core.Waiter); ok && w.Waiting(pid) {
+		return true, true
 	}
 	screen, err := p.l.srv.Screen(core.Handle{ID: p.id})
 	if err != nil {

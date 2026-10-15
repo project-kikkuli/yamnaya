@@ -477,8 +477,7 @@ func TestGoingToASessionInAnotherTerminalAdoptsItOnceConfirmed(t *testing.T) {
 		t.Fatalf("adopted session was not shown; focused %v", h.focused)
 	}
 	h.away = nil
-	m = refresh(t, m)
-	m = press(t, m, "o")
+	press(t, refresh(t, m), "o")
 	if len(l.adopted) != 1 || !strings.Contains(strings.Join(h.focused, " "), "/dev/a") {
 		t.Fatalf("a session tmux reaches must be focused, not adopted: adopted %v focused %v", l.adopted, h.focused)
 	}

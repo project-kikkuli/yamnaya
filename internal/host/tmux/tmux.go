@@ -114,13 +114,10 @@ func (h *Host) Focus(hd core.Handle) (string, error) {
 	return "", err
 }
 
-// Type sends text literally, then Enter as a separate key so the harness does not read it as a pasted newline.
+// Type pastes text as one bracketed paste, then presses Enter, so neither harness reads fast input as a paste burst that swallows the Enter.
 func (h *Host) Type(hd core.Handle, text string) error {
-	if _, err := h.run("send-keys", "-t", hd.ID, "-l", text); err != nil {
-		return err
-	}
-	time.Sleep(150 * time.Millisecond)
-	_, err := h.run("send-keys", "-t", hd.ID, "Enter")
+	buf := fmt.Sprintf("ym-%d-%d", os.Getpid(), time.Now().UnixNano())
+	_, err := h.run("set-buffer", "-b", buf, "--", text, ";", "paste-buffer", "-p", "-d", "-b", buf, "-t", hd.ID, ";", "send-keys", "-t", hd.ID, "Enter")
 	return err
 }
 

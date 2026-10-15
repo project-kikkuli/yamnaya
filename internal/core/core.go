@@ -152,6 +152,11 @@ type Harness interface {
 	ParsePrompt(screen string) (Prompt, bool)
 }
 
+// Waiter is a harness whose own files say when a process waits on a dialog, even one drawn past the screen's edge.
+type Waiter interface {
+	Waiting(pid int) bool
+}
+
 // Handle points at one terminal inside a host.
 type Handle struct {
 	Host  string

@@ -89,6 +89,12 @@ func (a *Adapter) state(pid int) (state, bool) {
 	return st, true
 }
 
+// Waiting reports whether Claude Code at pid says it waits on a permission or other dialog.
+func (a *Adapter) Waiting(pid int) bool {
+	st, ok := a.state(pid)
+	return ok && st.Status == "waiting"
+}
+
 func argSessionID(args []string) string {
 	for i, arg := range args {
 		for _, flag := range []string{"--resume", "-r", "--session-id"} {
