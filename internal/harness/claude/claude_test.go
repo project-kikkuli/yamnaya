@@ -15,7 +15,6 @@ func fixture(t *testing.T) *Adapter {
 	return &Adapter{
 		Dir: filepath.Join("testdata", "home"),
 		Bin: "claude",
-		Git: func(dir string) (string, string) { return filepath.Base(dir), "main" },
 		Cwd: func(int) string { return "" },
 		Now: time.Now,
 	}
@@ -47,7 +46,7 @@ func TestDiscoverReadsStateTranscriptAndCrew(t *testing.T) {
 	}))
 	waiting := got[101]
 	if waiting.ID != "11111111-aaaa-4aaa-8aaa-111111111111" || waiting.Title != "Flaky login test" || waiting.Status != core.Waiting ||
-		waiting.WaitingFor != "permission prompt" || waiting.Cwd != "/Users/me/src/app" || waiting.Repo != "app" {
+		waiting.WaitingFor != "permission prompt" || waiting.Cwd != "/Users/me/src/app" {
 		t.Errorf("101 = %+v", waiting)
 	}
 	if len(waiting.Crew) != 2 {

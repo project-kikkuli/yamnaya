@@ -43,8 +43,8 @@ func (p Proc) program() int {
 	return 0
 }
 
-// List runs ps once and returns every process.
-func List() ([]Proc, error) {
+// listPS runs ps once and returns every process.
+func listPS() ([]Proc, error) {
 	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,tty=,etime=,args=").Output()
 	if err != nil {
 		return nil, err

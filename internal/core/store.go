@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS ym_merges (
 	project TEXT PRIMARY KEY,
 	into_project TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_scans (
+	path TEXT PRIMARY KEY,
+	offset INTEGER NOT NULL,
+	data BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ym_prs (
+	url TEXT PRIMARY KEY,
+	state TEXT NOT NULL DEFAULT '',
+	title TEXT NOT NULL DEFAULT '',
+	review TEXT NOT NULL DEFAULT '',
+	passed INTEGER NOT NULL DEFAULT 0,
+	failed INTEGER NOT NULL DEFAULT 0,
+	pending INTEGER NOT NULL DEFAULT 0,
+	fetched_at TEXT NOT NULL
+);
 `
 
 func DefaultStorePath() (string, error) {
@@ -452,4 +467,48 @@ func (s *Store) Split(project string) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+func (s *Store) LoadScan(path string) (int64, []byte, bool) {
+	var off int64
+	var data []byte
+	if s.db.QueryRow(`SELECT offset, data FROM ym_scans WHERE path = ?`, path).Scan(&off, &data) != nil {
+		return 0, nil, false
+	}
+	return off, data, true
+}
+
+func (s *Store) SaveScan(path string, offset int64, data []byte) error {
+	_, err := s.db.Exec(`INSERT INTO ym_scans (path, offset, data) VALUES (?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, data = excluded.data`, path, offset, data)
+	return err
+}
+
+// PRStatuses returns the last fetched status of every pull request ym knows.
+func (s *Store) PRStatuses() (map[string]PRStatus, error) {
+	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, fetched_at FROM ym_prs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]PRStatus{}
+	for rows.Next() {
+		var url string
+		var st PRStatus
+		var at sql.NullString
+		if err := rows.Scan(&url, &st.State, &st.Title, &st.Review, &st.Passed, &st.Failed, &st.Pending, &at); err != nil {
+			return nil, err
+		}
+		st.Fetched = parseTime(at)
+		out[url] = st
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SavePRStatus(url string, st PRStatus) error {
+	_, err := s.db.Exec(`INSERT INTO ym_prs (url, state, title, review, passed, failed, pending, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(url) DO UPDATE SET state = excluded.state, title = excluded.title, review = excluded.review,
+		passed = excluded.passed, failed = excluded.failed, pending = excluded.pending, fetched_at = excluded.fetched_at`,
+		url, st.State, st.Title, st.Review, st.Passed, st.Failed, st.Pending, st.Fetched.UTC().Format(time.RFC3339Nano))
+	return err
 }

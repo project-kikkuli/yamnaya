@@ -16,7 +16,10 @@ type mode int
 
 const (
 	modeList mode = iota
+	modeRepo
 	modeDetail
+	modeSession
+	modeAgent
 	modeInput
 	modeWhy
 	modePick
@@ -33,12 +36,20 @@ const (
 	inFilter
 )
 
-// row is one selectable line: a permission prompt, an item, a mission, or a session in detail.
+// row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
 	need    *core.Need
+	repo    *core.Repo
 	project *core.Project
 	session *core.Live
+	member  *core.Member
 	item    *core.Item
+}
+
+// frame is a drill level to return to on esc.
+type frame struct {
+	mode   mode
+	cursor int
 }
 
 type Model struct {
@@ -49,7 +60,13 @@ type Model struct {
 	mode     mode
 	back     mode
 	cursor   int
+	stack    []frame
+	repo     string
 	detail   string
+	sess     string
+	agent    string
+	scrollY  int
+	prBusy   bool
 	input    []rune
 	fresh    bool
 	inKind   inputKind
@@ -83,6 +100,11 @@ type boardMsg struct {
 
 type tickMsg struct{}
 
+type prMsg struct {
+	n   int
+	err error
+}
+
 type doneMsg struct {
 	message string
 	err     error
@@ -94,6 +116,15 @@ func (m Model) refresh(tick bool) tea.Cmd {
 	return func() tea.Msg {
 		b, err := c.Board()
 		return boardMsg{b, err, tick}
+	}
+}
+
+// refreshPRs fetches stale pull request statuses in the background; the board shows them on its next load.
+func (m Model) refreshPRs(b core.Board) tea.Cmd {
+	c := m.core
+	return func() tea.Msg {
+		n, err := c.RefreshPRs(b)
+		return prMsg{n, err}
 	}
 }
 
@@ -119,8 +150,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
 		m.follow(keep)
+		var cmds []tea.Cmd
 		if msg.tick {
-			return m, m.tick()
+			cmds = append(cmds, m.tick())
+		}
+		if msg.err == nil && !m.prBusy {
+			m.prBusy = true
+			cmds = append(cmds, m.refreshPRs(msg.board))
+		}
+		return m, tea.Batch(cmds...)
+	case prMsg:
+		m.prBusy = false
+		if msg.n > 0 {
+			return m, m.refresh(false)
 		}
 		return m, nil
 	case tickMsg:
@@ -155,10 +197,14 @@ func rowKey(r row) string {
 	switch {
 	case r.item != nil:
 		return "item:" + r.item.ID
+	case r.member != nil:
+		return "member:" + r.session.Key() + "/" + r.member.ID
 	case r.session != nil:
 		return "session:" + r.session.Key()
 	case r.project != nil:
 		return "project:" + r.project.Key
+	case r.repo != nil:
+		return "repo:" + r.repo.Key
 	}
 	return ""
 }
@@ -176,38 +222,103 @@ func (m *Model) clamp() {
 func (m Model) rows() []row {
 	var out []row
 	switch m.listMode() {
+	case modeAgent:
+		return nil
+	case modeSession:
+		p, _ := m.board.Project(m.detail)
+		s, ok := m.session()
+		if !ok {
+			return nil
+		}
+		for i := range s.Crew {
+			out = append(out, row{member: &s.Crew[i], session: s, project: &p})
+		}
+		for i := range p.Items {
+			if p.Items[i].Session == s.Key() {
+				out = append(out, row{item: &p.Items[i], project: &p})
+			}
+		}
 	case modeDetail:
 		p, ok := m.board.Project(m.detail)
 		if !ok {
 			return nil
 		}
 		for i := range p.Sessions {
-			out = append(out, row{session: &p.Sessions[i], project: &p})
+			s := &p.Sessions[i]
+			out = append(out, row{session: s, project: &p})
+			for j := range s.Crew {
+				out = append(out, row{member: &s.Crew[j], session: s, project: &p})
+			}
 		}
 		for i := range p.Items {
 			out = append(out, row{item: &p.Items[i], project: &p})
 		}
+	case modeRepo:
+		r, ok := m.board.Repo(m.repo)
+		if !ok {
+			return nil
+		}
+		for i := range r.Missions {
+			out = append(out, row{project: &r.Missions[i], repo: &r})
+		}
 	default:
+		for i := range m.board.Repos {
+			r := &m.board.Repos[i]
+			all := m.matches(r.Name)
+			var missions []row
+			for j := range r.Missions {
+				if all || m.matches(r.Missions[j].Name) {
+					missions = append(missions, row{project: &r.Missions[j], repo: r})
+				}
+			}
+			if len(missions) > 0 {
+				out = append(out, row{repo: r})
+				out = append(out, missions...)
+			}
+		}
 		for i := range m.board.Needs {
 			n := &m.board.Needs[i]
 			if m.matches(m.projectName(n.Project), needText(*n)) {
 				out = append(out, row{need: n, item: n.Item, session: n.Session})
 			}
 		}
-		for i := range m.board.Projects {
-			p := &m.board.Projects[i]
-			if len(p.Sessions) > 0 && m.matches(p.Name) {
-				out = append(out, row{project: p})
+	}
+	return out
+}
+
+// session is the session the session or agent view shows.
+func (m Model) session() (*core.Live, bool) {
+	if p, ok := m.board.Project(m.detail); ok {
+		for i := range p.Sessions {
+			if p.Sessions[i].Key() == m.sess {
+				return &p.Sessions[i], true
 			}
 		}
 	}
-	return out
+	if s, ok := m.board.Session(m.sess); ok {
+		return &s, true
+	}
+	return nil, false
+}
+
+// member is the crew member the agent view shows.
+func (m Model) member() (*core.Live, *core.Member, bool) {
+	s, ok := m.session()
+	if !ok {
+		return nil, nil, false
+	}
+	for i := range s.Crew {
+		if s.Crew[i].ID == m.agent {
+			return s, &s.Crew[i], true
+		}
+	}
+	return s, nil, false
 }
 
 // listMode is the list the cursor moves over, looking through overlays.
 func (m Model) listMode() mode {
 	switch m.mode {
-	case modeInput, modeWhy, modePick, modeHelp:
+	case modeInput, modeWhy, modePick, modeHelp, modeMerge:
 		return m.back
 	}
 	return m.mode
@@ -287,25 +398,45 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mode == modeList {
 			return m, tea.Quit
 		}
-		m.mode, m.cursor = modeList, 0
+		if m.mode == modeMerge {
+			m.mode = m.back
+		}
+		for len(m.stack) > 0 {
+			m.pop()
+		}
 		return m, nil
 	case "esc":
-		if m.mode == modeMerge {
-			m.mode, m.message = modeList, "merge cancelled"
-		} else if m.mode == modeDetail {
-			m.mode, m.cursor = modeList, 0
-		} else if m.filter != "" {
+		switch {
+		case m.mode == modeMerge:
+			m.mode, m.message = m.back, "merge cancelled"
+		case len(m.stack) > 0:
+			m.pop()
+		case m.filter != "":
 			m.filter = ""
 		}
 		return m, nil
 	case "up", "k":
-		if m.cursor > 0 {
+		if m.mode == modeAgent {
+			m.scrollY = max(0, m.scrollY-1)
+		} else if m.cursor > 0 {
 			m.cursor--
 		}
 		return m, nil
 	case "down", "j":
-		if m.cursor < len(m.rows())-1 {
+		if m.mode == modeAgent {
+			m.scrollY++
+		} else if m.cursor < len(m.rows())-1 {
 			m.cursor++
+		}
+		return m, nil
+	case "pgup", "b":
+		if m.mode == modeAgent {
+			m.scrollY = max(0, m.scrollY-m.height/2)
+		}
+		return m, nil
+	case "pgdown", " ", "f":
+		if m.mode == modeAgent {
+			m.scrollY += m.height / 2
 		}
 		return m, nil
 	case "?":
@@ -319,12 +450,15 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	r, ok := m.selected()
 	if !ok {
+		if m.mode == modeAgent && k.String() == "o" {
+			return m.open(row{})
+		}
 		return m, nil
 	}
 	if m.mode == modeMerge {
-		if k.Type == tea.KeyEnter && r.project != nil && r.need == nil {
+		if k.Type == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
 			src, dst := m.mergeSrc, r.project.Key
-			m.mode = modeList
+			m.mode = m.back
 			return m, m.do(func() (string, error) {
 				return "merged into " + r.project.Name, m.core.Store.Merge(src, dst)
 			})
@@ -333,14 +467,28 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch k.String() {
 	case "enter":
-		if r.item != nil {
+		switch {
+		case r.item != nil:
 			return m.expand(r.item.ID)
+		case r.need != nil:
+			return m.open(r)
+		case r.member != nil:
+			m.push(modeAgent)
+			m.sess, m.agent, m.scrollY = r.session.Key(), r.member.ID, 0
+			if r.project != nil {
+				m.detail = r.project.Key
+			}
+		case r.session != nil:
+			m.push(modeSession)
+			m.sess = r.session.Key()
+		case r.project != nil:
+			m.push(modeDetail)
+			m.detail = r.project.Key
+		case r.repo != nil:
+			m.push(modeRepo)
+			m.repo = r.repo.Key
 		}
-		if r.project != nil && r.need == nil && m.mode == modeList {
-			m.mode, m.detail, m.cursor = modeDetail, r.project.Key, 0
-			return m, nil
-		}
-		return m.open(r)
+		return m, nil
 	case "o":
 		return m.open(r)
 	case "a":
@@ -376,8 +524,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.startInput(inRename, "", p.Key, p.Name, true)
 		}
 	case "m":
-		if p := m.projectOf(r); p != nil && m.mode == modeList {
-			m.mergeSrc, m.mode = p.Key, modeMerge
+		if p := m.projectOf(r); p != nil && (m.mode == modeList || m.mode == modeRepo) {
+			m.mergeSrc, m.back, m.mode = p.Key, m.mode, modeMerge
 			m.message = "pick the mission to merge " + p.Name + " into, then enter; esc cancels"
 		}
 	case "s":
@@ -390,6 +538,19 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// push enters a deeper level, remembering where esc returns to.
+func (m *Model) push(to mode) {
+	m.stack = append(m.stack, frame{m.mode, m.cursor})
+	m.mode, m.cursor = to, 0
+}
+
+func (m *Model) pop() {
+	f := m.stack[len(m.stack)-1]
+	m.stack = m.stack[:len(m.stack)-1]
+	m.mode, m.cursor = f.mode, f.cursor
+	m.clamp()
 }
 
 // expand shows an item in full; its keys act on it there.
@@ -407,10 +568,10 @@ func (m Model) projectOf(r row) *core.Project {
 	if r.need != nil {
 		return nil
 	}
-	if r.project != nil && r.session == nil && r.item == nil {
+	if r.project != nil && r.session == nil && r.item == nil && r.member == nil {
 		return r.project
 	}
-	if m.mode == modeDetail {
+	if m.mode == modeDetail || m.mode == modeSession {
 		if p, ok := m.board.Project(m.detail); ok {
 			return &p
 		}
@@ -508,6 +669,10 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 		key, harness = r.item.Session, r.item.Harness
 	case r.project != nil && len(r.project.Sessions) > 0:
 		key, harness = r.project.Sessions[0].Key(), r.project.Sessions[0].Harness
+	case m.mode == modeAgent || m.mode == modeSession:
+		if s, ok := m.session(); ok {
+			key, harness = s.Key(), s.Harness
+		}
 	}
 	if key == "" {
 		return m, nil

@@ -22,15 +22,14 @@ const Name = "claude"
 const staleAfter = 15 * time.Minute
 
 type Adapter struct {
-	Dir string
-	Bin string
-	Git func(dir string) (repo, branch string)
-	Cwd func(pid int) string
-	Now func() time.Time
+	Dir   string
+	Bin   string
+	Cwd   func(pid int) string
+	Now   func() time.Time
+	Cache core.ScanCache
 
 	mu    sync.Mutex
 	scans map[string]*scan
-	git   map[string]gitEntry
 }
 
 func New() *Adapter {
@@ -43,7 +42,7 @@ func New() *Adapter {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Bin: bin, Git: gitInfo, Cwd: cwdOf, Now: time.Now}
+	return &Adapter{Dir: dir, Bin: bin, Cwd: cwdOf, Now: time.Now}
 }
 
 func (a *Adapter) Name() string { return Name }
@@ -167,15 +166,19 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 		s.Status, s.Since, s.WaitingFor = core.Waiting, msTime(st.StatusUpdatedAt), st.WaitingFor
 	case ok && st.Status == "idle":
 		s.Status, s.Since = core.Idle, msTime(st.StatusUpdatedAt)
-	case path != "" && sc.open && now.Sub(sc.modified) < staleAfter:
+	case path != "" && sc.Open && now.Sub(sc.modified) < staleAfter:
 		s.Status, s.Since = core.Busy, sc.modified
 	case path != "":
 		s.Status, s.Since = core.Idle, sc.modified
 	}
+	s.Facts = sc.Facts
+	s.Task = sc.First
+	if s.Ask == "" {
+		s.Ask = sc.LastPrompt
+	}
 	if path != "" {
 		s.Crew = a.crew(filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents"), s.Status == core.Busy, now)
 	}
-	s.Repo, s.Branch = a.gitFor(s.Cwd, now)
 	return s
 }
 
@@ -198,43 +201,4 @@ func cwdOf(pid int) string {
 		}
 	}
 	return ""
-}
-
-const gitTTL = 30 * time.Second
-
-type gitEntry struct {
-	repo, branch string
-	at           time.Time
-}
-
-func gitInfo(dir string) (string, string) {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD").Output()
-	if err != nil {
-		return "", ""
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) != 2 {
-		return "", ""
-	}
-	return filepath.Base(lines[0]), lines[1]
-}
-
-func (a *Adapter) gitFor(dir string, now time.Time) (string, string) {
-	if dir == "" || a.Git == nil {
-		return "", ""
-	}
-	a.mu.Lock()
-	e, ok := a.git[dir]
-	a.mu.Unlock()
-	if ok && now.Sub(e.at) < gitTTL {
-		return e.repo, e.branch
-	}
-	repo, branch := a.Git(dir)
-	a.mu.Lock()
-	if a.git == nil {
-		a.git = map[string]gitEntry{}
-	}
-	a.git[dir] = gitEntry{repo, branch, now}
-	a.mu.Unlock()
-	return repo, branch
 }
