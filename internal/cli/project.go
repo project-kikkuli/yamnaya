@@ -165,6 +165,10 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Short: "Focus the terminal running a session, or print its resume command when no terminal can be reached",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			if ok, err := e.openLaunched(out, args[0]); ok || err != nil {
+				return err
+			}
 			b, err := e.core.Board()
 			if err != nil {
 				return err
@@ -179,7 +183,6 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if len(ts) == 0 {
 				return fmt.Errorf("no session %q", args[0])
 			}
-			out := cmd.OutOrStdout()
 			if len(ts) > 1 && pick == 0 {
 				fmt.Fprintf(out, "%s runs in %d processes; pass --pick N:\n", core.Short(key), len(ts))
 				for i, t := range ts {
@@ -193,6 +196,9 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 					return fmt.Errorf("--pick %d: only %d processes", pick, len(ts))
 				}
 				t = ts[pick-1]
+			}
+			if c := e.core.AttachCmd(t); c != nil {
+				return e.attach(c)
 			}
 			err = e.core.Focus(t)
 			if errors.Is(err, core.ErrNoHost) {

@@ -525,6 +525,9 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) focus(t core.Target) tea.Cmd {
+	if cmd := m.core.AttachCmd(t); cmd != nil {
+		return tea.ExecProcess(cmd, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
+	}
 	return m.do(func() (string, error) {
 		err := m.core.Focus(t)
 		if errors.Is(err, core.ErrNoHost) {

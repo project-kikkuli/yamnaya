@@ -25,7 +25,7 @@ func Wire(path string) (*core.Core, error) {
 	return &core.Core{
 		Store:     st,
 		Harnesses: []core.Harness{claude.New(), codex.New()},
-		Hosts:     []core.Host{tmux.New()},
+		Hosts:     []core.Host{tmux.New(), tmux.NewServer()},
 		Procs:     proc.List,
 	}, nil
 }
@@ -73,6 +73,11 @@ func NewRoot() *cobra.Command {
 		sessionsCmd(with),
 		openCmd(with),
 		switchCmd(with),
+		newCmd(with),
+		reviveCmd(with),
+		landCmd(with),
+		launchedCmd(with),
+		linkLaunchCmd(with),
 		installCmd(),
 	)
 	return root
