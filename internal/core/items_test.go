@@ -193,3 +193,24 @@ func TestASandboxedCodexFilesIntoItsRepoByItsThreadEnv(t *testing.T) {
 		t.Fatalf("filed %+v (%v) with no process table, want it in the thread's repo", it, err)
 	}
 }
+
+func TestTheEnvironmentNamesTheCallerOnlyWhenTheProcessTableIsUnreadable(t *testing.T) {
+	env := func(k string) string { return map[string]string{"CLAUDE_CODE_SESSION_ID": "inherited"}[k] }
+	for _, c := range []struct {
+		name  string
+		procs func() ([]proc.Proc, error)
+		want  Caller
+	}{
+		{"sandboxed", func() ([]proc.Proc, error) { return nil, errors.New("exec: ps: operation not permitted") }, Caller{Harness: "claude", Session: "inherited"}},
+		{"outside any session", func() ([]proc.Proc, error) { return []proc.Proc{{PID: 7, PPID: 1, Args: []string{"zsh"}}}, nil }, Caller{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.core.Procs = c.procs
+			got, err := w.core.Calling(7, env)
+			if got != c.want || (c.want == Caller{}) != errors.Is(err, ErrNotFound) {
+				t.Fatalf("Calling = %+v, %v; want %+v", got, err, c.want)
+			}
+		})
+	}
+}

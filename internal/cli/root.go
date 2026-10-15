@@ -114,12 +114,7 @@ func (e *env) caller() (core.Caller, error) {
 	if e.session != "" {
 		return e.core.CallerOf(e.session)
 	}
-	c, err := e.core.Identify(os.Getpid())
-	if err != nil {
-		if env, ok := core.CallerFromEnv(os.Getenv); ok {
-			return env, nil
-		}
-	}
+	c, err := e.core.Calling(os.Getpid(), os.Getenv)
 	if errors.Is(err, core.ErrNotFound) {
 		return c, fmt.Errorf("%w; run ym from inside a claude or codex session, or pass --session", err)
 	}

@@ -37,6 +37,17 @@ func (c *Core) Identify(pid int) (Caller, error) {
 	return Caller{}, fmt.Errorf("no claude or codex process above pid %d: %w", pid, ErrNotFound)
 }
 
+// Calling is the session above pid, or the one its harness names in the environment when the process table cannot be read.
+func (c *Core) Calling(pid int, getenv func(string) string) (Caller, error) {
+	cl, err := c.Identify(pid)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		if env, ok := CallerFromEnv(getenv); ok {
+			return env, nil
+		}
+	}
+	return cl, err
+}
+
 // CallerFromEnv is the session a harness names in its shells' environment, for when the process table cannot be read, as in Codex's sandbox.
 func CallerFromEnv(getenv func(string) string) (Caller, bool) {
 	for _, v := range []struct{ harness, key string }{{"codex", "CODEX_THREAD_ID"}, {"claude", "CLAUDE_CODE_SESSION_ID"}} {
