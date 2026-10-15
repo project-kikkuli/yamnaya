@@ -132,13 +132,33 @@ func (p Project) Places(n int) []Vibe {
 	return out
 }
 
-// VibeTarget is where a vibe set with -p ref goes: the mission ref names, else the setter's own when caller is set, as ym item add files against the caller whatever -p says.
-func (b Board) VibeTarget(ref, caller string) (string, error) {
-	key, err := b.ProjectKey(ref)
-	if err != nil && caller != "" {
+// VibeTarget is the mission a vibe set with -p ref lands on: a project, session or repo ref names, the setter's own when ref is "".
+// A repo means the setter's mission when it works there, else the repo's only mission.
+func (b Board) VibeTarget(ref, setter string) (string, error) {
+	if ref == "" {
 		return "", nil
 	}
-	return key, err
+	key, err := b.ProjectKey(ref)
+	if !errors.Is(err, ErrNotFound) {
+		return key, err
+	}
+	for _, r := range b.Repos {
+		if r.Key != ref && !strings.EqualFold(r.Name, ref) {
+			continue
+		}
+		var keys []string
+		for _, p := range r.Missions {
+			if setter != "" && p.Key == b.ProjectOf(setter) {
+				return p.Key, nil
+			}
+			keys = append(keys, p.Key)
+		}
+		if len(keys) == 1 {
+			return keys[0], nil
+		}
+		return "", fmt.Errorf("repo %q has %d missions, pass one: %s", ref, len(keys), strings.Join(keys, ", "))
+	}
+	return "", err
 }
 
 // VibeNudge asks the caller to set its mission's vibe while the mission has none or only ones older than VibeStale; "" while one is fresh.

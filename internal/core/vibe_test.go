@@ -2,6 +2,7 @@ package core
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -207,25 +208,51 @@ func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 	}
 }
 
-func TestVibeTargetTakesWhatItemAddTakesFromASession(t *testing.T) {
+func TestVibeWithAProjectFlagLandsOnTheMissionItNamesOrFails(t *testing.T) {
 	w := newWorld(t)
-	w.run(10, 1, "/dev/t1", "claude", "lead", Busy)
-	w.run(30, 1, "/dev/t3", "claude", "other", Idle)
-	b := w.board(t)
-	for _, tc := range []struct {
-		ref, caller, want string
-		fails             bool
-	}{
-		{"other", "lead", "other", false},
-		{"title other", "lead", "other", false},
-		{"yamnaya", "lead", "", false},
-		{"", "lead", "", false},
-		{"other", "", "other", false},
-		{"yamnaya", "", "", true},
+	repos := map[string]GitInfo{
+		"/src/app":          {Top: "/src/app", Common: "/src/app/.git", Branch: "main"},
+		"/src/app-wt-login": {Top: "/src/app-wt-login", Common: "/src/app/.git", Branch: "login"},
+		"/src/tool":         {Top: "/src/tool", Common: "/src/tool/.git", Branch: "main"},
+	}
+	w.core.Git = func(dir string) GitInfo { return repos[dir] }
+	for pid, s := range map[int]Session{
+		10: {ID: "main", Cwd: "/src/app", Status: Busy},
+		11: {ID: "login", Cwd: "/src/app-wt-login", Status: Idle},
+		12: {ID: "tool", Cwd: "/src/tool", Status: Idle},
 	} {
-		got, err := b.VibeTarget(tc.ref, tc.caller)
-		if (err != nil) != tc.fails || got != tc.want {
-			t.Errorf("VibeTarget(%q, %q) = %q, %v; want %q, fails %v", tc.ref, tc.caller, got, err, tc.want, tc.fails)
-		}
+		w.procs = append(w.procs, procOf(pid, "claude"))
+		w.claude.sessions[pid] = s
+	}
+	for _, tc := range []struct {
+		name, ref, setter, want, fails string
+	}{
+		{"no -p lands on the setter's mission", "", "main", "main", ""},
+		{"a session id", "tool", "main", "tool", ""},
+		{"a repo with one mission, from another repo", "tool", "login", "tool", ""},
+		{"a repo the setter works in", "app", "login", "login", ""},
+		{"a repo with several missions, from outside it", "app", "tool", "", "has 2 missions"},
+		{"a mistyped ref", "appx", "main", "", `project "appx": not found`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := w.board(t)
+			target, err := b.VibeTarget(tc.ref, tc.setter)
+			if tc.fails != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.fails) {
+					t.Fatalf("VibeTarget(%q) = %q, %v; want an error with %q", tc.ref, target, err, tc.fails)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			v, err := w.core.Store.AddVibe(Vibe{Place: "Ohio", Session: tc.setter, Harness: "claude", Target: target})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := b.ProjectOf(v.on()); got != tc.want {
+				t.Errorf("vibe landed on %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
