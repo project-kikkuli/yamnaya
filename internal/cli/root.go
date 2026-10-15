@@ -14,6 +14,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
+	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
 // Wire builds a core with every adapter and the store at path.
@@ -64,7 +65,16 @@ func NewRoot() *cobra.Command {
 			return run(e, cmd, args)
 		}
 	}
-	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error { return tui.Run(e.core) })
+	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		dir, err := stateDir()
+		if err != nil {
+			return err
+		}
+		m := usage.New(dir)
+		defer m.Close()
+		e.core.Meter = m
+		return tui.Run(e.core)
+	})
 	root.AddCommand(
 		itemCmd(with),
 		phaseCmd(with),
@@ -79,6 +89,8 @@ func NewRoot() *cobra.Command {
 		launchedCmd(with),
 		linkLaunchCmd(with),
 		installCmd(),
+		usageCmd(),
+		limitsCmd(),
 	)
 	return root
 }
