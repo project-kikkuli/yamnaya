@@ -15,13 +15,20 @@
 - **Missions**: one row per project, with phases, crew and status. A project is a session plus the sessions it started; subagents and teammates are its crew. Rename (`r`), merge (`m`) or split (`s`) missions.
 - `enter` on a need opens its session; on a mission it shows the detail. When ym runs inside tmux and the session is in a tmux pane, ym jumps there with `switch-client` and `select-pane`. Otherwise it says where the session runs (for example `iTerm ttys012`) and never opens windows or tabs. It never starts a second copy, and flags a session that runs in two processes.
 
+Sessions started with `ym new` run on a separate tmux server, `tmux -L ym`, with its own config and the default `C-b` prefix; ym never touches any other tmux server. `enter` on one of them attaches it in the board's terminal, and detaching returns to the board.
+
 An answer is typed into the agent's tmux pane as `re D4: <answer>` when the agent sits idle; otherwise the agent reads it with `ym item inbox` on its next turn.
 
 ## Commands
 
     ym                                  the board
     ym sessions [--json]                every live session with host and project
-    ym open <session|item>              jump to a session's tmux pane, or say where it runs
+    ym new [--codex] [--repo P] [--slug S] "<prompt>"
+                                        start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
+    ym open <session|item|key>          show a session: ym's own sessions attach in this terminal; detach (C-b d) returns to the board
+    ym launched                         sessions ym started, and whether each agent still runs
+    ym revive <key|session>             resume an exited one in its worktree, recreating the worktree if it is gone
+    ym land <key|session>               end it and remove its worktree, only when the branch is clean and merged or pushed
     ym item add --kind decision|default|chore --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
     ym item list [--all] [--everywhere] [--json]
     ym item show|answer|dismiss|snooze|reopen <id> ...
@@ -35,4 +42,4 @@ Commands that act for an agent find its session by walking up the process tree t
 
 ## Layout
 
-`internal/core` holds sessions, projects, items and phases and imports no adapter. Harness adapters (`internal/harness/claude`, `internal/harness/codex`) read each CLI's files; the host adapter (`internal/host/tmux`) finds, focuses and types into panes. An adapter that cannot read something reports it as unknown instead of failing.
+`internal/core` holds sessions, projects, items and phases and imports no adapter. Harness adapters (`internal/harness/claude`, `internal/harness/codex`) read each CLI's files; the host adapter (`internal/host/tmux`) finds, focuses and types into panes and runs ym's own server; `internal/launch` creates and trusts worktrees for `ym new` and decides when one can be landed. An adapter that cannot read something reports it as unknown instead of failing.

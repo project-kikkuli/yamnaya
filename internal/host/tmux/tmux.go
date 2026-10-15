@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,8 @@ type Host struct {
 	Socket string
 	// Self is the tmux pane ym itself runs in, from $TMUX_PANE.
 	Self string
+	// Kind names the host on handles; "" is Name.
+	Kind string
 
 	mu    sync.Mutex
 	panes map[string]pane
@@ -30,15 +33,39 @@ func New() *Host {
 	return &Host{Socket: os.Getenv("YAMNAYA_TMUX_SOCKET"), Self: os.Getenv("TMUX_PANE")}
 }
 
-func (h *Host) Name() string { return Name }
+func (h *Host) Name() string {
+	if h.Kind != "" {
+		return h.Kind
+	}
+	return Name
+}
+
+func (h *Host) socketName() string {
+	if h.Socket != "" {
+		return h.Socket
+	}
+	return "default"
+}
+
+// socketOf is the server name in a $TMUX value, the base of its socket path.
+func socketOf(tmuxEnv string) string {
+	path, _, _ := strings.Cut(tmuxEnv, ",")
+	if path == "" {
+		return ""
+	}
+	return filepath.Base(path)
+}
+
+// inside reports whether ym itself runs in this host's server.
+func (h *Host) inside() bool { return socketOf(os.Getenv("TMUX")) == h.socketName() }
 
 type pane struct {
 	id, target, session string
 }
 
 func (h *Host) run(args ...string) (string, error) {
-	if h.Socket != "" {
-		args = append([]string{"-L", h.Socket}, args...)
+	if h.Socket != "" || (os.Getenv("TMUX") != "" && !h.inside()) {
+		args = append([]string{"-L", h.socketName()}, args...)
 	}
 	cmd := exec.Command("tmux", args...)
 	var out, errb bytes.Buffer
@@ -75,12 +102,12 @@ func (h *Host) Locate(tty string) (core.Handle, bool) {
 	if !ok {
 		return core.Handle{}, false
 	}
-	return core.Handle{Host: Name, ID: p.id, Label: p.target}, true
+	return core.Handle{Host: h.Name(), ID: p.id, Label: p.target}, true
 }
 
-// Focus jumps ym's own tmux client to the pane. Outside tmux it does nothing, so no other client or window ever moves.
+// Focus jumps ym's own tmux client to the pane. Outside this server it does nothing, so no other client or window ever moves.
 func (h *Host) Focus(hd core.Handle) (string, error) {
-	if h.Self == "" || os.Getenv("TMUX") == "" {
+	if h.Self == "" || !h.inside() {
 		return "", core.ErrNoHost
 	}
 	_, err := h.run("switch-client", "-t", hd.ID, ";", "select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID)
