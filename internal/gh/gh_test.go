@@ -1,8 +1,11 @@
 package gh
 
 import (
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 const url = "https://github.com/me/app/pull/7"
@@ -47,4 +50,29 @@ func resolved(n int) string {
 		out += `{"isResolved":true}`
 	}
 	return out
+}
+
+func TestAMissingPullRequestIsGoneOnlyWhenItsRepoIsMissing(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		exists    bool
+		lookup    error
+		wantState string
+		wantErr   bool
+	}{
+		{"no such repo", false, nil, core.PRGone, false},
+		{"repo exists, pull request unreadable", true, nil, "", true},
+		{"repo lookup failed", false, errors.New("gh: HTTP 502"), "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var asked string
+			s := &Source{Now: time.Now,
+				Run:  func(string) ([]byte, error) { return []byte(`{"data":{"resource":null}}`), nil },
+				Repo: func(repo string) (bool, error) { asked = repo; return c.exists, c.lookup }}
+			st, err := s.PRStatus(url)
+			if st.State != c.wantState || (err != nil) != c.wantErr || asked != "me/app" {
+				t.Fatalf("status %+v, err %v, asked about %q", st, err, asked)
+			}
+		})
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -106,6 +107,9 @@ func (s *countingSource) PRStatus(url string) (PRStatus, error) {
 	if url == "https://github.com/me/app/pull/1" {
 		return PRStatus{State: "MERGED"}, nil
 	}
+	if strings.Contains(url, "/fixture/") {
+		return PRStatus{State: PRGone}, nil
+	}
 	return PRStatus{State: "OPEN", Failed: 1, Passed: 3}, nil
 }
 
@@ -138,5 +142,24 @@ func TestPRStatusIsFetchedOffTheBoardAndOnlyWhenStale(t *testing.T) {
 	s, _ := w.board(t).Session("lead")
 	if st := s.PRs[1].Status; st == nil || st.CI() != "failing" {
 		t.Fatalf("PR 2 status on the board = %+v", st)
+	}
+}
+
+func TestAPullRequestLinkIntoARepoGitHubLacksLeavesTheBoard(t *testing.T) {
+	w := newWorld(t)
+	src := &countingSource{calls: map[string]int{}}
+	w.core.PRs = src
+	w.procs = append(w.procs, procOf(10, "claude"))
+	fixture, real := "https://github.com/fixture/web/pull/9", "https://github.com/me/app/pull/2"
+	w.claude.sessions[10] = Session{ID: "lead", Status: Busy, Facts: Facts{PRs: []PR{{URL: fixture}, {URL: real}}},
+		Crew: []Member{{ID: "a", Facts: Facts{PRs: []PR{{URL: fixture}}}}}}
+	_, _ = w.core.RefreshPRs(w.board(t))
+	_, _ = w.core.RefreshPRs(w.board(t))
+	s, _ := w.board(t).Session("lead")
+	if len(s.PRs) != 1 || s.PRs[0].URL != real || len(s.Crew[0].PRs) != 0 {
+		t.Fatalf("lead PRs %+v, crew PRs %+v; want only %s", s.PRs, s.Crew[0].PRs, real)
+	}
+	if src.calls[fixture] != 1 {
+		t.Fatalf("asked GitHub about %s %d times, want once", fixture, src.calls[fixture])
 	}
 }

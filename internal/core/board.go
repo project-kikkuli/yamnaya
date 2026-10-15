@@ -341,20 +341,24 @@ func (c *Core) attachPRs(sessions []Live) {
 	if err != nil || len(known) == 0 {
 		return
 	}
-	set := func(prs []PR) {
-		for i := range prs {
-			if st, ok := known[prs[i].URL]; ok {
-				prs[i].Status = &st
+	set := func(prs []PR) []PR {
+		var out []PR
+		for _, pr := range prs {
+			if st, ok := known[pr.URL]; ok {
+				if st.State == PRGone {
+					continue
+				}
+				pr.Status = &st
 			}
+			out = append(out, pr)
 		}
+		return out
 	}
 	for i := range sessions {
-		sessions[i].PRs = append([]PR(nil), sessions[i].PRs...)
-		set(sessions[i].PRs)
+		sessions[i].PRs = set(sessions[i].PRs)
 		crew := append([]Member(nil), sessions[i].Crew...)
 		for j := range crew {
-			crew[j].PRs = append([]PR(nil), crew[j].PRs...)
-			set(crew[j].PRs)
+			crew[j].PRs = set(crew[j].PRs)
 		}
 		sessions[i].Crew = crew
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -13,10 +14,20 @@ import (
 // Source asks GitHub for a pull request's state, checks and review threads in one GraphQL query.
 type Source struct {
 	Run func(url string) ([]byte, error)
-	Now func() time.Time
+	// Repo reports whether GitHub has repository owner/name.
+	Repo func(repo string) (bool, error)
+	Now  func() time.Time
 }
 
-func New() *Source { return &Source{Run: query, Now: time.Now} }
+func New() *Source { return &Source{Run: query, Repo: repoExists, Now: time.Now} }
+
+func repoExists(repo string) (bool, error) {
+	out, err := exec.Command("gh", "api", "repos/"+repo, "--silent").CombinedOutput()
+	if err != nil && strings.Contains(string(out), "HTTP 404") {
+		return false, nil
+	}
+	return err == nil, err
+}
 
 const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   state title reviewDecision headRefName
@@ -78,6 +89,11 @@ func (s *Source) PRStatus(url string) (core.PRStatus, error) {
 	}
 	pr := v.Data.Resource
 	if pr == nil {
+		if prs := core.PRsIn(url); len(prs) > 0 {
+			if ok, err := s.Repo(prs[0].Repo); err == nil && !ok {
+				return core.PRStatus{State: core.PRGone, Fetched: s.Now()}, nil
+			}
+		}
 		return core.PRStatus{}, errors.New("no pull request at " + url)
 	}
 	st := core.PRStatus{State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,

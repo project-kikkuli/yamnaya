@@ -23,8 +23,13 @@ type PRStatus struct {
 	Fetched    time.Time
 }
 
+// PRGone is the state of a pull request link into a repository GitHub does not have, such as one from a test fixture.
+const PRGone = "GONE"
+
 // Closed reports whether the pull request can no longer change.
-func (s PRStatus) Closed() bool { return s.State == "MERGED" || s.State == "CLOSED" }
+func (s PRStatus) Closed() bool {
+	return s.State == "MERGED" || s.State == "CLOSED" || s.State == PRGone
+}
 
 // CI is the check rollup in one word: failing, running, passing, or "".
 func (s PRStatus) CI() string {
