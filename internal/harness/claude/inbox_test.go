@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -307,5 +308,32 @@ func TestSuccessorBesideARunningSessionLooksOnlyInItsDirectory(t *testing.T) {
 		if got := a.Successor(c.id, c.near); got != c.want {
 			t.Errorf("Successor(%.8s, near %.8s) = %q, want %q", c.id, c.near, got, c.want)
 		}
+	}
+}
+
+func TestASendSweepsReceiptSocketsLeftByEndedYmProcesses(t *testing.T) {
+	ended := exec.Command("true")
+	must(t, ended.Run())
+	for _, c := range []struct {
+		name string
+		pid  int
+		kept bool
+	}{
+		{"its process ended", ended.Process.Pid, false},
+		{"its process still runs", os.Getpid(), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			srv := serveInbox(t, "close")
+			left := filepath.Join(filepath.Dir(srv.sock), "ym-"+strconv.Itoa(c.pid)+"-0badf00d.sock")
+			must(t, os.WriteFile(left, nil, 0o600))
+			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
+			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"auto"}`, userLine)
+			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond, ReceiptWait: 50 * time.Millisecond}
+			must(t, a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go"))
+			if _, err := os.Stat(left); (err == nil) != c.kept {
+				t.Errorf("stat %s = %v, want kept %v", left, err, c.kept)
+			}
+		})
 	}
 }

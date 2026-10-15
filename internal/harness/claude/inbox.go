@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,7 +115,19 @@ func (a *Adapter) message(s core.Session, text string, gate bool) error {
 
 // listenReceipts opens a socket for receipts beside the session's own, where Claude Code agrees to send them.
 func listenReceipts(dir string) (*net.UnixListener, error) {
+	sweepReceipts(dir)
 	return net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "ym-"+strconv.Itoa(os.Getpid())+"-"+uuid.NewString()[:8]+".sock"), Net: "unix"})
+}
+
+// sweepReceipts removes the receipt sockets of ym processes that ended by a signal before closing them.
+func sweepReceipts(dir string) {
+	socks, _ := filepath.Glob(filepath.Join(dir, "ym-*-*.sock"))
+	for _, sock := range socks {
+		pid, _, _ := strings.Cut(strings.TrimPrefix(filepath.Base(sock), "ym-"), "-")
+		if n, err := strconv.Atoi(pid); err == nil && n > 0 && errors.Is(syscall.Kill(n, 0), syscall.ESRCH) {
+			os.Remove(sock)
+		}
+	}
 }
 
 // awaitReceipt reads receipts until wait passes; one saying the session did not queue message id is the error.
