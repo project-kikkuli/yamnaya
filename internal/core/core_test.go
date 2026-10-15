@@ -19,6 +19,8 @@ type fakeHarness struct {
 	// inbox is what each session's own inbox does with a message; a session missing from it has none.
 	inbox  map[string]error
 	handed []string
+	// during runs while a message is on its way to a session's inbox.
+	during func()
 }
 
 var errNoInbox = errors.New("no inbox")
@@ -29,6 +31,9 @@ func (f *fakeHarness) Message(s Session, text string) error {
 	err, ok := f.inbox[s.ID]
 	if !ok {
 		return errNoInbox
+	}
+	if f.during != nil {
+		f.during()
 	}
 	if err == nil {
 		f.handed = append(f.handed, s.ID+": "+text)

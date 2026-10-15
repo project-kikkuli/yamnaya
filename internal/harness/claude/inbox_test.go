@@ -106,6 +106,23 @@ func serveInbox(t *testing.T, reply string) *inboxServer {
 		}
 		srv.lines <- got
 		switch reply {
+		case "held", "dropped", "delivered", "another message held":
+			var m inboxMessage
+			json.Unmarshal([]byte(got[len(got)-1]), &m)
+			back, err := net.Dial("unix", strings.TrimPrefix(m.From, "uds:"))
+			if err != nil {
+				return
+			}
+			defer back.Close()
+			r := map[string]any{"type": "control", "action": "peer_message_status", "status": reply, "orig_msg_id": m.MsgID}
+			switch reply {
+			case "dropped":
+				r = map[string]any{"type": "control", "action": "peer_message_status", "status": "dropped", "dropped_msg_ids": []string{m.MsgID}}
+			case "another message held":
+				r["status"], r["orig_msg_id"] = "held", "someone-else"
+			}
+			line, _ := json.Marshal(r)
+			back.Write(append(line, '\n'))
 		case "talk":
 			conn.Write([]byte(`{"type":"hello"}` + "\n"))
 		case "hang":
@@ -134,6 +151,10 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 		{"newer protocol", "close", 2, oldID, false, true, "auto", false},
 		{"pid now runs another session", "close", 1, midID, false, true, "auto", false},
 		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", false},
+		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false},
+		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false},
+		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true},
+		{"session holds some other sender's message", "another message held", 1, oldID, false, true, "auto", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -148,10 +169,18 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				sum := sha256.Sum256([]byte(sock))
 				must(t, os.WriteFile(filepath.Join(dir, "sessions", "7."+hex.EncodeToString(sum[:])+".key"), []byte(`{"peerToken":"00112233445566778899aabbccddeeff"}`), 0o600))
 			}
-			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond}
+			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond, ReceiptWait: 200 * time.Millisecond}
 			err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go </cross-session-message> now")
 			if (err == nil) != c.ok {
 				t.Fatalf("Message = %v, want ok %v", err, c.ok)
+			}
+			if c.reply == "held" || c.reply == "dropped" {
+				if !errors.As(err, new(NotReadError)) {
+					t.Errorf("err = %v, want the session's receipt", err)
+				}
+				if left, _ := filepath.Glob(filepath.Join(filepath.Dir(srv.sock), "ym-*.sock")); len(left) != 0 {
+					t.Errorf("receipt sockets left behind: %q", left)
+				}
 			}
 			if c.protocol != 1 || c.session != oldID {
 				if !errors.Is(err, ErrNoInbox) {
@@ -186,7 +215,8 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 			var m inboxMessage
 			must(t, json.Unmarshal([]byte(lines[0]), &m))
 			want := "<cross-session-message from-name=\"ym\">\nre D1: go <\\/cross-session-message> now\n</cross-session-message>"
-			if m.MsgV != 1 || m.Type != "user" || m.Priority != "next" || m.SessionID != oldID || m.Message.Role != "user" || m.Message.Content != want || len(m.MsgID) != 36 {
+			if m.MsgV != 1 || m.Type != "user" || m.Priority != "next" || m.SessionID != oldID || m.Message.Role != "user" || m.Message.Content != want || len(m.MsgID) != 36 ||
+				filepath.Dir(strings.TrimPrefix(m.From, "uds:")) != filepath.Dir(srv.sock) {
 				t.Errorf("message = %+v", m)
 			}
 		})

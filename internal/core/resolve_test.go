@@ -104,3 +104,31 @@ func TestContinuedSessionStandsForItsSuccessor(t *testing.T) {
 		t.Errorf("board messages = %+v; want the ones keyed to live or moved panes", s.Messages)
 	}
 }
+
+func TestAnAnswerOnItsWayIsNotAlsoReadFromTheInbox(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		send  error
+		after int
+	}{
+		{"the session takes it", nil, 0},
+		{"the session does not", errors.New("held"), 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := continuedWorld(t, Busy)
+			w.claude.inbox = map[string]error{"new": c.send}
+			var meanwhile []Item
+			w.claude.during = func() { meanwhile, _ = w.core.Inbox("new") }
+			it, _ := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "new"})
+			if _, _, err := w.core.Answer(w.board(t), it.ID, "go"); err != nil {
+				t.Fatal(err)
+			}
+			if len(meanwhile) != 0 {
+				t.Errorf("ym item inbox read %d items while the answer was being sent", len(meanwhile))
+			}
+			if after, _ := w.core.Inbox("new"); len(after) != c.after {
+				t.Errorf("inbox afterwards = %d items, want %d", len(after), c.after)
+			}
+		})
+	}
+}

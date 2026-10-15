@@ -252,23 +252,20 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 	if !ok || len(s.Copies) > 1 {
 		return Queued
 	}
+	if claimed, err := c.Store.ClaimDelivery(it.Seq); err != nil || !claimed {
+		return Queued
+	}
 	if c.Direct(s.Session, text) {
-		if c.Store.MarkDelivered(it.Key()) != nil {
-			return Queued
-		}
 		return Sent
 	}
-	if s.Status != Idle || s.Handle == nil {
-		return Queued
+	if s.Status == Idle && s.Handle != nil {
+		host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
+		if host != nil && hn != nil && Type(host, *s.Handle, hn, s.PID, text) == nil {
+			return Typed
+		}
 	}
-	host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
-	if host == nil || hn == nil || Type(host, *s.Handle, hn, s.PID, text) != nil {
-		return Queued
-	}
-	if c.Store.MarkDelivered(it.Key()) != nil {
-		return Queued
-	}
-	return Typed
+	c.Store.Undeliver(it.Seq)
+	return Queued
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
@@ -285,10 +282,13 @@ func (c *Core) Inbox(session string) ([]Item, error) {
 		if !mine(it.Session) {
 			continue
 		}
-		if err := c.Store.MarkDelivered(it.Key()); err != nil {
+		claimed, err := c.Store.ClaimDelivery(it.Seq)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, it)
+		if claimed {
+			out = append(out, it)
+		}
 	}
 	return out, nil
 }

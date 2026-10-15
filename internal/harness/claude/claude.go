@@ -29,6 +29,8 @@ type Adapter struct {
 	Cache core.ScanCache
 	// SendTimeout bounds one delivery to a session's messaging socket; zero means two seconds.
 	SendTimeout time.Duration
+	// ReceiptWait is how long a send waits for a session to report it held the message; zero means one second.
+	ReceiptWait time.Duration
 	// ManagedSettings is the organization's settings file, which outranks the owner's own.
 	ManagedSettings string
 

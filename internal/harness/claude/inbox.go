@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,35 +39,59 @@ type inboxMessage struct {
 	Type      string `json:"type"`
 	Message   body   `json:"message"`
 	Priority  string `json:"priority"`
+	From      string `json:"from"`
 	SessionID string `json:"session_id"`
 }
+
+// receipt is the status a session reports back to a sender's own socket for a message it did not queue at once.
+type receipt struct {
+	Type      string   `json:"type"`
+	Action    string   `json:"action"`
+	Status    string   `json:"status"`
+	OrigMsgID string   `json:"orig_msg_id"`
+	Dropped   []string `json:"dropped_msg_ids"`
+}
+
+// NotReadError is a session's receipt saying it held, refused or dropped a message instead of queueing it.
+type NotReadError struct{ Status string }
+
+func (e NotReadError) Error() string { return "the session reported the message " + e.Status }
 
 type body struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym,
-// and counts it delivered once the session read the frame and closed its side; the socket never acknowledges.
-func (a *Adapter) Message(s core.Session, text string) error {
+// Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym.
+// It counts once the session read the frame, closed its side and sent no held, refused or dropped receipt in time.
+func (a *Adapter) Message(s core.Session, text string) error { return a.message(s, text, true) }
+
+func (a *Adapter) message(s core.Session, text string, gate bool) error {
 	st, ok := a.state(s.PID)
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
 		return ErrNoInbox
 	}
-	if !a.admits(st.Cwd, a.scan(a.transcript(st.Cwd, s.ID)).Mode) {
+	if gate && !a.admits(st.Cwd, a.scan(a.transcript(st.Cwd, s.ID)).Mode) {
 		return ErrHeld
 	}
+	back, err := listenReceipts(filepath.Dir(st.MessagingSocket))
+	if err != nil {
+		return err
+	}
+	defer back.Close()
 	var frame bytes.Buffer
 	if token := a.peerToken(s.PID, st.MessagingSocket); token != "" {
 		line, _ := json.Marshal(map[string]string{"type": "auth", "token": token})
 		frame.Write(append(line, '\n'))
 	}
+	id := uuid.NewString()
 	line, err := json.Marshal(inboxMessage{
 		MsgV:      peerProtocol,
-		MsgID:     uuid.NewString(),
+		MsgID:     id,
 		Type:      "user",
 		Message:   body{Role: "user", Content: wrap(text)},
 		Priority:  "next",
+		From:      "uds:" + back.Addr().String(),
 		SessionID: s.ID,
 	})
 	if err != nil {
@@ -77,7 +102,52 @@ func (a *Adapter) Message(s core.Session, text string) error {
 	if timeout == 0 {
 		timeout = 2 * time.Second
 	}
-	return deliver(st.MessagingSocket, frame.Bytes(), timeout)
+	if err := deliver(st.MessagingSocket, frame.Bytes(), timeout); err != nil {
+		return err
+	}
+	wait := a.ReceiptWait
+	if wait == 0 {
+		wait = time.Second
+	}
+	return awaitReceipt(back, id, wait)
+}
+
+// listenReceipts opens a socket for receipts beside the session's own, where Claude Code agrees to send them.
+func listenReceipts(dir string) (*net.UnixListener, error) {
+	return net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "ym-"+strconv.Itoa(os.Getpid())+"-"+uuid.NewString()[:8]+".sock"), Net: "unix"})
+}
+
+// awaitReceipt reads receipts until wait passes; one saying the session did not queue message id is the error.
+func awaitReceipt(ln *net.UnixListener, id string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		if err := ln.SetDeadline(deadline); err != nil {
+			return err
+		}
+		conn, err := ln.Accept()
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				return nil
+			}
+			return err
+		}
+		conn.SetDeadline(deadline)
+		dec := json.NewDecoder(conn)
+		for {
+			var r receipt
+			if dec.Decode(&r) != nil {
+				break
+			}
+			if r.Type != "control" || r.Action != "peer_message_status" || (r.OrigMsgID != id && !slices.Contains(r.Dropped, id)) {
+				continue
+			}
+			if r.Status != "delivered" {
+				conn.Close()
+				return NotReadError{Status: r.Status}
+			}
+		}
+		conn.Close()
+	}
 }
 
 // inboundRank orders crossSessionInbound values; a repository's settings may only raise it.

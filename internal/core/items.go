@@ -382,12 +382,19 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 	return s.Item(it.Key())
 }
 
-func (s *Store) MarkDelivered(ref string) error {
-	it, err := s.Item(ref)
+// ClaimDelivery marks the item delivered, false when another delivery took it first.
+func (s *Store) ClaimDelivery(seq int64) (bool, error) {
+	res, err := s.db.Exec(`UPDATE ym_items SET delivered_at = ? WHERE seq = ? AND delivered_at IS NULL`, now(), seq)
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = s.db.Exec(`UPDATE ym_items SET delivered_at = ? WHERE seq = ?`, now(), it.Seq)
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// Undeliver hands a claimed item back to ym item inbox after its delivery failed.
+func (s *Store) Undeliver(seq int64) error {
+	_, err := s.db.Exec(`UPDATE ym_items SET delivered_at = NULL WHERE seq = ?`, seq)
 	return err
 }
 
