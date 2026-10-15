@@ -13,7 +13,7 @@ File an item only when the answer changes what gets built, spends money, touches
 
 Always the owner's, so file them: authorization to build, merging (except where his standing rules delegate it), PR split, fold or retarget, core-capability or parity gaps, deploys outside what he has delegated, and messages to other people on his behalf. Never decide these silently.
 
-`default` is for real product defaults only, never for an engineering choice you could just make. `chore` is only for actions that need the owner's own hands.
+`default` is for real product defaults only, never for an engineering choice you could just make. `chore` is only for actions that need the owner's own hands. Before filing one, try the action yourself; file it only if it truly needs the owner's hands (logins, payments, his approvals, anything your safety rules forbid you to do).
 
 ## Open questions are items, never chat blocks
 
