@@ -246,6 +246,11 @@ func (m Model) repoLine(i int, r core.Repo) string {
 	if sp := m.missionSpend(r.Missions...); sp != "" {
 		parts = append(parts, sp)
 	}
+	if len(r.Missions) == 1 {
+		if v, ok := r.Missions[0].Vibe(); ok {
+			parts = append(parts, v.Place)
+		}
+	}
 	return m.mark(i) + bold.Render(pad(r.Name, min(28, max(12, m.width/5)))) + "  " + strings.Join(parts, " · ") + "\n"
 }
 
@@ -285,7 +290,8 @@ func (m Model) missionLine(i int, p core.Project, indent string) string {
 		status = alarm.Render(pad(copiesText(p), 8))
 	}
 	nw := m.nameWidth() - len(indent)
-	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + m.barCol(p) + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
+	dimmed := p.Status != core.Waiting && i != m.cursor && !p.Duplicated()
+	line := m.mark(i) + indent + pad(p.Name, nw) + " " + m.phaseCol(phase) + status + " " + m.barCol(p) + m.vibeCol(p, dimmed) + pad(crewText(p), 14) + " " + pad(prSummary(prsOf(p.Sessions)), 16)
 	if sp := m.missionSpend(p); sp != "" {
 		line += " " + pad(sp, 8)
 	}
@@ -295,8 +301,54 @@ func (m Model) missionLine(i int, p core.Project, indent string) string {
 	if p.Duplicated() {
 		return line + "  " + alarm.Render(copiesWhere(p)) + "\n"
 	}
-	if p.Status != core.Waiting && i != m.cursor {
+	if dimmed {
 		return dim.Render(line) + "\n"
+	}
+	return line + "\n"
+}
+
+// vibeCol is a mission's latest vibe, dim once stale, or nothing when no mission has one.
+func (m Model) vibeCol(p core.Project, dimmed bool) string {
+	if v, ok := p.Vibe(); ok {
+		place := pad(v.Place, 16) + " "
+		if p.VibeStale(m.board.At) && !dimmed {
+			return dim.Render(place)
+		}
+		return place
+	}
+	for _, q := range m.board.Projects {
+		if len(q.Vibes) > 0 {
+			return pad("", 17)
+		}
+	}
+	return ""
+}
+
+// vibeLines are a mission's latest vibe, who set it, and its recent place changes.
+func (m Model) vibeLines(p core.Project) string {
+	v, ok := p.Vibe()
+	if !ok {
+		return ""
+	}
+	place := bold.Render(v.Place)
+	if p.VibeStale(m.board.At) {
+		place = dim.Render(v.Place)
+	}
+	line := " vibe    " + dim.Render("says: ") + place
+	if v.Why != "" {
+		line += "  " + v.Why
+	}
+	by := age(m.board.At, v.At)
+	if v.Session != "" {
+		by = v.Harness + " " + core.Short(v.Session) + ", " + by
+	}
+	line += dim.Render("  " + by)
+	if ps := p.Places(5); len(ps) > 1 {
+		var hist []string
+		for _, h := range ps {
+			hist = append(hist, h.Place+dim.Render(" "+age(m.board.At, h.At)))
+		}
+		line += "\n" + dim.Render(" was     ") + strings.Join(hist[1:], dim.Render(" ← "))
 	}
 	return line + "\n"
 }
@@ -671,6 +723,7 @@ func (m Model) detailView() string {
 		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + dim.Render(pg.Parts()) + "\n")
 	}
 	b.WriteString(units(pg.Units))
+	b.WriteString(m.vibeLines(p))
 	b.WriteString("\n" + bold.Render(" SESSIONS AND CREW") + "\n")
 	i := 0
 	for _, s := range p.Sessions {

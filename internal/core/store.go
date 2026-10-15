@@ -68,7 +68,7 @@ type Event struct {
 	Text string
 }
 
-// Store keeps items, phases, lineage links, project names and merges.
+// Store keeps items, phases, vibes, lineage links, project names and merges.
 type Store struct {
 	db *sql.DB
 }
@@ -186,6 +186,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := prThreads(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate prs: %w", err)
+	}
+	if err := vibes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate vibes: %w", err)
 	}
 	return &Store{db: db}, nil
 }

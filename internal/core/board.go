@@ -72,6 +72,8 @@ type Project struct {
 	Spend    Spend
 	// Dormant are launched sessions of the mission whose agents exited.
 	Dormant []Dormant
+	// Vibes are the agents' reads of the mission, newest first.
+	Vibes []Vibe
 }
 
 // Shown reports whether the mission has a session running or one ym can revive.
@@ -268,11 +270,16 @@ func (c *Core) Board() (Board, error) {
 	}
 	b.parents, b.lin = parents, lin
 	b.Projects = group(b.Sessions, items, parents, lin, dormant)
+	vibes, err := c.Store.Vibes()
+	if err != nil {
+		return b, err
+	}
 	for i := range b.Projects {
 		p := &b.Projects[i]
 		if p.Phases, err = c.Store.Phases(p.Key); err != nil {
 			return b, err
 		}
+		p.Vibes = b.VibesOf(vibes, p.Key)
 		for j := range p.Sessions {
 			p.Sessions[j].Project = p.Key
 		}

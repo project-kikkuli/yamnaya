@@ -1,0 +1,130 @@
+package core
+
+import (
+	"database/sql"
+	"errors"
+	"strings"
+	"time"
+)
+
+// VibeStale is how long a vibe reads as current.
+const VibeStale = 2 * time.Hour
+
+// Vibe is an agent's read of how its mission is going, as a place from North Dakota (rough) to Hawaii (great).
+type Vibe struct {
+	Place string
+	Why   string
+	// Session set the vibe; Target is the session or project it was set on, the setter's own when empty.
+	Session string
+	Harness string
+	Target  string
+	At      time.Time
+}
+
+func vibes(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS ym_vibes (
+		seq INTEGER PRIMARY KEY AUTOINCREMENT,
+		place TEXT NOT NULL,
+		why TEXT NOT NULL DEFAULT '',
+		session TEXT NOT NULL DEFAULT '',
+		harness TEXT NOT NULL DEFAULT '',
+		target TEXT NOT NULL DEFAULT '',
+		at TEXT NOT NULL
+	)`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) AddVibe(v Vibe) (Vibe, error) {
+	v.Place, v.Why = oneLine(v.Place), oneLine(v.Why)
+	if v.Place == "" {
+		return v, errors.New("a vibe needs a place")
+	}
+	if v.Session == "" && v.Target == "" {
+		return v, errors.New("a vibe needs a session or project")
+	}
+	v.At = time.Now().UTC()
+	_, err := s.db.Exec(`INSERT INTO ym_vibes (place, why, session, harness, target, at) VALUES (?, ?, ?, ?, ?, ?)`,
+		v.Place, v.Why, v.Session, v.Harness, v.Target, v.At.Format(time.RFC3339Nano))
+	return v, err
+}
+
+// Vibes lists every vibe, newest first.
+func (s *Store) Vibes() ([]Vibe, error) {
+	rows, err := s.db.Query(`SELECT place, why, session, harness, target, at FROM ym_vibes ORDER BY seq DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Vibe
+	for rows.Next() {
+		var v Vibe
+		var at sql.NullString
+		if err := rows.Scan(&v.Place, &v.Why, &v.Session, &v.Harness, &v.Target, &at); err != nil {
+			return nil, err
+		}
+		v.At = parseTime(at)
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (v Vibe) on() string {
+	if v.Target != "" {
+		return v.Target
+	}
+	return v.Session
+}
+
+// VibesOf is the vibes set on a project, newest first.
+func (b Board) VibesOf(all []Vibe, project string) []Vibe {
+	var out []Vibe
+	for _, v := range all {
+		if b.ProjectOf(v.on()) == project {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// Vibe is the project's latest vibe.
+func (p Project) Vibe() (Vibe, bool) {
+	if len(p.Vibes) == 0 {
+		return Vibe{}, false
+	}
+	return p.Vibes[0], true
+}
+
+// VibeStale reports whether the latest vibe is old or every session of the project has ended.
+func (p Project) VibeStale(now time.Time) bool {
+	v, ok := p.Vibe()
+	if !ok || now.Sub(v.At) > VibeStale {
+		return true
+	}
+	for _, s := range p.Sessions {
+		if s.Status != Done {
+			return false
+		}
+	}
+	return true
+}
+
+// Places is the project's place changes, newest first, at most n.
+func (p Project) Places(n int) []Vibe {
+	var out []Vibe
+	for _, v := range p.Vibes {
+		if len(out) == n {
+			break
+		}
+		if len(out) == 0 || !strings.EqualFold(out[len(out)-1].Place, v.Place) {
+			out = append(out, v)
+		}
+	}
+	return out
+}

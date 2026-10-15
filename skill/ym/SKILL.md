@@ -1,6 +1,6 @@
 ---
 name: ym
-description: Use in any Claude Code or Codex session to file open questions for the owner as tracked items with `ym item add`, read the owner's answers, and record phases and spawned sessions. No setup or environment variables needed.
+description: Use in any Claude Code or Codex session to file open questions for the owner as tracked items with `ym item add`, read the owner's answers, and record phases, vibes and spawned sessions. No setup or environment variables needed.
 ---
 
 # ym
@@ -44,3 +44,7 @@ Always give `--rec`, options with their effects, and `--assumption`. The command
 
 - Sessions you start from your own shell join your project automatically. For a session started elsewhere, record it: `ym spawn <child-session-id>`.
 - Own the phases: `ym phase set a,b,c`, `ym phase next`, `ym phase show`.
+
+## Vibe
+
+Say how your mission is going as a place: `ym vibe "<place>" --why "<one line>"`. North Dakota is rough, Colorado is fine, Hawaii is great. Any place works; go to the extremes when they fit: Taliban-occupied Afghanistan for truly broken, US-Annexed Iceland for exceptional. Set it when a phase changes, when something breaks or lands, and in your final report. Be honest; the board shows it next to the facts. `ym vibe` shows your mission's current vibe and history.

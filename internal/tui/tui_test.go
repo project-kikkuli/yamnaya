@@ -507,3 +507,32 @@ func TestSendComposesAFollowUpForTheSelectedSession(t *testing.T) {
 		t.Fatalf("esc should cancel the compose line; sent %v", l.sent)
 	}
 }
+
+func TestMissionShowsItsVibeAndDrillInShowsWhoSaidIt(t *testing.T) {
+	m, c, _ := setup(t)
+	for _, v := range []core.Vibe{
+		{Place: "North Dakota", Why: "tests red", Session: "lead", Harness: "claude"},
+		{Place: "Colorado", Why: "tests green", Session: "lead", Harness: "claude"},
+	} {
+		if _, err := c.Store.AddVibe(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = refresh(t, m)
+	var row string
+	for _, l := range strings.Split(m.View(), "\n") {
+		if strings.Contains(l, "Lead work") {
+			row = l
+		}
+	}
+	if !strings.Contains(row, "Colorado") || strings.Contains(row, "North Dakota") {
+		t.Fatalf("mission row = %q", row)
+	}
+	m = press(t, m, "down", "down", "down", "enter")
+	view := m.View()
+	for _, want := range []string{"says: Colorado", "tests green", "claude lead", "North Dakota"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("detail lacks %q:\n%s", want, view)
+		}
+	}
+}

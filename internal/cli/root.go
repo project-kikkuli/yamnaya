@@ -89,6 +89,7 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(
 		itemCmd(with),
 		phaseCmd(with),
+		vibeCmd(with),
 		projectCmd(with),
 		linkCmd(with),
 		sessionsCmd(with),
