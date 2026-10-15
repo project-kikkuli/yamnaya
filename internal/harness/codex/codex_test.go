@@ -85,6 +85,7 @@ func TestSessionIDFromArgvOpenFilesThenNewestThread(t *testing.T) {
 		want string
 	}{
 		{cp(1, time.Hour, "codex", "resume", busyID), busyID},
+		{cp(5, time.Hour, "codex", "resume", "--add-dir", "/s", "-c", `shell_environment_policy.set.X="/s"`, idleID), idleID},
 		{cp(2, time.Hour, "codex"), idleID},
 		{cp(3, time.Hour, "codex"), busyID},
 		{cp(4, time.Minute, "codex"), newID},
@@ -149,10 +150,11 @@ func TestOwnsInteractiveAndExecButNotServers(t *testing.T) {
 
 func TestParsePromptFromRealDialogs(t *testing.T) {
 	cases := map[string]core.Prompt{
-		"codex-exec":    {Tool: "Shell", Detail: "rm -rf build && mkdir build"},
-		"codex-patch":   {Tool: "Edit", Detail: "/Users/me/tmp/ymperm-codex/notes.txt"},
-		"codex-trust":   {Tool: "trust folder", Detail: "/Users/me/tmp/ymperm-codex"},
-		"codex-trust-2": {Tool: "trust folder", Detail: "/private/tmp/ymcx.3AJg/repo/sub"},
+		"codex-exec":           {Tool: "Shell", Detail: "rm -rf build && mkdir build"},
+		"codex-patch":          {Tool: "Edit", Detail: "/Users/me/tmp/ymperm-codex/notes.txt"},
+		"codex-trust":          {Tool: "trust folder", Detail: "/Users/me/tmp/ymperm-codex"},
+		"codex-trust-2":        {Tool: "trust folder", Detail: "/private/tmp/ymcx.3AJg/repo/sub"},
+		"codex-open-elsewhere": {Tool: "open in another app"},
 	}
 	for name, want := range cases {
 		b, err := os.ReadFile(filepath.Join("testdata", name+".txt"))
@@ -245,6 +247,24 @@ func TestSpawnEdgesMakeCrewAndNeverAnswerForTheRoot(t *testing.T) {
 		}
 		if rev.Name != "reviewer" || rev.Status != core.Done {
 			t.Errorf("%s: grandchild = %+v", name, rev)
+		}
+	}
+}
+
+func TestOpenElsewhereReadsOnlyTheLiveNotice(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "codex-open-elsewhere.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		screen string
+		want   bool
+	}{
+		{string(b), true},
+		{"› This conversation is open in another app\n• noted\n› Ask Codex to do anything\n", false},
+	} {
+		if got := OpenElsewhere(c.screen); got != c.want {
+			t.Errorf("OpenElsewhere(%q) = %v, want %v", c.screen, got, c.want)
 		}
 	}
 }

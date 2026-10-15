@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -73,10 +74,18 @@ type thread struct {
 	updated                                                            time.Time
 }
 
+var threadID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// argThread is the thread id a resume names, wherever it sits among the resume's flags.
 func argThread(args []string) string {
 	for i, arg := range args {
-		if arg == "resume" && i+1 < len(args) && len(args[i+1]) >= 32 {
-			return args[i+1]
+		if arg != "resume" {
+			continue
+		}
+		for _, a := range args[i+1:] {
+			if threadID.MatchString(a) {
+				return a
+			}
 		}
 	}
 	return ""

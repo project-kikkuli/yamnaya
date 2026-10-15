@@ -7,10 +7,13 @@ import (
 
 const footerLines = 6
 
-// ParsePrompt reads a Codex approval or folder-trust dialog off the screen.
+// ParsePrompt reads a Codex approval, folder-trust or open-in-another-app dialog off the screen.
 func (a *Adapter) ParsePrompt(text string) (core.Prompt, bool) { return ParsePrompt(text) }
 
 func ParsePrompt(text string) (core.Prompt, bool) {
+	if OpenElsewhere(text) {
+		return core.Prompt{Tool: "open in another app"}, true
+	}
 	lines := screen.Lines(text)
 	if !screen.FooterNear(lines, footerLines, "Press enter to confirm or esc to cancel", "enter continue · esc") {
 		return core.Prompt{}, false
@@ -24,4 +27,11 @@ func ParsePrompt(text string) (core.Prompt, bool) {
 		return core.Prompt{Tool: "Edit", Detail: screen.LastPrefixed(lines, "Destination: ")}, true
 	}
 	return core.Prompt{}, false
+}
+
+// OpenElsewhere reports Codex's notice that another client still holds the conversation, which r retries.
+// The shared app-server keeps a quit client's claim for a moment, so a resume started right after the quit can meet it.
+func OpenElsewhere(text string) bool {
+	lines := screen.Lines(text)
+	return screen.Has(lines, "This conversation is open in another app") && screen.FooterNear(lines, footerLines, "r retry")
 }

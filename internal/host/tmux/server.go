@@ -142,3 +142,9 @@ func (h *Host) Running(id string) (pid int, ok bool) {
 	pid, err = strconv.Atoi(p)
 	return pid, err == nil
 }
+
+// Keys presses keys in pane id.
+func (h *Host) Keys(id string, keys ...string) error {
+	_, err := h.run(append([]string{"send-keys", "-t", id}, keys...)...)
+	return err
+}

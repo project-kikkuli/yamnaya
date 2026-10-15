@@ -344,6 +344,11 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if rec.Harness == codex.Name && rec.Session != "" {
+		if err := detach("resume-watch", name); err != nil {
+			return "", err
+		}
+	}
 	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
 }
 
@@ -452,5 +457,37 @@ func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			fmt.Fprintf(cmd.OutOrStdout(), "landed %s (%s); branch %s kept\n", rec.Key, why, rec.Worktree.Branch)
 			return nil
 		}),
+	}
+}
+
+// resumeWatchCmd answers Codex's "open in another app" notice with its own retry key. Codex's shared app-server keeps a quit
+// client's thread loaded for a minute, and a resume whose -c overrides differ from that load is refused until it unloads.
+func resumeWatchCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "resume-watch <tmux-session>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			srv := tmux.NewServer()
+			end, seen := time.Now().Add(15*time.Second), false
+			for ; time.Now().Before(end); time.Sleep(500 * time.Millisecond) {
+				p, err := srv.Pane(args[0])
+				if err != nil || p.Dead {
+					return nil
+				}
+				screen, err := srv.Screen(core.Handle{ID: p.ID})
+				if err != nil || !codex.OpenElsewhere(screen) {
+					continue
+				}
+				if !seen {
+					end, seen = time.Now().Add(90*time.Second), true
+				}
+				if err := srv.Keys(p.ID, "r"); err != nil {
+					return err
+				}
+				time.Sleep(2 * time.Second)
+			}
+			return nil
+		},
 	}
 }

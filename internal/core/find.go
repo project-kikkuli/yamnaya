@@ -32,7 +32,15 @@ func (c *Core) Find(ref string) (Live, error) {
 	if hit == nil {
 		return Live{}, fmt.Errorf("no live session %q: %w", ref, ErrNotFound)
 	}
-	found := hit.Discover(mine)
+	var found []Session
+	for _, s := range hit.Discover(mine) {
+		if match(s.ID) {
+			found = append(found, s)
+		}
+	}
+	if len(found) == 0 {
+		return Live{}, fmt.Errorf("no live session %q: %w", ref, ErrNotFound)
+	}
 	l := Live{Session: found[0], Copies: found}
 	for _, s := range found[1:] {
 		if s.ID != l.ID {

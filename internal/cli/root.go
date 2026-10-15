@@ -102,6 +102,7 @@ func NewRoot() *cobra.Command {
 		adoptCmd(with),
 		sendCmd(with),
 		sendHoldCmd(with),
+		resumeWatchCmd(),
 		installCmd(),
 		usageCmd(),
 		healthCmd(),
