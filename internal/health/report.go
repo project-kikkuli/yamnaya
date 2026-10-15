@@ -17,6 +17,8 @@ type Day struct {
 	// Blocked is agent time waiting on the owner; Permission is the part spent on permission prompts.
 	Blocked    time.Duration `json:"blocked_ns"`
 	Permission time.Duration `json:"permission_ns"`
+	// Waits are the whole lengths of the waits that ended this day.
+	Waits []time.Duration `json:"-"`
 }
 
 // Week rolls up the days from Start, a Monday, through Days days.
@@ -33,6 +35,8 @@ type Week struct {
 	Reprints   int           `json:"reprints"`
 	Blocked    time.Duration `json:"blocked_ns"`
 	Permission time.Duration `json:"permission_ns"`
+	// WaitP90 is the p90 length of one wait among those that ended in the week.
+	WaitP90 time.Duration `json:"wait_p90_ns"`
 }
 
 type Report struct {
@@ -85,21 +89,24 @@ func (h *Health) days() (map[string]*Day, error) {
 		get(d).Reprints = n
 	}
 	rows.Close()
-	rows, err = h.db.Query(`SELECT day, kind, sum(ms) FROM ym_health_waits GROUP BY day, kind`)
+	rows, err = h.db.Query(`SELECT day, kind, ms, whole FROM ym_health_waits`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var d, kind string
-		var ms int64
-		if err := rows.Scan(&d, &kind, &ms); err != nil {
+		var ms, whole int64
+		if err := rows.Scan(&d, &kind, &ms, &whole); err != nil {
 			return nil, err
 		}
 		x := get(d)
 		x.Blocked += time.Duration(ms) * time.Millisecond
 		if kind == WaitPermission {
 			x.Permission += time.Duration(ms) * time.Millisecond
+		}
+		if whole > 0 {
+			x.Waits = append(x.Waits, time.Duration(whole)*time.Millisecond)
 		}
 	}
 	return out, rows.Err()
@@ -160,6 +167,7 @@ func rollup(now time.Time, weeks int, days map[string]*Day, items []item) Report
 		if ws.Equal(this) {
 			w.Days = int(now.Sub(ws)/(24*time.Hour)) + 1
 		}
+		var waits []time.Duration
 		for i := range w.Days {
 			d := ws.AddDate(0, 0, i).Format(time.DateOnly)
 			x := days[d]
@@ -170,7 +178,9 @@ func rollup(now time.Time, weeks int, days map[string]*Day, items []item) Report
 			w.Reprints += x.Reprints
 			w.Blocked += x.Blocked
 			w.Permission += x.Permission
+			waits = append(waits, x.Waits...)
 		}
+		w.WaitP90 = quantile(waits, 0.9)
 		end := ws.AddDate(0, 0, 7)
 		var lat []time.Duration
 		for _, it := range items {
@@ -208,7 +218,7 @@ func quantile(ds []time.Duration, q float64) time.Duration {
 
 // Render writes the weekly table, newest week last.
 func Render(out io.Writer, r Report) {
-	fmt.Fprintf(out, "%-10s  %4s  %8s  %8s  %11s  %13s  %13s  %12s\n", "week of", "days", "answered", "median", "p90", "stale", "reprints/day", "blocked h/day")
+	fmt.Fprintf(out, "%-10s  %4s  %8s  %8s  %8s  %13s  %12s  %-20s  %8s\n", "week of", "days", "answered", "median", "p90", "stale", "reprints/day", "blocked h/day", "p90 wait")
 	for _, w := range r.Weeks {
 		stale := "-"
 		if w.Settled > 0 {
@@ -218,8 +228,13 @@ func Render(out io.Writer, r Report) {
 		if w.Answered > 0 {
 			med, p90 = span(w.Median), span(w.P90)
 		}
-		fmt.Fprintf(out, "%-10s  %4d  %8d  %8s  %11s  %13s  %13.1f  %6.1f (%s perm)\n", w.Start.Format(time.DateOnly), w.Days, w.Answered, med, p90, stale,
-			float64(w.Reprints)/float64(w.Days), w.Blocked.Hours()/float64(w.Days), strconv.FormatFloat(w.Permission.Hours()/float64(w.Days), 'f', 1, 64))
+		wait := "-"
+		if w.WaitP90 > 0 {
+			wait = span(w.WaitP90)
+		}
+		blocked := fmt.Sprintf("%.1f (%s perm)", w.Blocked.Hours()/float64(w.Days), strconv.FormatFloat(w.Permission.Hours()/float64(w.Days), 'f', 1, 64))
+		fmt.Fprintf(out, "%-10s  %4d  %8d  %8s  %8s  %13s  %12.1f  %-20s  %8s\n", w.Start.Format(time.DateOnly), w.Days, w.Answered, med, p90, stale,
+			float64(w.Reprints)/float64(w.Days), blocked, wait)
 	}
 }
 
@@ -238,5 +253,6 @@ const Legend = `answered      items answered that week; median and p90 time from
 stale         items filed that week that were dismissed or sat open over a day, of those plus the answered ones
 reprints/day  assistant messages in chat holding a non-empty block of questions for you (Open for you and similar)
 blocked h/day agent time from a turn that ended asking you (question block, filed item, question tool) or a
-              permission prompt you answered, to your next typed message; summed over sessions
+              permission prompt you answered, to your next typed message; summed over sessions, uncapped
+p90 wait      p90 length of one such wait, among the waits that ended that week
 `

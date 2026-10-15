@@ -27,6 +27,8 @@ func TestAsks(t *testing.T) {
 		{"still open heading", "Still open for you:\n- Who owns the rollout?", true},
 		{"decisions for you", "Two decisions for you:\n1. Tap or curl?\n2. Who pilots?", true},
 		{"needs your call", "Needs your call:\n1. Drop the pin?", true},
+		{"still waiting on you", "**Still waiting on you:**\n1. Merge #18303.", true},
+		{"one qualified decision", "**One doc decision for you:** soften section 1.5?", true},
 		{"empty count", "**Open for you (0).**", false},
 		{"nothing", "## Open for you\nNothing.", false},
 		{"none inline", "Open for you: none.", false},
@@ -87,10 +89,12 @@ func TestClaudeWaitsAndReprints(t *testing.T) {
 			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), claudeText(2, "Actually, merged it myself."), turnEnd(2), claudeUser(11, "human", "ok")}, 1, 0, 0},
 		{"filed item without a block",
 			[]string{claudeUser(0, "human", "go"), claudeTool(1, "ym item add --kind decision --question 'x'"), claudeText(2, "Filed."), turnEnd(2), claudeUser(32, "human", "answered")}, 0, 30 * time.Minute, 0},
-		{"notification turn that still asks keeps the wait open",
-			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(5, "task-notification", "<task-notification>done</task-notification>"), claudeText(6, ask), turnEnd(6), claudeUser(21, "human", "yes")}, 2, 20 * time.Minute, 0},
-		{"notification turn that stops asking ends the wait",
-			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(5, "task-notification", "<task-notification>done</task-notification>"), claudeText(9, "All done, nothing needed."), turnEnd(9), claudeUser(60, "human", "great")}, 1, 8 * time.Minute, 0},
+		{"notification turn that still asks resumes the wait after the agent works",
+			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(5, "task-notification", "<task-notification>done</task-notification>"), claudeText(6, ask), turnEnd(6), claudeUser(21, "human", "yes")}, 2, 19 * time.Minute, 0},
+		{"notification turn that stops asking ends the wait at the notification",
+			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(5, "task-notification", "<task-notification>done</task-notification>"), claudeText(9, "All done, nothing needed."), turnEnd(9), claudeUser(60, "human", "great")}, 1, 4 * time.Minute, 0},
+		{"owner replies while the agent works a notification",
+			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(5, "task-notification", "<task-notification>done</task-notification>"), claudeText(6, ask), claudeUser(8, "human", "yes")}, 2, 6 * time.Minute, 0},
 		{"permission prompt answered by the owner",
 			[]string{claudeUser(0, "human", "go"), claudeTool(1, "rm -rf build"), claudeResult(4, "user_temporary")}, 0, 0, 3 * time.Minute},
 		{"permission allowed by config is no wait",
@@ -98,7 +102,7 @@ func TestClaudeWaitsAndReprints(t *testing.T) {
 		{"untagged transcript counts typed prompts and skips injected ones",
 			[]string{claudeUser(0, "", "go"), claudeText(1, ask), claudeUser(3, "", "<command-name>/clear</command-name>"), claudeUser(13, "", "yes")}, 1, 12 * time.Minute, 0},
 		{"once tagged, untagged prompts are injected",
-			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(3, "", "injected text"), claudeText(4, ask), turnEnd(4), claudeUser(13, "human", "yes")}, 2, 12 * time.Minute, 0},
+			[]string{claudeUser(0, "human", "go"), claudeText(1, ask), turnEnd(1), claudeUser(3, "", "injected text"), claudeText(4, ask), turnEnd(4), claudeUser(13, "human", "yes")}, 2, 11 * time.Minute, 0},
 		{"sidechain text is ignored",
 			[]string{claudeUser(0, "human", "go"), strings.Replace(claudeText(1, ask), `"isSidechain":false`, `"isSidechain":true`, 1), claudeText(2, "Done."), turnEnd(2), claudeUser(12, "human", "ok")}, 0, 0, 0},
 	}
@@ -259,6 +263,8 @@ func TestScanIsIncrementalAndDedupesCopies(t *testing.T) {
 	copyOf := filepath.Join(h.ClaudeDir, "projects", "p", "22222222-bbbb-4bbb-8bbb-222222222222.jsonl")
 	raw, _ := os.ReadFile(path)
 	appendLines(t, copyOf, string(raw))
+	pickup := filepath.Join(h.ClaudeDir, "projects", "p", "33333333-cccc-4ccc-8ccc-333333333333.jsonl")
+	appendLines(t, pickup, claudeUser(0, "human", "go"), claudeText(1, ask), claudeTool(2, "ls"), turnEnd(2), claudeUser(11, "human", "yes"))
 	scan(t, h)
 	r, err := h.Report(t0.Add(time.Hour), 8)
 	if err != nil {
@@ -269,13 +275,13 @@ func TestScanIsIncrementalAndDedupesCopies(t *testing.T) {
 	for _, d := range r.Days {
 		reprints, blocked = reprints+d.Reprints, blocked+d.Blocked
 	}
-	if reprints != 2 || blocked != 10*time.Minute {
-		t.Fatalf("reprints %d blocked %s, want 2 and 10m", reprints, blocked)
+	if reprints != 2 || blocked != 10*time.Minute || r.Weeks[len(r.Weeks)-1].WaitP90 != 10*time.Minute {
+		t.Fatalf("reprints %d blocked %s p90 wait %s, want 2, 10m and 10m", reprints, blocked, r.Weeks[len(r.Weeks)-1].WaitP90)
 	}
 	var files int
 	h.db.QueryRow(`SELECT count(*) FROM ym_health_files`).Scan(&files)
-	if files != 2 {
-		t.Fatalf("files %d, want 2", files)
+	if files != 3 {
+		t.Fatalf("files %d, want 3", files)
 	}
 }
 

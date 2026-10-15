@@ -9,7 +9,7 @@ import (
 var heading = regexp.MustCompile(`(?i)^(still |remaining )?(` +
 	`open for you|for you|open questions?|open decisions?|open items?|` +
 	`decisions? (for|from|needed from) you|questions? for you|` +
-	`(one|two|three|four|five|\d+) (open )?(things|questions|decisions|answers) (for you|only you can answer|still open)|` +
+	`(one|two|three|four|five|\d+) (\w+ )?(things?|questions?|decisions?|answers?) (for you|only you can answer|still open)|(still )?waiting on you|` +
 	`questions? only you can answer|(what )?i need from you|needs? (you|your (call|input|decision|answer|approval|explicit approval))|your call` +
 	`)\b`)
 

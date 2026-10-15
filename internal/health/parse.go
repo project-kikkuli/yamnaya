@@ -31,6 +31,8 @@ type state struct {
 	Last  time.Time `json:"last"`
 	// WaitFrom is when the agent started waiting on the owner; zero when it is not.
 	WaitFrom time.Time `json:"wait_from"`
+	// Paused is when a message that is not the owner's woke the agent during a wait.
+	Paused time.Time `json:"paused"`
 }
 
 type reprint struct {
@@ -60,10 +62,15 @@ func (s *state) assistant(at time.Time, text string, hasText bool, f *found) {
 	}
 }
 
-// endTurn starts a wait when the turn ended asking the owner, and ends one when a later turn no longer asks.
+// endTurn starts a wait when the turn ended asking the owner. A wait the turn interrupted ends where the
+// turn began; one with no interruption ends here if the turn no longer asks.
 func (s *state) endTurn(f *found) {
 	if !s.InTurn {
 		return
+	}
+	if !s.WaitFrom.IsZero() && !s.Paused.IsZero() {
+		f.add(WaitAsk, s.WaitFrom, s.Paused)
+		s.WaitFrom = time.Time{}
 	}
 	waiting := s.Asked || s.Filed
 	switch {
@@ -73,7 +80,7 @@ func (s *state) endTurn(f *found) {
 		f.add(WaitAsk, s.WaitFrom, s.Last)
 		s.WaitFrom = time.Time{}
 	}
-	s.InTurn, s.Asked, s.Filed = false, false, false
+	s.InTurn, s.Asked, s.Filed, s.Paused = false, false, false, time.Time{}
 }
 
 // human ends any wait at the owner's typed message.
@@ -82,6 +89,15 @@ func (s *state) human(at time.Time, f *found) {
 	if !s.WaitFrom.IsZero() {
 		f.add(WaitAsk, s.WaitFrom, at)
 		s.WaitFrom = time.Time{}
+	}
+	s.Paused = time.Time{}
+}
+
+// injected pauses a wait at a message that is not the owner's; the turn it starts decides whether the wait resumes.
+func (s *state) injected(at time.Time, f *found) {
+	s.endTurn(f)
+	if !s.WaitFrom.IsZero() && s.Paused.IsZero() {
+		s.Paused = at
 	}
 }
 
@@ -200,7 +216,7 @@ func (s *state) claudeLine(line []byte, f *found) {
 		if typed(r, s.Marked) {
 			s.human(r.Timestamp, f)
 		} else if !r.IsMeta {
-			s.endTurn(f)
+			s.injected(r.Timestamp, f)
 		}
 	}
 }
@@ -249,8 +265,8 @@ var (
 	roleAgent    = []byte(`"role":"assistant"`)
 )
 
-// injected marks user-role Codex messages the harness adds, not the owner.
-var injected = []string{"# AGENTS.md", "<environment_context", "<subagent_notification", "<user_instructions", "<turn_aborted",
+// harness marks user-role Codex messages the harness adds, not the owner.
+var harness = []string{"# AGENTS.md", "<environment_context", "<subagent_notification", "<user_instructions", "<turn_aborted",
 	"<permissions", "<skill", "<collaboration_mode", "Another Claude session sent a message"}
 
 // codexLine reads one line of a Codex rollout; only threads started from the CLI or the app carry typed messages.
@@ -299,7 +315,7 @@ func (s *state) codexLine(line []byte, f *found) {
 			if ownerTyped(text) {
 				s.human(r.Timestamp, f)
 			} else {
-				s.endTurn(f)
+				s.injected(r.Timestamp, f)
 			}
 		}
 	default:
@@ -314,7 +330,7 @@ func ownerTyped(text string) bool {
 	if t == "" {
 		return false
 	}
-	for _, p := range injected {
+	for _, p := range harness {
 		if strings.HasPrefix(t, p) {
 			return false
 		}

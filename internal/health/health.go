@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS ym_health_waits (
 	path TEXT NOT NULL,
 	kind TEXT NOT NULL,
 	ms INTEGER NOT NULL,
+	whole INTEGER NOT NULL,
 	PRIMARY KEY (key, day)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS ym_health_waits_day ON ym_health_waits(day);
@@ -209,7 +210,7 @@ func (h *Health) commit(work []*file) error {
 		return err
 	}
 	defer rep.Close()
-	wt, err := tx.Prepare(`INSERT OR IGNORE INTO ym_health_waits (key, day, path, kind, ms) VALUES (?, ?, ?, ?, ?)`)
+	wt, err := tx.Prepare(`INSERT OR IGNORE INTO ym_health_waits (key, day, path, kind, ms, whole) VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -227,9 +228,14 @@ func (h *Health) commit(work []*file) error {
 			}
 		}
 		for _, w := range f.found.waits {
-			k := key(w.Kind, w.Start.UTC().Format(time.RFC3339Nano), w.End.UTC().Format(time.RFC3339Nano))
-			for _, p := range byDay(w.Start, w.End) {
-				if _, err := wt.Exec(k, p.day, f.Path, w.Kind, p.span.Milliseconds()); err != nil {
+			k := key(w.Kind, w.End.UTC().Format(time.RFC3339Nano))
+			pieces := byDay(w.Start, w.End)
+			for i, p := range pieces {
+				var whole int64
+				if i == len(pieces)-1 {
+					whole = w.End.Sub(w.Start).Milliseconds()
+				}
+				if _, err := wt.Exec(k, p.day, f.Path, w.Kind, p.span.Milliseconds(), whole); err != nil {
 					return err
 				}
 			}
