@@ -99,3 +99,65 @@ func TestPickerScansOnceAndShowsWhatItFoundSoFar(t *testing.T) {
 		t.Fatalf("an unfinished scan should say so:\n%s", m.repoPickView())
 	}
 }
+
+func TestBigNPicksTheRepositoryFirst(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		keys   []string
+		repo   string
+		prompt string
+		harn   string
+		slug   string
+		starts bool
+	}{
+		{"pick, prompt, slug", []string{"enter", "go", "enter", "enter"}, "api", "go", "claude", "", true},
+		{"filter picks another repo", []string{"we", "enter", "go", "enter", "my-slug", "enter"}, "web", "go", "claude", "my-slug", true},
+		{"tab toggles at the prompt", []string{"enter", "go", "tab", "enter", "enter"}, "api", "go", "codex", "", true},
+		{"esc at the picker", []string{"esc"}, "", "", "", "", false},
+		{"esc at the prompt", []string{"enter", "go", "esc"}, "", "", "", "", false},
+		{"esc at the slug", []string{"enter", "go", "enter", "esc"}, "", "", "", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, r := range []string{"api", "app", "web"} {
+				if err := os.MkdirAll(filepath.Join(root, r, ".git"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m, k, _ := setup(t)
+			l := &launches{}
+			k.Launches = l
+			k.Roots = func() []string { return []string{root} }
+			if err := k.Store.PickRepo(filepath.Join(root, "api"), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			m = to(t, place(t, m, k), mission("lead"))
+			m = press(t, m, "N")
+			view := m.View()
+			if !strings.Contains(view, "PICK A REPOSITORY") || m.newL.Repo != "" || len(m.picks) == 0 || m.picks[0] != filepath.Join(root, "api") {
+				t.Fatalf("N should open the picker with recents first and nothing preselected (repo %q, picks %v):\n%s", m.newL.Repo, m.picks, view)
+			}
+			for _, key := range c.keys {
+				if len(key) > 1 && key != "enter" && key != "esc" && key != "tab" {
+					m = press(t, m, strings.Split(key, "")...)
+					continue
+				}
+				m = press(t, m, key)
+			}
+			if !c.starts {
+				if len(l.started) != 0 || m.mode != modeList {
+					t.Fatalf("started %s in mode %v", fmtLaunches(l.started), m.mode)
+				}
+				return
+			}
+			if len(l.started) != 1 {
+				t.Fatalf("started %s", fmtLaunches(l.started))
+			}
+			got := l.started[0]
+			real, _ := filepath.EvalSymlinks(root)
+			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || got.Prompt != c.prompt || got.Harness != c.harn || got.Slug != c.slug {
+				t.Fatalf("started %s", fmtLaunches(l.started))
+			}
+		})
+	}
+}

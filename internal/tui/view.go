@@ -169,15 +169,15 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return "↑↓ move   enter open mission   o go to session   n new   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
+		return "↑↓ move   enter open mission   o go to session   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   N new in any repo   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   n new   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   n new   N new in any repo   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   n new   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -1065,6 +1065,8 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 the picker lists the selected row's repository, recently picked ones, then every repo
                 under ~/.config/wt-reap/roots (or ~/dev); typing filters by name or path, ↑↓ and enter
                 pick, and a path starting with / or ~ is used as typed; tab switches claude and codex
+   N            new session in any repository: pick the repository first (recent ones on top, nothing
+                taken from the selected row), then the prompt and the optional worktree name
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean
