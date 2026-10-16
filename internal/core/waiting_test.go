@@ -6,7 +6,16 @@ import (
 	"time"
 )
 
-const asking = "Done with the parser.\n\nOpen for you\n1. Ship it now?\n"
+const asking = "Done with the parser.\n\nOpen for you\n1. Ship it now?\n\nNext: watch CI.\n"
+
+func firstAsk(reply string) string {
+	_, block, ok := strings.Cut(reply, "Open for you\n")
+	if !ok {
+		return ""
+	}
+	line, _, _ := strings.Cut(block, "\n")
+	return line
+}
 
 type sends struct{ sent []string }
 
@@ -24,7 +33,7 @@ func (l *sends) Send(s Live, text string) (string, error) {
 
 func waitingWorld(t *testing.T) *world {
 	w := newWorld(t)
-	w.core.Asks = func(reply string) bool { return strings.Contains(reply, "Open for you") }
+	w.core.Ask = firstAsk
 	return w
 }
 
@@ -32,7 +41,7 @@ func waits(b Board) []string {
 	var out []string
 	for _, n := range b.Needs {
 		if n.Waiting() {
-			out = append(out, n.Session.Key()+" "+LastLine(n.Reply))
+			out = append(out, n.Session.Key()+" "+n.Line)
 		}
 	}
 	return out
@@ -75,7 +84,7 @@ func TestIdleSessionWhoseLastReplyAsksIsListedUnlessSomethingElseCoversIt(t *tes
 				t.Fatalf("waiting rows = %v, want %d", got, want)
 			}
 			if tc.want && got[0] != "s1 1. Ship it now?" {
-				t.Errorf("row = %q, want the reply's last line", got[0])
+				t.Errorf("row = %q, want the first question, not the reply's last line", got[0])
 			}
 		})
 	}
@@ -131,7 +140,7 @@ func TestAnsweringAWaitingSessionSendsTheOwnersMessageAndClearsTheRowUntilItAsks
 	if got := waits(w.board(t)); len(got) != 0 {
 		t.Fatalf("answered row still shows: %v", got)
 	}
-	w.claude.sessions[10] = Session{ID: "s1", Status: Idle, Facts: Facts{Result: "Shipped.\n\nOpen for you\n1. Tag the release?"}}
+	w.claude.sessions[10] = Session{ID: "s1", Status: Idle, Facts: Facts{Result: "Shipped.\n\nOpen for you\n1. Tag the release?\n\nNext: wait."}}
 	if got := waits(w.board(t)); len(got) != 1 || got[0] != "s1 1. Tag the release?" {
 		t.Fatalf("a new asking turn shows %v, want its row back", got)
 	}

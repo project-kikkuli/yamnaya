@@ -19,17 +19,6 @@ CREATE TABLE IF NOT EXISTS ym_waiting_dismissed (
 // Waiting reports whether the need is an idle session whose last reply asks the owner.
 func (n Need) Waiting() bool { return n.Item == nil && n.Reply != "" }
 
-// LastLine is the last non-empty line of text.
-func LastLine(text string) string {
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
-			return l
-		}
-	}
-	return ""
-}
-
 func replyKey(reply string) string {
 	h := sha1.Sum([]byte(strings.TrimSpace(reply)))
 	return hex.EncodeToString(h[:12])
@@ -69,7 +58,7 @@ func (c *Core) AnswerWaiting(s Live, reply, text string) (string, error) {
 
 // waiting lists idle sessions whose last reply asks the owner, with no open item, prompt or dismissal covering it, longest waiting first.
 func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
-	if c.Asks == nil {
+	if c.Ask == nil {
 		return nil, nil
 	}
 	dismissed, err := c.Store.dismissedWaiting()
@@ -97,11 +86,15 @@ func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
 		key := s.Key()
-		if covered[key] || s.Status != Idle || s.Prompt != nil || s.Result == "" || dismissed[key+"\x00"+replyKey(s.Result)] || !c.Asks(s.Result) {
+		if covered[key] || s.Status != Idle || s.Prompt != nil || s.Result == "" || dismissed[key+"\x00"+replyKey(s.Result)] {
+			continue
+		}
+		line := c.Ask(s.Result)
+		if line == "" {
 			continue
 		}
 		covered[key] = true
-		out = append(out, Need{Session: s, Project: s.Project, Reply: s.Result})
+		out = append(out, Need{Session: s, Project: s.Project, Reply: s.Result, Line: line})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Session.Since.Before(out[j].Session.Since) })
 	return out, nil

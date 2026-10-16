@@ -41,7 +41,7 @@ func waitingCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 					name = p.Name
 				}
 				out = append(out, waitingJSON{Session: s.Key(), Harness: s.Harness, Title: s.Title, Project: name, Host: s.Location(),
-					Since: s.Since.UTC().Format("2006-01-02T15:04:05Z"), Line: core.LastLine(n.Reply), Reply: n.Reply})
+					Since: s.Since.UTC().Format("2006-01-02T15:04:05Z"), Line: n.Line, Reply: n.Reply})
 			}
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), out)

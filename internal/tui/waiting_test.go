@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/health"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
@@ -17,20 +18,20 @@ func waitingBoard(t *testing.T) (Model, *core.Core, *launches) {
 	}
 	t.Cleanup(func() { st.Close() })
 	sessions := map[int]core.Session{
-		1: {ID: "asker", Title: "Parser work", Status: core.Idle, Facts: core.Facts{Result: "Parser done.\n\nOpen for you\n1. Ship it now?"}},
+		1: {ID: "asker", Title: "Parser work", Status: core.Idle, Facts: core.Facts{Result: "Parser done.\n\nOpen for you\n1. Ship it now?\n\nNext: watch CI."}},
 		2: {ID: "quiet", Title: "Quiet work", Status: core.Idle, Facts: core.Facts{Result: "All tests pass."}},
 	}
 	procs := []proc.Proc{{PID: 1, TTY: "/dev/a", Args: []string{"claude"}}, {PID: 2, TTY: "/dev/b", Args: []string{"claude"}}}
 	l := &launches{}
 	c := &core.Core{Store: st, Harnesses: []core.Harness{harness{sessions}}, Hosts: []core.Host{&host{}}, Launches: l,
 		Procs: func() ([]proc.Proc, error) { return procs, nil },
-		Asks:  func(r string) bool { return strings.Contains(r, "Open for you") }}
+		Ask:   health.Ask}
 	return refresh(t, New(c)), c, l
 }
 
 func isWaiting(r row) bool { return r.need != nil && r.need.Waiting() }
 
-func TestWaitingRowShowsTheReplysLastLineAndOnlyForTheAskingSession(t *testing.T) {
+func TestWaitingRowShowsTheRepliesFirstQuestionAndOnlyForTheAskingSession(t *testing.T) {
 	m, _, _ := waitingBoard(t)
 	view := m.View()
 	if !strings.Contains(view, "NEEDS YOU (1)") || !strings.Contains(view, "Parser work") || !strings.Contains(view, "waiting: 1. Ship it now?") {

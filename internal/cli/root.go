@@ -36,7 +36,7 @@ func Wire(path string) (*core.Core, error) {
 		PRs:       gh.New(),
 		Port:      port,
 		Roots:     core.RepoRoots,
-		Asks:      health.Asks,
+		Ask:       health.Ask,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core = c

@@ -47,6 +47,19 @@ func TestAsks(t *testing.T) {
 	}
 }
 
+func TestAskIsTheBlocksFirstQuestion(t *testing.T) {
+	for _, c := range []struct{ text, want string }{
+		{"Done.\n\n## Open for you\n1. **Merge #12?** I recommend yes.\n2. Tag it?\n\nNext: watch CI.", "1. Merge #12? I recommend yes."},
+		{"**Open for you:** should I start a shepherd on #16783?", "Open for you: should I start a shepherd on #16783?"},
+		{"Open for you: none.\n\nDecisions for you:\n- Ship?\n\nNext: deploy.", "- Ship?"},
+		{"All tests pass.\n\nNext: merge.", ""},
+	} {
+		if got := Ask(c.text); got != c.want {
+			t.Errorf("Ask(%q) = %q, want %q", c.text, got, c.want)
+		}
+	}
+}
+
 func claudeText(min int, text string) string {
 	return fmt.Sprintf(`{"type":"assistant","isSidechain":false,"timestamp":%q,"message":{"model":"claude-opus-5-5","content":[{"type":"text","text":%q}]}}`, at(min), text)
 }

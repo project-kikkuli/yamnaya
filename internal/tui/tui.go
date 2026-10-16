@@ -471,7 +471,7 @@ func needText(n core.Need) string {
 		return n.Item.ID + " " + n.Item.Question
 	}
 	if n.Waiting() {
-		return titleOf(*n.Session) + " waiting: " + core.LastLine(n.Reply)
+		return titleOf(*n.Session) + " waiting: " + n.Line
 	}
 	if n.Session != nil && n.Session.Prompt != nil {
 		return n.Session.Prompt.String()

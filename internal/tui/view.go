@@ -473,7 +473,7 @@ func (m Model) needLines(i int, n core.Need) string {
 	if n.Waiting() {
 		s := n.Session
 		head := m.mark(i) + m.hue(n.Project).Render(pad("wait", m.idWidth())) + " " + name + " " + pad(titleOf(*s), 20) + " waiting: "
-		b.WriteString(head + pad(core.LastLine(n.Reply), max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
+		b.WriteString(head + pad(n.Line, max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
 		if sel {
 			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
 			b.WriteString(pal.dim.Render("         enter last reply   a answer   x dismiss   o go to session") + "\n")
@@ -1039,7 +1039,7 @@ func (m Model) pickView() string {
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
  NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
- whose last reply asks you with no item filed ("waiting:", its reply's last line).
+ whose last reply asks you with no item filed ("waiting:", the first question it asks).
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
  A mission is a session plus the sessions it spawned. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.

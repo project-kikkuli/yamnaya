@@ -27,8 +27,8 @@ type Core struct {
 	Launches Launches
 	// Roots are the directories new-session pickers look for repositories under; nil looks nowhere.
 	Roots func() []string
-	// Asks reports whether an agent's reply asks the owner; nil lists no waiting sessions.
-	Asks func(reply string) bool
+	// Ask is the first question an agent's reply asks the owner, "" when none; nil lists no waiting sessions.
+	Ask func(reply string) string
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
@@ -107,8 +107,8 @@ type Need struct {
 	Session *Live
 	Item    *Item
 	Project string
-	// Reply is the waiting session's last reply.
-	Reply string
+	// Reply is the waiting session's last reply and Line the first question it asks.
+	Reply, Line string
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.

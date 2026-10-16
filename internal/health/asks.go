@@ -17,10 +17,14 @@ var (
 	listItem = regexp.MustCompile(`^\s*(\d+[.)]|[-*•])\s+`)
 	empty    = regexp.MustCompile(`(?i)^[\s(:.\-–—]*(\(0\)|0\b|nothing|none|no (decision|question|open|action)|n/a|nil\b)`)
 	markers  = strings.NewReplacer("#", "", "*", "", "_", "", "`", "", ">", "")
+	emphasis = strings.NewReplacer("**", "", "__", "")
 )
 
 // Asks reports whether text carries a non-empty block of questions for the owner, such as a numbered "Open for you" list.
-func Asks(text string) bool {
+func Asks(text string) bool { return Ask(text) != "" }
+
+// Ask is the first question of text's first non-empty block of questions for the owner, "" when it has none.
+func Ask(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		head := strings.TrimSpace(markers.Replace(line))
@@ -33,7 +37,7 @@ func Asks(text string) bool {
 			continue
 		}
 		if strings.Contains(rest, "?") {
-			return true
+			return plain(line)
 		}
 		for _, next := range lines[i+1 : min(len(lines), i+4)] {
 			if strings.TrimSpace(next) == "" {
@@ -41,10 +45,14 @@ func Asks(text string) bool {
 			}
 			if (listItem.MatchString(next) || strings.HasSuffix(strings.TrimSpace(next), "?")) &&
 				!empty.MatchString(markers.Replace(listItem.ReplaceAllString(next, ""))) {
-				return true
+				return plain(next)
 			}
 			break
 		}
 	}
-	return false
+	return ""
+}
+
+func plain(line string) string {
+	return strings.TrimSpace(emphasis.Replace(strings.TrimLeft(strings.TrimSpace(line), "#> ")))
 }
