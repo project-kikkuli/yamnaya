@@ -25,6 +25,12 @@ func (m Model) View() string {
 		b.WriteString(ansi.Wrap(m.whyView(), m.width, " "))
 	case modePick:
 		b.WriteString(m.pickView())
+	case modeInput:
+		if m.inKind == inNewRepo {
+			b.WriteString(m.repoPickView())
+			break
+		}
+		fallthrough
 	default:
 		switch m.listMode() {
 		case modeRepo:
@@ -133,6 +139,10 @@ func (m Model) footer() []string {
 			return lines
 		}
 		lines = append(lines, " "+pal.bold.Render(label+":")+" "+string(m.input)+"█")
+		if m.inKind == inNewRepo {
+			lines = append(lines, pal.dim.Render(" type to filter   ↑↓ choose   enter pick   esc cancel   ctrl+u clear"))
+			return lines
+		}
 		lines = append(lines, pal.dim.Render(" enter save   esc cancel   ctrl+u clear"))
 		return lines
 	}
@@ -1039,8 +1049,10 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
    S            split a merged mission back out
-   n            new session: type the prompt, then the repository (default: the selected row's) and
-                an optional worktree name; tab switches between claude and codex
+   n            new session: type the prompt, pick the repository, then an optional worktree name;
+                the picker lists the selected row's repository, recently picked ones, then every repo
+                under ~/.config/wt-reap/roots (or ~/dev); typing filters by name or path, ↑↓ and enter
+                pick, and a path starting with / or ~ is used as typed; tab switches claude and codex
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean

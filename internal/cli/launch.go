@@ -214,7 +214,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 	var useCodex bool
 	var repo, slug string
 	cmd := &cobra.Command{
-		Use:   "new [--codex] [--repo PATH] [--slug S] <prompt>",
+		Use:   "new [--codex] [--repo NAME|PATH] [--slug S] <prompt>",
 		Short: "Start claude (or codex) on a prompt in a new worktree, in ym's own tmux server",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -225,18 +225,21 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			if useCodex {
 				n.Harness = codex.Name
 			}
+			var err error
 			if n.Repo == "" {
-				var err error
-				if n.Repo, err = os.Getwd(); err != nil {
-					return err
-				}
+				n.Repo, err = os.Getwd()
+			} else {
+				n.Repo, err = e.core.ResolveRepo(n.Repo)
+			}
+			if err != nil {
+				return err
 			}
 			if c, err := e.caller(); err == nil {
 				n.Parent = c.Session
 			} else if !errors.Is(err, core.ErrNotFound) {
 				return err
 			}
-			msg, err := e.core.Launches.Start(n)
+			msg, err := e.core.StartNew(n)
 			if err != nil {
 				return err
 			}
@@ -245,7 +248,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 		}),
 	}
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "start codex instead of claude")
-	cmd.Flags().StringVar(&repo, "repo", "", "repository to branch from (default: the current directory's)")
+	cmd.Flags().StringVar(&repo, "repo", "", "repository to branch from, by path or by any part of its name (default: the current directory's)")
 	cmd.Flags().StringVar(&slug, "slug", "", "worktree and branch name (default: from the prompt)")
 	return cmd
 }

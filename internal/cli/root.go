@@ -34,6 +34,7 @@ func Wire(path string) (*core.Core, error) {
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
 		Port:      port,
+		Roots:     core.RepoRoots,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core = c

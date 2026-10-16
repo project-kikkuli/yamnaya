@@ -105,6 +105,13 @@ type Model struct {
 	ask       string
 	yes       tea.Cmd
 	newL      core.NewLaunch
+	// repoScan streams repositories found under the roots; scanned holds them for the whole TUI session.
+	repoScan <-chan string
+	scanned  []string
+	scanDone bool
+	// picks lists the n picker's repositories: the selected row's first, then recent, then scanned.
+	picks   []string
+	repoCur int
 	items     []core.Item
 	itemsOf   string
 	message   string
@@ -143,6 +150,12 @@ type prMsg struct {
 type redeliveredMsg struct {
 	n   int
 	err error
+}
+
+// reposMsg carries repositories the scan found since the last one; done marks the scan's end.
+type reposMsg struct {
+	repos []string
+	done  bool
 }
 
 type doneMsg struct {
@@ -193,6 +206,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case reposMsg:
+		m.scanned = append(m.scanned, msg.repos...)
+		m.scanDone = msg.done
+		if m.mode == modeInput && m.inKind == inNewRepo {
+			m.picks = m.orderPicks()
+		}
+		if msg.done {
+			return m, nil
+		}
+		return m, m.waitRepos()
 	case boardMsg:
 		keep := ""
 		if r, ok := m.selected(); ok {
@@ -593,7 +616,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		r, _ := m.selected()
 		m.newL = core.NewLaunch{Harness: "claude", Repo: m.repoOf(r)}
 		m.startInput(inNew, "", "", "", false)
-		return m, nil
+		return m, m.scanRepos()
 	case "/":
 		if m.mode == modeList {
 			m.startInput(inFilter, "", "", m.filter, false)
@@ -928,9 +951,19 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = string(m.input)
 			m.cursor = 0
 		}
+		m.repoCur = 0
 		return m, nil
 	case tea.KeyCtrlU:
-		m.input, m.fresh = nil, false
+		m.input, m.fresh, m.repoCur = nil, false, 0
+		return m, nil
+	case tea.KeyUp, tea.KeyDown:
+		if m.inKind == inNewRepo {
+			if k.Type == tea.KeyUp {
+				m.repoCur = max(0, m.repoCur-1)
+			} else {
+				m.repoCur = min(len(m.repoMatches())-1, m.repoCur+1)
+			}
+		}
 		return m, nil
 	case tea.KeyTab:
 		if m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inNewSlug {
@@ -996,19 +1029,20 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Prompt = text
-			m.startInput(inNewRepo, "", "", m.newL.Repo, true)
+			m.openRepoPicker()
 		case inNewRepo:
-			if text == "" {
+			repo := m.pickedRepo(text)
+			if repo == "" {
 				return m, nil
 			}
-			m.newL.Repo = text
+			m.newL.Repo = repo
 			m.startInput(inNewSlug, "", "", "", false)
 		case inNewSlug:
-			n, l := m.newL, m.core.Launches
+			n, c := m.newL, m.core
 			n.Slug = text
 			m.message = "starting " + n.Harness + "…"
 			return m, m.do(func() (string, error) {
-				msg, err := l.Start(n)
+				msg, err := c.StartNew(n)
 				first, _, _ := strings.Cut(msg, "\n")
 				return "started " + first, err
 			})
@@ -1055,6 +1089,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = string(m.input)
 			m.cursor = 0
 		}
+		m.repoCur = 0
 	}
 	return m, nil
 }

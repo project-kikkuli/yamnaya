@@ -25,6 +25,8 @@ type Core struct {
 	PRs PRSource
 	// Launches reports launched sessions that exited; nil shows none.
 	Launches Launches
+	// Roots are the directories new-session pickers look for repositories under; nil looks nowhere.
+	Roots func() []string
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
