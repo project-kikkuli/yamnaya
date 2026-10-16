@@ -170,3 +170,29 @@ func TestCreateWithoutWtUsesGitWorktree(t *testing.T) {
 		t.Errorf("worktree head %q, repo head %q", got, Head(repo))
 	}
 }
+
+func TestNormalizeSlug(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Mafchine Identity", "mafchine-identity"},
+		{"MixedCase", "mixedcase"},
+		{"feature/login", "feature-login"},
+		{"a..b", "a-b"},
+		{"foo.lock", "foo-lock"},
+		{"-leading", "leading"},
+		{"  --x--  ", "x"},
+		{"café au lait", "caf-au-lait"},
+		{"日本語", ""},
+		{"", ""},
+		{"~^:?*[ ", ""},
+	} {
+		got := NormalizeSlug(c.in)
+		if got != c.want {
+			t.Errorf("NormalizeSlug(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if got != "" {
+			if out, err := exec.Command("git", "check-ref-format", "--branch", got).CombinedOutput(); err != nil {
+				t.Errorf("%q is not a valid branch: %s", got, out)
+			}
+		}
+	}
+}

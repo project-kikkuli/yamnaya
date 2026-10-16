@@ -161,7 +161,7 @@ func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
 
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
 func (l launcher) Start(n core.NewLaunch) (string, error) {
-	slug := n.Slug
+	slug := launch.NormalizeSlug(n.Slug)
 	if slug == "" {
 		slug = launch.Slug(n.Prompt)
 	}

@@ -86,11 +86,26 @@ func (r Records) Find(ref string) (Record, bool) {
 	return Record{}, false
 }
 
-// Slug turns a prompt into a short branch name: its first words, lowercased, joined by dashes.
-func Slug(prompt string) string {
-	words := strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool {
+func slugWords(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !(r < unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)))
 	})
+}
+
+// NormalizeSlug makes a typed worktree name a valid branch name: lowercase ASCII words joined by dashes, so any
+// character git refuses in a ref (spaces, slashes, dots, a leading dash, a .lock suffix) becomes a dash or vanishes.
+// It is empty when nothing usable is left.
+func NormalizeSlug(name string) string {
+	s := strings.Join(slugWords(name), "-")
+	if len(s) > 48 {
+		s = strings.TrimRight(s[:48], "-")
+	}
+	return s
+}
+
+// Slug turns a prompt into a short branch name: its first words, lowercased, joined by dashes.
+func Slug(prompt string) string {
+	words := slugWords(prompt)
 	s := ""
 	for _, w := range words {
 		next := w
