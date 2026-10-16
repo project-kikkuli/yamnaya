@@ -112,6 +112,7 @@ type Model struct {
 	// picks lists the n picker's repositories: the selected row's first, then recent, then scanned.
 	picks    []string
 	repoCur  int
+	pickErr  string
 	items    []core.Item
 	itemsOf  string
 	message  string
@@ -951,17 +952,17 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = string(m.input)
 			m.cursor = 0
 		}
-		m.repoCur = 0
+		m.repoCur, m.pickErr = 0, ""
 		return m, nil
 	case tea.KeyCtrlU:
-		m.input, m.fresh, m.repoCur = nil, false, 0
+		m.input, m.fresh, m.repoCur, m.pickErr = nil, false, 0, ""
 		return m, nil
 	case tea.KeyUp, tea.KeyDown:
 		if m.inKind == inNewRepo {
 			if k.Type == tea.KeyUp {
 				m.repoCur = max(0, m.repoCur-1)
 			} else {
-				m.repoCur = min(len(m.repoMatches())-1, m.repoCur+1)
+				m.repoCur = max(0, min(len(m.repoMatches())-1, m.repoCur+1))
 			}
 		}
 		return m, nil
@@ -1031,8 +1032,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.newL.Prompt = text
 			m.openRepoPicker()
 		case inNewRepo:
-			repo := m.pickedRepo(text)
-			if repo == "" {
+			repo, err := m.pickedRepo(text)
+			if err != nil {
+				m.mode, m.pickErr = modeInput, err.Error()
 				return m, nil
 			}
 			m.newL.Repo = repo
@@ -1089,7 +1091,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter = string(m.input)
 			m.cursor = 0
 		}
-		m.repoCur = 0
+		m.repoCur, m.pickErr = 0, ""
 	}
 	return m, nil
 }

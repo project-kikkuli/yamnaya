@@ -294,7 +294,7 @@ func TestNewStartsInTheSelectedRowsRepoAndShowsFailuresInline(t *testing.T) {
 	}{
 		{"mission row", mission("lead"), []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
 		{"repo row", func(r row) bool { return r.repo != nil && r.project == nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
-		{"typed repo", mission("lead"), []string{"n", "go", "enter", "/elsewhere", "enter", "enter"}, nil, "/elsewhere", "started claude "},
+		{"typed repo", mission("lead"), []string{"n", "go", "enter", "/tmp", "enter", "enter"}, nil, "/tmp", "started claude "},
 		{"permission prompt", func(r row) bool { return r.need != nil && r.item == nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, "/src/app", "started claude "},
 		{"item with no repo", func(r row) bool { return r.need != nil && r.item != nil }, []string{"n", "go", "enter", "enter", "enter"}, nil, core.MainCheckout(cwd), "started claude "},
 		{"not a git repo", mission("lead"), []string{"n", "go", "enter", "enter", "enter"}, errors.New("/src/app is not a git repository"), "/src/app", "error: /src/app is not a git repository"},

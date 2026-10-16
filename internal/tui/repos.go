@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -50,7 +52,10 @@ func (m Model) waitRepos() tea.Cmd {
 
 func (m *Model) openRepoPicker() {
 	m.startInput(inNewRepo, "", "", "", false)
-	m.repoCur = 0
+	m.repoCur, m.pickErr = 0, ""
+	if m.newL.Repo != "" {
+		m.newL.Repo = core.MainCheckout(m.newL.Repo)
+	}
 	m.picks = m.orderPicks()
 }
 
@@ -61,9 +66,6 @@ func (m Model) orderPicks() []string {
 		recent = nil
 	}
 	pre := m.newL.Repo
-	if pre != "" {
-		pre = core.MainCheckout(pre)
-	}
 	all := core.OrderRepos(recent, m.scanned)
 	if pre == "" {
 		return all
@@ -73,20 +75,33 @@ func (m Model) orderPicks() []string {
 
 func (m Model) repoMatches() []string { return core.MatchRepos(m.picks, string(m.input)) }
 
-// pickedRepo is what enter in the picker chooses: a typed path as typed, else the highlighted match, else the text as a path.
-func (m Model) pickedRepo(text string) string {
-	if core.IsRepoPath(text) {
-		return core.ExpandHome(text)
+// pickedRepo is what enter in the picker chooses: a typed path, else the highlighted match, else the text as an existing directory.
+func (m Model) pickedRepo(text string) (string, error) {
+	if text == "" && len(m.repoMatches()) == 0 {
+		return "", fmt.Errorf("no repository to pick yet; type a name or a path")
 	}
-	if ms := m.repoMatches(); len(ms) > 0 {
-		return ms[min(m.repoCur, len(ms)-1)]
+	if ms := m.repoMatches(); !core.IsRepoPath(text) && len(ms) > 0 {
+		return ms[max(0, min(m.repoCur, len(ms)-1))], nil
 	}
-	return text
+	dir, err := filepath.Abs(core.ExpandHome(text))
+	if err != nil {
+		return "", err
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		if core.IsRepoPath(text) {
+			return "", fmt.Errorf("%s is not a directory", text)
+		}
+		return "", fmt.Errorf("no repository matches %q", text)
+	}
+	return dir, nil
 }
 
 func (m Model) repoPickView() string {
 	var b strings.Builder
 	b.WriteString(pal.bold.Render(" PICK A REPOSITORY") + pal.dim.Render("  type to filter, or a path starting with / or ~") + "\n")
+	if m.pickErr != "" {
+		b.WriteString("   " + m.pickErr + "\n")
+	}
 	if core.IsRepoPath(string(m.input)) {
 		b.WriteString(pal.dim.Render("   enter uses the path as typed") + "\n")
 		return b.String()

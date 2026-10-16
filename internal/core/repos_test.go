@@ -84,16 +84,16 @@ func TestScanFindsMainCheckoutsWithinTwoLevels(t *testing.T) {
 }
 
 func TestMatchReposRanksNameMatchesFirst(t *testing.T) {
-	repos := []string{"/d/augur-context", "/d/august", "/d/fira/augur-capture", "/d/yamnaya", "/d/app"}
+	repos := []string{"/d/atlantic-api", "/d/atlas", "/d/acme/atlantic-cli", "/d/yamnaya", "/d/app"}
 	for _, c := range []struct {
 		query string
 		want  []string
 	}{
 		{"", repos},
-		{"august", []string{"/d/august"}},
-		{"aug", []string{"/d/augur-context", "/d/august", "/d/fira/augur-capture"}},
-		{"cap", []string{"/d/fira/augur-capture"}},
-		{"fira", []string{"/d/fira/augur-capture"}},
+		{"atlas", []string{"/d/atlas"}},
+		{"atl", []string{"/d/atlantic-api", "/d/atlas", "/d/acme/atlantic-cli"}},
+		{"cli", []string{"/d/acme/atlantic-cli"}},
+		{"acme", []string{"/d/acme/atlantic-cli"}},
 		{"ymn", []string{"/d/yamnaya"}},
 		{"APP", []string{"/d/app"}},
 		{"zzz", nil},
@@ -113,7 +113,7 @@ func repoCore(t *testing.T, root string) *Core {
 }
 
 func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
-	root := repoTree(t, "fira/august/", "fira/augur-context/", "fira/august-wt-x=wt", "kikkuli/yamnaya/", "one/app/", "two/app/")
+	root := repoTree(t, "acme/atlas/", "acme/atlantic-api/", "acme/atlas-wt-x=wt", "kikkuli/yamnaya/", "one/app/", "two/app/")
 	home, _ := os.UserHomeDir()
 	for _, c := range []struct {
 		ref  string
@@ -122,8 +122,8 @@ func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
 	}{
 		{"yamnaya", "kikkuli/yamnaya", ""},
 		{"yam", "kikkuli/yamnaya", ""},
-		{"august", "fira/august", ""},
-		{"aug", "", "matches several"},
+		{"atlas", "acme/atlas", ""},
+		{"atl", "", "matches several"},
 		{"app", "", "matches several"},
 		{"nothing", "", "no repository matches"},
 		{"/abs/path", "/abs/path", ""},

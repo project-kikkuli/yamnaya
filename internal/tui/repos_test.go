@@ -15,16 +15,19 @@ func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 		recent string
 		keys   []string
 		repo   string
+		err    string
 	}{
-		{"enter keeps the selected row's repo", "", []string{"enter"}, "/src/app"},
-		{"down picks the next, scanned by name", "", []string{"down", "enter"}, "work/api"},
-		{"down then up returns", "", []string{"down", "down", "up", "enter"}, "work/api"},
-		{"typing filters by name", "", []string{"web", "enter"}, "work/web"},
-		{"name matches rank above path matches", "", []string{"w", "down", "enter"}, "work/api"},
-		{"recent picks follow the selected row's", "solo", []string{"down", "enter"}, "solo"},
-		{"a ~ path is used as typed", "", []string{"~/elsewhere", "enter"}, filepath.Join(home, "elsewhere")},
-		{"an absolute path is used as typed", "", []string{"/elsewhere", "enter"}, "/elsewhere"},
-		{"no match is tried as a path", "", []string{"zzz", "enter"}, "zzz"},
+		{"enter keeps the selected row's repo", "", []string{"enter"}, "/src/app", ""},
+		{"down picks the next, scanned by name", "", []string{"down", "enter"}, "work/api", ""},
+		{"down then up returns", "", []string{"down", "down", "up", "enter"}, "work/api", ""},
+		{"typing filters by name", "", []string{"web", "enter"}, "work/web", ""},
+		{"name matches rank above path matches", "", []string{"w", "down", "enter"}, "work/api", ""},
+		{"recent picks follow the selected row's", "solo", []string{"down", "enter"}, "solo", ""},
+		{"a ~ path is used as typed", "", []string{"~", "enter"}, home, ""},
+		{"an absolute path is used as typed", "", []string{"ROOT/notes/old", "enter"}, "notes/old", ""},
+		{"a name matching nothing stays in the picker", "", []string{"telc", "enter"}, "", "no repository matches \"telc\""},
+		{"a missing path stays in the picker", "", []string{"/nowhere/at/all", "enter"}, "", "/nowhere/at/all is not a directory"},
+		{"down past the last match keeps the last", "", []string{"web", "down", "down", "enter"}, "work/web", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -55,14 +58,20 @@ func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 			}
 			for _, key := range c.keys {
 				if len(key) > 1 && key != "enter" && key != "down" && key != "up" {
-					m = press(t, m, strings.Split(key, "")...)
+					m = press(t, m, strings.Split(strings.Replace(key, "ROOT", root, 1), "")...)
 					continue
 				}
 				m = press(t, m, key)
 			}
+			if c.err != "" {
+				if len(l.started) != 0 || !strings.Contains(m.View(), c.err) || !strings.Contains(m.View(), "PICK A REPOSITORY") {
+					t.Fatalf("started %s; picker should stay open saying %q:\n%s", fmtLaunches(l.started), c.err, m.View())
+				}
+				return
+			}
 			m = press(t, m, "enter")
 			want := c.repo
-			if !filepath.IsAbs(want) && !strings.HasPrefix(want, "zzz") {
+			if !filepath.IsAbs(want) {
 				want = filepath.Join(root, want)
 			}
 			if len(l.started) != 1 || l.started[0].Repo != want || l.started[0].Prompt != "go" {

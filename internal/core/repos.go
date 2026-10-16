@@ -88,7 +88,10 @@ func ScanRepos(roots []string, found chan<- string) {
 
 // MainCheckout is the main checkout of the repository dir lies in, or dir when it has none.
 func MainCheckout(dir string) string {
-	g := ReadGit(dir)
+	g, ok := readGitFiles(dir)
+	if !ok {
+		g = revParse(dir)
+	}
 	if filepath.Base(g.Common) == ".git" {
 		return filepath.Dir(g.Common)
 	}
