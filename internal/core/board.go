@@ -27,6 +27,8 @@ type Core struct {
 	Launches Launches
 	// Roots are the directories new-session pickers look for repositories under; nil looks nowhere.
 	Roots func() []string
+	// Asks reports whether an agent's reply asks the owner; nil lists no waiting sessions.
+	Asks func(reply string) bool
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
@@ -100,11 +102,13 @@ func (p Project) Duplicated() bool {
 	return false
 }
 
-// Need is one row of the needs-you list: a permission prompt or an open item.
+// Need is one row of the needs-you list: a permission prompt, an open item, or an idle session whose last reply asks the owner.
 type Need struct {
 	Session *Live
 	Item    *Item
 	Project string
+	// Reply is the waiting session's last reply.
+	Reply string
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -330,6 +334,11 @@ func (c *Core) Board() (Board, error) {
 	}
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)
+	wait, err := c.waiting(b, b.Needs)
+	if err != nil {
+		return b, err
+	}
+	b.Needs = append(b.Needs, wait...)
 	return b, nil
 }
 

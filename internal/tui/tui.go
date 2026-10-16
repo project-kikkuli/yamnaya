@@ -49,6 +49,7 @@ const (
 	inNewSlug
 	inPhases
 	inVibe
+	inWaitAnswer
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -94,6 +95,8 @@ type Model struct {
 	inKind    inputKind
 	inItem    string
 	inLabel   string
+	// inReply is the waiting reply an answer is for.
+	inReply   string
 	inProj    string
 	filter    string
 	targets   []core.Target
@@ -467,6 +470,9 @@ func needText(n core.Need) string {
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question
 	}
+	if n.Waiting() {
+		return titleOf(*n.Session) + " waiting: " + core.LastLine(n.Reply)
+	}
 	if n.Session != nil && n.Session.Prompt != nil {
 		return n.Session.Prompt.String()
 	}
@@ -645,6 +651,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if r.need != nil && r.need.Waiting() && slices.Contains([]string{"enter", "w", "a", "x"}, k.String()) {
+		return m.waitingKey(k, *r.need)
+	}
 	if r.stale {
 		switch k.String() {
 		case "enter":
@@ -784,6 +793,26 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.startInput(inVibe, "", p.Key, "", false)
 			m.inLabel = p.Name
 		}
+	}
+	return m, nil
+}
+
+// waitingKey acts on a session waiting on the owner: enter or w shows its last reply, a answers it, x dismisses it.
+func (m Model) waitingKey(k tea.KeyMsg, n core.Need) (tea.Model, tea.Cmd) {
+	s := n.Session
+	switch k.String() {
+	case "enter", "w":
+		m.show(k.String(), " "+titleOf(*s)+" ("+s.Location()+"), last reply:\n\n"+n.Reply+"\n")
+	case "a":
+		if m.core.Launches == nil {
+			m.message = "ym's launcher is unavailable"
+			return m, nil
+		}
+		m.startInput(inWaitAnswer, s.Key(), "", "", false)
+		m.inLabel, m.inReply = titleOf(*s), n.Reply
+	case "x":
+		key, reply, label := s.Key(), n.Reply, titleOf(*s)
+		return m, m.do(func() (string, error) { return label + " dismissed", m.core.Store.DismissWaiting(key, reply) })
 	}
 	return m, nil
 }
@@ -988,6 +1017,17 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			l := m.core.Launches
 			return m, m.do(func() (string, error) { return l.Send(s, text) })
+		case inWaitAnswer:
+			if text == "" {
+				return m, nil
+			}
+			s, ok := m.board.Session(m.inItem)
+			if !ok {
+				m.message = m.inLabel + " is gone"
+				return m, nil
+			}
+			reply := m.inReply
+			return m, m.do(func() (string, error) { return m.core.AnswerWaiting(s, reply, text) })
 		case inFilter:
 			m.filter, m.cursor = text, 0
 		case inAnswer:

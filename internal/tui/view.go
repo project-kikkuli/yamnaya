@@ -126,7 +126,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel,
+			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
 			inNewSlug: "new " + m.newL.Harness + " session, worktree name (empty: from the prompt)",
 			inPhases:  "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (place: why)"}[m.inKind]
@@ -177,7 +177,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   o go to session   n new   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   n new   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -470,6 +470,16 @@ func (m Model) needLines(i int, n core.Need) string {
 	name := pad(m.projectName(n.Project), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
+	if n.Waiting() {
+		s := n.Session
+		head := m.mark(i) + m.hue(n.Project).Render(pad("wait", m.idWidth())) + " " + name + " " + pad(titleOf(*s), 20) + " waiting: "
+		b.WriteString(head + pad(core.LastLine(n.Reply), max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
+		if sel {
+			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
+			b.WriteString(pal.dim.Render("         enter last reply   a answer   x dismiss   o go to session") + "\n")
+		}
+		return b.String()
+	}
 	if n.Item == nil {
 		what := "permission prompt"
 		if n.Session.Prompt != nil {
@@ -1028,24 +1038,26 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
- NEEDS YOU lists permission prompts first, then open items, most blocking first.
+ NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
+ whose last reply asks you with no item filed ("waiting:", its reply's last line).
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
  A mission is a session plus the sessions it spawned. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
 
    ↑ ↓ or k j   move
-   enter        an item: expand it; a permission prompt: go to its session; an exited launch: revive it;
-                anything else: open it
+   enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
+                last reply; an exited launch: revive it; anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    s            send the session a follow-up: typed in on ym's server even mid-turn, held while a
                 permission prompt shows; other sessions read it from ym item inbox
-   a            answer an item; an idle agent in tmux gets it typed in, others on their next turn
+   a            answer an item; an idle agent in tmux gets it typed in, others on their next turn;
+                on a waiting session, send the answer as your message, the same way s does, and clear the row
    l            later: snooze the item
    u            reopen a snoozed item (detail)
-   x            dismiss the item with a reason
-   w            show the item in full with its history
+   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again
+   w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
    S            split a merged mission back out

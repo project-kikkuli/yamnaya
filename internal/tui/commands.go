@@ -20,6 +20,7 @@ var Commands = map[string]string{
 	"ym adopt":          "o",
 	"ym revive":         "enter",
 	"ym send":           "s",
+	"ym waiting":        "w",
 	"ym new":            "n",
 	"ym land":           "L",
 	"ym kill":           "K",

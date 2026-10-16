@@ -12,6 +12,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/gh"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
+	"github.com/project-kikkuli/yamnaya/internal/health"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
@@ -35,6 +36,7 @@ func Wire(path string) (*core.Core, error) {
 		PRs:       gh.New(),
 		Port:      port,
 		Roots:     core.RepoRoots,
+		Asks:      health.Asks,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core = c
@@ -105,6 +107,7 @@ func NewRoot() *cobra.Command {
 		linkLaunchCmd(with),
 		adoptCmd(with),
 		sendCmd(with),
+		waitingCmd(with),
 		sendHoldCmd(with),
 		resumeWatchCmd(),
 		installCmd(),

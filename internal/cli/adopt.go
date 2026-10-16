@@ -222,7 +222,10 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			switch {
 			case err == nil:
 				_, callErr := e.core.Calling(os.Getpid(), os.Getenv)
-				msg, err = l.sendFrom(s, text, errors.Is(callErr, core.ErrNotFound))
+				owner := errors.Is(callErr, core.ErrNotFound)
+				if msg, err = l.sendFrom(s, text, owner); err == nil && owner && s.Result != "" {
+					err = e.core.Store.DismissWaiting(s.Key(), s.Result)
+				}
 			case errors.Is(err, core.ErrNotFound) && len(args[0]) >= 32:
 				msg, err = l.send(args[0], nil, text, nil)
 			}
