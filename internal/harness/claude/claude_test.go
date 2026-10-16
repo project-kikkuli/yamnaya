@@ -112,23 +112,28 @@ func TestSessionIDFromStateThenArgv(t *testing.T) {
 
 func TestOwnsSessionProcessesOnly(t *testing.T) {
 	a := fixture(t)
+	a.Dir = t.TempDir()
+	writeState(t, a.Dir, 2, map[string]any{"pid": 2, "sessionId": "job", "kind": "bg"})
 	cases := map[string]struct {
 		args []string
 		want bool
+		pid  int
 	}{
-		"interactive":    {[]string{"/opt/bin/claude", "--resume", "x"}, true},
-		"headless":       {[]string{"claude", "-p", "do it"}, true},
-		"node launcher":  {[]string{"node", "/usr/lib/claude", "--continue"}, true},
-		"prompt words":   {[]string{"claude", "fix", "it", "then", "update", "mcp"}, true},
-		"subcommand":     {[]string{"claude", "update"}, false},
-		"chrome host":    {[]string{"claude", "--chrome-native-host"}, false},
-		"mcp server":     {[]string{"claude", "mcp", "serve"}, false},
-		"other program":  {[]string{"codex"}, false},
-		"background job": {[]string{"claude bg-spare", "--bg-spare", "/tmp/s.claim.sock"}, true},
-		"background pty": {[]string{"claude bg-pty-host", "--bg-pty-host", "/tmp/s.pty.sock"}, false},
+		"interactive":     {[]string{"/opt/bin/claude", "--resume", "x"}, true, 1},
+		"headless":        {[]string{"claude", "-p", "do it"}, true, 1},
+		"node launcher":   {[]string{"node", "/usr/lib/claude", "--continue"}, true, 1},
+		"prompt words":    {[]string{"claude", "fix", "it", "then", "update", "mcp"}, true, 1},
+		"subcommand":      {[]string{"claude", "update"}, false, 1},
+		"chrome host":     {[]string{"claude", "--chrome-native-host"}, false, 1},
+		"mcp server":      {[]string{"claude", "mcp", "serve"}, false, 1},
+		"other program":   {[]string{"codex"}, false, 1},
+		"claimed spare":   {[]string{"claude bg-spare", "--bg-spare", "/tmp/s.claim.sock"}, true, 2},
+		"unclaimed spare": {[]string{"claude bg-spare", "--bg-spare", "/tmp/t.claim.sock"}, false, 3},
+		"background pty":  {[]string{"claude bg-pty-host", "--bg-pty-host", "/tmp/s.pty.sock"}, false, 2},
+		"other titled":    {[]string{"claude daemon", "run"}, false, 2},
 	}
 	for name, c := range cases {
-		if got := a.Owns(proc.Proc{PID: 1, Args: c.args}); got != c.want {
+		if got := a.Owns(proc.Proc{PID: c.pid, Args: c.args}); got != c.want {
 			t.Errorf("%s: Owns = %v, want %v", name, got, c.want)
 		}
 	}

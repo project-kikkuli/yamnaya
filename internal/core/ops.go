@@ -236,7 +236,7 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	return it, c.deliver(b, it, notice(it)), nil
+	return it, c.deliver(b, it.Session, []Item{it}), nil
 }
 
 // Dismiss closes the item for good and tells the agent the way Answer does.
@@ -245,7 +245,7 @@ func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	return it, c.deliver(b, it, notice(it)), nil
+	return it, c.deliver(b, it.Session, []Item{it}), nil
 }
 
 // notice is how an answered or dismissed item reaches its agent.
@@ -256,20 +256,29 @@ func notice(it Item) string {
 	return fmt.Sprintf("re %s: %s", it.Spoken(), oneLine(it.Answer))
 }
 
-// Redeliver hands each answered or dismissed item still queued to its agent once the session carrying it runs on the board,
-// the way Answer does; it returns how many reached their sessions.
+// Redeliver hands the answered and dismissed items still queued to their agents once the session carrying them runs on the board,
+// one notice per session; it returns how many items reached their sessions.
 func (c *Core) Redeliver(b Board) (int, error) {
 	items, err := c.Store.Items(ItemFilter{Undelivered: true})
 	if err != nil {
 		return 0, err
 	}
-	n := 0
+	bySession := map[string][]Item{}
+	var order []string
 	for _, it := range items {
-		if !it.Held.IsZero() {
+		s, ok := b.Session(c.Resolve(it.Session))
+		if !ok {
 			continue
 		}
-		if d := c.deliver(b, it, notice(it)); d != Queued {
-			n++
+		if _, seen := bySession[s.Key()]; !seen {
+			order = append(order, s.Key())
+		}
+		bySession[s.Key()] = append(bySession[s.Key()], it)
+	}
+	n := 0
+	for _, key := range order {
+		if d := c.deliver(b, key, bySession[key]); d != Queued {
+			n += len(bySession[key])
 		}
 	}
 	return n, nil
@@ -279,18 +288,32 @@ func (c *Core) Snooze(id string) (Item, error) { return c.Store.Transition(id, I
 
 func (c *Core) Reopen(id string) (Item, error) { return c.Store.Transition(id, ItemOpen, "") }
 
-func (c *Core) deliver(b Board, it Item, text string) Delivery {
-	s, ok := b.Session(c.Resolve(it.Session))
+// deliver hands the items' notices to session as one message, claiming each first so no other delivery repeats them.
+func (c *Core) deliver(b Board, session string, items []Item) Delivery {
+	s, ok := b.Session(c.Resolve(session))
 	if !ok || len(s.Copies) > 1 {
 		return Queued
 	}
-	if claimed, err := c.Store.ClaimDelivery(it.Seq); err != nil || !claimed {
+	var claimed []Item
+	var notices []string
+	for _, it := range items {
+		if ok, err := c.Store.ClaimDelivery(it.Seq); err == nil && ok {
+			claimed = append(claimed, it)
+			notices = append(notices, notice(it))
+		}
+	}
+	if len(claimed) == 0 {
 		return Queued
 	}
-	switch err := c.message(s.Session, text, true); {
+	text := strings.Join(notices, "; ")
+	err := c.message(s.Session, text, true)
+	switch {
 	case err == nil:
 		return Sent
-	case errors.Is(err, ErrPendingApproval) && c.Store.MarkHeld(it.Seq) == nil:
+	case errors.Is(err, ErrPendingApproval):
+		for _, it := range claimed {
+			c.Store.MarkHeld(it.Seq)
+		}
 		return Held
 	}
 	if s.Status == Idle && s.Handle != nil {
@@ -299,7 +322,9 @@ func (c *Core) deliver(b Board, it Item, text string) Delivery {
 			return Typed
 		}
 	}
-	c.Store.Undeliver(it.Seq)
+	for _, it := range claimed {
+		c.Store.Undeliver(it.Seq)
+	}
 	return Queued
 }
 

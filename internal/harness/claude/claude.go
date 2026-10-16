@@ -56,13 +56,18 @@ func (a *Adapter) Name() string { return Name }
 
 var subcommands = map[string]bool{"mcp": true, "doctor": true, "update": true, "install": true, "config": true, "setup-token": true, "plugin": true}
 
-// titledRoles are the process titles "claude <role>" that run a session; a background job's process renames itself "claude bg-spare".
+// titledRoles are the process titles "claude <role>" that can run a session; a background job's process renames itself "claude bg-spare"
+// and runs one once a job claims it and it writes its state file.
 var titledRoles = map[string]bool{"bg-spare": true}
 
 func (a *Adapter) Owns(p proc.Proc) bool {
 	name, role, titled := strings.Cut(p.Command(), " ")
 	if name != "claude" || titled && !titledRoles[role] {
 		return false
+	}
+	if titled {
+		_, ok := a.state(p.PID)
+		return ok
 	}
 	args := p.Params()
 	if len(args) > 0 && subcommands[args[0]] {

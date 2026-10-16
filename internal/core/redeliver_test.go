@@ -57,3 +57,32 @@ func TestQueuedAnswersReachTheirSessionOnceItIsReachable(t *testing.T) {
 		})
 	}
 }
+
+func TestQueuedAnswersReachASessionAsOneNotice(t *testing.T) {
+	w := newWorld(t)
+	var ids []string
+	for _, q := range []string{"q1", "q2", "q3"} {
+		it, err := w.core.AddItem(Item{Kind: KindDecision, Question: q, Session: "s"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, it.ID)
+	}
+	if _, _, err := w.core.Answer(w.board(t), ids[0], "go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.core.Dismiss(w.board(t), ids[1], "stale"); err != nil {
+		t.Fatal(err)
+	}
+	w.run(20, 1, "/dev/t2", "claude", "s", Busy)
+	w.claude.inbox = map[string]error{"s": nil}
+	for i, want := range []int{2, 0} {
+		if n, err := w.core.Redeliver(w.board(t)); err != nil || n != want {
+			t.Fatalf("refresh %d: Redeliver = %d, %v; want %d", i+1, n, err, want)
+		}
+	}
+	want := fmt.Sprintf("[s: re %s: go; re %s: dismissed: stale]", ids[0], ids[1])
+	if fmt.Sprint(w.claude.handed) != want {
+		t.Errorf("handed %q, want %s", w.claude.handed, want)
+	}
+}
