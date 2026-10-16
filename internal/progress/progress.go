@@ -37,7 +37,7 @@ func (u Unit) Passed() int {
 	return n
 }
 
-// Crew counts dispatched agents. Cut ones ended mid-turn and count as finished.
+// Crew counts dispatched agents. Cut ones, killed or failed mid-turn, are left out of Finished and Dispatched.
 type Crew struct {
 	Finished, Cut, Dispatched int
 }
@@ -71,7 +71,7 @@ func (m Mission) Parts() string {
 	}
 	s := fmt.Sprintf("crew %d/%d finished", m.Crew.Finished, m.Crew.Dispatched)
 	if m.Crew.Cut > 0 {
-		s += fmt.Sprintf(" (%d cut)", m.Crew.Cut)
+		s += fmt.Sprintf(" (%d cut, not counted)", m.Crew.Cut)
 	}
 	return s + fmt.Sprintf(", gates %d/%d over %d branches", gates, len(Gates)*len(m.open()), len(m.open()))
 }
@@ -112,12 +112,13 @@ func Of(p core.Project) Mission {
 }
 
 func (c *Crew) add(s core.Status, cut bool) {
+	if cut {
+		c.Cut++
+		return
+	}
 	c.Dispatched++
 	if s != core.Busy && s != core.Waiting {
 		c.Finished++
-	}
-	if cut {
-		c.Cut++
 	}
 }
 

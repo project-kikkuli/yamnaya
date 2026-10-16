@@ -209,6 +209,9 @@ func (m Model) listView() string {
 		if (r.repo != nil || r.project != nil) && !repos {
 			repos = true
 			b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n")
+			if cols.bar > 0 {
+				b.WriteString(pal.dim.Render("   "+progressLegend) + "\n")
+			}
 		}
 		switch {
 		case r.stale:

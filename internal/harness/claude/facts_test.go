@@ -151,3 +151,31 @@ func TestAFreshRunResumesFromTheSavedOffset(t *testing.T) {
 		t.Fatalf("offset %d did not advance past %d", cache[w.transcript].off, saved)
 	}
 }
+
+func TestASubagentIsCutOnlyWhenItStoppedMidTurn(t *testing.T) {
+	ended := `{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn"}}`
+	cases := []struct {
+		name  string
+		lines []string
+		cut   bool
+	}{
+		{"replied and ended its turn", []string{human("go"), ended}, false},
+		{"handed back its report", []string{human("go"), toolUse("h1", "SubagentHandback", `{"message":"report"}`),
+			toolResult("h1", `{"success":true,"message":"Report delivered to your parent"}`)}, false},
+		{"interrupted", []string{human("go"), toolUse("b1", "Bash", `{"command":"go test ./..."}`),
+			`{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`}, true},
+		{"killed waiting on a tool", []string{human("go"), toolUse("b1", "Bash", `{"command":"go test ./..."}`)}, true},
+		{"denied a tool", []string{human("go"), toolUse("e1", "Edit", `{"file_path":"/x"}`), toolResult("e1", "Permission for this tool use was denied.")}, true},
+		{"kept working after a handback", []string{human("go"), toolUse("h1", "SubagentHandback", `{"message":"report"}`),
+			toolResult("h1", "ok"), toolUse("b1", "Bash", `{"command":"ls"}`), toolResult("b1", "a")}, true},
+	}
+	for _, c := range cases {
+		w := newWorld(t, human("coordinate"))
+		w.agent(t, "x1", `{"agentType":"general-purpose","description":"work"}`, c.lines...)
+		a := &Adapter{Dir: w.dir, Now: time.Now}
+		crew := a.crew(w.subagents, false, time.Now().Add(time.Hour))
+		if len(crew) != 1 || crew[0].Status != core.Done || crew[0].Cut != c.cut {
+			t.Errorf("%s: crew %+v, want done with cut %v", c.name, crew, c.cut)
+		}
+	}
+}

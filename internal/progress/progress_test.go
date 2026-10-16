@@ -28,9 +28,9 @@ func TestFractionCountsFinishedCrewAndPassedGates(t *testing.T) {
 		units int
 	}{
 		{"nothing to measure", core.Project{Key: "root", Sessions: []core.Live{live("root", core.Busy, "main", 0)}}, 0, false, Crew{}, 0},
-		{"two of four crew finished, one killed and one failed", core.Project{Key: "root", Sessions: []core.Live{live("root", core.Busy, "", 0,
+		{"one of two crew finished, the two cut ones left out", core.Project{Key: "root", Sessions: []core.Live{live("root", core.Busy, "", 0,
 			member(core.Busy, false), member(core.Done, true), member(core.Done, false), member(core.Waiting, true))}},
-			0.5, true, Crew{Finished: 2, Cut: 2, Dispatched: 4}, 0},
+			0.5, true, Crew{Finished: 1, Cut: 2, Dispatched: 2}, 0},
 		{"idle teammates count finished, spawned sessions and exited ones count as crew", core.Project{Key: "root",
 			Sessions: []core.Live{live("root", core.Busy, "", 0, member(core.Idle, false)), live("kid", core.Busy, "", 0)},
 			Dormant:  []core.Dormant{{Key: "gone", Session: "gone"}}},
@@ -51,6 +51,38 @@ func TestFractionCountsFinishedCrewAndPassedGates(t *testing.T) {
 		f, ok := m.Fraction()
 		if ok != c.ok || (ok && abs(f-c.want) > 1e-9) || m.Crew != c.crew || len(m.Units) != c.units {
 			t.Errorf("%s: fraction %v %v, crew %+v, units %d; want %v %v, %+v, %d (%s)", c.name, f, ok, m.Crew, len(m.Units), c.want, c.ok, c.crew, c.units, m.Parts())
+		}
+	}
+}
+
+func TestFractionOverCrewAndGateMixes(t *testing.T) {
+	green := core.PR{URL: "g", Repo: "app", Number: 5, Status: &core.PRStatus{State: "OPEN", Head: "g", Passed: 3}}
+	withPR := func(crew ...core.Member) core.Live {
+		l := live("root", core.Busy, "", 0, crew...)
+		l.PRs = []core.PR{green}
+		return l
+	}
+	done, busy, waiting, cut := member(core.Done, false), member(core.Busy, false), member(core.Waiting, false), member(core.Done, true)
+	cases := []struct {
+		name string
+		lead core.Live
+		want float64
+		ok   bool
+	}{
+		{"all crew finished", live("root", core.Busy, "", 0, done, done), 1, true},
+		{"busy and waiting crew hold it back", live("root", core.Busy, "", 0, done, busy, waiting), 1.0 / 3, true},
+		{"cut crew neither inflate nor block", live("root", core.Busy, "", 0, done, cut, cut), 1, true},
+		{"cut crew beside busy crew", live("root", core.Busy, "", 0, busy, cut), 0, true},
+		{"only cut crew leaves nothing to measure", live("root", core.Busy, "", 0, cut), 0, false},
+		{"a green PR with no crew", withPR(), 5.0 / 6, true},
+		{"a green PR, finished and cut crew", withPR(done, cut), 6.0 / 7, true},
+		{"a green PR, busy crew", withPR(busy, waiting), 5.0 / 8, true},
+	}
+	for _, c := range cases {
+		m := Of(core.Project{Key: "root", Sessions: []core.Live{c.lead}})
+		f, ok := m.Fraction()
+		if ok != c.ok || (ok && abs(f-c.want) > 1e-9) {
+			t.Errorf("%s: %v %v, want %v %v (%s)", c.name, f, ok, c.want, c.ok, m.Parts())
 		}
 	}
 }

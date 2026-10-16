@@ -36,7 +36,7 @@ func (m Model) missionCols(indent int) cols {
 			c.phase = phaseName + 1 + phaseDots
 		}
 		if _, ok := progress.Of(p).Fraction(); ok {
-			c.bar = 13
+			c.bar = 18
 		}
 		if v, ok := p.Vibe(); ok {
 			c.vibe = max(c.vibe, ansi.StringWidth(v.Place))
@@ -165,9 +165,12 @@ func phaseCell(ph core.Phases) string {
 	return pad(ph.Names[ph.Current], phaseName) + " " + pad(strings.Join(dots, ""), phaseDots)
 }
 
+// progressLegend says what a mission row's done percent counts.
+var progressLegend = "done = agents finished + PR steps cleared (" + strings.Join(progress.Gates[:], "→") + ")"
+
 func barCell(p core.Project, w int) string {
 	if f, ok := progress.Of(p).Fraction(); ok {
-		return pad(progress.Bar(f, 8)+fmt.Sprintf(" %3.0f%%", f*100), w)
+		return pad(progress.Bar(f, 8)+fmt.Sprintf(" %3.0f%% done", f*100), w)
 	}
 	return pad("", w)
 }

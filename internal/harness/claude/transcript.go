@@ -116,7 +116,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 4
+const scanFormat = 5
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -136,6 +136,8 @@ type scan struct {
 	LastType   string
 	LastStop   string
 	Stopped    bool
+	// HandedBack is set while the last assistant record called SubagentHandback, which ends a subagent cleanly.
+	HandedBack bool
 	LastAt     time.Time
 	// UserAt is the latest user record's time; Claude can write a new turn's prompt before the last turn's final reply.
 	UserAt time.Time
@@ -221,6 +223,7 @@ func (t *scan) add(r record) {
 }
 
 func (t *scan) assistant(r record) {
+	t.HandedBack = false
 	if r.Message != nil && r.Message.Model != "" && !strings.HasPrefix(r.Message.Model, "<") {
 		t.Facts.Model = r.Message.Model
 	}
@@ -231,6 +234,9 @@ func (t *scan) assistant(r record) {
 				t.Facts.Result = s
 			}
 		case "tool_use":
+			if b.Name == "SubagentHandback" {
+				t.HandedBack = true
+			}
 			a := core.Describe(b.Name, b.Input, r.Cwd, r.Timestamp)
 			var files []string
 			if wrote[b.Name] {
@@ -270,7 +276,7 @@ func (t *scan) user(r record) {
 func (t scan) pending(quiet time.Duration) bool {
 	switch t.LastType {
 	case "user":
-		return true
+		return !t.HandedBack
 	case "assistant":
 		if !t.Stopped {
 			return quiet < 2*time.Minute
