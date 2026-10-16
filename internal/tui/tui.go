@@ -86,6 +86,8 @@ type Model struct {
 	agent     string
 	scrollY   int
 	prBusy    bool
+	// sending is set while queued answers are handed to sessions that became reachable.
+	sending bool
 	showStale bool
 	input     []rune
 	fresh     bool
@@ -138,6 +140,11 @@ type prMsg struct {
 	err error
 }
 
+type redeliveredMsg struct {
+	n   int
+	err error
+}
+
 type doneMsg struct {
 	message string
 	err     error
@@ -154,6 +161,15 @@ func (m Model) refresh(tick bool) tea.Cmd {
 	return func() tea.Msg {
 		b, err := c.Board()
 		return boardMsg{b, err, tick}
+	}
+}
+
+// redeliver hands queued answers to their sessions in the background once the board shows them reachable.
+func (m Model) redeliver(b core.Board) tea.Cmd {
+	c := m.core
+	return func() tea.Msg {
+		n, err := c.Redeliver(b)
+		return redeliveredMsg{n, err}
 	}
 }
 
@@ -199,7 +215,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prBusy = true
 			cmds = append(cmds, m.refreshPRs(msg.board))
 		}
+		if msg.err == nil && !m.sending {
+			m.sending = true
+			cmds = append(cmds, m.redeliver(msg.board))
+		}
 		return m, tea.Batch(cmds...)
+	case redeliveredMsg:
+		m.sending = false
+		if msg.err != nil {
+			m.message = "error: " + msg.err.Error()
+		}
+		if msg.n > 0 {
+			return m, m.refresh(false)
+		}
+		return m, nil
 	case prMsg:
 		m.prBusy = false
 		if msg.n > 0 {

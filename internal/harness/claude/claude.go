@@ -56,8 +56,12 @@ func (a *Adapter) Name() string { return Name }
 
 var subcommands = map[string]bool{"mcp": true, "doctor": true, "update": true, "install": true, "config": true, "setup-token": true, "plugin": true}
 
+// titledRoles are the process titles "claude <role>" that run a session; a background job's process renames itself "claude bg-spare".
+var titledRoles = map[string]bool{"bg-spare": true}
+
 func (a *Adapter) Owns(p proc.Proc) bool {
-	if p.Command() != "claude" {
+	name, role, titled := strings.Cut(p.Command(), " ")
+	if name != "claude" || titled && !titledRoles[role] {
 		return false
 	}
 	args := p.Params()
@@ -84,6 +88,7 @@ type state struct {
 	StatusUpdatedAt int64  `json:"statusUpdatedAt"`
 	PeerProtocol    int    `json:"peerProtocol"`
 	MessagingSocket string `json:"messagingSocketPath"`
+	Kind            string `json:"kind"`
 }
 
 func (a *Adapter) state(pid int) (state, bool) {
@@ -173,7 +178,7 @@ func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
 	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY}
 	st, ok := a.state(p.PID)
 	if ok {
-		s.ID, s.Cwd = st.SessionID, st.Cwd
+		s.ID, s.Cwd, s.Background = st.SessionID, st.Cwd, st.Kind == "bg"
 	} else {
 		s.ID = argSessionID(p.Args)
 	}

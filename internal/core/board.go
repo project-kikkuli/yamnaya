@@ -52,6 +52,9 @@ type Live struct {
 
 // Location names where the session runs, for display.
 func (l Live) Location() string {
+	if l.Background {
+		return "bg job"
+	}
 	if l.Handle == nil {
 		where := strings.TrimPrefix(l.TTY, "/dev/")
 		if where == "" {

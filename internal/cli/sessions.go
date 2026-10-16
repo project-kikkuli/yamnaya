@@ -46,6 +46,9 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
+			if _, err := e.core.Redeliver(b); err != nil {
+				return err
+			}
 			var out []sessionJSON
 			for _, s := range b.Sessions {
 				j := sessionJSON{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, Branch: s.Branch,

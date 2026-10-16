@@ -129,6 +129,8 @@ type Session struct {
 	Crew      []Member
 	Prompt    *Prompt
 	Facts
+	// Background is a job the harness runs detached, on a terminal no host shows; only its inbox reaches it.
+	Background bool
 	// CheckScreen asks core to look for a prompt on screen because the harness files cannot show one.
 	CheckScreen bool
 }

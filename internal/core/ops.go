@@ -109,6 +109,9 @@ func (t Target) String() string {
 	if t.Handle != nil {
 		return fmt.Sprintf("%s %s (pid %d)", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	}
+	if t.Session.Background {
+		return fmt.Sprintf("bg job (pid %d)", t.Session.PID)
+	}
 	if t.Session.PID != 0 {
 		return fmt.Sprintf("%s %s (pid %d)", t.App, strings.TrimPrefix(t.Session.TTY, "/dev/"), t.Session.PID)
 	}
@@ -119,6 +122,8 @@ func (t Target) String() string {
 func (t Target) Advice() string {
 	resume := strings.Join(t.Resume, " ")
 	switch {
+	case t.Session.Background:
+		return fmt.Sprintf("runs as a background job (pid %d) with no terminal ym can attach to; a answers and s sends reach it through its inbox", t.Session.PID)
 	case t.Handle != nil:
 		return fmt.Sprintf("runs in %s %s (pid %d); ym jumps there only when it runs inside that tmux", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	case t.Session.PID == 0:
@@ -143,9 +148,9 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 		}
 		for _, cp := range copiesOf(s) {
 			t := Target{Session: cp, App: s.App}
-			if h, host := c.locate(cp.TTY); host != nil {
+			if h, host := c.locate(cp.TTY); host != nil && !cp.Background {
 				t.Handle = &h
-			} else {
+			} else if !cp.Background {
 				t.Resume = c.resume(cp.Harness, cp.ID)
 			}
 			out = append(out, t)
@@ -231,8 +236,7 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	d := c.deliver(b, it, fmt.Sprintf("re %s: %s", it.Spoken(), oneLine(text)))
-	return it, d, nil
+	return it, c.deliver(b, it, notice(it)), nil
 }
 
 // Dismiss closes the item for good and tells the agent the way Answer does.
@@ -241,8 +245,34 @@ func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	d := c.deliver(b, it, fmt.Sprintf("re %s: dismissed: %s", it.Spoken(), oneLine(reason)))
-	return it, d, nil
+	return it, c.deliver(b, it, notice(it)), nil
+}
+
+// notice is how an answered or dismissed item reaches its agent.
+func notice(it Item) string {
+	if it.State == ItemDismissed {
+		return fmt.Sprintf("re %s: dismissed: %s", it.Spoken(), oneLine(it.Reason))
+	}
+	return fmt.Sprintf("re %s: %s", it.Spoken(), oneLine(it.Answer))
+}
+
+// Redeliver hands each answered or dismissed item still queued to its agent once the session carrying it runs on the board,
+// the way Answer does; it returns how many reached their sessions.
+func (c *Core) Redeliver(b Board) (int, error) {
+	items, err := c.Store.Items(ItemFilter{Undelivered: true})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, it := range items {
+		if !it.Held.IsZero() {
+			continue
+		}
+		if d := c.deliver(b, it, notice(it)); d != Queued {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (c *Core) Snooze(id string) (Item, error) { return c.Store.Transition(id, ItemSnoozed, "") }
