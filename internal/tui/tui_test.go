@@ -115,6 +115,8 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			msg = tea.KeyMsg{Type: tea.KeyEsc}
 		case "down":
 			msg = tea.KeyMsg{Type: tea.KeyDown}
+		case "up":
+			msg = tea.KeyMsg{Type: tea.KeyUp}
 		case "ctrl+u":
 			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 		case "tab":
@@ -132,7 +134,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			next, cmd = m.Update(out)
 			m = next.(Model)
 			switch out.(type) {
-			case doneMsg, adoptedMsg:
+			case doneMsg, adoptedMsg, reposMsg:
 			default:
 				cmd = nil
 			}

@@ -110,14 +110,14 @@ type Model struct {
 	scanned  []string
 	scanDone bool
 	// picks lists the n picker's repositories: the selected row's first, then recent, then scanned.
-	picks   []string
-	repoCur int
-	items     []core.Item
-	itemsOf   string
-	message   string
-	width     int
-	height    int
-	interval  time.Duration
+	picks    []string
+	repoCur  int
+	items    []core.Item
+	itemsOf  string
+	message  string
+	width    int
+	height   int
+	interval time.Duration
 }
 
 func New(c *core.Core) Model {
