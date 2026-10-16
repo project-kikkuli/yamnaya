@@ -116,14 +116,16 @@ func TestOwnsSessionProcessesOnly(t *testing.T) {
 		args []string
 		want bool
 	}{
-		"interactive":   {[]string{"/opt/bin/claude", "--resume", "x"}, true},
-		"headless":      {[]string{"claude", "-p", "do it"}, true},
-		"node launcher": {[]string{"node", "/usr/lib/claude", "--continue"}, true},
-		"prompt words":  {[]string{"claude", "fix", "it", "then", "update", "mcp"}, true},
-		"subcommand":    {[]string{"claude", "update"}, false},
-		"chrome host":   {[]string{"claude", "--chrome-native-host"}, false},
-		"mcp server":    {[]string{"claude", "mcp", "serve"}, false},
-		"other program": {[]string{"codex"}, false},
+		"interactive":    {[]string{"/opt/bin/claude", "--resume", "x"}, true},
+		"headless":       {[]string{"claude", "-p", "do it"}, true},
+		"node launcher":  {[]string{"node", "/usr/lib/claude", "--continue"}, true},
+		"prompt words":   {[]string{"claude", "fix", "it", "then", "update", "mcp"}, true},
+		"subcommand":     {[]string{"claude", "update"}, false},
+		"chrome host":    {[]string{"claude", "--chrome-native-host"}, false},
+		"mcp server":     {[]string{"claude", "mcp", "serve"}, false},
+		"other program":  {[]string{"codex"}, false},
+		"background job": {[]string{"claude bg-spare", "--bg-spare", "/tmp/s.claim.sock"}, true},
+		"background pty": {[]string{"claude bg-pty-host", "--bg-pty-host", "/tmp/s.pty.sock"}, false},
 	}
 	for name, c := range cases {
 		if got := a.Owns(proc.Proc{PID: 1, Args: c.args}); got != c.want {

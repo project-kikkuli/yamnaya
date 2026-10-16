@@ -71,23 +71,23 @@ type frame struct {
 }
 
 type Model struct {
-	core      *core.Core
-	host      string
-	board     core.Board
-	loaded    bool
-	err       error
-	mode      mode
-	back      mode
-	cursor    int
-	stack     []frame
-	repo      string
-	detail    string
-	sess      string
-	agent     string
-	scrollY   int
-	prBusy    bool
+	core    *core.Core
+	host    string
+	board   core.Board
+	loaded  bool
+	err     error
+	mode    mode
+	back    mode
+	cursor  int
+	stack   []frame
+	repo    string
+	detail  string
+	sess    string
+	agent   string
+	scrollY int
+	prBusy  bool
 	// sending is set while queued answers are handed to sessions that became reachable.
-	sending bool
+	sending   bool
 	showStale bool
 	input     []rune
 	fresh     bool
