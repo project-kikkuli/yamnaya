@@ -43,7 +43,7 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
 - `go`: you wait on the owner's go-ahead to build; see above.
 - `--blocks`: how many pieces of your work wait on the answer.
 
-Always give `--rec`, options with their effects, and `--assumption`. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
+Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
 
 ## Answers
 
