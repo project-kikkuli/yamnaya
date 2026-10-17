@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -139,9 +140,9 @@ func TestOwnsSessionProcessesOnly(t *testing.T) {
 	}
 }
 
-func TestResumeNamesTheSession(t *testing.T) {
+func TestResumeNamesTheSessionWithPermissionPromptsOff(t *testing.T) {
 	got := fixture(t).Resume("abc")
-	if len(got) != 3 || got[1] != "--resume" || got[2] != "abc" {
+	if !slices.Contains(got, "--dangerously-skip-permissions") || got[len(got)-2] != "--resume" || got[len(got)-1] != "abc" {
 		t.Fatalf("Resume = %v", got)
 	}
 }

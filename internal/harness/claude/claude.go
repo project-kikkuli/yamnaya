@@ -150,7 +150,9 @@ func (a *Adapter) SessionID(p proc.Proc) string {
 	return argSessionID(p.Args)
 }
 
-func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "--resume", id} }
+func (a *Adapter) Resume(id string) []string {
+	return []string{a.Bin, "--dangerously-skip-permissions", "--resume", id}
+}
 
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	now := a.Now()

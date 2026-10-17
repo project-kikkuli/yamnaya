@@ -59,9 +59,9 @@ func startArgv(rec launch.Record) ([]string, error) {
 		return nil, err
 	}
 	if rec.Harness == claude.Name {
-		return []string{b, "--session-id", rec.Session, rec.Prompt}, nil
+		return []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, rec.Prompt}, nil
 	}
-	return append(append([]string{b}, codexDirs(rec)...), rec.Prompt), nil
+	return append(append([]string{b, "--dangerously-bypass-approvals-and-sandbox"}, codexDirs(rec)...), rec.Prompt), nil
 }
 
 func resumeArgv(rec launch.Record) ([]string, error) {
@@ -70,9 +70,9 @@ func resumeArgv(rec launch.Record) ([]string, error) {
 		return nil, err
 	}
 	if rec.Harness == claude.Name {
-		return []string{b, "--resume", rec.Session}, nil
+		return []string{b, "--dangerously-skip-permissions", "--resume", rec.Session}, nil
 	}
-	return append(append([]string{b, "resume"}, codexDirs(rec)...), rec.Session), nil
+	return append(append([]string{b, "resume", "--dangerously-bypass-approvals-and-sandbox"}, codexDirs(rec)...), rec.Session), nil
 }
 
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.

@@ -67,7 +67,9 @@ func (a *Adapter) Owns(p proc.Proc) bool {
 	return true
 }
 
-func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "resume", id} }
+func (a *Adapter) Resume(id string) []string {
+	return []string{a.Bin, "resume", "--dangerously-bypass-approvals-and-sandbox", id}
+}
 
 type thread struct {
 	id, rollout, title, cwd, task, branch, role, nickname, path, model string
