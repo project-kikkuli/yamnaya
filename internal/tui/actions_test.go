@@ -145,6 +145,12 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			}
 			return ""
 		}},
+		{"F forgets the session once confirmed", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"F", "y"}, func(t *testing.T, f fixture) string {
+			if !slices.Equal(f.l.forgot, []string{"lead"}) || len(f.l.landed) != 0 || f.m.message != "forgot lead" {
+				return "forgot " + strings.Join(f.l.forgot, ",") + " landed " + strings.Join(f.l.landed, ",") + " message " + f.m.message
+			}
+			return ""
+		}},
 		{"P sets phases, p advances them", []func(row) bool{mission("lead")}, []string{"P", "plan, build, ship", "enter", "p", "y"}, func(t *testing.T, f fixture) string {
 			ph, err := f.c.Store.Phases(projectKey(f, "lead"))
 			if err != nil || !slices.Equal(ph.Names, []string{"plan", "build", "ship"}) || ph.Current != 1 {

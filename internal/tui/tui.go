@@ -765,7 +765,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			live := *s
 			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
 		}
-	case "L":
+	case "L", "F":
 		ref, label := "", ""
 		if r.dormant != nil {
 			ref, label = r.dormant.Key, r.dormant.Key
@@ -774,6 +774,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if ref != "" && m.core.Launches != nil {
 			l := m.core.Launches
+			if k.String() == "F" {
+				m.confirm("forget "+label+"? it ends the agent and drops its launch record; its worktree and branch stay",
+					m.do(func() (string, error) { return l.Forget(ref) }))
+				break
+			}
 			m.confirm("land "+label+"? it ends the agent and removes its worktree once its branch is clean and merged or pushed",
 				m.do(func() (string, error) { return l.Land(ref) }))
 		}

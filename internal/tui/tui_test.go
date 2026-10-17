@@ -295,6 +295,7 @@ type launches struct {
 	sent    []string
 	started []core.NewLaunch
 	landed  []string
+	forgot  []string
 	// startErr is what Start fails with, if anything.
 	startErr   error
 	relaunched []string
@@ -321,6 +322,11 @@ func (l *launches) Start(n core.NewLaunch) (string, error) {
 func (l *launches) Land(ref string) (string, error) {
 	l.landed = append(l.landed, ref)
 	return "landed " + ref, nil
+}
+
+func (l *launches) Forget(ref string) (string, error) {
+	l.forgot = append(l.forgot, ref)
+	return "forgot " + ref, nil
 }
 
 func (l *launches) Launched() []core.Launched {

@@ -16,7 +16,7 @@ type Dormant struct {
 	RepoKey string
 	Branch  string
 	Title   string
-	// State is how its pane stands, such as "exited 0" or "gone".
+	// State is how its pane stands, such as "exited 1" or "gone", or why landing it after a clean exit failed.
 	State   string
 	Started time.Time
 }
@@ -41,6 +41,8 @@ type Launches interface {
 	Start(n NewLaunch) (string, error)
 	// Land ends a launched session and removes its worktree, only when its branch is clean and merged or pushed.
 	Land(ref string) (string, error)
+	// Forget ends a launched session and drops its record, leaving its worktree and branch.
+	Forget(ref string) (string, error)
 	// Relaunch resumes session id of harness on ym's server in from's directory, taking over from's launch record when it has one.
 	Relaunch(from Live, harness, id string) (string, error)
 	Launched() []Launched

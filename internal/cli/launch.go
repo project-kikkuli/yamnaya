@@ -379,12 +379,22 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
 }
 
-// Dormant lists the launched sessions whose agents no longer run.
+// Dormant lists the launched sessions whose agents no longer run, landing first those whose agent exited 0 and lost nothing.
 func (l launcher) Dormant() []core.Dormant {
 	all, _ := l.records.All()
 	var out []core.Dormant
 	for _, rec := range all {
-		if _, st := l.state(rec); st != "running" {
+		pane, st := l.state(rec)
+		if pane.Dead && pane.Status == 0 {
+			_, err := l.land(rec)
+			if err == nil {
+				continue
+			}
+			if !errors.As(err, &unlandable{}) {
+				st = "land failed: " + err.Error()
+			}
+		}
+		if st != "running" {
 			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
 				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started})
 		}
@@ -433,12 +443,38 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	}
 }
 
+// unlandable is land's refusal while removing the worktree would lose work.
+type unlandable struct{ key, path, reason string }
+
+func (u unlandable) Error() string {
+	return fmt.Sprintf("not landing %s: %s %s", u.key, u.path, u.reason)
+}
+
 // Land ends a launched session and removes its worktree, refusing while its branch has work that is not clean and merged or pushed.
 func (l launcher) Land(ref string) (string, error) {
 	rec, err := l.find(ref)
 	if err != nil {
 		return "", err
 	}
+	return l.land(rec)
+}
+
+// Forget ends a launched session and drops its record, leaving its worktree and branch as they are.
+func (l launcher) Forget(ref string) (string, error) {
+	rec, err := l.find(ref)
+	if err != nil {
+		return "", err
+	}
+	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
+		return "", err
+	}
+	if err := l.records.Delete(rec.Key); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("forgot %s; %s and branch %s stay", rec.Key, rec.Worktree.Path, rec.Worktree.Branch), nil
+}
+
+func (l launcher) land(rec launch.Record) (string, error) {
 	if rec.Adopted {
 		if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 			return "", err
@@ -457,7 +493,7 @@ func (l launcher) Land(ref string) (string, error) {
 		}
 		ok, reason := g.Landable()
 		if !ok {
-			return "", fmt.Errorf("not landing %s: %s %s", rec.Key, rec.Worktree.Path, reason)
+			return "", unlandable{rec.Key, rec.Worktree.Path, reason}
 		}
 		why = reason
 	}
@@ -476,22 +512,28 @@ func (l launcher) Land(ref string) (string, error) {
 }
 
 func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "land <key|session>",
 		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
 		Args:  cobra.ExactArgs(1),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			if e.core.Launches == nil {
-				return errors.New("ym's launcher is unavailable")
-			}
-			msg, err := e.core.Launches.Land(args[0])
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), msg)
-			return nil
-		}),
 	}
+	forget := cmd.Flags().Bool("forget", false, "end the session and drop its launch record, never touching its worktree or branch")
+	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		if e.core.Launches == nil {
+			return errors.New("ym's launcher is unavailable")
+		}
+		land := e.core.Launches.Land
+		if *forget {
+			land = e.core.Launches.Forget
+		}
+		msg, err := land(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), msg)
+		return nil
+	})
+	return cmd
 }
 
 // resumeWatchCmd answers Codex's "open in another app" notice with its own retry key. Codex's shared app-server keeps a quit

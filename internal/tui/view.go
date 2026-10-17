@@ -171,13 +171,13 @@ func (m Model) hints() string {
 	case modeRepo:
 		return "↑↓ move   enter open mission   o go to session   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   T switch   n new   N new in any repo   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   T switch   n new   N new in any repo   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   T switch   esc back"
+		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -674,6 +674,9 @@ func (m Model) detailView() string {
 		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + pal.dim.Render(pad(d.State, 9)) + pad(d.Key, 18) + " " + d.Branch
 		if i == m.cursor {
 			line += pal.dim.Render("   enter revive")
+			if ansi.StringWidth(d.State) > 9 {
+				line += "   " + pal.red.Render(d.State)
+			}
 		}
 		b.WriteString(line + "\n")
 		i++
@@ -1073,7 +1076,9 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean
-                and merged or pushed (asks y/n)
+                and merged or pushed (asks y/n); one whose agent exited 0 with nothing to lose lands by itself
+   F            forget a session ym launched: end it and drop its launch record, leaving its worktree and
+                branch as they are (asks y/n)
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated
