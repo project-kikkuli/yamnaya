@@ -67,6 +67,7 @@ type Pane struct {
 	TTY     string
 	Dead    bool
 	Status  int
+	Signal  string
 	PID     int
 }
 
@@ -95,17 +96,17 @@ func (h *Host) Respawn(name, cwd string, argv []string) error {
 
 // Pane reads the pane of session name; ErrNotFound when the session is gone.
 func (h *Host) Pane(name string) (Pane, error) {
-	out, err := h.run("list-panes", "-t", "="+name+":", "-F", "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}")
+	out, err := h.run("list-panes", "-t", "="+name+":", "-F", "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_dead_signal}")
 	if err != nil {
 		return Pane{}, fmt.Errorf("%s: %w", name, core.ErrNotFound)
 	}
 	f := strings.Split(strings.Split(out, "\n")[0], "\t")
-	if len(f) != 5 {
+	if len(f) != 6 {
 		return Pane{}, fmt.Errorf("tmux list-panes %s: unexpected %q", name, out)
 	}
 	status, _ := strconv.Atoi(f[3])
 	pid, _ := strconv.Atoi(f[4])
-	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1", Status: status, PID: pid}, nil
+	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1", Status: status, Signal: f[5], PID: pid}, nil
 }
 
 // Kill ends session name; a session that is already gone is not an error.

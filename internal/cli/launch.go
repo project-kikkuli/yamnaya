@@ -309,6 +309,8 @@ func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	switch {
 	case err != nil:
 		return p, "gone"
+	case p.Dead && p.Signal != "":
+		return p, "sig" + p.Signal
 	case p.Dead:
 		return p, fmt.Sprintf("exited %d", p.Status)
 	}
@@ -385,7 +387,7 @@ func (l launcher) Dormant() []core.Dormant {
 	var out []core.Dormant
 	for _, rec := range all {
 		pane, st := l.state(rec)
-		if pane.Dead && pane.Status == 0 {
+		if pane.Dead && pane.Signal == "" && pane.Status == 0 {
 			_, err := l.land(rec)
 			if err == nil {
 				continue
