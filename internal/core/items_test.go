@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -210,6 +211,40 @@ func TestTheEnvironmentNamesTheCallerOnlyWhenTheProcessTableIsUnreadable(t *test
 			got, err := w.core.Calling(7, env)
 			if got != c.want || (c.want == Caller{}) != errors.Is(err, ErrNotFound) {
 				t.Fatalf("Calling = %+v, %v; want %+v", got, err, c.want)
+			}
+		})
+	}
+}
+
+func TestAGoItemAnswersWithTheGoAheadOrDismissesAndRelaysEither(t *testing.T) {
+	goAhead := func(c *Core, b Board, key string) error { _, _, err := c.Go(b, key); return err }
+	dismiss := func(c *Core, b Board, key string) error { _, _, err := c.Dismiss(b, key, "not now"); return err }
+	for _, c := range []struct {
+		name, kind, wantID, wantState, wantInbox string
+		act                                      func(*Core, Board, string) error
+		ok                                       bool
+	}{
+		{"go answers a go item", KindGo, "G1", ItemAnswered, "re G1: " + GoAhead, goAhead, true},
+		{"go refuses a decision", KindDecision, "D1", ItemOpen, "", goAhead, false},
+		{"dismiss closes a go item", KindGo, "G1", ItemDismissed, "re G1: dismissed: not now", dismiss, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			it, err := w.core.AddItem(Item{Kind: c.kind, Question: "Build it?", Session: "lead"})
+			if err != nil || it.ID != c.wantID {
+				t.Fatalf("filed %s (%v), want %s", it.ID, err, c.wantID)
+			}
+			if err := c.act(w.core, w.board(t), it.Key()); (err == nil) != c.ok {
+				t.Fatalf("act = %v, want ok %v", err, c.ok)
+			}
+			got, _ := w.core.Store.Item(it.Key())
+			inbox, _ := w.core.Inbox("lead")
+			var notices []string
+			for _, in := range inbox {
+				notices = append(notices, notice(in))
+			}
+			if got.State != c.wantState || strings.Join(notices, "\n") != c.wantInbox {
+				t.Fatalf("%s %s, inbox %q; want %s, %q", got.ID, got.State, notices, c.wantState, c.wantInbox)
 			}
 		})
 	}

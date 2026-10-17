@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,37 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	}
 	if !strings.Contains(m.message, "typed into the agent's terminal") || strings.Contains(m.View(), "NEEDS YOU (2)") {
 		t.Fatalf("message %q\n%s", m.message, m.View())
+	}
+}
+
+func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		keys      []string
+		wantState string
+		wantTyped []string
+	}{
+		{"g on the row", []string{"g"}, core.ItemAnswered, []string{"/dev/a re G3: " + core.GoAhead}},
+		{"g in the expanded view", []string{"enter", "g"}, core.ItemAnswered, []string{"/dev/a re G3: " + core.GoAhead}},
+		{"g on a decision does nothing", []string{"down", "g"}, core.ItemOpen, nil},
+		{"x dismisses it", []string{"x", "n", "o", "enter"}, core.ItemDismissed, []string{"/dev/a re G3: dismissed: no"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, h := setup(t)
+			if _, err := k.AddItem(core.Item{Kind: core.KindGo, Question: "Build the importer?", Session: "lead", Blocks: 5}); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.cursor = 0
+			if v := m.View(); !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
+				t.Fatalf("view:\n%s", v)
+			}
+			press(t, m, c.keys...)
+			it, _ := k.Store.Item("G3")
+			if d1, _ := k.Store.Item("D1"); it.State != c.wantState || d1.State != core.ItemOpen || !slices.Equal(h.typed, c.wantTyped) {
+				t.Fatalf("G3 %s, D1 %s, typed %q; want G3 %s, typed %q", it.State, d1.State, h.typed, c.wantState, c.wantTyped)
+			}
+		})
 	}
 }
 

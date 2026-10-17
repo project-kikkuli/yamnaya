@@ -239,6 +239,18 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	return it, c.deliver(b, it.Session, []Item{it}), nil
 }
 
+// Go answers a go item with GoAhead.
+func (c *Core) Go(b Board, id string) (Item, Delivery, error) {
+	it, err := c.Store.Item(id)
+	if err != nil {
+		return it, Queued, err
+	}
+	if it.Kind != KindGo {
+		return it, Queued, fmt.Errorf("%s is a %s item, not a go item", it.ID, it.Kind)
+	}
+	return c.Answer(b, id, GoAhead)
+}
+
 // Dismiss closes the item for good and tells the agent the way Answer does.
 func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	it, err := c.Store.Transition(id, ItemDismissed, reason)

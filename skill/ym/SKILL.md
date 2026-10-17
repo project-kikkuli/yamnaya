@@ -15,12 +15,23 @@ Always the owner's, so file them: authorization to build, merging (except where 
 
 `default` is for real product defaults only, never for an engineering choice you could just make. `chore` is only for actions that need the owner's own hands. Before filing one, try the action yourself; file it only if it truly needs the owner's hands (logins, payments, his approvals, anything your safety rules forbid you to do).
 
+## Waiting on the go-ahead is an item
+
+Whenever you wait on the owner's authorization to build ("PLEASE GO IMPLEMENT THIS"), file a `go` item instead of asking in chat:
+
+```
+ym item add --kind go --question "<one line naming what you will build>" \
+  --rec "<the approach you will take>" --blocks <n>
+```
+
+In chat say only its id, e.g. "filed G4", and stop. The owner's go-ahead arrives as `re G4: PLEASE GO IMPLEMENT THIS`; that is the authorization, so start building. A dismissal means do not build.
+
 ## Open questions are items, never chat blocks
 
 Never print an open-questions block in chat. File each question that clears the bar:
 
 ```
-ym item add --kind decision|default|chore --question "<one line>" \
+ym item add --kind decision|default|chore|go --question "<one line>" \
   --rec "<what you recommend>" \
   --option "<label>=<effect>" --option "<label>=<effect>" \
   --assumption "<what you assume meanwhile>" --blocks <n>
@@ -29,6 +40,7 @@ ym item add --kind decision|default|chore --question "<one line>" \
 - `decision`: you need a choice before continuing.
 - `default`: you will proceed with `--rec` unless the owner vetoes it.
 - `chore`: an action only a human can take (login, approval, payment).
+- `go`: you wait on the owner's go-ahead to build; see above.
 - `--blocks`: how many pieces of your work wait on the answer.
 
 Always give `--rec`, options with their effects, and `--assumption`. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.

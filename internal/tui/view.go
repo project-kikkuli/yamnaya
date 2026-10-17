@@ -161,9 +161,9 @@ func (m Model) hints() string {
 	case modeHelp, modeScreen:
 		return "esc back"
 	case modeItems:
-		return "↑↓ move   enter expand   a answer   l later   u unsnooze   x dismiss   esc back"
+		return "↑↓ move   enter expand   a answer   g go ahead   l later   u unsnooze   x dismiss   esc back"
 	case modeWhy:
-		return "a answer   l later   x dismiss   u unsnooze   o go to its session   esc back"
+		return "a answer   g go ahead   l later   x dismiss   u unsnooze   o go to its session   esc back"
 	case modePick:
 		return "↑↓ choose   enter open   esc back"
 	case modeMerge:
@@ -171,13 +171,13 @@ func (m Model) hints() string {
 	case modeRepo:
 		return "↑↓ move   enter open mission   o go to session   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -495,7 +495,11 @@ func (m Model) needLines(i int, n core.Need) string {
 		return b.String()
 	}
 	it := n.Item
-	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + it.Question + "\n")
+	q, keys := it.Question, "enter expand   a answer   l later   x dismiss   o go to session"
+	if it.Kind == core.KindGo {
+		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session"
+	}
+	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + q + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
@@ -503,7 +507,7 @@ func (m Model) needLines(i int, n core.Need) string {
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
 		b.WriteString(pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n")
-		b.WriteString(pal.dim.Render("         enter expand   a answer   l later   x dismiss   o go to session") + "\n")
+		b.WriteString(pal.dim.Render("         "+keys) + "\n")
 	}
 	return b.String()
 }
@@ -1060,6 +1064,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 permission prompt shows; other sessions read it from ym item inbox
    a            answer an item; an idle agent in tmux gets it typed in, others on their next turn;
                 on a waiting session, send the answer as your message, the same way s does, and clear the row
+   g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    l            later: snooze the item
    u            reopen a snoozed item (detail)
    x            dismiss the item with a reason; on a waiting session, hide the row until it asks again

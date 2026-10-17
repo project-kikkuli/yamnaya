@@ -523,7 +523,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
-		case "a", "l", "x", "u", "o":
+		case "a", "g", "l", "x", "u", "o":
 			m.mode = m.back
 			m.follow("item:" + m.why.Key())
 			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
@@ -709,6 +709,14 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r.item != nil && r.item.State == core.ItemOpen {
 			m.startInput(inAnswer, r.item.Key(), "", r.item.Rec, true)
 			m.inLabel = r.item.ID
+		}
+	case "g":
+		if r.item != nil && r.item.State == core.ItemOpen && r.item.Kind == core.KindGo {
+			key, board := r.item.Key(), m.board
+			return m, m.do(func() (string, error) {
+				it, d, err := m.core.Go(board, key)
+				return it.ID + " answered go ahead, " + d.String(), err
+			})
 		}
 	case "x":
 		if r.item != nil && (r.item.State == core.ItemOpen || r.item.State == core.ItemSnoozed) {

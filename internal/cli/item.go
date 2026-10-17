@@ -36,6 +36,26 @@ func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			return nil
 		}),
 	}, &cobra.Command{
+		Use:   "go <id>",
+		Short: "Answer a go item with " + core.GoAhead,
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, d, err := e.core.Go(b, found.Key())
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s answered, %s\n", it.ID, d)
+			return nil
+		}),
+	}, &cobra.Command{
 		Use:   "dismiss <id> <reason>",
 		Short: "Dismiss an item for good",
 		Args:  cobra.MinimumNArgs(2),
@@ -122,7 +142,7 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&it.Kind, "kind", "", "decision, default, or chore")
+	cmd.Flags().StringVar(&it.Kind, "kind", "", "decision, default, chore, or go")
 	cmd.Flags().StringVar(&it.Question, "question", "", "one-line question")
 	cmd.Flags().StringVar(&it.Rec, "rec", "", "what you recommend")
 	cmd.Flags().StringArrayVar(&options, "option", nil, "option as label=effect (repeatable)")

@@ -166,7 +166,7 @@ func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 // AddItem files it in its Scope with that scope's next ID.
 func (s *Store) AddItem(it Item) (Item, error) {
 	if _, ok := kindPrefix[it.Kind]; !ok {
-		return it, fmt.Errorf("unknown kind %q (want decision, default, or chore)", it.Kind)
+		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, or go)", it.Kind)
 	}
 	if strings.TrimSpace(it.Question) == "" {
 		return it, errors.New("question is required")

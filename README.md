@@ -50,9 +50,10 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym revive <key|session>             resume an exited one in its worktree, recreating the worktree if it is gone
     ym land <key|session>               end it and remove its worktree, only when the branch is clean and merged or pushed
     ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal
-    ym item add --kind decision|default|chore --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
+    ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
     ym item list [--all] [--everywhere] [--json]
     ym item show|answer|dismiss|snooze|reopen <id> ...
+    ym item go <id>                     answer a go item with PLEASE GO IMPLEMENT THIS
     ym item inbox                       answers the calling session has not received
     ym phase set "a,b,c" | next | show
     ym spawn <child-session>            record that the calling session started another
