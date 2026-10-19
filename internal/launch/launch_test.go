@@ -95,7 +95,7 @@ func TestLandOnlyWhenNothingIsLost(t *testing.T) {
 			wt := WorktreePath(repo, "feature")
 			run(t, repo, "git", "worktree", "add", "-q", "-b", "feature", wt)
 			c.setup(t, wt)
-			g, err := State(wt)
+			g, err := State(wt, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -77,7 +77,7 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 				cwds = []string{filepath.Join(wt, "sub")}
 			}
 
-			s, err := GC(repo, time.Now().Add(c.age), cwds, c.dry, true)
+			s, err := GC(repo, time.Now().Add(c.age), cwds, nil, c.dry, true)
 			if err != nil || len(s.Errors) > 0 {
 				t.Fatal(err, s.Errors)
 			}

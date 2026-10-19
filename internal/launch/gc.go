@@ -5,8 +5,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +32,8 @@ type Sweep struct {
 	Keep   string
 	Why    string
 	Size   int64
+	// PR is the merged pull request that squashed the worktree's local-only commits, or 0.
+	PR int
 }
 
 // Swept is one repository's gc: its worktrees, the branches it deleted, and what failed.
@@ -175,10 +179,11 @@ func Inside(path string, cwds []string) string {
 	return ""
 }
 
-// GC removes the linked worktrees of the repository at root that are clean, have every commit on a remote, went untouched
-// for Idle and hold no cwd in cwds, then deletes local branches merged into Base that no worktree has checked out.
-// With dry it only decides; with sizes it measures every worktree it removes or keeps for dirt or local commits.
-func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, error) {
+// GC removes the linked worktrees of the repository at root that are clean, have every commit on a remote or in a
+// merged pull request, went untouched for Idle and hold no cwd in cwds, then deletes local branches merged into Base or
+// squashed by a merged pull request that no worktree has checked out. With dry it only decides; with sizes it measures
+// every worktree it removes or keeps for dirt or local commits.
+func GC(root string, now time.Time, cwds []string, q *Squash, dry, sizes bool) (Swept, error) {
 	s := Swept{Root: root}
 	all, err := worktrees(root)
 	if err != nil {
@@ -197,6 +202,15 @@ func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, erro
 			var n string
 			n, err = look(w.path, "rev-list", "--count", "HEAD", "--not", "--remotes")
 			local, _ = strconv.Atoi(n)
+		}
+		if err == nil && local > 0 && status == "" && !w.locked {
+			pr, err := q.Merged(root, w.branch, Head(w.path))
+			if err != nil {
+				s.Errors = append(s.Errors, err.Error())
+			}
+			if sw.PR = pr; pr > 0 {
+				local = 0
+			}
 		}
 		switch {
 		case w.locked:
@@ -224,14 +238,18 @@ func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, erro
 	if base == "" {
 		return s, nil
 	}
-	merged, err := git(root, "for-each-ref", "--format=%(refname:short)", "--merged", base, "refs/heads")
+	merged, err := look(root, "for-each-ref", "--format=%(refname:short)", "--merged", base, "refs/heads")
 	if err != nil {
 		return s, err
 	}
-	for _, b := range strings.Fields(merged) {
-		if used[b] {
-			continue
-		}
+	tips, err := look(root, "for-each-ref", "--format=%(refname:short) %(objectname)", "--no-merged", base, "refs/heads")
+	if err != nil {
+		return s, err
+	}
+	gone := slices.DeleteFunc(strings.Fields(merged), func(b string) bool { return used[b] })
+	squashed, errs := squashedBranches(root, tips, used, q)
+	s.Errors = append(s.Errors, errs...)
+	for _, b := range append(gone, squashed...) {
 		if !dry {
 			if _, err := git(root, "branch", "-D", b); err != nil {
 				s.Errors = append(s.Errors, err.Error())
@@ -243,14 +261,53 @@ func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, erro
 	return s, nil
 }
 
-// DropMerged deletes branch from the repository at root when it is merged into Base; ok reports a deletion.
-func DropMerged(root, branch string) (bool, error) {
+// squashedBranches are the branches in tips, "name sha" lines, that no worktree uses and a merged pull request squashed,
+// asked of q a few at a time.
+func squashedBranches(root, tips string, used map[string]bool, q *Squash) ([]string, []string) {
+	lines := strings.Split(tips, "\n")
+	found := make([]string, len(lines))
+	fails := make([]string, len(lines))
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i, line := range lines {
+		b, sha, ok := strings.Cut(line, " ")
+		if !ok || used[b] {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			n, err := q.Merged(root, b, sha)
+			switch {
+			case err != nil:
+				fails[i] = err.Error()
+			case n > 0:
+				found[i] = b
+			}
+		}()
+	}
+	wg.Wait()
+	empty := func(v string) bool { return v == "" }
+	return slices.DeleteFunc(found, empty), slices.DeleteFunc(fails, empty)
+}
+
+// DropMerged deletes branch from the repository at root when it is merged into Base or squashed by a merged pull
+// request; ok reports a deletion.
+func DropMerged(root, branch string, q *Squash) (bool, error) {
 	base := Base(root)
 	if base == "" || branch == "" {
 		return false, nil
 	}
 	if _, err := git(root, "merge-base", "--is-ancestor", "refs/heads/"+branch, base); err != nil {
-		return false, nil
+		tip, err := look(root, "rev-parse", "refs/heads/"+branch)
+		if err != nil {
+			return false, nil
+		}
+		if pr, err := q.Merged(root, branch, tip); pr == 0 {
+			return false, err
+		}
 	}
 	if _, err := git(root, "branch", "-D", branch); err != nil {
 		return false, err

@@ -122,6 +122,8 @@ type GitState struct {
 	Unpushed int
 	Merged   bool
 	Into     string
+	// Squashed is the merged pull request whose head holds every commit, or 0.
+	Squashed int
 }
 
 // Landable reports whether removing the worktree loses nothing: it is clean and every commit is merged or pushed.
@@ -131,14 +133,17 @@ func (g GitState) Landable() (bool, string) {
 		return false, "has uncommitted or untracked changes"
 	case g.Merged:
 		return true, "merged into " + g.Into
+	case g.Squashed > 0:
+		return true, fmt.Sprintf("squash-merged in pull request #%d", g.Squashed)
 	case g.Unpushed == 0:
 		return true, "every commit is pushed"
 	}
 	return false, fmt.Sprintf("%d commits are neither merged into %s nor pushed", g.Unpushed, g.Into)
 }
 
-// State reads dir's GitState against the repository's default branch, main or master, local or on origin.
-func State(dir string) (GitState, error) {
+// State reads dir's GitState against the repository's default branch, main or master, local or on origin, asking q
+// for a merged pull request when commits are neither merged nor pushed.
+func State(dir string, q *Squash) (GitState, error) {
 	status, err := git(dir, "status", "--porcelain")
 	if err != nil {
 		return GitState{}, err
@@ -167,7 +172,16 @@ func State(dir string) (GitState, error) {
 		return GitState{}, err
 	}
 	g.Unpushed, _ = strconv.Atoi(n)
-	return g, nil
+	if g.Dirty || g.Merged || g.Unpushed == 0 {
+		return g, nil
+	}
+	root, err := MainRoot(dir)
+	if err != nil {
+		return g, err
+	}
+	branch, _ := git(dir, "symbolic-ref", "--short", "-q", "HEAD")
+	g.Squashed, err = q.Merged(root, branch, Head(dir))
+	return g, err
 }
 
 // Remove deletes the worktree, keeping its branch; git refuses when it is dirty.

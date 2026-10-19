@@ -30,7 +30,10 @@ type launcher struct {
 	records launch.Records
 	conf    string
 	// stamp is the file whose age throttles the board's background gc; empty never starts one.
-	stamp string
+	stamp  string
+	squash *launch.Squash
+	// repos caches the repositories with linked worktrees found under ~/dev.
+	repos string
 }
 
 func newLauncher() (launcher, error) {
@@ -40,7 +43,8 @@ func newLauncher() (launcher, error) {
 	}
 	dir := filepath.Dir(path)
 	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf"),
-		stamp: filepath.Join(dir, "gc.stamp")}
+		stamp: filepath.Join(dir, "gc.stamp"), repos: filepath.Join(dir, "repos.json"),
+		squash: &launch.Squash{Hub: launch.GH{}, Cache: filepath.Join(dir, "squash.json"), Now: time.Now}}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
@@ -514,7 +518,7 @@ func (l launcher) land(rec launch.Record) (string, error) {
 	why := "worktree already gone"
 	_, statErr := os.Stat(rec.Worktree.Path)
 	if statErr == nil {
-		g, err := launch.State(rec.Worktree.Path)
+		g, err := launch.State(rec.Worktree.Path, l.squash)
 		if err != nil {
 			return "", err
 		}
@@ -537,7 +541,7 @@ func (l launcher) land(rec launch.Record) (string, error) {
 	}
 	kept := "kept"
 	if rec.Worktree.GitDir != "" {
-		if gone, err := launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch); err != nil {
+		if gone, err := launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch, l.squash); err != nil {
 			kept = "kept: " + err.Error()
 		} else if gone {
 			kept = "deleted, merged into " + launch.Base(filepath.Dir(rec.Worktree.GitDir))

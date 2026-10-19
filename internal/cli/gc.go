@@ -42,9 +42,13 @@ func cwds() []string {
 	return out
 }
 
-// gc sweeps every repository in repos and those of launch records, dropping the records of worktrees it removes.
+// gc sweeps every repository in repos, those of launch records and those with linked worktrees under ~/dev, dropping the
+// records of worktrees it removes.
 func (l launcher) gc(repos []string, dry, sizes bool) []launch.Swept {
 	seen := map[string]bool{}
+	if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
+		repos = append(repos, launch.Discovered(filepath.Join(home, "dev"), l.repos, time.Now())...)
+	}
 	recs, _ := l.records.All()
 	for _, rec := range recs {
 		if rec.Worktree.GitDir != "" {
@@ -61,7 +65,7 @@ func (l launcher) gc(repos []string, dry, sizes bool) []launch.Swept {
 		if _, err := os.Stat(root); err != nil {
 			continue
 		}
-		s, err := launch.GC(root, now, dirs, dry, sizes)
+		s, err := launch.GC(root, now, dirs, l.squash, dry, sizes)
 		if err != nil {
 			s.Errors = append(s.Errors, err.Error())
 		}
@@ -96,7 +100,11 @@ func printSwept(w io.Writer, all []launch.Swept, dry bool) {
 			case "":
 				removed++
 				freed += t.Size
-				fmt.Fprintf(w, "%s %s (%s, %s)\n", verb, t.Path, t.Branch, gb(t.Size))
+				how := ""
+				if t.PR > 0 {
+					how = fmt.Sprintf(", squash-merged in #%d", t.PR)
+				}
+				fmt.Fprintf(w, "%s %s (%s%s, %s)\n", verb, t.Path, t.Branch, how, gb(t.Size))
 			case launch.KeepDirty, launch.KeepLocal:
 				held = append(held, t)
 			}
@@ -126,8 +134,8 @@ func printSwept(w io.Writer, all []launch.Swept, dry bool) {
 func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "gc [--dry-run]",
-		Short: ("Remove worktrees of known repositories that are clean, on a remote, untouched for 3 days and unused, " +
-			"then delete branches merged into origin's default branch that no worktree uses"),
+		Short: ("Remove worktrees of known repositories and those under ~/dev that are clean, on a remote or squash-merged, " +
+			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses"),
 		Args: cobra.NoArgs,
 	}
 	dry := cmd.Flags().Bool("dry-run", false, "print what gc would remove and delete, changing nothing")
