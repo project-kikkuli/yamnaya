@@ -113,7 +113,7 @@ func TestFocusJumpsOnlyYmsOwnClientWithoutChangingLayout(t *testing.T) {
 	}
 }
 
-func TestSplitOpensTheTargetBesideYmWithoutMovingYmsWindow(t *testing.T) {
+func TestSplitOpensTheTargetBesideYmWithoutMovingAnySessionAndClosesOnDetach(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		// own puts the target in ym's server, and in ym's own session when session is "home".
@@ -126,6 +126,7 @@ func TestSplitOpensTheTargetBesideYmWithoutMovingYmsWindow(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ym := server(t)
+			ym.must(t, "set-option", "-g", "remain-on-exit", "on")
 			ym.must(t, "new-session", "-d", "-s", "home", "-x", "200", "-y", "50", "cat")
 			h := ym
 			if !tc.own {
@@ -137,6 +138,7 @@ func TestSplitOpensTheTargetBesideYmWithoutMovingYmsWindow(t *testing.T) {
 			h.must(t, "new-window", "-d", "-t", tc.session+":", "cat")
 			target := h.must(t, "list-panes", "-t", tc.session+":1", "-F", "#{pane_id}")
 			self := ym.must(t, "display-message", "-p", "-t", "home:0", "#{pane_id}")
+			sessions := h.must(t, "list-sessions", "-F", "#{session_name}")
 
 			h.Self = self
 			t.Setenv("TMUX", "")
@@ -147,15 +149,30 @@ func TestSplitOpensTheTargetBesideYmWithoutMovingYmsWindow(t *testing.T) {
 			if err := h.Split(core.Handle{ID: target}); err != nil {
 				t.Fatal(err)
 			}
-			if n := ym.must(t, "display-message", "-p", "-t", "home:0", "#{window_panes}"); n != "2" {
+			if n := ym.must(t, "display-message", "-p", "-t", "=home:0", "#{window_panes}"); n != "2" {
 				t.Errorf("ym's window has %s panes, want 2", n)
 			}
+			var client string
 			waitFor(t, "a client showing the target", func() bool {
-				out, _ := h.run("list-clients", "-F", "#{pane_id}")
-				return out == target
+				out, _ := h.run("list-clients", "-F", "#{pane_id} #{client_name}")
+				pane, name, _ := strings.Cut(out, " ")
+				client = name
+				return pane == target
 			})
-			if w := ym.must(t, "display-message", "-p", "-t", "home:", "#{window_index}"); w != "0" {
+			if w := h.must(t, "display-message", "-p", "-t", "="+tc.session+":", "#{window_index}"); w != "0" {
+				t.Errorf("session %s moved to window %s", tc.session, w)
+			}
+			if w := ym.must(t, "display-message", "-p", "-t", "=home:", "#{window_index}"); w != "0" {
 				t.Errorf("ym's session moved to window %s", w)
+			}
+
+			h.must(t, "detach-client", "-t", client)
+			waitFor(t, "the split to close", func() bool {
+				n, _ := ym.run("display-message", "-p", "-t", "=home:0", "#{window_panes}")
+				return n == "1"
+			})
+			if out := h.must(t, "list-sessions", "-F", "#{session_name}"); out != sessions {
+				t.Errorf("sessions after detach = %q, want %q", out, sessions)
 			}
 		})
 	}

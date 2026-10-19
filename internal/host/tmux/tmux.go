@@ -114,28 +114,20 @@ func (h *Host) Focus(hd core.Handle) (string, error) {
 	return "", err
 }
 
-// Split shows hd in a new pane beside ym's own, attached to hd's session; only ym's own window changes.
-// A target in ym's own session gets a grouped session, so ym's client keeps its window.
+// Split shows hd in a new pane beside ym's own through a grouped session of hd's, so no other client's window moves.
+// The split closes when its client detaches, even in a server that keeps exited panes.
 func (h *Host) Split(hd core.Handle) error {
 	if h.Self == "" || os.Getenv("TMUX") == "" {
 		return core.ErrNoHost
 	}
-	inner := []string{"attach-session", "-t", hd.ID}
-	if h.inside() {
-		own, err := h.run("display-message", "-p", "-t", h.Self, "#{session_name}")
-		if err != nil {
-			return err
-		}
-		session, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}")
-		if err != nil {
-			return err
-		}
-		if own == session {
-			inner = []string{"new-session", "-t", "=" + session, `\;`, "set-option", "destroy-unattached", "on",
-				`\;`, "select-window", "-t", hd.ID, `\;`, "select-pane", "-t", hd.ID}
-		}
+	session, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}")
+	if err != nil {
+		return err
 	}
-	args := append([]string{"split-window", "-h", "-t", h.Self, "-e", "TMUX=", "tmux", "-L", h.socketName()}, inner...)
+	args := []string{"split-window", "-h", "-t", h.Self, "-e", "TMUX=", "tmux", "-L", h.socketName(),
+		"new-session", "-t", "=" + session, `\;`, "set-option", "destroy-unattached", "on",
+		`\;`, "select-window", "-t", hd.ID, `\;`, "select-pane", "-t", hd.ID,
+		";", "set-option", "-p", "remain-on-exit", "off"}
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(string(out)))
 	}

@@ -679,6 +679,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case r.item != nil:
 			return m.expand(r.item.Key())
 		case r.need != nil:
+			m.beside = false
 			return m.open(r)
 		case r.dormant != nil:
 			return m.revive(*r.dormant)
