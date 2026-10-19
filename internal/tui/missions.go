@@ -136,6 +136,9 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 
 // hue is the project's color on this board, apart from every other project's while there are colors to spare.
 func (m Model) hue(key string) lipgloss.Style {
+	if i, ok := m.alpine.hues[key]; ok {
+		return pal.hues[i]
+	}
 	keys := make([]string, len(m.board.Projects))
 	for i, p := range m.board.Projects {
 		keys[i] = p.Key

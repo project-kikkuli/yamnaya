@@ -7,8 +7,8 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
-func (m Model) itemsView() string {
-	var b strings.Builder
+func (m Model) itemsView() viewPage {
+	b := viewPage{place: "m:" + m.itemsOf}
 	title := "every project"
 	if p, ok := m.board.Project(m.itemsOf); ok && m.itemsOf != "" {
 		title = p.Name
@@ -19,9 +19,10 @@ func (m Model) itemsView() string {
 	}
 	ids := itemIDs(m.items)
 	for i, it := range m.items {
+		b.place = m.itemPlace(it.Session)
 		b.WriteString(m.itemLines(i, it, ids))
 	}
-	return b.String()
+	return b
 }
 
 func (m Model) usageText() string {

@@ -72,6 +72,7 @@ type frame struct {
 
 type Model struct {
 	alpine  alpine
+	page    *viewPage
 	core    *core.Core
 	host    string
 	board   core.Board
@@ -134,6 +135,8 @@ func New(c *core.Core) Model {
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
+	prepared := m.prepareView()
+	m.page = &prepared
 	return m
 }
 
@@ -221,10 +224,22 @@ func (m Model) tick() tea.Cmd {
 func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(true), alpineTick()) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case alpineFrame:
+	if _, ok := msg.(alpineFrame); ok {
 		m.alpine.advance()
 		return m, alpineTick()
+	}
+	m.page = nil
+	next, cmd := m.update(msg)
+	if model, ok := next.(Model); ok {
+		prepared := model.prepareView()
+		model.page = &prepared
+		return model, cmd
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
@@ -966,7 +981,7 @@ func phaseText(p core.Phases) string {
 
 // scrollBy moves the agent view by n lines, stopping where its last line reaches the bottom.
 func (m *Model) scrollBy(n int) {
-	total := strings.Count(m.agentView(), "\n")
+	total := strings.Count(m.agentView().String(), "\n")
 	m.scrollY = max(0, min(m.scrollY+n, total-m.height/2))
 }
 

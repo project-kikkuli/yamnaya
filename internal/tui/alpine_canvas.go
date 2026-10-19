@@ -21,6 +21,8 @@ const (
 	alpineLamp
 	alpineCloud
 	alpineStorm
+	alpinePine
+	alpineMoss
 )
 
 type alpineCanvas struct {
@@ -57,19 +59,15 @@ func (c *alpineCanvas) label(x, y int, text string, ink int) {
 	}
 }
 
-func (c alpineCanvas) String() string {
+func (c alpineCanvas) row(y, start, end int) string {
 	var b strings.Builder
-	b.Grow(c.w * c.h * 4)
-	for y := range c.h {
-		for x := 0; x < c.w; {
-			start, ink := x, c.ink[y*c.w+x]
-			for x < c.w && c.ink[y*c.w+x] == ink {
-				x++
-			}
-			text := strings.ReplaceAll(string(c.text[y*c.w+start:y*c.w+x]), "\x00", "")
-			b.WriteString(pal.alpine[ink].Render(text))
+	for x := start; x < end; {
+		from, ink := x, c.ink[y*c.w+x]
+		for x < end && c.ink[y*c.w+x] == ink {
+			x++
 		}
-		b.WriteByte('\n')
+		text := strings.ReplaceAll(string(c.text[y*c.w+from:y*c.w+x]), "\x00", "")
+		b.WriteString(pal.alpine[ink].Render(text))
 	}
 	return b.String()
 }

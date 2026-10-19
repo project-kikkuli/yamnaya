@@ -48,7 +48,7 @@ func newPalette(r *lipgloss.Renderer, color bool) palette {
 	for _, c := range hueColors {
 		p.hues = append(p.hues, fg(c))
 	}
-	for _, c := range []string{"#0d1926", "#243b50", "#355568", "#467083", "#96b7c4", "#e6c3b5", "#c5dce1", "#4a929d", "#295563", "#e6b76c", "#f07a65", "#eff5e8", "#768c9c", "#b3a7c9"} {
+	for _, c := range []string{"#0d1926", "#243b50", "#355568", "#467083", "#96b7c4", "#e6c3b5", "#c5dce1", "#4a929d", "#295563", "#e6b76c", "#f07a65", "#eff5e8", "#768c9c", "#b3a7c9", "#376b63", "#657a59"} {
 		s := fg(c)
 		if color {
 			s = s.Background(lipgloss.Color("#0d1926"))

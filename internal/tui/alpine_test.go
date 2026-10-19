@@ -17,8 +17,9 @@ func alpineBoard() core.Board {
 	s := core.Live{Session: core.Session{ID: "ridge", Status: core.Busy, Crew: []core.Member{
 		{ID: "rope", Status: core.Busy}, {ID: "camp", Status: core.Idle},
 	}}}
-	p := core.Project{Key: "ridge", Name: "North ridge", Sessions: []core.Live{s}}
-	return core.Board{At: time.Unix(100, 0), Projects: []core.Project{p}, Sessions: []core.Live{s}}
+	s.Project = "ridge"
+	p := core.Project{Key: "ridge", Name: "North ridge", Repo: "/repo/ridge", RepoName: "Ridge", Sessions: []core.Live{s}}
+	return core.Board{At: time.Unix(100, 0), Projects: []core.Project{p}, Sessions: []core.Live{s}, Repos: []core.Repo{{Key: p.Repo, Name: p.RepoName, Missions: []core.Project{p}}}}
 }
 
 func TestExpeditionTransitions(t *testing.T) {
@@ -67,8 +68,8 @@ func TestExpeditionTransitions(t *testing.T) {
 			for range 80 {
 				a.advance()
 			}
-			if len(a.events) > 0 {
-				t.Fatalf("effect did not end: %+v", a.events)
+			if _, shown := a.effectAt("m:ridge"); shown {
+				t.Fatal("effect remains visible after it ends")
 			}
 		})
 	}
@@ -96,13 +97,14 @@ func TestLandscapeStartsFromCurrentStateWithoutReplayingHistory(t *testing.T) {
 func TestWeatherMovesWithoutReadingTheBoardOrMovingInput(t *testing.T) {
 	usePalette(t, false)
 	m := Model{width: 120, height: 40, loaded: true, mode: modeInput, inKind: inFilter, input: []rune("ridge"), cursor: 2}
-	m.alpine.observe(alpineBoard())
-	before := m.alpineView(10)
+	m.board = alpineBoard()
+	m.alpine.observe(m.board)
+	before := m.View()
 	for range 20 {
 		next, _ := m.Update(alpineFrame{})
 		m = next.(Model)
 	}
-	if m.alpineView(10) == before {
+	if m.View() == before {
 		t.Fatal("resting landscape stopped moving")
 	}
 	if m.cursor != 2 || string(m.input) != "ridge" || m.mode != modeInput {
@@ -116,9 +118,11 @@ func TestAlpineBoardKeepsControlsVisibleAcrossTerminalSizes(t *testing.T) {
 		for _, effect := range []string{"", "summit", "storm"} {
 			t.Run(fmt.Sprint(size, effect), func(t *testing.T) {
 				m, _, _ := setup(t)
-				m.width, m.height = size[0], size[1]
+				next, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+				m = next.(Model)
 				if effect != "" {
-					m.alpine.events = []alpineEvent{{kind: effect, mountain: m.alpine.mountains[0].key, frame: 0, people: 8}}
+					m.alpine.emit(alpineEvent{kind: effect, mountain: m.alpine.mountains[0].key, frame: 0, people: 8})
+					m.alpine.group()
 				}
 				for _, frame := range []uint64{0, 15, 40, 70} {
 					m.alpine.frame = frame
@@ -161,27 +165,43 @@ func TestAnimationPreservesSelectionAndScrollAcrossFrames(t *testing.T) {
 	}
 }
 
-func TestRangeToggleLeavesTypedCapitalAInTheInput(t *testing.T) {
+func TestSceneryToggleFreesSpaceAndLeavesTypedAInTheInput(t *testing.T) {
 	m, _, _ := setup(t)
+	firstRepo := func(view string) int {
+		for y, line := range strings.Split(ansi.Strip(view), "\n") {
+			if strings.Contains(line, "2 missions") {
+				return y
+			}
+		}
+		return -1
+	}
+	before := firstRepo(m.View())
 	m = press(t, m, "A")
-	if m.alpineHeight() != 0 {
+	if hidden := firstRepo(m.View()); hidden < 0 || hidden >= before {
+		t.Fatalf("hiding scenery did not recover table space: before=%d, after=%d", before, hidden)
+	}
+	if left, _ := m.sceneMargins(); left != 0 {
 		t.Fatal("A did not hide the landscape")
 	}
 	m = press(t, m, "A", "/", "A")
-	if m.alpineHeight() == 0 || string(m.input) != "A" {
+	if left, _ := m.sceneMargins(); left == 0 || string(m.input) != "A" {
 		t.Fatal("typing A toggled the landscape instead of entering text")
 	}
 }
 
-func TestMountainLabelsRespectWideCharactersAndNoColor(t *testing.T) {
+func TestWideMissionNamesKeepTheirCellsWithAndWithoutColor(t *testing.T) {
 	for _, color := range []bool{false, true} {
 		t.Run(fmt.Sprint(color), func(t *testing.T) {
 			usePalette(t, color)
 			b := alpineBoard()
 			b.Projects[0].Name = "雪山 🏔 expedition"
-			m := Model{width: 80, height: 32, board: b}
+			b.Repos[0].Missions[0].Name = b.Projects[0].Name
+			m := Model{width: 80, height: 32, board: b, loaded: true}
 			m.alpine.observe(b)
-			v := m.alpineView(m.alpineHeight())
+			v := m.View()
+			if !strings.Contains(ansi.Strip(v), "雪山 🏔") {
+				t.Fatal("wide mission name is missing")
+			}
 			if colored(v) != color || strings.Contains(v, "\x00") {
 				t.Fatalf("invalid landscape output: %q", v)
 			}
@@ -232,14 +252,187 @@ func TestFailedBoardRefreshPreservesExpeditions(t *testing.T) {
 }
 
 func BenchmarkAlpineFrame(b *testing.B) {
-	m := Model{width: 160, height: 50, loaded: true}
-	board := alpineBoard()
-	for i := range 100 {
-		board.Projects[0].Sessions[0].Crew = append(board.Projects[0].Sessions[0].Crew, core.Member{ID: fmt.Sprint("climber", i), Status: core.Busy})
+	for _, layout := range []string{"crew", "missions"} {
+		for _, n := range []int{100, 1000, 10000} {
+			b.Run(fmt.Sprint(layout, "/", n), func(b *testing.B) {
+				m := Model{width: 160, height: 50, loaded: true}
+				board := alpineBoard()
+				if layout == "crew" {
+					for i := range n {
+						board.Projects[0].Sessions[0].Crew = append(board.Projects[0].Sessions[0].Crew, core.Member{ID: fmt.Sprint("climber", i), Status: core.Busy})
+					}
+				} else {
+					board.Projects = nil
+					board.Sessions = nil
+					for i := range n {
+						id := fmt.Sprint("mission", i)
+						session := core.Live{Project: id, Session: core.Session{ID: id, Status: core.Busy}}
+						board.Projects = append(board.Projects, core.Project{Key: id, Name: id, Repo: "/repo/ridge", Sessions: []core.Live{session}})
+						board.Sessions = append(board.Sessions, session)
+					}
+				}
+				board.Repos[0].Missions = board.Projects
+				m.board = board
+				m.alpine.observe(board)
+				page := m.prepareView()
+				m.page = &page
+				for b.Loop() {
+					m.alpine.advance()
+					_ = m.View()
+				}
+			})
+		}
 	}
-	m.alpine.observe(board)
-	for b.Loop() {
-		m.alpine.advance()
-		_ = m.alpineView(12)
+}
+
+func TestDenseExpeditionsKeepEveryStateAndBoundTheirMarkers(t *testing.T) {
+	for _, n := range []int{10, 1000, 10000} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			b := alpineBoard()
+			b.Projects[0].Sessions[0].Crew = nil
+			want := [6]int{}
+			want[core.Busy]++
+			for i := range n {
+				status := []core.Status{core.Busy, core.Waiting, core.Idle, core.Done, core.Unknown}[i%5]
+				b.Projects[0].Sessions[0].Crew = append(b.Projects[0].Sessions[0].Crew, core.Member{ID: fmt.Sprint(i), Status: status})
+				want[status]++
+			}
+			var a alpine
+			a.observe(b)
+			for _, key := range []string{"r:/repo/ridge", "m:ridge", "s:ridge"} {
+				group := a.groups[key]
+				if group == nil || group.counts != want || group.total() != n+1 {
+					t.Fatalf("%s omitted agents: %+v; want %v", key, group, want)
+				}
+				if len(group.sample) > 6 {
+					t.Fatalf("%d agents require %d markers", n, len(group.sample))
+				}
+			}
+			b.Kills = map[string]time.Time{"ridge": b.At}
+			b.Projects = nil
+			a.observe(b)
+			if a.groups["r:/repo/ridge"].total() != 0 {
+				t.Fatal("departed agents remain in the active fleet")
+			}
+			if e, ok := a.effectAt("r:/repo/ridge"); !ok || e.people != n+1-want[core.Done] {
+				t.Fatalf("kill lost members of its expedition: %+v", e)
+			}
+		})
+	}
+}
+
+func TestTerrainAndEventsPreserveEveryVisibleTextCell(t *testing.T) {
+	usePalette(t, true)
+	for _, mode := range []mode{modeList, modeRepo, modeDetail, modeSession, modeAgent} {
+		for _, event := range []string{"", "storm", "summit", "work", "depart"} {
+			t.Run(fmt.Sprint(mode, event), func(t *testing.T) {
+				m, _, _ := setup(t)
+				m.width, m.height = 160, 40
+				m.mode, m.detail, m.sess, m.agent = mode, "lead", "lead", "a1"
+				if len(m.board.Repos) > 0 {
+					m.repo = m.board.Repos[0].Key
+				}
+				if event != "" {
+					m.alpine.emit(alpineEvent{kind: event, mountain: "lead", team: "lead", people: 24})
+					m.alpine.group()
+				}
+				page := m.prepareView()
+				m.page = &page
+				for _, frame := range []uint64{0, 17, 46, 80} {
+					m.alpine.frame = frame
+					lines := strings.Split(m.View(), "\n")
+					if len(lines) != m.height {
+						t.Fatalf("view has %d lines, want %d", len(lines), m.height)
+					}
+					for y, line := range page.lines {
+						want := ansi.Strip(line.text)
+						if got := ansi.Strip(ansi.Cut(lines[y], line.offset, line.offset+ansi.StringWidth(want))); got != want {
+							t.Fatalf("row %d text changed: %q, want %q", y, got, want)
+						}
+						if ansi.StringWidth(lines[y]) > m.width {
+							t.Fatalf("row %d overflows", y)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAnimatedBoardAcceptsAnswersAndRefreshesItsCachedText(t *testing.T) {
+	m, c, h := setup(t)
+	for range 10 {
+		next, _ := m.Update(alpineFrame{})
+		m = next.(Model)
+	}
+	m = press(t, m, "a", "ctrl+u", "yes", "enter")
+	item, _ := c.Store.Item("D1")
+	if item.State != core.ItemAnswered || len(h.typed) != 1 {
+		t.Fatalf("answer did not reach the session: %+v, %v", item, h.typed)
+	}
+	if !strings.Contains(m.View(), "NEEDS YOU (1)") {
+		t.Fatal("animation retained the answered item in its text cache")
+	}
+}
+
+func TestInterruptedClimberGetsAWreckMarker(t *testing.T) {
+	usePalette(t, false)
+	for _, cut := range []bool{false, true} {
+		t.Run(fmt.Sprint(cut), func(t *testing.T) {
+			b := alpineBoard()
+			b.Projects[0].Sessions[0].Crew[0].Status = core.Done
+			b.Projects[0].Sessions[0].Crew[0].Cut = cut
+			m := Model{width: 120, height: 40, loaded: true, board: b, mode: modeAgent, detail: "ridge", sess: "ridge", agent: "rope"}
+			m.alpine.observe(b)
+			page := m.prepareView()
+			rendered := strings.Split(m.paintView(page), "\n")
+			for y, line := range page.lines {
+				if line.place != "a:ridge/rope" {
+					continue
+				}
+				mark := "▴"
+				if cut {
+					mark = "×"
+				}
+				if !strings.Contains(ansi.Strip(ansi.Cut(rendered[y], 0, line.offset)), mark) {
+					t.Fatalf("interrupted=%v, marker missing: %q", cut, rendered[y])
+				}
+				return
+			}
+			t.Fatal("climber has no location")
+		})
+	}
+}
+
+func TestDenseRegionsKeepOwnerNeedsVisible(t *testing.T) {
+	usePalette(t, false)
+	for _, n := range []int{1, 10000} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			b := alpineBoard()
+			for i := range n {
+				b.Projects[0].Sessions[0].Crew = append(b.Projects[0].Sessions[0].Crew, core.Member{ID: fmt.Sprint("worker", i), Status: core.Busy})
+			}
+			b.Repos[0].Missions[0] = b.Projects[0]
+			b.Sessions[0] = b.Projects[0].Sessions[0]
+			for i := range 2 {
+				b.Needs = append(b.Needs, core.Need{Project: "ridge", Item: &core.Item{ID: fmt.Sprint("D", i+1), Session: "ridge", Question: "Choose a crossing?", Kind: core.KindDecision, State: core.ItemOpen}})
+			}
+			m := Model{board: b, width: 160, height: 40, loaded: true}
+			m.alpine.observe(b)
+			page := m.prepareView()
+			view := strings.Split(m.paintView(page), "\n")
+			seen := map[string]bool{}
+			for y, line := range page.lines {
+				if line.place != "m:ridge" && line.place != "r:/repo/ridge" {
+					continue
+				}
+				if strings.Contains(ansi.Strip(ansi.Cut(view[y], 0, line.offset)), "!2") {
+					seen[line.place] = true
+				}
+			}
+			if !seen["m:ridge"] || !seen["r:/repo/ridge"] {
+				t.Fatalf("owner needs disappeared in a fleet of %d: %v", n, seen)
+			}
+		})
 	}
 }

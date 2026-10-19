@@ -14,48 +14,64 @@ import (
 )
 
 func (m Model) View() string {
-	var b strings.Builder
-	b.WriteString(m.header() + "\n\n")
-	top := strings.Count(m.header(), "\n") + 2
-	if height := m.alpineHeight(); height > 0 {
-		b.WriteString(m.alpineView(height) + "\n")
-		top += height
+	page := m.page
+	if page == nil {
+		prepared := m.prepareView()
+		page = &prepared
 	}
+	return m.paintView(*page)
+}
+
+func (m Model) prepareView() viewPage {
+	left, right := m.sceneMargins()
+	bodyModel := m
+	bodyModel.width = max(20, m.width-left-right)
+	bodyModel.alpine.hidden = left == 0
+	var body viewPage
 	switch m.mode {
 	case modeHelp:
-		b.WriteString(ansi.Wrap(Help, m.width, " "))
+		body = textPage(ansi.Wrap(Help, bodyModel.width, " "), "")
 	case modeScreen:
-		b.WriteString(m.screen)
+		body = textPage(m.screen, "")
 	case modeWhy:
-		b.WriteString(ansi.Wrap(m.whyView(), m.width, " "))
+		body = textPage(ansi.Wrap(bodyModel.whyView(), bodyModel.width, " "), m.sceneFocus())
 	case modePick:
-		b.WriteString(m.pickView())
+		body = textPage(bodyModel.pickView(), "")
 	case modeInput:
 		if m.inKind == inNewRepo {
-			b.WriteString(m.repoPickView())
+			body = textPage(bodyModel.repoPickView(), "")
 			break
 		}
 		fallthrough
 	default:
 		switch m.listMode() {
 		case modeRepo:
-			b.WriteString(m.repoView())
+			body = bodyModel.repoView()
 		case modeDetail:
-			b.WriteString(m.detailView())
+			body = bodyModel.detailView()
 		case modeSession:
-			b.WriteString(m.sessionView())
+			body = bodyModel.sessionView()
 		case modeAgent:
-			b.WriteString(m.agentView())
+			body = bodyModel.agentView()
 		case modeItems:
-			b.WriteString(m.itemsView())
+			body = bodyModel.itemsView()
 		default:
-			b.WriteString(m.listView())
+			body = bodyModel.listView()
 		}
 	}
-	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-	var foot []string
-	for _, l := range m.footer() {
-		foot = append(foot, strings.Split(ansi.Wrap(l, max(20, m.width-1), " "), "\n")...)
+	lines := textPage(m.header()+"\n", "").lines
+	top := len(lines)
+	for len(body.lines) > 0 && body.lines[len(body.lines)-1].text == "" {
+		body.lines = body.lines[:len(body.lines)-1]
+	}
+	m.locateLines(body.lines)
+	for _, line := range body.lines {
+		line.offset = left
+		lines = append(lines, line)
+	}
+	var foot []viewLine
+	for _, line := range m.footer() {
+		foot = append(foot, textPage(ansi.Wrap(line, max(20, m.width-1), " "), "").lines...)
 	}
 	room := max(1, m.height-len(foot))
 	if m.mode == modeAgent && len(lines) > room && room > top {
@@ -64,25 +80,34 @@ func (m Model) View() string {
 	} else if len(lines) > room {
 		lines = m.scroll(lines, room, top)
 	}
+	place := m.sceneFocus()
+	world := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i].place != "" {
+			place = lines[i].place
+			world = lines[i].world + 1
+			break
+		}
+	}
 	for len(lines) < room {
-		lines = append(lines, "")
+		lines = append(lines, viewLine{place: place, offset: left, open: true, world: world, extent: world + room - len(lines)})
+		world++
 	}
 	lines = append(lines, foot...)
-	for i, l := range lines {
-		lines[i] = ansi.Truncate(l, m.width, "…")
+	for i := range lines {
+		lines[i].text = ansi.Truncate(lines[i].text, max(1, m.width-lines[i].offset), "…")
 	}
-	return strings.Join(lines, "\n")
+	return viewPage{lines: lines}
 }
 
-// scroll keeps the header's top lines and the cursor's line on screen when the view outgrows it, moving no further from the top than that needs.
-func (m Model) scroll(lines []string, room, top int) []string {
+func (m Model) scroll(lines []viewLine, room, top int) []viewLine {
 	if room <= top+1 {
 		top = 0
 	}
 	body, space := lines[top:], room-top
 	at := 0
-	for i, l := range body {
-		if strings.HasPrefix(ansi.Strip(l), " >") {
+	for i, line := range body {
+		if strings.HasPrefix(ansi.Strip(line.text), " >") {
 			at = i
 		}
 	}
@@ -184,7 +209,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   O beside   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A range   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A scenery   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -194,11 +219,11 @@ func (m Model) mark(i int) string {
 	return "   "
 }
 
-func (m Model) listView() string {
+func (m Model) listView() viewPage {
 	if !m.loaded {
-		return ""
+		return viewPage{}
 	}
-	var b strings.Builder
+	b := viewPage{place: ""}
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
@@ -228,17 +253,23 @@ func (m Model) listView() string {
 			}
 			b.WriteString(line + "\n")
 		case r.need != nil:
+			b.place = "m:" + r.need.Project
 			b.WriteString(m.needLines(i, *r.need))
 		case r.project == nil:
+			b.place = "r:" + r.repo.Key
+			if !m.alpine.hidden {
+				b.WriteString("\n\n")
+			}
 			b.WriteString(m.repoLine(i, *r.repo, cols))
 		default:
+			b.place = "m:" + r.project.Key
 			b.WriteString(m.missionLine(i, *r.project, cols))
 		}
 	}
 	if !repos {
 		b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n" + pal.dim.Render("   no sessions found") + "\n")
 	}
-	return b.String()
+	return b
 }
 
 func (m Model) isStale(n *core.Need) bool {
@@ -582,12 +613,12 @@ func copiesWhere(p core.Project) string {
 	return ""
 }
 
-func (m Model) repoView() string {
+func (m Model) repoView() viewPage {
 	r, ok := m.board.Repo(m.repo)
 	if !ok {
-		return pal.dim.Render("   this repo has no live sessions now; esc back")
+		return textPage(pal.dim.Render("   this repo has no live sessions now; esc back"), "")
 	}
-	var b strings.Builder
+	b := viewPage{place: "r:" + r.Key}
 	key := r.Key
 	if key == "" {
 		key = "sessions outside any git repo"
@@ -597,6 +628,7 @@ func (m Model) repoView() string {
 	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
 	cols := m.missionCols(0)
 	for i, p := range r.Missions {
+		b.place = "m:" + p.Key
 		b.WriteString(m.missionLine(i, p, cols))
 		if len(p.Sessions) > 0 {
 			lead := p.Sessions[0]
@@ -611,15 +643,15 @@ func (m Model) repoView() string {
 			b.WriteString(pal.dim.Render("     "+strings.Join(meta, " | ")) + "\n")
 		}
 	}
-	return b.String()
+	return b
 }
 
-func (m Model) detailView() string {
+func (m Model) detailView() viewPage {
 	p, ok := m.board.Project(m.detail)
 	if !ok {
-		return pal.dim.Render("   this mission has no live sessions now; esc back")
+		return textPage(pal.dim.Render("   this mission has no live sessions now; esc back"), "")
 	}
-	var b strings.Builder
+	b := viewPage{place: "m:" + p.Key}
 	b.WriteString(pal.bold.Render(" "+p.Name) + pal.dim.Render("  "+p.RepoName+"  "+p.Key) + "\n")
 	if len(p.Phases.Names) > 0 {
 		var ps []string
@@ -667,16 +699,19 @@ func (m Model) detailView() string {
 		if i == m.cursor && s.Adoptable() {
 			line += pal.dim.Render("   o adopt")
 		}
+		b.place = "s:" + s.Key()
 		b.WriteString(line + "\n")
 		if d := doingText(m.board.At, s.Session); d != "" {
 			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
 		}
 		i++
 		for _, c := range s.Crew {
+			b.place = "a:" + s.Key() + "/" + c.ID
 			b.WriteString(m.crewLine(i, s, c))
 			i++
 		}
 	}
+	b.place = "m:" + p.Key
 	for _, d := range p.Dormant {
 		title := d.Title
 		if title == "" {
@@ -701,7 +736,7 @@ func (m Model) detailView() string {
 		b.WriteString(m.itemLines(i, it, ids))
 		i++
 	}
-	return b.String()
+	return b
 }
 
 func (m Model) crewLine(i int, s core.Live, c core.Member) string {
@@ -769,7 +804,7 @@ func shortModel(model string) string {
 }
 
 // field writes a labelled value, wrapping long values under their label.
-func (m Model) field(b *strings.Builder, label, value string) {
+func (m Model) field(b interface{ WriteString(string) (int, error) }, label, value string) {
 	if strings.TrimSpace(value) == "" {
 		return
 	}
@@ -793,12 +828,12 @@ func clip(text string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) sessionView() string {
+func (m Model) sessionView() viewPage {
 	s, ok := m.session()
 	if !ok {
-		return pal.dim.Render("   this session is gone; esc back")
+		return textPage(pal.dim.Render("   this session is gone; esc back"), "")
 	}
-	var b strings.Builder
+	b := viewPage{place: "s:" + s.Key()}
 	title := s.Title
 	if title == "" {
 		title = core.Short(s.Key())
@@ -840,9 +875,11 @@ func (m Model) sessionView() string {
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
 	i := 0
 	for _, c := range s.Crew {
+		b.place = "a:" + s.Key() + "/" + c.ID
 		b.WriteString(m.crewLine(i, *s, c))
 		i++
 	}
+	b.place = "s:" + s.Key()
 	if len(s.Crew) == 0 {
 		b.WriteString(pal.dim.Render("   none") + "\n")
 	}
@@ -877,7 +914,7 @@ func (m Model) sessionView() string {
 			}
 		}
 	}
-	return b.String()
+	return b
 }
 
 // units is one line per branch of work: its gate strip and the raw facts behind it.
@@ -907,12 +944,12 @@ func prStatus(pr core.PR) string {
 	return st
 }
 
-func (m Model) agentView() string {
+func (m Model) agentView() viewPage {
 	s, c, ok := m.member()
 	if !ok {
-		return pal.dim.Render("   this agent is gone; esc back")
+		return textPage(pal.dim.Render("   this agent is gone; esc back"), "")
 	}
-	var b strings.Builder
+	b := viewPage{place: "a:" + s.Key() + "/" + c.ID}
 	b.WriteString(pal.bold.Render(" "+c.Name) + pal.dim.Render("  in "+s.Title+"  "+c.ID) + "\n\n")
 	kind := c.Type
 	if c.Teammate {
@@ -973,7 +1010,7 @@ func (m Model) agentView() string {
 			b.WriteString(pal.dim.Render("   "+pad(at, 9)) + a.String() + "\n")
 		}
 	}
-	return b.String()
+	return b
 }
 
 func toolCounts(tools map[string]int) string {
@@ -1055,13 +1092,6 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
- THE RANGE shows each mission as a mountain and its agents as an expedition. Busy agents climb,
- waiting agents shelter, idle agents rest at camp, and completed crew leave cairns. New work shapes
- the terrain; elevation is activity, not percent complete. A summit sends up a flare; a confirmed
- ym kill sweeps that session's expedition away. Weather and water keep moving while agents rest.
- The camera follows the selected mission and briefly visits summits and tornadoes. Counts cover
- the whole fleet, including mountains outside the view. The range hides in small terminals.
-
  NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
  whose last reply asks you with no item filed ("waiting:", the first question it asks).
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
@@ -1069,7 +1099,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
 
    ↑ ↓ or k j   move
-   A            hide or show the mountain range
+   A            hide or show scenery
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
