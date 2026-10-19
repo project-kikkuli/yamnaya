@@ -7,10 +7,12 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
+	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
-func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
+func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 	bins, state := t.TempDir(), t.TempDir()
 	for _, name := range []string{"claude", "codex"} {
 		if err := os.WriteFile(filepath.Join(bins, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -34,17 +36,26 @@ func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
 		rec    launch.Record
 		argv   func(launch.Record) ([]string, error)
 		writes bool
-		bypass string
 	}{
-		{"codex start", launch.Record{Harness: "codex", Prompt: "go", Worktree: wt}, startArgv, true, "--dangerously-bypass-approvals-and-sandbox"},
-		{"codex resume", launch.Record{Harness: "codex", Session: "t1", Worktree: wt}, resumeArgv, true, "--dangerously-bypass-approvals-and-sandbox"},
-		{"claude start", launch.Record{Harness: "claude", Session: "s1", Prompt: "go", Worktree: wt}, startArgv, false, "--dangerously-skip-permissions"},
-		{"claude resume", launch.Record{Harness: "claude", Session: "s1", Worktree: wt}, resumeArgv, false, "--dangerously-skip-permissions"},
+		{"codex start", launch.Record{Harness: "codex", Prompt: "go", Worktree: wt}, startArgv, true},
+		{"codex resume", launch.Record{Harness: "codex", Session: "t1", Worktree: wt}, resumeArgv, true},
+		{"claude start", launch.Record{Harness: "claude", Session: "s1", Prompt: "go", Worktree: wt}, startArgv, false},
+		{"claude resume", launch.Record{Harness: "claude", Session: "s1", Worktree: wt}, resumeArgv, false},
+		{"claude resume command", launch.Record{Harness: "claude", Session: "s1"}, func(r launch.Record) ([]string, error) {
+			return claude.New().Resume(r.Session), nil
+		}, false},
+		{"codex resume command", launch.Record{Harness: "codex", Session: "t1"}, func(r launch.Record) ([]string, error) {
+			return codex.New().Resume(r.Session), nil
+		}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			argv, err := c.argv(c.rec)
 			if err != nil {
 				t.Fatal(err)
+			}
+			flag := map[string]string{"claude": "--dangerously-skip-permissions", "codex": "--yolo"}[c.rec.Harness]
+			if !slices.Contains(argv, flag) {
+				t.Fatalf("argv %q must bypass permission prompts with %s", argv, flag)
 			}
 			dirs := map[string]bool{}
 			for i, a := range argv {
@@ -62,9 +73,6 @@ func TestLaunchedCodexCanWriteYmStateAndCommit(t *testing.T) {
 			}
 			if dirs[gitDir] || dirs[filepath.Join(gitDir, "hooks")] {
 				t.Fatalf("argv %q opens the git dir's hooks and config to the sandbox", argv)
-			}
-			if !slices.Contains(argv, c.bypass) {
-				t.Fatalf("argv %q must turn permission prompts off with %s", argv, c.bypass)
 			}
 			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Session {
 				t.Fatalf("argv %q must end with the prompt or session", argv)
