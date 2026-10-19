@@ -85,6 +85,8 @@ func TestBoardRestartsWhenItsBinaryChanges(t *testing.T) {
 		{"on the list", modeList, true},
 		{"while typing", modeInput, false},
 		{"while confirming", modeConfirm, false},
+		{"while picking", modePick, false},
+		{"while merging", modeMerge, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "ym")

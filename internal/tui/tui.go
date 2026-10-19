@@ -277,7 +277,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tickMsg:
-		if m.self != nil && m.mode != modeInput && m.mode != modeConfirm && m.self.changed() {
+		if m.self != nil && m.mode == m.listMode() && m.self.changed() {
 			m.restart = true
 			return m, tea.Quit
 		}

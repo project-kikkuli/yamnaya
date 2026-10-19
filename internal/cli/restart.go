@@ -13,12 +13,13 @@ const childrenEnv = "YM_CHILDREN"
 
 var children sync.Map
 
-// reap waits for pid in the background, keeping it listed for a restart until it exits.
+// reap waits for pid in the background, keeping it listed for a restart until it exits; the token keeps a reused pid listed.
 func reap(pid int, wait func()) {
-	children.Store(pid, struct{}{})
+	token := new(int)
+	children.Store(pid, token)
 	go func() {
 		wait()
-		children.Delete(pid)
+		children.CompareAndDelete(pid, token)
 	}()
 }
 
