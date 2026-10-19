@@ -26,6 +26,12 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 		os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644)
 	}
 	old := 4 * 24 * time.Hour
+	expired := func(t *testing.T, wt string) {
+		merged(t, wt)
+		admin, _ := git(wt, "rev-parse", "--absolute-git-dir")
+		later := time.Now().Add(old)
+		os.Chtimes(filepath.Join(admin, "logs", "HEAD"), later, later)
+	}
 	for _, c := range []struct {
 		name   string
 		setup  func(t *testing.T, wt string)
@@ -39,6 +45,7 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 		{"merged, idle, only ignored files", ignored, old, false, false, "", false},
 		{"pushed not merged, idle", pushed, old, false, false, "", true},
 		{"merged, touched today", merged, 0, false, false, KeepActive, true},
+		{"merged, idle, reflog rewritten by git gc today", expired, old, false, false, "", false},
 		{"merged, idle, a process works inside", merged, old, true, false, KeepInUse, true},
 		{"dirty and merged, idle", dirty, old, false, false, KeepDirty, true},
 		{"local-only commit, idle", commit, old, false, false, KeepLocal, true},

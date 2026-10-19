@@ -108,24 +108,47 @@ func Base(root string) string {
 	return ""
 }
 
-// touched is the newest change to the worktree's directory, its HEAD or its reflog; the index is left out because any git
-// status may rewrite it.
+// touched is the newest change to the worktree's directory, its HEAD or its newest reflog entry. The index and the
+// reflog file's own mtime are left out because any git status rewrites the one and git gc's reflog expiry the other.
 func touched(path string) time.Time {
 	var newest time.Time
-	see := func(p string) {
-		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(newest) {
-			newest = fi.ModTime()
+	see := func(t time.Time) {
+		if t.After(newest) {
+			newest = t
 		}
 	}
-	see(path)
+	stat := func(p string) {
+		if fi, err := os.Stat(p); err == nil {
+			see(fi.ModTime())
+		}
+	}
+	stat(path)
 	if b, err := os.ReadFile(filepath.Join(path, ".git")); err == nil {
 		if admin, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: "); ok {
-			for _, f := range []string{"HEAD", filepath.Join("logs", "HEAD")} {
-				see(filepath.Join(admin, f))
-			}
+			stat(filepath.Join(admin, "HEAD"))
+			see(lastEntry(filepath.Join(admin, "logs", "HEAD")))
 		}
 	}
 	return newest
+}
+
+// lastEntry is when the reflog at path last recorded a move: each line is "old new who <unix> <zone>\tmessage".
+func lastEntry(path string) time.Time {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return time.Time{}
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	who, _, _ := strings.Cut(lines[len(lines)-1], "\t")
+	f := strings.Fields(who)
+	if len(f) < 2 {
+		return time.Time{}
+	}
+	sec, err := strconv.ParseInt(f[len(f)-2], 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
 
 // Size is the bytes of every file under path, not following links.
