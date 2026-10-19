@@ -67,6 +67,25 @@ func TestLocateTypeAndScreenByPaneTTY(t *testing.T) {
 	})
 }
 
+func TestLocateSkipsADeadPaneOnTheLiveSessionsReusedTTY(t *testing.T) {
+	dead := "/dev/ttys006\t%9\tbuddy:0.0\tbuddy\t1"
+	live := "/dev/ttys006\t%11\tcost:0.0\tcost\t0"
+	for name, rows := range map[string][]string{"dead first": {dead, live}, "live first": {live, dead}} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\nprintf '%s\\n' '" + strings.Join(rows, "' '") + "'\n"
+			if err := os.WriteFile(dir+"/tmux", []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			hd, ok := (&Host{Socket: "fake"}).Locate("/dev/ttys006")
+			if !ok || hd.ID != "%11" || hd.Label != "cost:0.0" {
+				t.Fatalf("Locate = %+v, %v, want the live pane %%11", hd, ok)
+			}
+		})
+	}
+}
+
 func TestFocusJumpsOnlyYmsOwnClientWithoutChangingLayout(t *testing.T) {
 	h := server(t)
 	h.must(t, "new-session", "-d", "-s", "home", "cat")

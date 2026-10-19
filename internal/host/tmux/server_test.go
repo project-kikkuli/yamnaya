@@ -58,12 +58,15 @@ func ymServer(t *testing.T) (*Host, string) {
 func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	h, conf := ymServer(t)
 	t.Setenv("TMUX", "/tmp/tmux-0/default,1,0")
-	p, err := h.Start(conf, "repo-wt-x", t.TempDir(), []string{"sh", "-c", "exit 3"})
+	p, err := h.Start(conf, "repo-wt-x", t.TempDir(), []string{"sh", "-c", "read _; exit 3"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hd, ok := h.Locate(p.TTY); !ok || hd.Host != Server || hd.ID != p.ID {
 		t.Errorf("Locate(%s) = %+v, %v", p.TTY, hd, ok)
+	}
+	if _, err := h.run("send-keys", "-t", p.ID, "Enter"); err != nil {
+		t.Fatal(err)
 	}
 	waitFor(t, "the agent to exit", func() bool {
 		p, err = h.Pane("repo-wt-x")

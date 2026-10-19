@@ -84,13 +84,13 @@ func (h *Host) list() map[string]pane {
 		return h.panes
 	}
 	h.panes, h.at = map[string]pane{}, time.Now()
-	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}")
+	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t#{pane_dead}")
 	if err != nil {
 		return h.panes
 	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if _, seen := h.panes[f[0]]; len(f) == 4 && !seen {
+		if _, seen := h.panes[f[0]]; len(f) == 5 && f[4] != "1" && !seen {
 			h.panes[f[0]] = pane{id: f[1], target: f[2], session: f[3]}
 		}
 	}
