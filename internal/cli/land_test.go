@@ -39,23 +39,26 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		state  string
 		setup  func(t *testing.T, wt string)
 		forget bool
+		busy   bool
 		landed bool
 		tree   bool
 		branch bool
 	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, true, false, true},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, true, false, false},
-		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, true, true},
-		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, true, true},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, true, false, true},
-		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, true, true},
-		{"gone, merged", "", 0, "", merged, false, true, false, false},
-		{"gone, dirty", "", 0, "gone", dirty, false, false, true, true},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, true, true},
-		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, true, true},
-		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, true, false, true},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, true, true},
-		{"forget, unpushed", "exit 3", 0, "", commit, true, true, true, true},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, false, true, false, true},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, false, true, false, false},
+		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, true, true},
+		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, true, true},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, false, true, false, true},
+		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, true, true},
+		{"gone, merged", "", 0, "", merged, false, false, true, false, false},
+		{"gone, dirty", "", 0, "gone", dirty, false, false, false, true, true},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, true, true},
+		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, true, true},
+		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, true, false, true},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, true, true},
+		{"gone, merged, a process works inside", "", 0, "gone", merged, false, true, false, true, true},
+		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, true, false, true, true},
+		{"forget, unpushed", "exit 3", 0, "", commit, true, false, true, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -68,6 +71,14 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			wt := launch.WorktreePath(repo, "feature")
 			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
 			c.setup(t, wt)
+			if c.busy {
+				sleep := exec.Command("sleep", "60")
+				sleep.Dir = wt
+				if err := sleep.Start(); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { sleep.Process.Kill(); sleep.Wait() })
+			}
 
 			srv := &tmux.Host{Socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano()), Kind: tmux.Server}
 			t.Cleanup(func() { exec.Command("tmux", "-L", srv.Socket, "kill-server").Run() })

@@ -40,16 +40,18 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 		dry    bool
 		keep   string
 		branch bool
+		detach bool
 	}{
-		{"merged, idle", merged, old, false, false, "", false},
-		{"merged, idle, only ignored files", ignored, old, false, false, "", false},
-		{"pushed not merged, idle", pushed, old, false, false, "", true},
-		{"merged, touched today", merged, 0, false, false, KeepActive, true},
-		{"merged, idle, reflog rewritten by git gc today", expired, old, false, false, "", false},
-		{"merged, idle, a process works inside", merged, old, true, false, KeepInUse, true},
-		{"dirty and merged, idle", dirty, old, false, false, KeepDirty, true},
-		{"local-only commit, idle", commit, old, false, false, KeepLocal, true},
-		{"merged, idle, dry run", merged, old, false, true, "", true},
+		{"merged, idle", merged, old, false, false, "", false, false},
+		{"merged, idle, only ignored files", ignored, old, false, false, "", false, false},
+		{"pushed not merged, idle", pushed, old, false, false, "", true, false},
+		{"merged, touched today", merged, 0, false, false, KeepActive, true, false},
+		{"merged, idle, reflog rewritten by git gc today", expired, old, false, false, "", false, false},
+		{"merged, idle, a process works inside", merged, old, true, false, KeepInUse, true, false},
+		{"dirty and merged, idle", dirty, old, false, false, KeepDirty, true, false},
+		{"local-only commit, idle", commit, old, false, false, KeepLocal, true, false},
+		{"merged, idle, dry run", merged, old, false, true, "", true, false},
+		{"merged, idle, main checkout detached", merged, old, false, false, "", false, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -67,6 +69,9 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 			wt := WorktreePath(repo, "feature")
 			run(t, repo, "git", "worktree", "add", "-q", "-b", "feature", wt)
 			c.setup(t, wt)
+			if c.detach {
+				run(t, repo, "git", "checkout", "-q", "--detach")
+			}
 			var cwds []string
 			if c.inside {
 				cwds = []string{filepath.Join(wt, "sub")}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -279,7 +280,8 @@ func detach(args ...string) error {
 	if err := c.Start(); err != nil {
 		return err
 	}
-	return c.Process.Release()
+	go c.Wait()
+	return nil
 }
 
 func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -394,11 +396,12 @@ func landsAlone(state string, age time.Duration) bool {
 func (l launcher) Dormant() []core.Dormant {
 	l.sweepSoon()
 	all, _ := l.records.All()
+	dirs := sync.OnceValue(cwds)
 	var out []core.Dormant
 	for _, rec := range all {
 		_, st := l.state(rec)
 		if landsAlone(st, time.Since(rec.Started)) {
-			_, err := l.land(rec)
+			_, err := l.landUnused(rec, dirs)
 			if err == nil {
 				continue
 			}
@@ -486,6 +489,18 @@ func (l launcher) Forget(ref string) (string, error) {
 	return fmt.Sprintf("forgot %s; %s and branch %s stay", rec.Key, rec.Worktree.Path, rec.Worktree.Branch), nil
 }
 
+// landUnused lands rec unless a process in dirs works in its worktree, as an agent resumed outside ym's pane does.
+func (l launcher) landUnused(rec launch.Record, dirs func() []string) (string, error) {
+	if !rec.Adopted {
+		if path, err := filepath.EvalSymlinks(rec.Worktree.Path); err == nil {
+			if user := launch.Inside(path, dirs()); user != "" {
+				return "", unlandable{rec.Key, rec.Worktree.Path, "has a process working in " + user}
+			}
+		}
+	}
+	return l.land(rec)
+}
+
 func (l launcher) land(rec launch.Record) (string, error) {
 	if rec.Adopted {
 		if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
@@ -534,6 +549,7 @@ func (l launcher) land(rec launch.Record) (string, error) {
 // LandAll lands every dormant session that loses nothing and forgets those whose worktree is gone, saying what it skipped.
 func (l launcher) LandAll() string {
 	all, _ := l.records.All()
+	dirs := sync.OnceValue(cwds)
 	var lines []string
 	for _, rec := range all {
 		if _, st := l.state(rec); st == "running" {
@@ -545,7 +561,7 @@ func (l launcher) LandAll() string {
 		if _, statErr := os.Stat(rec.Worktree.Path); errors.Is(statErr, os.ErrNotExist) && !rec.Adopted {
 			msg, err = l.Forget(rec.Key)
 		} else {
-			msg, err = l.land(rec)
+			msg, err = l.landUnused(rec, dirs)
 		}
 		if err != nil {
 			msg = fmt.Sprintf("skipped %s: %v", rec.Key, err)

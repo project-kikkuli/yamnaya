@@ -165,7 +165,8 @@ func Size(path string) int64 {
 	return n
 }
 
-func inside(path string, cwds []string) string {
+// Inside is the first of cwds at or under path, or "".
+func Inside(path string, cwds []string) string {
 	for _, c := range cwds {
 		if c == path || strings.HasPrefix(c, path+string(filepath.Separator)) {
 			return c
@@ -203,7 +204,7 @@ func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, erro
 		case err != nil:
 			sw.Keep, sw.Why = KeepFailing, err.Error()
 		default:
-			sw.Keep, sw.Why = Keep(status != "", local, idle, inside(w.path, cwds))
+			sw.Keep, sw.Why = Keep(status != "", local, idle, Inside(w.path, cwds))
 		}
 		if sizes && (sw.Keep == "" || sw.Keep == KeepDirty || sw.Keep == KeepLocal) {
 			sw.Size = Size(w.path)
@@ -223,7 +224,7 @@ func GC(root string, now time.Time, cwds []string, dry, sizes bool) (Swept, erro
 	if base == "" {
 		return s, nil
 	}
-	merged, err := git(root, "branch", "--format=%(refname:short)", "--merged", base)
+	merged, err := git(root, "for-each-ref", "--format=%(refname:short)", "--merged", base, "refs/heads")
 	if err != nil {
 		return s, err
 	}
