@@ -21,6 +21,25 @@ func (h *hub) Merged(_, branch string) ([]PR, error) { h.calls++; return h.byBra
 func (h *hub) Holding(_, sha string) ([]PR, error)   { h.calls++; return h.bySHA[sha], nil }
 func (h *hub) Ancestor(_, _, _ string) (bool, error) { h.calls++; return h.ancestor, nil }
 
+func pr(n int, head string) PR { return PR{Number: n, Head: head, Base: "main"} }
+
+// stacked is pull request n with head, merged into base as commit merge.
+func stacked(n int, head, base, merge string) PR {
+	p := PR{Number: n, Head: head, Base: base}
+	p.Merge.Oid = merge
+	return p
+}
+
+// parentCommit is a commit on branch parent, off main's root and on no default branch.
+func parentCommit(t *testing.T, repo string) string {
+	run(t, repo, "git", "branch", "parent", "main~1")
+	run(t, repo, "git", "checkout", "-q", "parent")
+	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "squash of work into parent")
+	x := Head(repo)
+	run(t, repo, "git", "checkout", "-q", "main")
+	return x
+}
+
 const elsewhere = "0123456789abcdef0123456789abcdef01234567"
 
 // squashRepo is a repository whose origin claims to be github.com/o/r but pushes to a local bare repository, with a
@@ -51,30 +70,40 @@ func TestGCTreatsSquashMergedWorktreesAsMerged(t *testing.T) {
 		keep  string
 	}{
 		{"pull request head is HEAD", func(t *testing.T, repo, wt, head string) *hub {
-			return &hub{byBranch: map[string][]PR{"feature": {{7, head}}}}
+			return &hub{byBranch: map[string][]PR{"feature": {pr(7, head)}}}
 		}, ""},
 		{"pull request head descends from HEAD locally", func(t *testing.T, repo, wt, head string) *hub {
 			run(t, wt, "git", "commit", "-q", "--allow-empty", "-m", "review fix")
 			later := Head(wt)
 			run(t, wt, "git", "reset", "-q", "--hard", head)
-			return &hub{byBranch: map[string][]PR{"feature": {{7, later}}}}
+			return &hub{byBranch: map[string][]PR{"feature": {pr(7, later)}}}
 		}, ""},
 		{"pull request head descends from HEAD on GitHub only", func(t *testing.T, repo, wt, head string) *hub {
-			return &hub{byBranch: map[string][]PR{"feature": {{7, elsewhere}}}, ancestor: true}
+			return &hub{byBranch: map[string][]PR{"feature": {pr(7, elsewhere)}}, ancestor: true}
 		}, ""},
 		{"pull request head GitHub says does not descend", func(t *testing.T, repo, wt, head string) *hub {
-			return &hub{byBranch: map[string][]PR{"feature": {{7, elsewhere}}}}
+			return &hub{byBranch: map[string][]PR{"feature": {pr(7, elsewhere)}}}
 		}, KeepLocal},
 		{"pull request under the upstream branch name", func(t *testing.T, repo, wt, head string) *hub {
 			run(t, repo, "git", "config", "branch.feature.merge", "refs/heads/someone/feature")
-			return &hub{byBranch: map[string][]PR{"someone/feature": {{7, head}}}}
+			return &hub{byBranch: map[string][]PR{"someone/feature": {pr(7, head)}}}
 		}, ""},
 		{"pull request found only by commit", func(t *testing.T, repo, wt, head string) *hub {
-			return &hub{bySHA: map[string][]PR{head: {{7, head}}}}
+			return &hub{bySHA: map[string][]PR{head: {pr(7, head)}}}
 		}, ""},
 		{"commits after the merge", func(t *testing.T, repo, wt, head string) *hub {
 			run(t, wt, "git", "commit", "-q", "--allow-empty", "-m", "after merge")
-			return &hub{byBranch: map[string][]PR{"feature": {{7, head}}}}
+			return &hub{byBranch: map[string][]PR{"feature": {pr(7, head)}}}
+		}, KeepLocal},
+		{"stacked pull request whose merge commit is on main", func(t *testing.T, repo, wt, head string) *hub {
+			return &hub{byBranch: map[string][]PR{"feature": {stacked(7, head, "parent", Head(repo))}}}
+		}, ""},
+		{"stacked pull request whose parent squash-merged", func(t *testing.T, repo, wt, head string) *hub {
+			x := parentCommit(t, repo)
+			return &hub{byBranch: map[string][]PR{"feature": {stacked(7, head, "parent", x)}, "parent": {pr(8, x)}}}
+		}, ""},
+		{"stacked pull request whose parent never merged", func(t *testing.T, repo, wt, head string) *hub {
+			return &hub{byBranch: map[string][]PR{"feature": {stacked(7, head, "parent", parentCommit(t, repo))}}}
 		}, KeepLocal},
 		{"no pull request", func(t *testing.T, repo, wt, head string) *hub {
 			return &hub{}
@@ -117,7 +146,7 @@ func TestGCDeletesSquashMergedBranchesWithoutWorktrees(t *testing.T) {
 	run(t, repo, "git", "checkout", "-q", "unmerged")
 	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "own work")
 	run(t, repo, "git", "checkout", "-q", "main")
-	h := &hub{byBranch: map[string][]PR{"feature": {{7, head}}}}
+	h := &hub{byBranch: map[string][]PR{"feature": {pr(7, head)}}}
 	q := &Squash{Hub: h, Cache: filepath.Join(t.TempDir(), "squash.json"), Now: time.Now}
 
 	s, err := GC(repo, time.Now(), nil, q, true, false)
@@ -139,8 +168,8 @@ func TestSquashAsksGitHubOncePerCommitAndAgainAfterUnmergedExpires(t *testing.T)
 		later time.Duration
 		again bool
 	}{
-		{"merged, an hour later", []PR{{7, ""}}, time.Hour, false},
-		{"merged, a week later", []PR{{7, ""}}, 7 * 24 * time.Hour, false},
+		{"merged, an hour later", []PR{pr(7, "")}, time.Hour, false},
+		{"merged, a week later", []PR{pr(7, "")}, 7 * 24 * time.Hour, false},
 		{"unmerged, an hour later", nil, time.Hour, false},
 		{"unmerged, past expiry", nil, Unmerged + time.Hour, true},
 	} {

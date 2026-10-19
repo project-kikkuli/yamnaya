@@ -15,10 +15,15 @@ import (
 // Unmerged is how long gc trusts that a commit is in no merged pull request before asking GitHub again.
 const Unmerged = 24 * time.Hour
 
-// PR is a merged pull request and the commit its head branch ended on.
+// PR is a merged pull request, the commit its head branch ended on, the branch it merged into and the commit that
+// merge made there.
 type PR struct {
 	Number int    `json:"number"`
 	Head   string `json:"headRefOid"`
+	Base   string `json:"baseRefName"`
+	Merge  struct {
+		Oid string `json:"oid"`
+	} `json:"mergeCommit"`
 }
 
 // Hub is what GitHub says about the merged pull requests of repository owner/name.
@@ -51,7 +56,7 @@ func gh(args ...string) ([]byte, error) {
 }
 
 func prs(args ...string) ([]PR, error) {
-	out, err := gh(append([]string{"pr", "list", "--state", "merged", "--json", "number,headRefOid"}, args...)...)
+	out, err := gh(append([]string{"pr", "list", "--state", "merged", "--json", "number,headRefOid,baseRefName,mergeCommit"}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,22 +189,49 @@ func (q *Squash) ask(root, slug, branch, sha string) (int, error) {
 		}
 	}
 	for _, pr := range found {
-		if pr.Head == sha {
-			return pr.Number, nil
-		}
-		if _, err := look(root, "cat-file", "-e", pr.Head+"^{commit}"); err == nil {
-			if _, err := look(root, "merge-base", "--is-ancestor", sha, pr.Head); err == nil {
-				return pr.Number, nil
+		if ok, err := q.contains(root, slug, pr.Head, sha); err != nil || !ok {
+			if err != nil {
+				return 0, err
 			}
 			continue
 		}
-		ok, err := q.Hub.Ancestor(slug, sha, pr.Head)
-		if err != nil {
-			return 0, err
-		}
-		if ok {
-			return pr.Number, nil
+		if ok, err := q.landed(root, slug, pr); err != nil || ok {
+			return pr.Number, err
 		}
 	}
 	return 0, nil
+}
+
+// contains reports whether sha equals or precedes head, locally when head is here, else on GitHub.
+func (q *Squash) contains(root, slug, head, sha string) (bool, error) {
+	if head == sha {
+		return true, nil
+	}
+	if _, err := look(root, "cat-file", "-e", head+"^{commit}"); err == nil {
+		_, err := look(root, "merge-base", "--is-ancestor", sha, head)
+		return err == nil, nil
+	}
+	return q.Hub.Ancestor(slug, sha, head)
+}
+
+// landed reports whether pr's work reached the default branch: it merged into it, or its merge commit is on it or in a
+// merged pull request that landed in turn.
+func (q *Squash) landed(root, slug string, pr PR) (bool, error) {
+	base := Base(root)
+	branch := strings.TrimPrefix(base, "origin/")
+	if pr.Base == branch {
+		return true, nil
+	}
+	if pr.Merge.Oid == "" || base == "" {
+		return false, nil
+	}
+	if _, err := look(root, "cat-file", "-e", pr.Merge.Oid+"^{commit}"); err == nil {
+		if _, err := look(root, "merge-base", "--is-ancestor", pr.Merge.Oid, base); err == nil {
+			return true, nil
+		}
+	} else if ok, err := q.Hub.Ancestor(slug, pr.Merge.Oid, branch); err != nil || ok {
+		return ok, err
+	}
+	n, err := q.ask(root, slug, pr.Base, pr.Merge.Oid)
+	return n > 0, err
 }
