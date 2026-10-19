@@ -28,6 +28,8 @@ type launcher struct {
 	srv     *tmux.Host
 	records launch.Records
 	conf    string
+	// stamp is the file whose age throttles the board's background gc; empty never starts one.
+	stamp string
 }
 
 func newLauncher() (launcher, error) {
@@ -36,7 +38,8 @@ func newLauncher() (launcher, error) {
 		return launcher{}, err
 	}
 	dir := filepath.Dir(path)
-	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf")}
+	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf"),
+		stamp: filepath.Join(dir, "gc.stamp")}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
@@ -381,13 +384,20 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
 }
 
-// Dormant lists the launched sessions whose agents no longer run, landing first those whose agent exited 0 and lost nothing.
+// landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
+// and a kill by a signal only after a day.
+func landsAlone(state string, age time.Duration) bool {
+	return state != "running" && (!strings.HasPrefix(state, "sig") || age >= 24*time.Hour)
+}
+
+// Dormant lists the launched sessions whose agents no longer run, landing first those that land alone and lose nothing.
 func (l launcher) Dormant() []core.Dormant {
+	l.sweepSoon()
 	all, _ := l.records.All()
 	var out []core.Dormant
 	for _, rec := range all {
-		pane, st := l.state(rec)
-		if pane.Dead && pane.Signal == "" && pane.Status == 0 {
+		_, st := l.state(rec)
+		if landsAlone(st, time.Since(rec.Started)) {
 			_, err := l.land(rec)
 			if err == nil {
 				continue
@@ -510,17 +520,66 @@ func (l launcher) land(rec launch.Record) (string, error) {
 	if err := l.records.Delete(rec.Key); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("landed %s (%s); branch %s kept", rec.Key, why, rec.Worktree.Branch), nil
+	kept := "kept"
+	if rec.Worktree.GitDir != "" {
+		if gone, err := launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch); err != nil {
+			kept = "kept: " + err.Error()
+		} else if gone {
+			kept = "deleted, merged into " + launch.Base(filepath.Dir(rec.Worktree.GitDir))
+		}
+	}
+	return fmt.Sprintf("landed %s (%s); branch %s %s", rec.Key, why, rec.Worktree.Branch, kept), nil
+}
+
+// LandAll lands every dormant session that loses nothing and forgets those whose worktree is gone, saying what it skipped.
+func (l launcher) LandAll() string {
+	all, _ := l.records.All()
+	var lines []string
+	for _, rec := range all {
+		if _, st := l.state(rec); st == "running" {
+			lines = append(lines, fmt.Sprintf("skipped %s: running", rec.Key))
+			continue
+		}
+		var msg string
+		var err error
+		if _, statErr := os.Stat(rec.Worktree.Path); errors.Is(statErr, os.ErrNotExist) && !rec.Adopted {
+			msg, err = l.Forget(rec.Key)
+		} else {
+			msg, err = l.land(rec)
+		}
+		if err != nil {
+			msg = fmt.Sprintf("skipped %s: %v", rec.Key, err)
+		}
+		lines = append(lines, msg)
+	}
+	if len(lines) == 0 {
+		return "nothing launched to land"
+	}
+	return strings.Join(lines, "\n")
 }
 
 func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "land <key|session>",
+		Use:   "land <key|session> | --all",
 		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
-		Args:  cobra.ExactArgs(1),
 	}
 	forget := cmd.Flags().Bool("forget", false, "end the session and drop its launch record, never touching its worktree or branch")
+	every := cmd.Flags().Bool("all", false, "land every dormant session that loses nothing and forget those whose worktree is gone")
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if *every {
+			return cobra.NoArgs(cmd, args)
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	}
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		if *every {
+			l, err := newLauncher()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), l.LandAll())
+			return nil
+		}
 		if e.core.Launches == nil {
 			return errors.New("ym's launcher is unavailable")
 		}

@@ -24,6 +24,7 @@ var Commands = map[string]string{
 	"ym waiting":        "w",
 	"ym new":            "n",
 	"ym land":           "L",
+	"ym gc":             "G",
 	"ym kill":           "K",
 	"ym switch":         "T",
 	"ym launched":       "E",

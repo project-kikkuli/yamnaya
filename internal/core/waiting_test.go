@@ -25,6 +25,7 @@ func (l *sends) Adopt(Live, func(string)) (Target, error)      { return Target{}
 func (l *sends) Start(NewLaunch) (string, error)               { return "", nil }
 func (l *sends) Land(string) (string, error)                   { return "", nil }
 func (l *sends) Forget(string) (string, error)                 { return "", nil }
+func (l *sends) GC() (string, error)                           { return "", nil }
 func (l *sends) Relaunch(Live, string, string) (string, error) { return "", nil }
 func (l *sends) Launched() []Launched                          { return nil }
 func (l *sends) Send(s Live, text string) (string, error) {

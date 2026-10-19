@@ -151,6 +151,12 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			}
 			return ""
 		}},
+		{"G sweeps worktrees once confirmed", nil, []string{"G", "y"}, func(t *testing.T, f fixture) string {
+			if f.l.swept != 1 || f.m.message != "removed 1 worktrees" {
+				return fmt.Sprintf("swept %d times, message %s", f.l.swept, f.m.message)
+			}
+			return ""
+		}},
 		{"P sets phases, p advances them", []func(row) bool{mission("lead")}, []string{"P", "plan, build, ship", "enter", "p", "y"}, func(t *testing.T, f fixture) string {
 			ph, err := f.c.Store.Phases(projectKey(f, "lead"))
 			if err != nil || !slices.Equal(ph.Names, []string{"plan", "build", "ship"}) || ph.Current != 1 {

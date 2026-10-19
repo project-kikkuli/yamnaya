@@ -1081,9 +1081,14 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean
-                and merged or pushed (asks y/n); one whose agent exited 0 with nothing to lose lands by itself
+                and merged or pushed, deleting the branch when merged into origin (asks y/n); on an exited
+                mission, every launch in it. One whose agent exited or whose pane is gone, or one killed
+                by a signal over a day ago, lands by itself when it has nothing to lose
    F            forget a session ym launched: end it and drop its launch record, leaving its worktree and
-                branch as they are (asks y/n)
+                branch as they are (asks y/n); on an exited mission, every launch in it
+   G            gc: remove worktrees of known repos idle 3 days that are clean, on a remote and unused,
+                then local branches merged into origin that no worktree uses (asks y/n); the board
+                runs it by itself at most hourly
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated

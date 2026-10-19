@@ -339,6 +339,7 @@ type launches struct {
 	started []core.NewLaunch
 	landed  []string
 	forgot  []string
+	swept   int
 	// startErr is what Start fails with, if anything.
 	startErr   error
 	relaunched []string
@@ -370,6 +371,11 @@ func (l *launches) Land(ref string) (string, error) {
 func (l *launches) Forget(ref string) (string, error) {
 	l.forgot = append(l.forgot, ref)
 	return "forgot " + ref, nil
+}
+
+func (l *launches) GC() (string, error) {
+	l.swept++
+	return "removed 1 worktrees", nil
 }
 
 func (l *launches) Launched() []core.Launched {
@@ -416,6 +422,35 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	m = press(t, m, "enter")
 	if len(l.revived) != 1 || l.revived[0] != "fix-login" || m.message != "revived fix-login" {
 		t.Fatalf("revived %v, message %q", l.revived, m.message)
+	}
+}
+
+func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
+	for _, c := range []struct{ key, verb string }{{"L", "land"}, {"F", "forget"}} {
+		t.Run(c.key, func(t *testing.T) {
+			m, co, _ := setup(t)
+			l := &launches{dormant: []core.Dormant{
+				{Key: "fix-login", Harness: "claude", Session: "kid", Parent: "lead", Title: "Fix login", State: "exited 1"},
+				{Key: "docs-pass", Harness: "codex", Title: "Docs pass", State: "gone"},
+			}}
+			co.Launches = l
+			m = refresh(t, m)
+			m = to(t, m, func(r row) bool {
+				return r.project != nil && r.session == nil && r.dormant == nil && len(r.project.Sessions) == 0 && len(r.project.Dormant) == 1
+			})
+			m = press(t, m, c.key)
+			if m.mode != modeConfirm || !strings.Contains(m.View(), c.verb+" ") {
+				t.Fatalf("%s should ask first:\n%s", c.key, m.View())
+			}
+			m = press(t, m, "y")
+			done := l.landed
+			if c.key == "F" {
+				done = l.forgot
+			}
+			if !slices.Equal(done, []string{"docs-pass"}) || len(l.landed)+len(l.forgot) != 1 {
+				t.Fatalf("landed %v forgot %v, message %q", l.landed, l.forgot, m.message)
+			}
+		})
 	}
 }
 

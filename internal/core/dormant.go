@@ -43,6 +43,8 @@ type Launches interface {
 	Land(ref string) (string, error)
 	// Forget ends a launched session and drops its record, leaving its worktree and branch.
 	Forget(ref string) (string, error)
+	// GC removes idle worktrees of known repositories that lose nothing, then branches merged into origin's default branch.
+	GC() (string, error)
 	// Relaunch resumes session id of harness on ym's server in from's directory, taking over from's launch record when it has one.
 	Relaunch(from Live, harness, id string) (string, error)
 	Launched() []Launched

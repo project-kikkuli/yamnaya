@@ -28,22 +28,34 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 	commit := func(t *testing.T, wt string) { git(t, wt, "commit", "-q", "--allow-empty", "-m", "work") }
+	push := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }
+	merged := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD:main") }
+	dirty := func(t *testing.T, wt string) { os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644) }
+	day := 25 * time.Hour
 	for _, c := range []struct {
 		name   string
 		agent  string
+		age    time.Duration
 		state  string
 		setup  func(t *testing.T, wt string)
 		forget bool
 		landed bool
 		tree   bool
+		branch bool
 	}{
-		{"exit 0, pushed", "exit 0", "", func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }, false, true, false},
-		{"exit 0, dirty", "exit 0", "exited 0", func(t *testing.T, wt string) { os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644) }, false, false, true},
-		{"exit 0, unpushed", "exit 0", "exited 0", commit, false, false, true},
-		{"exit 3, pushed", "exit 3", "exited 3", func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }, false, false, true},
-		{"SIGTERM, pushed", "kill -TERM $$", "sigterm", func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }, false, false, true},
-		{"SIGKILL, pushed", "kill -KILL $$", "sigkill", func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }, false, false, true},
-		{"forget, unpushed", "exit 3", "", commit, true, true, true},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, true, false, true},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, true, false, false},
+		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, true, true},
+		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, true, true},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, true, false, true},
+		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, true, true},
+		{"gone, merged", "", 0, "", merged, false, true, false, false},
+		{"gone, dirty", "", 0, "gone", dirty, false, false, true, true},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, true, true},
+		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, true, true},
+		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, true, false, true},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, true, true},
+		{"forget, unpushed", "exit 3", 0, "", commit, true, true, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -64,20 +76,22 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 				t.Fatal(err)
 			}
 			l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf}
-			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(),
+			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-c.age),
 				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
 			if err := l.records.Save(rec); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := srv.Start(conf, tmux.SessionName(rec.Key), wt, []string{"sh", "-c", c.agent}); err != nil {
-				t.Fatal(err)
-			}
-			for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-				if p, err := srv.Pane(tmux.SessionName(rec.Key)); err == nil && p.Dead {
-					break
+			if c.agent != "" {
+				if _, err := srv.Start(conf, tmux.SessionName(rec.Key), wt, []string{"sh", "-c", c.agent}); err != nil {
+					t.Fatal(err)
 				}
-				if time.Now().After(end) {
-					t.Fatal("the agent never exited")
+				for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+					if p, err := srv.Pane(tmux.SessionName(rec.Key)); err == nil && p.Dead {
+						break
+					}
+					if time.Now().After(end) {
+						t.Fatal("the agent never exited")
+					}
 				}
 			}
 			if c.forget {
@@ -96,6 +110,9 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			}
 			if len(rows) == 1 && rows[0].State != c.state {
 				t.Fatalf("row state %q, want %q", rows[0].State, c.state)
+			}
+			if kept := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil; kept != c.branch {
+				t.Fatalf("branch kept %v, want %v", kept, c.branch)
 			}
 		})
 	}

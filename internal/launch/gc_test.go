@@ -1,0 +1,96 @@
+package launch
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+)
+
+func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
+	commit := func(t *testing.T, wt string) { run(t, wt, "git", "commit", "-q", "--allow-empty", "-m", "work") }
+	merged := func(t *testing.T, wt string) { commit(t, wt); run(t, wt, "git", "push", "-q", "origin", "HEAD:main") }
+	pushed := func(t *testing.T, wt string) { commit(t, wt); run(t, wt, "git", "push", "-q", "origin", "HEAD") }
+	ignored := func(t *testing.T, wt string) {
+		merged(t, wt)
+		os.WriteFile(filepath.Join(wt, ".gitignore"), []byte(".env\n"), 0o644)
+		run(t, wt, "git", "add", ".gitignore")
+		run(t, wt, "git", "commit", "-q", "-m", "ignore")
+		run(t, wt, "git", "push", "-q", "origin", "HEAD:main")
+		os.WriteFile(filepath.Join(wt, ".env"), []byte("SECRET=1"), 0o644)
+	}
+	dirty := func(t *testing.T, wt string) {
+		merged(t, wt)
+		os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644)
+	}
+	old := 4 * 24 * time.Hour
+	for _, c := range []struct {
+		name   string
+		setup  func(t *testing.T, wt string)
+		age    time.Duration
+		inside bool
+		dry    bool
+		keep   string
+		branch bool
+	}{
+		{"merged, idle", merged, old, false, false, "", false},
+		{"merged, idle, only ignored files", ignored, old, false, false, "", false},
+		{"pushed not merged, idle", pushed, old, false, false, "", true},
+		{"merged, touched today", merged, 0, false, false, KeepActive, true},
+		{"merged, idle, a process works inside", merged, old, true, false, KeepInUse, true},
+		{"dirty and merged, idle", dirty, old, false, false, KeepDirty, true},
+		{"local-only commit, idle", commit, old, false, false, KeepLocal, true},
+		{"merged, idle, dry run", merged, old, false, true, "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
+			repo := filepath.Join(base, "repo")
+			run(t, base, "git", "init", "-q", "-b", "main", "repo")
+			run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
+			run(t, repo, "git", "remote", "add", "origin", filepath.Join(base, "origin.git"))
+			run(t, repo, "git", "push", "-q", "origin", "main")
+			run(t, repo, "git", "branch", "stale-merged")
+			run(t, repo, "git", "branch", "stale-unmerged")
+			run(t, repo, "git", "worktree", "add", "-q", "spare", "stale-unmerged")
+			run(t, filepath.Join(repo, "spare"), "git", "commit", "-q", "--allow-empty", "-m", "spare")
+			run(t, repo, "git", "worktree", "remove", "spare")
+			wt := WorktreePath(repo, "feature")
+			run(t, repo, "git", "worktree", "add", "-q", "-b", "feature", wt)
+			c.setup(t, wt)
+			var cwds []string
+			if c.inside {
+				cwds = []string{filepath.Join(wt, "sub")}
+			}
+
+			s, err := GC(repo, time.Now().Add(c.age), cwds, c.dry, true)
+			if err != nil || len(s.Errors) > 0 {
+				t.Fatal(err, s.Errors)
+			}
+			if len(s.Trees) != 1 || s.Trees[0].Keep != c.keep {
+				t.Fatalf("decided %+v, want keep %q", s.Trees, c.keep)
+			}
+			if c.keep == "" && s.Trees[0].Size == 0 {
+				t.Fatalf("no size measured for %+v", s.Trees[0])
+			}
+			_, statErr := os.Stat(wt)
+			if kept := statErr == nil; kept != (c.keep != "" || c.dry) {
+				t.Fatalf("worktree kept %v with keep %q, dry %v", kept, c.keep, c.dry)
+			}
+			hasBranch := func(b string) bool {
+				return exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+b).Run() == nil
+			}
+			if hasBranch("feature") != c.branch {
+				t.Fatalf("feature branch kept %v, want %v", hasBranch("feature"), c.branch)
+			}
+			if hasBranch("stale-merged") != c.dry || !hasBranch("stale-unmerged") || !hasBranch("main") {
+				t.Fatalf("branches: stale-merged %v, stale-unmerged %v, main %v", hasBranch("stale-merged"), hasBranch("stale-unmerged"), hasBranch("main"))
+			}
+			if want := "stale-merged"; !slices.Contains(s.Branches, want) {
+				t.Fatalf("deleted %v, want %s among them", s.Branches, want)
+			}
+		})
+	}
+}

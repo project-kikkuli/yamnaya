@@ -775,21 +775,36 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
 		}
 	case "L", "F":
-		ref, label := "", ""
+		var refs []string
+		label := ""
 		if r.dormant != nil {
-			ref, label = r.dormant.Key, r.dormant.Key
+			refs, label = []string{r.dormant.Key}, r.dormant.Key
 		} else if s := m.sessionOf(r); s != nil && s.ID != "" {
-			ref, label = s.ID, s.Label()
+			refs, label = []string{s.ID}, s.Label()
+		} else if p := m.projectOf(r); p != nil && len(p.Dormant) > 0 {
+			for _, d := range p.Dormant {
+				refs = append(refs, d.Key)
+			}
+			label = fmt.Sprintf("%s's %d exited sessions", p.Name, len(refs))
 		}
-		if ref != "" && m.core.Launches != nil {
+		if len(refs) > 0 && m.core.Launches != nil {
 			l := m.core.Launches
 			if k.String() == "F" {
 				m.confirm("forget "+label+"? it ends the agent and drops its launch record; its worktree and branch stay",
-					m.do(func() (string, error) { return l.Forget(ref) }))
+					m.do(func() (string, error) { return each(refs, l.Forget) }))
 				break
 			}
 			m.confirm("land "+label+"? it ends the agent and removes its worktree once its branch is clean and merged or pushed",
-				m.do(func() (string, error) { return l.Land(ref) }))
+				m.do(func() (string, error) { return each(refs, l.Land) }))
+		}
+	case "G":
+		if m.core.Launches != nil {
+			l := m.core.Launches
+			m.confirm("gc? removes worktrees idle 3 days that are clean, on a remote and unused, then branches merged into origin",
+				m.do(func() (string, error) {
+					msg, err := l.GC()
+					return msg[strings.LastIndex(msg, "\n")+1:], err
+				}))
 		}
 	case "T":
 		if s := m.sessionOf(r); s != nil {
@@ -1261,6 +1276,21 @@ func (m Model) adopt(key string) (tea.Model, tea.Cmd) {
 		t, err := l.Adopt(s, nil)
 		return adoptedMsg{t, err}
 	}
+}
+
+// each runs f on every ref, going on past failures, and joins what it said.
+func each(refs []string, f func(string) (string, error)) (string, error) {
+	var said []string
+	var errs []error
+	for _, ref := range refs {
+		msg, err := f(ref)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		said = append(said, msg)
+	}
+	return strings.Join(said, "; "), errors.Join(errs...)
 }
 
 // sessionOf is the session a row or the open view is about.

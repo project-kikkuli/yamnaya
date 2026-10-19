@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 // RepoDepth is how many directories below a root ScanRepos looks for a repository.
@@ -243,4 +245,36 @@ func (s *Store) RecentRepos() ([]string, error) {
 		}
 	}
 	return out, rows.Err()
+}
+
+// KnownRepos are the main checkouts of repositories picked for a new session or holding a running session.
+func (c *Core) KnownRepos() ([]string, error) {
+	recent, err := c.Store.RecentRepos()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(dir string) {
+		root := MainCheckout(dir)
+		if fi, err := os.Stat(filepath.Join(root, ".git")); err == nil && fi.IsDir() && !seen[root] {
+			seen[root] = true
+			out = append(out, root)
+		}
+	}
+	for _, r := range recent {
+		add(r)
+	}
+	procs, err := c.Procs()
+	if err != nil {
+		return out, err
+	}
+	for _, owned := range c.owned(procs) {
+		for _, p := range owned {
+			if dir := proc.Cwd(p.PID); dir != "" {
+				add(dir)
+			}
+		}
+	}
+	return out, nil
 }
