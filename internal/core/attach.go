@@ -17,3 +17,20 @@ func (c *Core) AttachCmd(t Target) *exec.Cmd {
 	}
 	return nil
 }
+
+// Splitter is a host that shows a terminal in a new pane beside the caller's own, keeping the caller in view.
+type Splitter interface {
+	Split(h Handle) error
+}
+
+// OpenBeside shows t beside the caller's terminal; ErrNoHost when its host cannot.
+func (c *Core) OpenBeside(t Target) error {
+	if t.Handle == nil {
+		return ErrNoHost
+	}
+	s, ok := c.host(t.Handle.Host).(Splitter)
+	if !ok {
+		return ErrNoHost
+	}
+	return s.Split(*t.Handle)
+}

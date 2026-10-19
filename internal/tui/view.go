@@ -162,21 +162,21 @@ func (m Model) hints() string {
 	case modeItems:
 		return "↑↓ move   enter expand   a answer   g go ahead   l later   u unsnooze   x dismiss   esc back"
 	case modeWhy:
-		return "a answer   g go ahead   l later   x dismiss   u unsnooze   o go to its session   esc back"
+		return "a answer   g go ahead   l later   x dismiss   u unsnooze   o go to its session   O beside   esc back"
 	case modePick:
 		return "↑↓ choose   enter open   esc back"
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return "↑↓ move   enter open mission   o go to session   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
+		return "↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return "↑↓ move   enter open session, agent or item   o go to session   O beside   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return "↑↓ move   enter open agent or item   o go to session   O beside   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   s send   K kill   L land   F forget   T switch   esc back"
+		return "↑↓ scroll   space/b page   o go to its session   O beside   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -478,7 +478,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		b.WriteString(head + pad(n.Line, max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
 		if sel {
 			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
-			b.WriteString(pal.dim.Render("         enter last reply   a answer   x dismiss   o go to session") + "\n")
+			b.WriteString(pal.dim.Render("         enter last reply   a answer   x dismiss   o go to session   O beside") + "\n")
 		}
 		return b.String()
 	}
@@ -494,9 +494,9 @@ func (m Model) needLines(i int, n core.Need) string {
 		return b.String()
 	}
 	it := n.Item
-	q, keys := it.Question, "enter expand   a answer   l later   x dismiss   o go to session"
+	q, keys := it.Question, "enter expand   a answer   l later   x dismiss   o go to session   O beside"
 	if it.Kind == core.KindGo {
-		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session"
+		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
 	}
 	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + q + "\n")
 	var meta []string
@@ -1059,6 +1059,8 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
+   O            open the selected row's session in a new tmux pane beside ym, so the board stays in
+                view; needs ym running inside tmux
    s            send the session a follow-up: typed in on ym's server even mid-turn, held while a
                 permission prompt shows; other sessions read it from ym item inbox
    a            answer an item; an idle agent in tmux gets it typed in, others on their next turn;

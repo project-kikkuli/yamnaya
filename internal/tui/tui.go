@@ -95,11 +95,13 @@ type Model struct {
 	inItem    string
 	inLabel   string
 	// inReply is the waiting reply an answer is for.
-	inReply   string
-	inProj    string
-	filter    string
-	targets   []core.Target
-	cursor2   int
+	inReply string
+	inProj  string
+	filter  string
+	targets []core.Target
+	cursor2 int
+	// beside opens the chosen target in a split next to ym instead of switching to it.
+	beside    bool
 	mergeSrc  string
 	why       *core.Item
 	screen    string
@@ -521,7 +523,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
-		case "a", "g", "l", "x", "u", "o":
+		case "a", "g", "l", "x", "u", "o", "O":
 			m.mode = m.back
 			m.follow("item:" + m.why.Key())
 			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
@@ -639,7 +641,8 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	r, ok := m.selected()
 	if !ok {
-		if (m.mode == modeAgent || m.mode == modeSession) && k.String() == "o" {
+		if (m.mode == modeAgent || m.mode == modeSession) && (k.String() == "o" || k.String() == "O") {
+			m.beside = k.String() == "O"
 			return m.open(row{})
 		}
 		if strings.Contains("sKTL", k.String()) && (m.mode == modeAgent || m.mode == modeSession) {
@@ -696,10 +699,11 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.repo = r.repo.Key
 		}
 		return m, nil
-	case "o":
+	case "o", "O":
 		if r.dormant != nil {
 			return m.revive(*r.dormant)
 		}
+		m.beside = k.String() == "O"
 		return m.open(r)
 	case "a":
 		if r.item != nil && r.item.State == core.ItemOpen {
@@ -1200,6 +1204,18 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) focus(t core.Target) tea.Cmd {
+	if m.beside {
+		return m.do(func() (string, error) {
+			err := m.core.OpenBeside(t)
+			switch {
+			case errors.Is(err, core.ErrNoHost) && t.Handle != nil:
+				return "runs in " + t.String() + "; O opens it beside ym only when ym runs inside tmux", nil
+			case errors.Is(err, core.ErrNoHost):
+				return t.Advice(), nil
+			}
+			return "opened " + t.String() + " beside", err
+		})
+	}
 	if cmd := m.core.AttachCmd(t); cmd != nil {
 		return tea.ExecProcess(cmd, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
 	}

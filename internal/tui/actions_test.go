@@ -328,7 +328,7 @@ func TestNewStartsInTheSelectedRowsRepoAndShowsFailuresInline(t *testing.T) {
 }
 
 func TestBoardKeysWaitWhileAMergeIsPicked(t *testing.T) {
-	for _, key := range []string{"?", "h", "n", "N", "I", "U", "E", "K", "p"} {
+	for _, key := range []string{"?", "h", "n", "N", "I", "U", "E", "K", "p", "O"} {
 		t.Run(key, func(t *testing.T) {
 			m, k, _ := setup(t)
 			k.Launches = &launches{}

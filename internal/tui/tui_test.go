@@ -38,7 +38,18 @@ type host struct {
 	typed   []string
 	focused []string
 	// away are terminals no host reaches, like an iTerm window.
-	away map[string]bool
+	away  map[string]bool
+	split []string
+	// outside is ym running outside tmux, where no split opens.
+	outside bool
+}
+
+func (h *host) Split(hd core.Handle) error {
+	if h.outside {
+		return core.ErrNoHost
+	}
+	h.split = append(h.split, hd.ID)
+	return nil
 }
 
 func (h *host) Name() string { return "tmux" }
@@ -629,4 +640,33 @@ func TestLongVibePlaceNeverWidensRows(t *testing.T) {
 	check(m.View())
 	m = press(t, m, "down", "down", "down", "enter")
 	check(m.View())
+}
+
+func TestCapitalOOpensTheSessionBesideTheBoard(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		keys    []string
+		outside bool
+		split   []string
+		focused []string
+		message string
+	}{
+		{"o still switches", []string{"o"}, false, nil, []string{"/dev/a"}, "opened"},
+		{"an item's session", []string{"O"}, false, []string{"/dev/a"}, nil, "beside"},
+		{"the picked copy", []string{"down", "down", "down", "down", "O", "down", "enter"}, false, []string{"/dev/c"}, nil, "beside"},
+		{"from an expanded item", []string{"enter", "O"}, false, []string{"/dev/a"}, nil, "beside"},
+		{"outside tmux", []string{"O"}, true, nil, nil, "only when ym runs inside tmux"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, h := setup(t)
+			h.outside = tc.outside
+			m = press(t, m, tc.keys...)
+			if fmt.Sprint(h.split) != fmt.Sprint(tc.split) || fmt.Sprint(h.focused) != fmt.Sprint(tc.focused) {
+				t.Fatalf("split %v focused %v, want split %v focused %v", h.split, h.focused, tc.split, tc.focused)
+			}
+			if !strings.Contains(m.message, tc.message) {
+				t.Fatalf("message %q lacks %q", m.message, tc.message)
+			}
+		})
+	}
 }

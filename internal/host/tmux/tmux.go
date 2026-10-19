@@ -1,4 +1,4 @@
-// Package tmux finds, focuses and types into tmux panes. It never changes layout.
+// Package tmux finds, focuses and types into tmux panes. It changes no layout but the split it opens beside ym's own pane.
 package tmux
 
 import (
@@ -90,7 +90,7 @@ func (h *Host) list() map[string]pane {
 	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) == 4 {
+		if _, seen := h.panes[f[0]]; len(f) == 4 && !seen {
 			h.panes[f[0]] = pane{id: f[1], target: f[2], session: f[3]}
 		}
 	}
@@ -112,6 +112,34 @@ func (h *Host) Focus(hd core.Handle) (string, error) {
 	}
 	_, err := h.run("switch-client", "-t", hd.ID, ";", "select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID)
 	return "", err
+}
+
+// Split shows hd in a new pane beside ym's own, attached to hd's session; only ym's own window changes.
+// A target in ym's own session gets a grouped session, so ym's client keeps its window.
+func (h *Host) Split(hd core.Handle) error {
+	if h.Self == "" || os.Getenv("TMUX") == "" {
+		return core.ErrNoHost
+	}
+	inner := []string{"attach-session", "-t", hd.ID}
+	if h.inside() {
+		own, err := h.run("display-message", "-p", "-t", h.Self, "#{session_name}")
+		if err != nil {
+			return err
+		}
+		session, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}")
+		if err != nil {
+			return err
+		}
+		if own == session {
+			inner = []string{"new-session", "-t", "=" + session, `\;`, "set-option", "destroy-unattached", "on",
+				`\;`, "select-window", "-t", hd.ID, `\;`, "select-pane", "-t", hd.ID}
+		}
+	}
+	args := append([]string{"split-window", "-h", "-t", h.Self, "-e", "TMUX=", "tmux", "-L", h.socketName()}, inner...)
+	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Paste pastes text as one bracketed paste, so neither harness reads fast input as a paste burst or a typed Enter.

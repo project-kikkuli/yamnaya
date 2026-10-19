@@ -112,3 +112,51 @@ func TestFocusJumpsOnlyYmsOwnClientWithoutChangingLayout(t *testing.T) {
 		t.Errorf("layout changed:\n%s\n%s", before, after)
 	}
 }
+
+func TestSplitOpensTheTargetBesideYmWithoutMovingYmsWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// own puts the target in ym's server, and in ym's own session when session is "home".
+		own     bool
+		session string
+	}{
+		{"another server", false, "agents"},
+		{"another session", true, "agents"},
+		{"ym's own session", true, "home"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ym := server(t)
+			ym.must(t, "new-session", "-d", "-s", "home", "-x", "200", "-y", "50", "cat")
+			h := ym
+			if !tc.own {
+				h = server(t)
+			}
+			if tc.session != "home" {
+				h.must(t, "new-session", "-d", "-s", tc.session, "cat")
+			}
+			h.must(t, "new-window", "-d", "-t", tc.session+":", "cat")
+			target := h.must(t, "list-panes", "-t", tc.session+":1", "-F", "#{pane_id}")
+			self := ym.must(t, "display-message", "-p", "-t", "home:0", "#{pane_id}")
+
+			h.Self = self
+			t.Setenv("TMUX", "")
+			if err := h.Split(core.Handle{ID: target}); !errors.Is(err, core.ErrNoHost) {
+				t.Fatalf("split outside tmux = %v, want ErrNoHost", err)
+			}
+			t.Setenv("TMUX", ym.must(t, "display-message", "-p", "#{socket_path}")+",1,0")
+			if err := h.Split(core.Handle{ID: target}); err != nil {
+				t.Fatal(err)
+			}
+			if n := ym.must(t, "display-message", "-p", "-t", "home:0", "#{window_panes}"); n != "2" {
+				t.Errorf("ym's window has %s panes, want 2", n)
+			}
+			waitFor(t, "a client showing the target", func() bool {
+				out, _ := h.run("list-clients", "-F", "#{pane_id}")
+				return out == target
+			})
+			if w := ym.must(t, "display-message", "-p", "-t", "home:", "#{window_index}"); w != "0" {
+				t.Errorf("ym's session moved to window %s", w)
+			}
+		})
+	}
+}
