@@ -25,9 +25,9 @@ type Record struct {
 	// Adopted records a session ym moved in from another terminal; its directory is not ym's to remove.
 	Adopted bool `json:"adopted,omitempty"`
 	// Killed is when ym kill ended the agent, so its exit waits out the same day of grace a signal death gets.
-	Killed time.Time `json:"killed,omitempty"`
+	Killed time.Time `json:"killed,omitzero"`
 	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.
-	Landed time.Time `json:"landed,omitempty"`
+	Landed time.Time `json:"landed,omitzero"`
 }
 
 func (r Record) IsLanded() bool { return !r.Landed.IsZero() }
