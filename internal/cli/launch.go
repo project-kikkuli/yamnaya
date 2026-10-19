@@ -34,6 +34,8 @@ type launcher struct {
 	squash *launch.Squash
 	// repos caches the repositories with linked worktrees found under ~/dev.
 	repos string
+	// landings is the JSON-lines log every landing appends to; empty logs nothing.
+	landings string
 }
 
 func newLauncher() (launcher, error) {
@@ -43,7 +45,7 @@ func newLauncher() (launcher, error) {
 	}
 	dir := filepath.Dir(path)
 	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf"),
-		stamp: filepath.Join(dir, "gc.stamp"), repos: filepath.Join(dir, "repos.json"),
+		stamp: filepath.Join(dir, "gc.stamp"), repos: filepath.Join(dir, "repos.json"), landings: filepath.Join(dir, "landings.jsonl"),
 		squash: &launch.Squash{Hub: launch.GH{}, Cache: filepath.Join(dir, "squash.json"), Now: time.Now}}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
@@ -156,6 +158,9 @@ func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
 		return false, nil
 	}
 	pane, st := l.state(rec)
+	if rec.IsLanded() {
+		st = "landed " + rec.Landed.Format(time.DateTime)
+	}
 	if st != "running" {
 		fmt.Fprintf(w, "%s %s; ym revive %s\n", rec.Key, st, rec.Key)
 		return true, nil
@@ -330,6 +335,10 @@ func (l launcher) Launched() []core.Launched {
 	all, _ := l.records.All()
 	out := make([]core.Launched, 0, len(all))
 	for _, rec := range all {
+		if rec.IsLanded() {
+			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed})
+			continue
+		}
 		rec = l.settle(rec)
 		_, st := l.state(rec)
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path})
@@ -338,8 +347,9 @@ func (l launcher) Launched() []core.Launched {
 }
 
 func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	return &cobra.Command{
-		Use:   "launched",
+	var landed bool
+	cmd := &cobra.Command{
+		Use:   "launched [--landed]",
 		Short: "List sessions ym launched, and whether each agent still runs",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -347,11 +357,15 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return errors.New("ym's launcher is unavailable")
 			}
 			for _, l := range e.core.Launches.Launched() {
-				fmt.Fprintln(cmd.OutOrStdout(), l)
+				if landed || l.Landed.IsZero() {
+					fmt.Fprintln(cmd.OutOrStdout(), l)
+				}
 			}
 			return nil
 		}),
 	}
+	cmd.Flags().BoolVar(&landed, "landed", false, "also list landed sessions, which ym revive brings back")
+	return cmd
 }
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
@@ -382,6 +396,12 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if rec.IsLanded() || !rec.Killed.IsZero() {
+		rec.Landed, rec.Killed = time.Time{}, time.Time{}
+		if err := l.records.Save(rec); err != nil {
+			return "", err
+		}
+	}
 	if rec.Harness == codex.Name && rec.Session != "" {
 		if err := detach("resume-watch", name); err != nil {
 			return "", err
@@ -391,9 +411,17 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 }
 
 // landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
-// and a kill by a signal only after a day.
-func landsAlone(state string, age time.Duration) bool {
-	return state != "running" && (!strings.HasPrefix(state, "sig") || age >= 24*time.Hour)
+// and a death by a signal or after ym kill only a day on.
+func landsAlone(rec launch.Record, state string, now time.Time) bool {
+	switch {
+	case state == "running":
+		return false
+	case !rec.Killed.IsZero():
+		return now.Sub(rec.Killed) >= 24*time.Hour
+	case strings.HasPrefix(state, "sig"):
+		return now.Sub(rec.Started) >= 24*time.Hour
+	}
+	return true
 }
 
 // Dormant lists the launched sessions whose agents no longer run, landing first those that land alone and lose nothing.
@@ -403,8 +431,11 @@ func (l launcher) Dormant() []core.Dormant {
 	dirs := sync.OnceValue(cwds)
 	var out []core.Dormant
 	for _, rec := range all {
+		if rec.IsLanded() {
+			continue
+		}
 		_, st := l.state(rec)
-		if landsAlone(st, time.Since(rec.Started)) {
+		if landsAlone(rec, st, time.Now()) {
 			_, err := l.landUnused(rec, dirs)
 			if err == nil {
 				continue
@@ -441,7 +472,7 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "revive <key|session>",
-		Short: "Resume an exited launched session in its worktree, recreating the worktree when it is gone",
+		Short: "Resume an exited or landed launched session in its worktree, recreating the worktree and branch when they are gone",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			l, err := newLauncher()
@@ -475,7 +506,33 @@ func (l launcher) Land(ref string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if rec.IsLanded() {
+		return "", fmt.Errorf("%s landed %s; ym revive %s", rec.Key, rec.Landed.Format(time.DateTime), rec.Key)
+	}
 	return l.land(rec)
+}
+
+// markKilled records that ym kill is ending the launched session id, so its exit is not landed for a day.
+func (l launcher) markKilled(id string) error {
+	rec, ok := l.records.Find(id)
+	if !ok || rec.IsLanded() {
+		return nil
+	}
+	rec.Killed = time.Now()
+	return l.records.Save(rec)
+}
+
+// landed keeps rec marked landed so ym revive can bring it back, and appends the landing to the landing log.
+func (l launcher) landed(rec launch.Record, why string) error {
+	rec.Landed = time.Now()
+	if err := l.records.Save(rec); err != nil {
+		return err
+	}
+	if l.landings == "" {
+		return nil
+	}
+	return launch.Log(l.landings, launch.Landing{At: rec.Landed, Key: rec.Key, Harness: rec.Harness, Session: rec.Session,
+		Worktree: rec.Worktree, Head: rec.Head, Why: why})
 }
 
 // Forget ends a launched session and drops its record, leaving its worktree and branch as they are.
@@ -510,7 +567,7 @@ func (l launcher) land(rec launch.Record) (string, error) {
 		if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 			return "", err
 		}
-		if err := l.records.Delete(rec.Key); err != nil {
+		if err := l.landed(rec, "adopted"); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("landed %s; %s was not ym's, so it stays", rec.Key, rec.Worktree.Path), nil
@@ -527,6 +584,9 @@ func (l launcher) land(rec launch.Record) (string, error) {
 			return "", unlandable{rec.Key, rec.Worktree.Path, reason}
 		}
 		why = reason
+		if head := launch.Head(rec.Worktree.Path); head != "" {
+			rec.Head = head
+		}
 	}
 	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 		return "", err
@@ -536,7 +596,7 @@ func (l launcher) land(rec launch.Record) (string, error) {
 			return "", err
 		}
 	}
-	if err := l.records.Delete(rec.Key); err != nil {
+	if err := l.landed(rec, why); err != nil {
 		return "", err
 	}
 	kept := "kept"
@@ -550,23 +610,20 @@ func (l launcher) land(rec launch.Record) (string, error) {
 	return fmt.Sprintf("landed %s (%s); branch %s %s", rec.Key, why, rec.Worktree.Branch, kept), nil
 }
 
-// LandAll lands every dormant session that loses nothing and forgets those whose worktree is gone, saying what it skipped.
+// LandAll lands every dormant session that loses nothing, saying what it skipped.
 func (l launcher) LandAll() string {
 	all, _ := l.records.All()
 	dirs := sync.OnceValue(cwds)
 	var lines []string
 	for _, rec := range all {
+		if rec.IsLanded() {
+			continue
+		}
 		if _, st := l.state(rec); st == "running" {
 			lines = append(lines, fmt.Sprintf("skipped %s: running", rec.Key))
 			continue
 		}
-		var msg string
-		var err error
-		if _, statErr := os.Stat(rec.Worktree.Path); errors.Is(statErr, os.ErrNotExist) && !rec.Adopted {
-			msg, err = l.Forget(rec.Key)
-		} else {
-			msg, err = l.landUnused(rec, dirs)
-		}
+		msg, err := l.landUnused(rec, dirs)
 		if err != nil {
 			msg = fmt.Sprintf("skipped %s: %v", rec.Key, err)
 		}
@@ -584,7 +641,7 @@ func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
 	}
 	forget := cmd.Flags().Bool("forget", false, "end the session and drop its launch record, never touching its worktree or branch")
-	every := cmd.Flags().Bool("all", false, "land every dormant session that loses nothing and forget those whose worktree is gone")
+	every := cmd.Flags().Bool("all", false, "land every dormant session that loses nothing")
 	cmd.Args = func(cmd *cobra.Command, args []string) error {
 		if *every {
 			return cobra.NoArgs(cmd, args)

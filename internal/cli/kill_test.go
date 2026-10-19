@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
@@ -56,14 +57,20 @@ func TestKillAsksOnATerminalAndNeedsYesWithout(t *testing.T) {
 					}
 					return nil
 				}}
+			l := launcher{records: launch.Records{Dir: t.TempDir()}}
+			if err := l.records.Save(launch.Record{Key: "app-wt-x", Harness: "claude", Session: "06456f12-aaaa"}); err != nil {
+				t.Fatal(err)
+			}
+			k.Launches = l
 			var out bytes.Buffer
 			err := kill(k, "06456f12", c.yes, c.tty, strings.NewReader(c.in), &out)
 			got := out.String()
 			if err != nil {
 				got += err.Error()
 			}
-			if !strings.Contains(got, c.want) || (len(sent) == 1) != c.signal {
-				t.Fatalf("got %q, signalled %v; want %q, signal %v", got, sent, c.want, c.signal)
+			rec, _ := l.records.Find("app-wt-x")
+			if !strings.Contains(got, c.want) || (len(sent) == 1) != c.signal || rec.Killed.IsZero() == c.signal {
+				t.Fatalf("got %q, signalled %v, marked killed at %v; want %q, signal and mark %v", got, sent, rec.Killed, c.want, c.signal)
 			}
 		})
 	}

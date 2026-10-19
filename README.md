@@ -19,7 +19,7 @@
 - **Fleet line**: each Claude and Codex limit window with its use and reset, and today's and the last seven days' spend at API prices. Every repo, mission, session and agent shows its own spend, subagents and child threads included.
 - `enter` drills down and `esc` climbs back: repo, then its missions, then a mission's sessions and crew, then a session (task, latest ask, what it is doing now, pull requests and CI, items, crew), then one agent (its full brief, result, files written and tool trail). Rename (`r`), merge (`m`) or split (`S`) missions, advance (`p`) or set (`P`) their phases, and set their vibe (`v`).
 - `h` shows health by week: median and p90 time from item filed to answered, the share of items dismissed or open past a day, assistant messages per day that print a block of questions in chat, and agent-hours per day spent waiting on you (from a turn that ended asking you, or a permission prompt you answered, to your next typed message). It reads transcripts incrementally into per-day rows in the ym database.
-- Anything the CLI does for the owner has a key; `?` lists them. `n` starts a new session in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `N` picks the repository first, from recent repos then every repo under the roots, then asks for the prompt. `K` kills a session's agent process with SIGTERM after a y/n, leaving its terminal, worktree and transcript; a session ym launched then shows exited and `enter` revives it. `L` lands a launched session (on an exited mission, each of its launches; one whose agent exited or whose pane is gone, or one killed by a signal over a day ago, lands by itself once it has nothing to lose), `G` runs `ym gc`, `T` ends an idle one and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
+- Anything the CLI does for the owner has a key; `?` lists them. `n` starts a new session in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `N` picks the repository first, from recent repos then every repo under the roots, then asks for the prompt. `K` kills a session's agent process with SIGTERM after a y/n, leaving its terminal, worktree and transcript; a session ym launched then shows exited and `enter` revives it. `L` lands a launched session (on an exited mission, each of its launches; one whose agent exited or whose pane is gone, or one killed by a signal or by `K` over a day ago, lands by itself once it has nothing to lose), `G` runs `ym gc`, `T` ends an idle one and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
 - `o` goes to a session. When ym runs inside tmux and the session is in a tmux pane, ym jumps there with `switch-client` and `select-pane`. Otherwise it says where the session runs (for example `iTerm ttys012`) and never opens windows or tabs. It never starts a second copy, and flags a session that runs in two processes.
 - `O` opens a tmux session beside the board instead: ym splits its own pane and attaches the new pane to a grouped copy of the session's tmux session, so the board stays in view and no other client's window moves. The pane closes when you detach from it. It needs ym running inside tmux.
 
@@ -49,15 +49,19 @@ An answer goes to the session carrying the conversation now, following Claude's 
                                         start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
     ym waiting [--json]                 idle sessions whose last reply asks you with no item filed; answer with ym send
     ym open <session|item|key>          show a session: ym's own sessions attach in this terminal; detach (C-b d) returns to the board
-    ym launched                         sessions ym started, and whether each agent still runs
-    ym revive <key|session>             resume an exited one in its worktree, recreating the worktree if it is gone
+    ym launched [--landed]              sessions ym started, and whether each agent still runs; --landed adds landed ones
+    ym revive <key|session>             resume an exited or landed one in its worktree, recreating the worktree and branch at its
+                                        recorded commit (origin's default branch when that commit is gone) if they are gone
     ym land <key|session>               end it and remove its worktree, only when the branch is clean and merged or pushed;
-                                        the branch goes too when merged into origin's default branch
-    ym land --all                       land every exited launch that loses nothing, forget those whose worktree is gone, say what stayed
+                                        the branch goes too when merged into origin's default branch. The record stays, marked
+                                        landed, and each landing is appended to landings.jsonl in ym's state dir
+    ym land --all                       land every exited launch that loses nothing, say what stayed
     ym gc [--dry-run]                   remove worktrees of known repos that are clean, on a remote, untouched 3 days and no process's cwd,
                                         then local branches merged into origin's default branch that no worktree uses; lists the dirty and
-                                        local-only worktrees it keeps with their sizes. The board runs it in the background at most hourly
-    ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal
+                                        local-only worktrees it keeps with their sizes, and drops launch records landed over 14 days ago.
+                                        The board runs it in the background at most hourly
+    ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal. A
+                                        launched session it kills waits a day before landing by itself
     ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
     ym item list [--all] [--everywhere] [--json]
     ym item show|answer|dismiss|snooze|reopen <id> ...

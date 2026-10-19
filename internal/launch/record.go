@@ -24,7 +24,13 @@ type Record struct {
 	Started  time.Time `json:"started"`
 	// Adopted records a session ym moved in from another terminal; its directory is not ym's to remove.
 	Adopted bool `json:"adopted,omitempty"`
+	// Killed is when ym kill ended the agent, so its exit waits out the same day of grace a signal death gets.
+	Killed time.Time `json:"killed,omitempty"`
+	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.
+	Landed time.Time `json:"landed,omitempty"`
 }
+
+func (r Record) IsLanded() bool { return !r.Landed.IsZero() }
 
 // Records keeps one JSON file per launch under Dir.
 type Records struct{ Dir string }
@@ -76,14 +82,52 @@ func (r Records) All() ([]Record, error) {
 }
 
 // Find matches ref against keys, branch slugs and session ids; a session id may be given by a prefix of six or more.
+// A record not yet landed wins over a landed one.
 func (r Records) Find(ref string) (Record, bool) {
 	all, _ := r.All()
-	for _, rec := range all {
+	var landed *Record
+	for i, rec := range all {
 		if rec.Key == ref || rec.Worktree.Branch == ref || (rec.Session != "" && (rec.Session == ref || (len(ref) >= 6 && strings.HasPrefix(rec.Session, ref)))) {
-			return rec, true
+			if !rec.IsLanded() {
+				return rec, true
+			}
+			if landed == nil {
+				landed = &all[i]
+			}
 		}
 	}
+	if landed != nil {
+		return *landed, true
+	}
 	return Record{}, false
+}
+
+// Landing is one line of the landing log: a session ym landed, what it ran in, and why it was safe to remove.
+type Landing struct {
+	At       time.Time `json:"at"`
+	Key      string    `json:"key"`
+	Harness  string    `json:"harness"`
+	Session  string    `json:"session,omitempty"`
+	Worktree Worktree  `json:"worktree"`
+	Head     string    `json:"head,omitempty"`
+	Why      string    `json:"why"`
+}
+
+// Log appends l to the JSON-lines file at path.
+func Log(path string, l Landing) error {
+	data, err := json.Marshal(l)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func slugWords(s string) []string {

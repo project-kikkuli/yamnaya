@@ -87,7 +87,8 @@ func Create(dir, slug string) (Worktree, error) {
 	return w, nil
 }
 
-// Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too.
+// Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too,
+// or at the default branch when head is gone as well.
 func Restore(w Worktree, head string) error {
 	if _, err := os.Stat(w.Path); err == nil {
 		return nil
@@ -99,8 +100,11 @@ func Restore(w Worktree, head string) error {
 	exec.Command("git", gd, "worktree", "prune").Run()
 	add := []string{gd, "worktree", "add", w.Path, w.Branch}
 	if exec.Command("git", gd, "show-ref", "--verify", "--quiet", "refs/heads/"+w.Branch).Run() != nil {
+		if head == "" || exec.Command("git", gd, "cat-file", "-e", head+"^{commit}").Run() != nil {
+			head = Base(filepath.Dir(w.GitDir))
+		}
 		if head == "" {
-			return fmt.Errorf("%s and its branch %s are gone and no commit was recorded to recreate them", w.Path, w.Branch)
+			return fmt.Errorf("%s and its branch %s are gone and neither the recorded commit nor a default branch is left to recreate them", w.Path, w.Branch)
 		}
 		add = []string{gd, "worktree", "add", "-b", w.Branch, w.Path, head}
 	}

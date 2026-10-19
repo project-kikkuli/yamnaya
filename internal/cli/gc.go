@@ -10,12 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 // sweepEvery is how often the board starts a background ym gc.
 const sweepEvery = time.Hour
+
+// landedKeep is how long ym gc keeps a landed session's record for ym revive.
+const landedKeep = 14 * 24 * time.Hour
 
 // sweepSoon starts ym gc in the background when the last one began over sweepEvery ago.
 func (l launcher) sweepSoon() {
@@ -42,9 +46,9 @@ func cwds() []string {
 	return out
 }
 
-// gc sweeps every repository in repos, those of launch records and those with linked worktrees under ~/dev, dropping the
-// records of worktrees it removes.
-func (l launcher) gc(repos []string, dry, sizes bool) []launch.Swept {
+// gc sweeps every repository in repos, those of launch records and those with linked worktrees under ~/dev, marking the
+// records of worktrees it removes landed, then drops the records landed over landedKeep ago and says how many.
+func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	seen := map[string]bool{}
 	if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
 		repos = append(repos, launch.Discovered(filepath.Join(home, "dev"), l.repos, time.Now())...)
@@ -72,20 +76,32 @@ func (l launcher) gc(repos []string, dry, sizes bool) []launch.Swept {
 		if !dry {
 			for _, t := range s.Trees {
 				for _, rec := range recs {
-					if t.Keep == "" && rec.Worktree.Path == t.Path {
-						l.records.Delete(rec.Key)
+					if t.Keep == "" && rec.Worktree.Path == t.Path && !rec.IsLanded() {
+						l.srv.Kill(tmux.SessionName(rec.Key))
+						if err := l.landed(rec, "removed by ym gc"); err != nil {
+							s.Errors = append(s.Errors, err.Error())
+						}
 					}
 				}
 			}
 		}
 		out = append(out, s)
 	}
-	return out
+	pruned := 0
+	for _, rec := range recs {
+		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep {
+			pruned++
+			if !dry {
+				l.records.Delete(rec.Key)
+			}
+		}
+	}
+	return out, pruned
 }
 
 func gb(n int64) string { return fmt.Sprintf("%.2f GB", float64(n)/1e9) }
 
-func printSwept(w io.Writer, all []launch.Swept, dry bool) {
+func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 	verb, del := "removed", "deleted"
 	if dry {
 		verb, del = "would remove", "would delete"
@@ -126,6 +142,9 @@ func printSwept(w io.Writer, all []launch.Swept, dry bool) {
 			fmt.Fprintf(w, "  %-18s %10s  %s (%s)\n", t.Keep, gb(t.Size), t.Path, t.Branch)
 		}
 	}
+	if pruned > 0 {
+		fmt.Fprintf(w, "%s %d landed launch records older than %d days\n", del, pruned, int(landedKeep.Hours()/24))
+	}
 	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d active, %d in use, %d locked or missing, %d unreadable\n",
 		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepActive],
 		kept[launch.KeepInUse], kept[launch.KeepLocked], kept[launch.KeepFailing])
@@ -135,7 +154,7 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 	cmd := &cobra.Command{
 		Use: "gc [--dry-run]",
 		Short: ("Remove worktrees of known repositories and those under ~/dev that are clean, on a remote or squash-merged, " +
-			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses"),
+			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago"),
 		Args: cobra.NoArgs,
 	}
 	dry := cmd.Flags().Bool("dry-run", false, "print what gc would remove and delete, changing nothing")
@@ -149,9 +168,9 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 		if err != nil {
 			return err
 		}
-		all := l.gc(repos, *dry, !*quiet)
+		all, pruned := l.gc(repos, *dry, !*quiet)
 		if !*quiet {
-			printSwept(cmd.OutOrStdout(), all, *dry)
+			printSwept(cmd.OutOrStdout(), all, pruned, *dry)
 		}
 		return nil
 	})
@@ -165,6 +184,7 @@ func (l launcher) GC() (string, error) {
 		return "", err
 	}
 	var b strings.Builder
-	printSwept(&b, l.gc(repos, false, true), false)
+	all, pruned := l.gc(repos, false, true)
+	printSwept(&b, all, pruned, false)
 	return strings.TrimRight(b.String(), "\n"), nil
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
@@ -40,7 +41,12 @@ func (m Model) launchedText() string {
 	if m.core.Launches == nil {
 		return " ym's launcher is unavailable"
 	}
-	ls := m.core.Launches.Launched()
+	var ls []core.Launched
+	for _, l := range m.core.Launches.Launched() {
+		if l.Landed.IsZero() {
+			ls = append(ls, l)
+		}
+	}
 	if len(ls) == 0 {
 		return " ym launched no sessions yet; n starts one"
 	}

@@ -86,6 +86,8 @@ type Launched struct {
 	Session string
 	State   string
 	Path    string
+	// Landed is when ym landed it, or zero while it is not landed.
+	Landed time.Time
 }
 
 func (l Launched) String() string {

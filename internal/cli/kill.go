@@ -41,6 +41,11 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 			return nil
 		}
 	}
+	if l, ok := c.Launches.(launcher); ok {
+		if err := l.markKilled(s.ID); err != nil {
+			return err
+		}
+	}
 	msg, err := c.Kill(s)
 	if err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSlug(t *testing.T) {
@@ -145,6 +146,31 @@ func TestRecordsFindByKeyBranchOrSessionPrefix(t *testing.T) {
 		if _, ok := r.Find(ref); ok {
 			t.Errorf("Find(%q) matched", ref)
 		}
+	}
+}
+
+func TestRecordsFindPrefersALiveRecordOverALandedOne(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		recs []Record
+		want string
+	}{
+		{"only landed", []Record{{Key: "a", Worktree: Worktree{Branch: "x"}, Landed: time.Now()}}, "a"},
+		{"landed older, live newer", []Record{
+			{Key: "a", Worktree: Worktree{Branch: "x"}, Started: time.Now().Add(-time.Hour), Landed: time.Now()},
+			{Key: "b", Worktree: Worktree{Branch: "x"}, Started: time.Now()}}, "b"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := Records{Dir: t.TempDir()}
+			for _, rec := range c.recs {
+				if err := r.Save(rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, ok := r.Find("x"); !ok || got.Key != c.want {
+				t.Fatalf("Find(x) = %q, %v; want %q", got.Key, ok, c.want)
+			}
+		})
 	}
 }
 
