@@ -128,7 +128,7 @@ func (m Model) footer() []string {
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
-			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (place: why)"}[m.inKind]
+			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)"}[m.inKind]
 		if m.inKind == inNew || m.inKind == inNewRepo {
 			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
 		}
@@ -1092,7 +1092,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated
-   v            set the mission's vibe, as a place from North Dakota (rough) to Hawaii (great): "place: why"
+   v            set the mission's vibe, any fitting place from Afghanistan (broken) to Hawaii (great): "place: why"
    I            every item, answered, dismissed and snoozed too; in a mission, just its items
    /            filter
    h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you

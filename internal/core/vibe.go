@@ -13,7 +13,7 @@ import (
 // VibeStale is how long a vibe reads as current.
 const VibeStale = 2 * time.Hour
 
-// Vibe is an agent's read of how its mission is going, as a place from North Dakota (rough) to Hawaii (great).
+// Vibe is an agent's read of how its mission is going, as any fitting place from Afghanistan (broken) to Hawaii (great).
 type Vibe struct {
 	Place string
 	Why   string

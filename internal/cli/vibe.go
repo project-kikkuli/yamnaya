@@ -24,7 +24,7 @@ func vibeCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	var why string
 	cmd := &cobra.Command{
 		Use:   "vibe [place]",
-		Short: "Say how the calling session's mission is going, as a place from North Dakota (rough) to Hawaii (great); with no place, show its vibes",
+		Short: "Say how the calling session's mission is going, as any fitting place from Afghanistan (broken) to Hawaii (great); with no place, show its vibes",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()

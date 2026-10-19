@@ -21,7 +21,7 @@ func TestVibesLandOnTheMissionOfWhoeverSetsThem(t *testing.T) {
 	}
 	for _, v := range []Vibe{
 		{Place: "North  Dakota", Why: "tests\n red", Session: "lead", Harness: "claude"},
-		{Place: "Colorado", Session: "worker", Harness: "codex"},
+		{Place: "Wisconsin", Session: "worker", Harness: "codex"},
 		{Place: "Hawaii", Why: "landed", Session: "solo", Harness: "claude"},
 		{Place: "Utah", Session: "", Target: "other"},
 	} {
@@ -34,7 +34,7 @@ func TestVibesLandOnTheMissionOfWhoeverSetsThem(t *testing.T) {
 		project string
 		places  []string
 	}{
-		{"lead", []string{"Hawaii", "Colorado", "North Dakota"}},
+		{"lead", []string{"Hawaii", "Wisconsin", "North Dakota"}},
 		{"other", []string{"Utah"}},
 	} {
 		p, _ := b.Project(tc.project)
@@ -80,7 +80,7 @@ func TestVibeGoesStaleWithAgeOrWhenEverySessionEnded(t *testing.T) {
 		{"no session left", time.Minute, nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Project{Vibes: []Vibe{{Place: "Colorado", At: now.Add(-tc.age)}}}
+			p := Project{Vibes: []Vibe{{Place: "Oklahoma", At: now.Add(-tc.age)}}}
 			for _, st := range tc.statuses {
 				p.Sessions = append(p.Sessions, Live{Session: Session{Status: st}})
 			}
@@ -93,15 +93,15 @@ func TestVibeGoesStaleWithAgeOrWhenEverySessionEnded(t *testing.T) {
 
 func TestPlacesKeepOnlyChanges(t *testing.T) {
 	var p Project
-	for _, place := range []string{"Hawaii", "hawaii", "Colorado", "Colorado", "North Dakota", "Colorado", "Utah"} {
+	for _, place := range []string{"Hawaii", "hawaii", "Vermont", "Vermont", "North Dakota", "Vermont", "Utah"} {
 		p.Vibes = append(p.Vibes, Vibe{Place: place})
 	}
 	for _, tc := range []struct {
 		n    int
 		want []string
 	}{
-		{5, []string{"Hawaii", "Colorado", "North Dakota", "Colorado", "Utah"}},
-		{2, []string{"Hawaii", "Colorado"}},
+		{5, []string{"Hawaii", "Vermont", "North Dakota", "Vermont", "Utah"}},
+		{2, []string{"Hawaii", "Vermont"}},
 	} {
 		got := p.Places(tc.n)
 		if len(got) != len(tc.want) {
@@ -125,7 +125,7 @@ func TestVibeTableMigratesOnceAndKeepsHistory(t *testing.T) {
 			defer wg.Done()
 			st, err := OpenStore(path)
 			if err == nil {
-				_, err = st.AddVibe(Vibe{Place: "Colorado", Session: "s"})
+				_, err = st.AddVibe(Vibe{Place: "Delaware", Session: "s"})
 				st.Close()
 			}
 			errs[i] = err
@@ -184,7 +184,7 @@ func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 			scans := 0
 			w.core.Harnesses = []Harness{discoverCount{w.claude, &scans}, discoverCount{w.codex, &scans}}
 			if tc.setter != "" {
-				if _, err := w.core.Store.AddVibe(Vibe{Place: "Colorado", Session: tc.setter, Harness: "claude"}); err != nil {
+				if _, err := w.core.Store.AddVibe(Vibe{Place: "Nebraska", Session: tc.setter, Harness: "claude"}); err != nil {
 					t.Fatal(err)
 				}
 			}

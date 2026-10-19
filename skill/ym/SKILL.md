@@ -60,4 +60,12 @@ Decision and default items always get `--rec`, options with their effects, and `
 
 ## Vibe
 
-Say how your mission is going as a place: `ym vibe "<place>" --why "<one line>"`. North Dakota is rough, Colorado is fine, Hawaii is great. Any place works; go to the extremes when they fit: Taliban-occupied Afghanistan for truly broken, US-Annexed Iceland for exceptional. Set it when a phase changes, when something breaks or lands, and in your final report. Be honest; the board shows it next to the facts. `ym vibe` shows your mission's current vibe and history.
+Say how your mission is going as a place: `ym vibe "<place>" --why "<one line>"`. Pick a real place whose character fits this exact moment; be creative and don't reuse the places below.
+
+- Broken: Taliban-occupied Afghanistan, Chernobyl, Pyongyang
+- Rough: North Dakota, Oklahoma, Newark, the Mojave
+- Middling: Delaware, Nebraska, Wisconsin, Ohio
+- Good: Vermont, Montana, Lisbon, Kyoto
+- Great: Hawaii, US-Annexed Iceland, Patagonia, the Amalfi Coast
+
+The place is just a place; status goes in `--why`. Set it when a phase changes, when something breaks or lands, and in your final report. Be honest; the board shows it next to the facts. `ym vibe` shows your mission's current vibe and history.
