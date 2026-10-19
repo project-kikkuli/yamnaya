@@ -129,15 +129,13 @@ func TestBigNPicksTheRepositoryFirst(t *testing.T) {
 		repo   string
 		prompt string
 		harn   string
-		slug   string
 		starts bool
 	}{
-		{"pick, prompt, slug", []string{"enter", "go", "enter", "enter"}, "api", "go", "claude", "", true},
-		{"filter picks another repo", []string{"we", "enter", "go", "enter", "my-slug", "enter"}, "web", "go", "claude", "my-slug", true},
-		{"tab toggles at the prompt", []string{"enter", "go", "tab", "enter", "enter"}, "api", "go", "codex", "", true},
-		{"esc at the picker", []string{"esc"}, "", "", "", "", false},
-		{"esc at the prompt", []string{"enter", "go", "esc"}, "", "", "", "", false},
-		{"esc at the slug", []string{"enter", "go", "enter", "esc"}, "", "", "", "", false},
+		{"pick then prompt launches", []string{"enter", "go", "enter"}, "api", "go", "claude", true},
+		{"filter picks another repo", []string{"we", "enter", "go", "enter"}, "web", "go", "claude", true},
+		{"tab toggles at the prompt", []string{"enter", "go", "tab", "enter"}, "api", "go", "codex", true},
+		{"esc at the picker", []string{"esc"}, "", "", "", false},
+		{"esc at the prompt", []string{"enter", "go", "esc"}, "", "", "", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -177,7 +175,7 @@ func TestBigNPicksTheRepositoryFirst(t *testing.T) {
 			}
 			got := l.started[0]
 			real, _ := filepath.EvalSymlinks(root)
-			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || got.Prompt != c.prompt || got.Harness != c.harn || got.Slug != c.slug {
+			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || got.Prompt != c.prompt || got.Harness != c.harn || got.Slug != "" {
 				t.Fatalf("started %s", fmtLaunches(l.started))
 			}
 		})

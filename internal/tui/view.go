@@ -128,9 +128,8 @@ func (m Model) footer() []string {
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
-			inNewSlug: "new " + m.newL.Harness + " session, worktree name (empty: from the prompt)",
-			inPhases:  "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (place: why)"}[m.inKind]
-		if m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inNewSlug {
+			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (place: why)"}[m.inKind]
+		if m.inKind == inNew || m.inKind == inNewRepo {
 			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
 		}
 		if m.fresh {
@@ -1073,11 +1072,10 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    m            merge a mission into another
    S            split a merged mission back out
    n            new session in the selected row's repository (else ym's own directory): type the
-                prompt, then an optional worktree name; tab switches claude and codex
-   N            new session in any repository: pick it first, then the prompt and the optional worktree
-                name; the picker lists recently picked repos, then every repo under
-                ~/.config/wt-reap/roots (or ~/dev); typing filters by name or path, ↑↓ and enter pick,
-                and a path starting with / or ~ is used as typed
+                prompt; the worktree is named from it; tab switches claude and codex
+   N            new session in any repository: pick it first, then the prompt; the picker lists
+                recently picked repos, then every repo under ~/.config/wt-reap/roots (or ~/dev); typing
+                filters by name or path, ↑↓ and enter pick, and a path starting with / or ~ is used as typed
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean

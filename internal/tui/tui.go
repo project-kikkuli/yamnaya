@@ -46,7 +46,6 @@ const (
 	inSend
 	inNew
 	inNewRepo
-	inNewSlug
 	inPhases
 	inVibe
 	inWaitAnswer
@@ -1017,7 +1016,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyTab:
-		if m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inNewSlug {
+		if m.inKind == inNew || m.inKind == inNewRepo {
 			m.newL.Harness = core.Other(m.newL.Harness)
 		}
 		return m, nil
@@ -1091,7 +1090,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Prompt = text
-			m.startInput(inNewSlug, "", "", "", false)
+			return m.startNew()
 		case inNewRepo:
 			repo, err := m.pickedRepo(text)
 			if err != nil {
@@ -1100,15 +1099,6 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.newL.Repo = repo
 			m.startInput(inNew, "", "", "", false)
-		case inNewSlug:
-			n, c := m.newL, m.core
-			n.Slug = text
-			m.message = "starting " + n.Harness + "…"
-			return m, m.do(func() (string, error) {
-				msg, err := c.StartNew(n)
-				first, _, _ := strings.Cut(msg, "\n")
-				return "started " + first, err
-			})
 		case inPhases:
 			var names []string
 			for _, n := range strings.Split(text, ",") {
@@ -1155,6 +1145,16 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.repoCur, m.pickErr = 0, ""
 	}
 	return m, nil
+}
+
+func (m Model) startNew() (tea.Model, tea.Cmd) {
+	n, c := m.newL, m.core
+	m.message = "starting " + n.Harness + "…"
+	return m, m.do(func() (string, error) {
+		msg, err := c.StartNew(n)
+		first, _, _ := strings.Cut(msg, "\n")
+		return "started " + first, err
+	})
 }
 
 func (m Model) do(f func() (string, error)) tea.Cmd {
