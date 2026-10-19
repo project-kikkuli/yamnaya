@@ -12,7 +12,7 @@ import (
 // agentOnly are commands agents or setup run, never the owner at the board.
 var agentOnly = map[string]bool{
 	"ym item add": true, "ym item inbox": true, "ym spawn": true, "ym limits record": true,
-	"ym install": true, "ym completion": true, "ym remote": true, "ym remote install": true, "ym help": true,
+	"ym install": true, "ym update": true, "ym completion": true, "ym remote": true, "ym remote install": true, "ym help": true,
 }
 
 func TestEveryOwnerCommandHasABoardKeyInHelp(t *testing.T) {

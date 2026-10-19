@@ -123,14 +123,27 @@ type Model struct {
 	width    int
 	height   int
 	interval time.Duration
+	// self watches ym's own executable; restart is set when the board quits to run the new one.
+	self    *binaryWatch
+	restart bool
 }
 
 func New(c *core.Core) Model {
-	return Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second}
+	m := Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second}
+	if path, err := os.Executable(); err == nil {
+		m.self, _ = watchBinary(path)
+	}
+	return m
 }
 
+// ErrRestart is Run's result when ym's executable changed on disk and the board quit so the new one can run.
+var ErrRestart = errors.New("ym executable changed")
+
 func Run(c *core.Core) error {
-	_, err := tea.NewProgram(New(c), tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(New(c), tea.WithAltScreen()).Run()
+	if m, ok := final.(Model); ok && err == nil && m.restart {
+		return ErrRestart
+	}
 	return err
 }
 
@@ -264,6 +277,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tickMsg:
+		if m.self != nil && m.mode != modeInput && m.mode != modeConfirm && m.self.changed() {
+			m.restart = true
+			return m, tea.Quit
+		}
 		return m, m.refresh(true)
 	case doneMsg:
 		if msg.err != nil {

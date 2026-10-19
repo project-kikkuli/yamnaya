@@ -9,6 +9,8 @@
 
 `ym install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex`. State lives in `~/.local/state/yamnaya/ym.db` (override with `YAMNAYA_STATE_DIR`).
 
+`ym update` runs that `go install` again and prints the version and path it installed. A running board polls its own executable every second and, once a new binary has settled on disk, restores the terminal and execs it in place with the same arguments and environment, unless you are typing or confirming. Sessions on ym's tmux server are untouched.
+
 ## The screen
 
 - **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result. Mission rows also show a progress bar and its percent done, with a dimmed legend under the header saying what done counts.
@@ -69,6 +71,7 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym health [--weeks N] [--json]      weekly item answer times, stale items, questions reprinted in chat, agent time blocked on you
     ym limits                           Claude and Codex limit windows
     ym limits record                    save Claude limits from statusline JSON on stdin
+    ym update                           go install the latest ym; a running board restarts into it
     ym remote install <host>            build ym for the host, copy it to ~/.local/bin/ym there, link the skill and wire the statusline
     ym remote <host> [ym args...]       run ym on the host over ssh: the board by default
 

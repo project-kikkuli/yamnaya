@@ -80,6 +80,7 @@ func NewRoot() *cobra.Command {
 		}
 	}
 	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		adoptChildren()
 		dir, err := stateDir()
 		if err != nil {
 			return err
@@ -112,6 +113,7 @@ func NewRoot() *cobra.Command {
 		sendHoldCmd(with),
 		resumeWatchCmd(),
 		installCmd(),
+		updateCmd(runGo),
 		usageCmd(),
 		healthCmd(),
 		limitsCmd(),

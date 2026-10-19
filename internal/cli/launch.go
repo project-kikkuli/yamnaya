@@ -284,7 +284,7 @@ func detach(args ...string) error {
 	if err := c.Start(); err != nil {
 		return err
 	}
-	go c.Wait()
+	reap(c.Process.Pid, func() { c.Wait() })
 	return nil
 }
 
