@@ -56,6 +56,11 @@ func (c *Core) Kill(s Live) (string, error) {
 	if len(left) > 0 {
 		return "", fmt.Errorf("%s %s still running (pid %s) after SIGTERM", s.Harness, Short(s.Key()), strings.Join(left, ", "))
 	}
+	if c.Store != nil {
+		if err := c.Store.RecordKill(s.Key(), c.now()); err != nil {
+			return "", fmt.Errorf("killed %s %s; recording exit: %w", s.Harness, Short(s.Key()), err)
+		}
+	}
 	return fmt.Sprintf("killed %s %s", s.Harness, Short(s.Key())), nil
 }
 

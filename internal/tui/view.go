@@ -16,6 +16,11 @@ import (
 func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(m.header() + "\n\n")
+	top := strings.Count(m.header(), "\n") + 2
+	if height := m.alpineHeight(); height > 0 {
+		b.WriteString(m.alpineView(height) + "\n")
+		top += height
+	}
 	switch m.mode {
 	case modeHelp:
 		b.WriteString(ansi.Wrap(Help, m.width, " "))
@@ -53,7 +58,7 @@ func (m Model) View() string {
 		foot = append(foot, strings.Split(ansi.Wrap(l, max(20, m.width-1), " "), "\n")...)
 	}
 	room := max(1, m.height-len(foot))
-	if top := strings.Count(m.header(), "\n") + 2; m.mode == modeAgent && len(lines) > room && room > top {
+	if m.mode == modeAgent && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -151,6 +156,9 @@ func (m Model) footer() []string {
 	if m.filter != "" {
 		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
 	}
+	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
+		return append(lines, pal.dim.Render(" ↑↓ move   enter open   ? help"))
+	}
 	lines = append(lines, pal.dim.Render(" "+m.hints()))
 	return lines
 }
@@ -176,7 +184,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   O beside   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   ? help   q quit"
+	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A range   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -1047,6 +1055,13 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
+ THE RANGE shows each mission as a mountain and its agents as an expedition. Busy agents climb,
+ waiting agents shelter, idle agents rest at camp, and completed crew leave cairns. New work shapes
+ the terrain; elevation is activity, not percent complete. A summit sends up a flare; a confirmed
+ ym kill sweeps that session's expedition away. Weather and water keep moving while agents rest.
+ The camera follows the selected mission and briefly visits summits and tornadoes. Counts cover
+ the whole fleet, including mountains outside the view. The range hides in small terminals.
+
  NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
  whose last reply asks you with no item filed ("waiting:", the first question it asks).
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
@@ -1054,6 +1069,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
 
    ↑ ↓ or k j   move
+   A            hide or show the mountain range
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;

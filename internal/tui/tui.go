@@ -71,6 +71,7 @@ type frame struct {
 }
 
 type Model struct {
+	alpine  alpine
 	core    *core.Core
 	host    string
 	board   core.Board
@@ -217,10 +218,13 @@ func (m Model) tick() tea.Cmd {
 	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func (m Model) Init() tea.Cmd { return m.refresh(true) }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(true), alpineTick()) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case alpineFrame:
+		m.alpine.advance()
+		return m, alpineTick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
@@ -242,6 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
+			m.alpine.observe(msg.board)
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
 		if m.listMode() == modeItems {
@@ -561,6 +566,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.message = ""
 	switch k.String() {
+	case "A":
+		m.alpine.hidden = !m.alpine.hidden
+		return m, nil
 	case "q":
 		if m.mode == modeList {
 			return m, tea.Quit

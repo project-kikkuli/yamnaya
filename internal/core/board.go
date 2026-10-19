@@ -125,6 +125,7 @@ type Board struct {
 	Repos    []Repo
 	Needs    []Need
 	Fleet    Fleet
+	Kills    map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
 
@@ -209,6 +210,10 @@ func (c *Core) owned(procs []proc.Proc) [][]proc.Proc {
 // Board reads every session, groups sessions into projects and lists what needs the owner.
 func (c *Core) Board() (Board, error) {
 	b := Board{At: c.now()}
+	var err error
+	if b.Kills, err = c.Store.Kills(b.At.Add(-24 * time.Hour)); err != nil {
+		return b, err
+	}
 	procs, err := c.Procs()
 	if err != nil {
 		return b, err
