@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,24 +52,16 @@ func (m Model) waitRepos() tea.Cmd {
 func (m *Model) openRepoPicker() {
 	m.startInput(inNewRepo, "", "", "", false)
 	m.repoCur, m.pickErr = 0, ""
-	if m.newL.Repo != "" {
-		m.newL.Repo = core.MainCheckout(m.newL.Repo)
-	}
 	m.picks = m.orderPicks()
 }
 
-// orderPicks puts the selected row's repository first, then recently picked ones, then the scanned ones by name.
+// orderPicks puts recently picked repositories first, then the scanned ones by name.
 func (m Model) orderPicks() []string {
 	recent, err := m.core.Store.RecentRepos()
 	if err != nil {
 		recent = nil
 	}
-	pre := m.newL.Repo
-	all := core.OrderRepos(recent, m.scanned)
-	if pre == "" {
-		return all
-	}
-	return append([]string{pre}, slices.DeleteFunc(all, func(r string) bool { return r == pre })...)
+	return core.OrderRepos(recent, m.scanned)
 }
 
 func (m Model) repoMatches() []string { return core.MatchRepos(m.picks, string(m.input)) }

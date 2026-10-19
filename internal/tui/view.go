@@ -1072,12 +1072,12 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
    S            split a merged mission back out
-   n            new session: type the prompt, pick the repository, then an optional worktree name;
-                the picker lists the selected row's repository, recently picked ones, then every repo
-                under ~/.config/wt-reap/roots (or ~/dev); typing filters by name or path, ↑↓ and enter
-                pick, and a path starting with / or ~ is used as typed; tab switches claude and codex
-   N            new session in any repository: pick the repository first (recent ones on top, nothing
-                taken from the selected row), then the prompt and the optional worktree name
+   n            new session in the selected row's repository (else ym's own directory): type the
+                prompt, then an optional worktree name; tab switches claude and codex
+   N            new session in any repository: pick it first, then the prompt and the optional worktree
+                name; the picker lists recently picked repos, then every repo under
+                ~/.config/wt-reap/roots (or ~/dev); typing filters by name or path, ↑↓ and enter pick,
+                and a path starting with / or ~ is used as typed
    K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean

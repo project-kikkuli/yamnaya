@@ -108,12 +108,11 @@ type Model struct {
 	ask       string
 	yes       tea.Cmd
 	newL      core.NewLaunch
-	repoFirst bool
 	// repoScan streams repositories found under the roots; scanned holds them for the whole TUI session.
 	repoScan <-chan string
 	scanned  []string
 	scanDone bool
-	// picks lists the n picker's repositories: the selected row's first, then recent, then scanned.
+	// picks lists the N picker's repositories: recent first, then scanned.
 	picks    []string
 	repoCur  int
 	pickErr  string
@@ -622,17 +621,15 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		r, _ := m.selected()
-		m.newL = core.NewLaunch{Harness: "claude", Repo: m.repoOf(r)}
-		m.repoFirst = false
+		m.newL = core.NewLaunch{Harness: "claude", Repo: core.MainCheckout(m.repoOf(r))}
 		m.startInput(inNew, "", "", "", false)
-		return m, m.scanRepos()
+		return m, nil
 	case "N":
 		if m.core.Launches == nil {
 			m.message = "ym's launcher is unavailable"
 			return m, nil
 		}
 		m.newL = core.NewLaunch{Harness: "claude"}
-		m.repoFirst = true
 		m.openRepoPicker()
 		return m, m.scanRepos()
 	case "/":
@@ -1094,11 +1091,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Prompt = text
-			if m.repoFirst {
-				m.startInput(inNewSlug, "", "", "", false)
-				break
-			}
-			m.openRepoPicker()
+			m.startInput(inNewSlug, "", "", "", false)
 		case inNewRepo:
 			repo, err := m.pickedRepo(text)
 			if err != nil {
@@ -1106,11 +1099,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Repo = repo
-			if m.repoFirst {
-				m.startInput(inNew, "", "", "", false)
-				break
-			}
-			m.startInput(inNewSlug, "", "", "", false)
+			m.startInput(inNew, "", "", "", false)
 		case inNewSlug:
 			n, c := m.newL, m.core
 			n.Slug = text

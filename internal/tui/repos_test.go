@@ -8,7 +8,29 @@ import (
 	"time"
 )
 
-func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
+func TestNewSkipsThePickerAndBigNOpensIt(t *testing.T) {
+	for _, c := range []struct {
+		key    string
+		picker bool
+		scans  int
+	}{
+		{"n", false, 0},
+		{"N", true, 1},
+	} {
+		t.Run(c.key, func(t *testing.T) {
+			m, k, _ := setup(t)
+			k.Launches = &launches{}
+			calls := 0
+			k.Roots = func() []string { calls++; return nil }
+			m = press(t, to(t, place(t, m, k), mission("lead")), c.key)
+			if picking := m.mode == modeInput && m.inKind == inNewRepo; picking != c.picker || calls != c.scans {
+				t.Fatalf("%s: picker %v, roots read %d times", c.key, picking, calls)
+			}
+		})
+	}
+}
+
+func TestBigNPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	for _, c := range []struct {
 		name   string
@@ -17,12 +39,12 @@ func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 		repo   string
 		err    string
 	}{
-		{"enter keeps the selected row's repo", "", []string{"enter"}, "/src/app", ""},
-		{"down picks the next, scanned by name", "", []string{"down", "enter"}, "work/api", ""},
-		{"down then up returns", "", []string{"down", "down", "up", "enter"}, "work/api", ""},
+		{"enter picks the first, scanned by name", "", []string{"enter"}, "work/api", ""},
+		{"down picks the next", "", []string{"down", "enter"}, "solo", ""},
+		{"down then up returns", "", []string{"down", "down", "up", "enter"}, "solo", ""},
 		{"typing filters by name", "", []string{"web", "enter"}, "work/web", ""},
 		{"name matches rank above path matches", "", []string{"w", "down", "enter"}, "work/api", ""},
-		{"recent picks follow the selected row's", "solo", []string{"down", "enter"}, "solo", ""},
+		{"recent picks come first", "solo", []string{"enter"}, "solo", ""},
 		{"a ~ path is used as typed", "", []string{"~", "enter"}, home, ""},
 		{"an absolute path is used as typed", "", []string{"ROOT/notes/old", "enter"}, "notes/old", ""},
 		{"a name matching nothing stays in the picker", "", []string{"telc", "enter"}, "", "no repository matches \"telc\""},
@@ -49,9 +71,9 @@ func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 				}
 			}
 			m = to(t, place(t, m, k), mission("lead"))
-			m = press(t, m, "n", "g", "o", "enter")
+			m = press(t, m, "N")
 			view := m.View()
-			for _, want := range []string{"PICK A REPOSITORY", " > app", "api", "solo", "web"} {
+			for _, want := range []string{"PICK A REPOSITORY", "api", "solo", "web"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("picker lacks %q:\n%s", want, view)
 				}
@@ -69,7 +91,7 @@ func TestNewPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 				}
 				return
 			}
-			m = press(t, m, "enter")
+			press(t, m, "g", "o", "enter", "enter")
 			want := c.repo
 			if !filepath.IsAbs(want) {
 				want = filepath.Join(root, want)
@@ -90,7 +112,7 @@ func TestPickerScansOnceAndShowsWhatItFoundSoFar(t *testing.T) {
 	k.Launches = &launches{}
 	calls := 0
 	k.Roots = func() []string { calls++; return nil }
-	m = press(t, m, "n", "esc", "n", "g", "o", "enter")
+	m = press(t, m, "N", "esc", "N")
 	if calls != 1 || !m.scanDone {
 		t.Fatalf("roots read %d times, scan done %v", calls, m.scanDone)
 	}
