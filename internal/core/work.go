@@ -14,6 +14,16 @@ func (c *Core) ObserveWork(b Board) error {
 	if err != nil {
 		return err
 	}
+	agents, err := c.Store.Work.Agents()
+	if err != nil {
+		return err
+	}
+	byAgentSession := map[string]string{}
+	for _, a := range agents {
+		if a.Session != "" {
+			byAgentSession[a.Session] = a.Workspace
+		}
+	}
 	byOrigin := map[string]work.Scope{}
 	bySession := map[string]work.Scope{}
 	for _, w := range all {
@@ -22,12 +32,23 @@ func (c *Core) ObserveWork(b Board) error {
 			bySession[session] = w
 		}
 	}
+	alive := map[string]bool{}
 	for _, p := range b.Projects {
 		if len(p.Sessions) == 0 {
 			continue
 		}
 		origin := ThisHost() + "/" + p.Key
 		w, ok := byOrigin[origin]
+		for _, session := range p.Sessions {
+			if id := byAgentSession[session.Key()]; id != "" {
+				w, err = c.Store.Work.Get(id)
+				if err != nil {
+					return err
+				}
+				ok = true
+				break
+			}
+		}
 		if !ok {
 			for _, session := range p.Sessions {
 				if found, exists := bySession[session.Key()]; exists {
@@ -42,25 +63,47 @@ func (c *Core) ObserveWork(b Board) error {
 				return err
 			}
 		}
+
 		for _, session := range p.Sessions {
-			if _, bound := w.Bindings[session.Key()]; bound {
-				continue
+			alive[session.Key()] = true
+			if _, bound := w.Bindings[session.Key()]; !bound {
+				w, err = c.Store.Work.Commit(work.Event{ID: "bind/" + w.ID + "/" + session.Key(), Work: w.ID, Expected: w.Revision, Type: "bind", Target: session.Key(), Actor: "discovery", Execution: &work.Execution{Harness: session.Harness, Directory: session.Cwd}})
+				if err != nil {
+					return err
+				}
+				if err = c.Store.Work.AttachDefaults(w); err != nil {
+					return err
+				}
 			}
-			w, err = c.Store.Work.Commit(work.Event{ID: "bind/" + w.ID + "/" + session.Key(), Work: w.ID, Expected: w.Revision, Type: "bind", Target: session.Key(), Actor: "discovery", Execution: &work.Execution{Harness: session.Harness, Directory: session.Cwd}})
-			if err != nil {
-				return err
+			observed := work.ExecutionObservation{State: session.Status.String(), Result: session.Result}
+			if w.Observations[session.Key()] != observed {
+				w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "execution", Target: session.Key(), Actor: "discovery", Observation: observed, Text: "Native session " + session.Key() + " is " + observed.State + "\n" + observed.Result})
+				if err != nil {
+					return err
+				}
 			}
 		}
-		if w.Manager == "" {
-			w, err = c.Store.Work.Commit(work.Event{ID: "manager/" + w.ID, Work: w.ID, Expected: w.Revision, Type: "manager", Target: p.Sessions[0].Key(), Actor: "discovery"})
-			if err != nil {
-				return err
-			}
-		}
+
 		if w.Purpose == "" && p.Sessions[0].Task != "" {
 			_, err = c.Store.Work.Commit(work.Event{ID: "purpose/" + w.ID, Work: w.ID, Expected: w.Revision, Type: "purpose", Text: p.Sessions[0].Task, Actor: "discovery"})
 			if err != nil {
 				return err
+			}
+		}
+	}
+
+	latest, err := c.Store.Work.List()
+	if err != nil {
+		return err
+	}
+	for _, w := range latest {
+		for session, observed := range w.Observations {
+			if !alive[session] && observed.State != "exited" {
+				observed.State = "exited"
+				w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "execution", Target: session, Actor: "discovery", Observation: observed, Text: "Native session " + session + " exited; assess its result evidence and retain unfinished responsibility"})
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -215,7 +258,7 @@ func (c *Core) ChangeWork(w work.Scope, e work.Event) (work.Scope, error) {
 	if e.Type == "context" {
 		e.Context = w.Context.Revision
 	}
-	if e.Type == "decide" || e.Type == "feedback" {
+	if e.Type == "decide" || e.Type == "feedback" || e.Type == "follow-through" {
 		e.Review = w.Reviews[e.Target]
 		e.Context = w.Context.Revision
 	}
@@ -258,4 +301,37 @@ func (c *Core) ApplyWork(e work.Event) (work.Scope, error) {
 		}
 	}
 	return c.Store.Work.Commit(e)
+}
+
+func attachAgentUsage(b *Board) {
+	for i := range b.Projects {
+		p := &b.Projects[i]
+		if p.Work == nil || (p.Work.Kind != "chief" && p.Work.Kind != "agent") {
+			continue
+		}
+		for _, a := range b.Agents {
+			if a.Workspace != p.Work.ID {
+				continue
+			}
+			if len(p.Sessions) == 0 {
+				p.Status = Idle
+				if a.Running {
+					p.Status = Busy
+				}
+			}
+			counted := map[string]bool{}
+			for _, s := range p.Sessions {
+				counted[s.Key()] = true
+			}
+			for _, d := range p.Dormant {
+				counted[d.ID()] = true
+			}
+			for _, id := range append(a.Sessions, a.Session) {
+				if id != "" && !counted[id] {
+					p.Spend = p.Spend.Plus(b.Fleet.Sessions[id].Total)
+					counted[id] = true
+				}
+			}
+		}
+	}
 }

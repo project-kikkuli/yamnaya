@@ -28,6 +28,9 @@ func New(db *sql.DB) (*Store, error) {
 	if err == nil {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ym_work_runs(session TEXT PRIMARY KEY,error TEXT NOT NULL);`)
 	}
+	if err == nil {
+		_, err = db.Exec(agentSchema)
+	}
 	return &Store{db: db}, err
 }
 
@@ -51,11 +54,14 @@ func (s *Store) Get(id string) (Scope, error) {
 	if err == nil {
 		err = json.Unmarshal(raw, &x)
 	}
+	if err == nil {
+		err = s.db.QueryRow(`SELECT count(*) FROM ym_agent_queue WHERE agent=?`, x.ID).Scan(&x.PendingInputs)
+	}
 	return x, err
 }
 
 func (s *Store) List() ([]Scope, error) {
-	rows, err := s.db.Query(`SELECT state,COALESCE((SELECT revision FROM ym_work_seen s WHERE s.work=w.id),0),(SELECT count(*) FROM ym_work_outbox o WHERE o.work=w.id AND o.delivered=0) FROM ym_work w ORDER BY repo,origin`)
+	rows, err := s.db.Query(`SELECT state,COALESCE((SELECT revision FROM ym_work_seen s WHERE s.work=w.id),0),(SELECT count(*) FROM ym_work_outbox o WHERE o.work=w.id AND o.delivered=0),(SELECT count(*) FROM ym_agent_queue q WHERE q.agent=w.id) FROM ym_work w ORDER BY repo,origin`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,8 +71,8 @@ func (s *Store) List() ([]Scope, error) {
 		var raw []byte
 		var x Scope
 		var seen int64
-		var pending int
-		if err := rows.Scan(&raw, &seen, &pending); err != nil {
+		var pending, inputs int
+		if err := rows.Scan(&raw, &seen, &pending, &inputs); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(raw, &x); err != nil {
@@ -74,6 +80,7 @@ func (s *Store) List() ([]Scope, error) {
 		}
 		x.Changes = max(0, x.Revision-seen)
 		x.Pending = pending
+		x.PendingInputs = inputs
 		out = append(out, x)
 	}
 	if err = rows.Err(); err != nil {
@@ -185,6 +192,9 @@ func (s *Store) Commit(e Event) (Scope, error) {
 			return x, ErrConflict
 		}
 	}
+	if err = validateDelegation(tx, x, e); err != nil {
+		return x, err
+	}
 	e.Work = x.ID
 	before := x.Revision
 	if err = Apply(&x, e); err != nil {
@@ -219,7 +229,7 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "message":
 		destinations = append(destinations, e.Target)
-	case "observe", "feedback", "decide", "wake", "watch", "close", "resume", "relate", "unrelate":
+	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "wake", "watch", "close", "resume", "relate", "unrelate":
 		destinations = append(destinations, "@manager")
 	case "purpose":
 		if e.Actor == "owner" {
@@ -229,6 +239,9 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "manager":
 		destinations = append(destinations, x.Manager)
+	}
+	if x.Owner != "" {
+		destinations = nil
 	}
 	text := fmt.Sprintf("ym work %s: %s\n%s\nRead current context and brief with ym work show %s. Publish assessment with ym work brief; acknowledge incorporated context with ym work adopt.", x.ID, e.Type, e.Text, x.ID)
 	if e.Type == "context" || e.Type == "manager" || e.Type == "bind" {
@@ -244,12 +257,25 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		text = fmt.Sprintf("ym work %s trigger: %s\nRead current context, reassess, and publish a brief or prepare an owner judgment within the delegated authority.", x.ID, x.Trigger)
 	}
 	for _, dest := range destinations {
+		if (dest == "@manager" || dest == "") && x.Owner != "" {
+			continue
+		}
+		var persistent int
+		if err = tx.QueryRow(`SELECT count(*) FROM ym_agents WHERE id=?`, dest).Scan(&persistent); err != nil {
+			return x, err
+		}
+		if persistent > 0 {
+			continue
+		}
 		if dest == "" {
 			dest = "@manager"
 		}
 		if _, err = tx.Exec(`INSERT OR IGNORE INTO ym_work_outbox(id,destination,work,text) VALUES(?,?,?,?)`, e.ID, dest, x.ID, text); err != nil {
 			return x, err
 		}
+	}
+	if err = queueAgentEvent(tx, x, e); err != nil {
+		return x, err
 	}
 	return x, tx.Commit()
 }
@@ -364,6 +390,8 @@ func (s *Store) Inbox(session string) ([]string, error) {
 }
 
 func (s *Store) SourceError(id, url string, err error) error {
+	var previous string
+	s.db.QueryRow(`SELECT error FROM ym_work_source_errors WHERE work=? AND url=?`, id, url).Scan(&previous)
 	text := ""
 	if err != nil {
 		text = err.Error()
@@ -373,6 +401,11 @@ func (s *Store) SourceError(id, url string, err error) error {
 		return e
 	}
 	_, e = s.db.Exec(`INSERT INTO ym_work_polls(work,url,at) VALUES(?,?,?) ON CONFLICT(work,url) DO UPDATE SET at=excluded.at`, id, url, time.Now().Unix())
+	if e == nil && previous != text {
+		if w, getErr := s.Get(id); getErr == nil {
+			_, e = s.Commit(Event{Work: w.ID, Expected: w.Revision, Type: "message", Actor: "source", Text: "Source coverage changed for " + url + ": " + text})
+		}
+	}
 	return e
 }
 
@@ -462,7 +495,8 @@ func (s *Store) Find(query string) (Scope, error) {
 	}
 	var found []Scope
 	for _, x := range all {
-		if x.Name == query || strings.HasPrefix(x.ID, query) {
+		_, bound := x.Bindings[query]
+		if bound || x.Name == query || strings.HasPrefix(x.ID, query) {
 			found = append(found, x)
 		}
 	}

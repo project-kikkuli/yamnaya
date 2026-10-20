@@ -35,17 +35,36 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 ## Continuing work
 
-The repo view stays the entry point. Missions retain their purpose, manager, context, briefs, review obligations and history after their sessions exit. Discovery attaches existing sessions automatically. Use `ym work create "Compatibility" --repo /src/query/.git --purpose "Preserve v2 callers"` for work that starts without a session, then `ym work bind WORK SESSION` and `ym work manager WORK SESSION` to assign independent native sessions. `ym work relate WORK OTHER "depends on the schema migration"` connects work across repositories without changing repo grouping.
+The repo view stays the entry point, including mission spend, idle/busy/waiting state, phases, and PR activity. Work retains its purpose, accountable agent, context, briefs, review obligations, and history after execution ends. Session discovery records execution facts; it does not assign management responsibility.
 
-- `B` reads the selected project's full manager brief and shows its browser address. On a repo row, `B` and `C` first choose a project. `tab` moves through brief, workstreams, shared context and history. Changes since the last read appear in the brief; assessment freshness is tied to its cited sources and context.
-- `R` opens review obligations. `tab` switches ready, preparing, with author and completed. Opening an obligation restores its question, recommendation, evidence and previous feedback. `a` records a judgment; `f` sends feedback into the manager's durable inbox and transfers follow-through to them. Neither action posts to GitHub or Notion. Reading preserves the obligation.
-- `C` reads shared context in the terminal; `e` on that panel edits it in `$EDITOR`. Delivery, receipt and each session's explicit adoption of the context revision remain distinct. Context changes invalidate prepared judgments.
-- `s` messages the selected workstream or manager. `o` opens its native session. `V` opens the original source from a review, or the stable rich brief from a project. A manager can publish a separate artifact URL.
-- `:` runs owner CLI commands with quoted arguments, without shell expansion. Command output opens in a scrollable reader.
+- `M` opens chiefs and managers. `n` creates a chief through name, remit, and authority prompts. Open `M` from a project to attach it with `a`; `d` toggles the repository default and `D` the global default for new sessions. Removing a default preserves existing attachments. `p` pauses or resumes scheduling.
+- `B` reads the full brief. Its workstreams tab includes owned delegations and attached projects. `s` sends direction to the responsible agent; `C` reads shared context and `e` edits it. `V` opens the stable browser brief.
+- `R` opens review obligations, including unassigned incoming requests. Prepared judgments also appear on the home screen. `a` records a judgment and `f` returns feedback. These actions preserve a management obligation to follow through; they do not post to GitHub or Notion.
+- Results remain awaiting verification until their delegator or the owner records independent evidence. Open the work brief and press `a` to record owner verification. Reading a brief or receiving an event completes nothing.
 
-`ym serve` runs discovery, source reconciliation, persisted triggers, delivery and the loopback brief server independently of the terminal. Opening the board starts it detached; closing the board leaves it and native agents running. It reloads when its binary changes. `ym service status` shows its heartbeat, address and errors. After changing credentials, `ym service restart` starts it with the current shell's environment. The default brief address is `http://127.0.0.1:7763/brief/WORK`.
+`ym serve` runs reconciliation and the brief server independently of the terminal. Opening the board starts it detached; closing the board leaves it and native executions running. It reloads after a binary update. `ym service status` shows its address and errors; `ym service restart` adopts the current shell environment. Briefs are served at `http://127.0.0.1:7763/brief/WORK` by default.
 
-Managers receive durable updates through `ym work inbox` (also included in `ym item inbox`). Exited managers can resume through their native Claude or Codex CLI using their original directory and normal configuration. Up to four detached manager resumes run on a host; independently running agents are unrestricted. Execution failures appear in the brief's coverage status and logs under the state directory. This requires the native CLI's own authentication and tool permissions. Workstations and browser access retain their own lifecycle and configuration.
+Create a chief without opening the terminal:
+
+```sh
+ym agent spawn General --remit "Carry priorities across attached engineering work" --authority "Investigate and coordinate; prepare owner judgments; reserve publication" --directory /src/query
+ym agent attach General EXISTING_SESSION
+ym agent default General /src/query
+ym agent default General
+ym agent message General "Preserve callers before cleanup"
+```
+
+An agent has a persistent identity and working brief; its native Claude or Codex session is replaceable. `ym agent snapshot AGENT` includes the remit, context, attachments, owned work, recent events, and pending input revisions. `ym agent replace AGENT` starts a fresh execution from that state; `--session-id` links an existing native conversation. `pause` stops future scheduling, while `resume` schedules a new management pass. Already running native sessions retain their independent lifecycle. Agent spend includes previous execution sessions after replacement.
+
+The background service coalesces changes into bounded management batches. A native agent investigates, acts within its remit, and publishes a checkpoint containing its assessment, incorporated input revisions, and a next action or concrete wait condition. Reading the inbox or exiting successfully does not discharge that obligation. Independent next actions schedule another pass; source changes, child results, owner direction, and registered wake times schedule reassessment. Execution failures remain visible and wake the delegator for investigation. A failed input is not blindly executed again without changed direction or an explicit replacement.
+
+`ym agent capacity N` configures concurrent background executions; the default is four. Independently running agents are unrestricted. Workstations and browser access keep their own lifecycle. `ym work host SSH_ALIAS` registers a remote host, and a local chief can follow its work with `ym agent attach CHIEF SSH_ALIAS/WORK_ID`.
+
+A manager delegates a bounded commitment with `ym work delegate PARENT NAME --agent AGENT --purpose TEXT --authority TEXT --next TEXT`. Each commitment has one accountable agent. `ym work result WORK EVIDENCE` submits a result against current context; `ym work verify WORK EVIDENCE` records independent verification by its delegator or the owner. Changed context invalidates obsolete completion evidence. Parent cycles and verification with unfinished children are rejected.
+
+After carrying out an owner decision, `ym work follow-through WORK REVIEW EVIDENCE` records the resulting evidence. Until then, the decision retains its accountable next owner.
+
+Explicit owner direction and agent inference retain their actor identities in history and context. `ym work priority WORK N` records both the priority and who set it. Chiefs can follow the same work without sharing execution ownership.
 
 Managers publish `ym work brief WORK` from JSON on stdin:
 
@@ -57,7 +76,7 @@ Use the actual context revision and exact observed source versions from `ym work
 
 ## Review intake
 
-GitHub review assignments for the authenticated `gh` account are discovered automatically. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
+GitHub review assignments for the authenticated `gh` account are discovered automatically. A uniquely matching repository chief takes responsibility, falling back to a uniquely configured general chief. Ambiguous or unassigned requests appear in Incoming requests. Existing synthetic review projects migrate there with their evidence, feedback, and original history preserved. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
 
 ```
 ym work watch WORK https://github.com/owner/repo/pull/42 --requester Mira --question "Accept the migration?"

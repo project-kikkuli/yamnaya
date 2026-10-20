@@ -57,6 +57,8 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.agentView()
 		case modeItems:
 			body = bodyModel.itemsView()
+		case modeChiefs:
+			body = bodyModel.chiefsView()
 		case modeWork:
 			body = bodyModel.workView()
 		case modeReviews:
@@ -172,7 +174,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inWorkFeedback: "feedback; next action returns to author", inWorkDecision: "record judgment", inWorkMessage: "message " + m.inLabel, inCommand: "ym command",
+			inWorkFeedback: "feedback; next action returns to author", inWorkDecision: "record judgment", inWorkMessage: "message " + m.inLabel, inCommand: "ym command", inWorkVerify: "record independent verification evidence", inChiefName: "name this chief", inChiefRemit: "what should this chief own?", inChiefAuthority: "what may this chief do independently?",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)"}[m.inKind]
@@ -215,6 +217,8 @@ func (m Model) footer() []string {
 
 func (m Model) hints() string {
 	switch m.mode {
+	case modeChiefs:
+		return "n new chief · enter brief · s message · a attach project · d repo default · D global default · p pause/resume · esc back"
 	case modeWork:
 		if m.workPanel == 1 {
 			return "↑↓ choose workstream   enter open   s message   B brief   C context   tab next panel   esc back"
@@ -222,7 +226,7 @@ func (m Model) hints() string {
 		if m.workPanel == 2 {
 			return "↑↓ scroll   e edit context   B brief   tab next panel   s message manager   esc back"
 		}
-		return "↑↓ scroll   space/b page   tab brief/work/context/history   C context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
+		return "↑↓ scroll   space/b page   a verify result   tab brief/work/context/history   C context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
 	case modeReviews:
 		return "↑↓ move   enter review   tab ready/preparing/author/completed   B brief   : command   esc back"
 	case modeReview:
@@ -267,10 +271,11 @@ func (m Model) listView() viewPage {
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
-		if r.review != nil || (r.need != nil && !m.isStale(r.need)) {
+		if r.attention != "" || r.review != nil || (r.need != nil && !m.isStale(r.need)) {
 			needs++
 		}
 	}
+	b.WriteString(pal.dim.Render(fmt.Sprintf(" %d chiefs · M management · B brief · C context", m.chiefCount())) + "\n\n")
 	b.WriteString(pal.bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
 	if needs == 0 {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
@@ -293,6 +298,12 @@ func (m Model) listView() viewPage {
 			}
 		}
 		switch {
+		case r.attention != "":
+			b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.attention, 12)) + " " + r.work.Name + "\n")
+			if i == m.cursor {
+				m.field(&b, "next", r.work.Next)
+				m.field(&b, "result", clip(r.work.Result, 3))
+			}
 		case r.review != nil:
 			b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.review.Kind, 9)) + " " + pad(r.work.Name, min(28, max(12, m.width/4))) + " " + r.review.Title + "\n")
 			if i == m.cursor {
@@ -1157,6 +1168,7 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
+   M            chiefs and managers: n creates a chief; enter reads its brief; s messages; a attaches the selected project; d/D toggle repo/global defaults
    B            read the full manager brief; on a repo choose its project first; V opens the browser version
    R            all review obligations; tab switches ready, preparing, with author, and completed
    C            read project context; e opens $EDITOR from the context panel, preserving its starting revision

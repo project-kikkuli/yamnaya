@@ -189,7 +189,16 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	if m.mode == modeInput || m.mode == modeHelp || m.mode == modeConfirm || m.mode == modePick || m.mode == modeWhy {
 		return m, nil, false
 	}
+	if next, cmd, handled := m.chiefKey(k); handled {
+		return next, cmd, true
+	}
 	key := k.String()
+	if key == "enter" {
+		if r, ok := m.selected(); ok && r.attention != "" {
+			m.openWork(*r.work)
+			return m, nil, true
+		}
+	}
 	if key == "enter" {
 		if r, ok := m.selected(); ok && r.review != nil {
 			m.push(modeReview)
@@ -257,7 +266,7 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.mode == modeReviews {
 		if key == "tab" {
-			states := []string{"", work.Preparing, work.WithAuthor, work.Completed}
+			states := []string{"", "incoming", work.Preparing, work.WithAuthor, work.Completed}
 			for i, s := range states {
 				if s == m.reviewFilter {
 					m.reviewFilter = states[(i+1)%len(states)]
@@ -287,6 +296,19 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				host, target := r.work.Host, r.target
 				command := "~/.local/bin/ym open '" + strings.ReplaceAll(target, "'", "'\"'\"'") + "'"
 				return m, tea.ExecProcess(exec.Command("ssh", "-t", "-oBatchMode=yes", host, command), func(err error) tea.Msg { return doneMsg{err: err} }), true
+			}
+		}
+		if key == "a" {
+			if w, ok := m.workScope(); ok && w.State == "verifying" {
+				m.inputWork = w
+				m.startInput(inWorkVerify, "", "", "", false)
+				return m, nil, true
+			}
+		}
+		if key == "enter" {
+			if r, ok := m.selected(); ok && r.work != nil && r.review == nil && r.session == nil && r.work.ID != m.workID {
+				m.openWork(*r.work)
+				return m, nil, true
 			}
 		}
 		if key == "tab" {
@@ -404,6 +426,9 @@ func (m Model) editContext(w work.Scope) tea.Cmd {
 }
 
 func (m Model) workInput(text string) (tea.Model, tea.Cmd, bool) {
+	if next, cmd, handled := m.chiefInput(text); handled {
+		return next, cmd, true
+	}
 	if m.inKind == inCommand {
 		return m, func() tea.Msg {
 			args, err := commandWords(text)
@@ -427,13 +452,16 @@ func (m Model) workInput(text string) (tea.Model, tea.Cmd, bool) {
 			return commandMsg{text: strings.TrimSpace(string(raw)), err: err}
 		}, true
 	}
-	if m.inKind != inWorkFeedback && m.inKind != inWorkDecision && m.inKind != inWorkMessage {
+	if m.inKind != inWorkFeedback && m.inKind != inWorkDecision && m.inKind != inWorkMessage && m.inKind != inWorkVerify {
 		return m, nil, false
 	}
 	if text == "" {
 		return m, nil, true
 	}
 	kind := "decide"
+	if m.inKind == inWorkVerify {
+		kind = "verify"
+	}
 	if m.inKind == inWorkFeedback {
 		kind = "feedback"
 	}
@@ -445,10 +473,13 @@ func (m Model) workInput(text string) (tea.Model, tea.Cmd, bool) {
 	if kind == "message" {
 		if target == "" {
 			target = w.Manager
+			if w.Owner != "" {
+				target = w.Owner
+			}
 		}
 	}
 	return m, m.do(func() (string, error) {
-		_, err := m.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: kind, Actor: "owner", Target: target, Text: text})
+		_, err := m.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: kind, Actor: "owner", Target: target, Text: text, Context: w.Context.Revision})
 		if w.Host != "" {
 			return "queued for " + w.Host + "; awaiting application", err
 		}
@@ -462,7 +493,7 @@ func (m Model) workView() viewPage {
 		return textPage(" continuing work is unavailable; esc returns to the board", "")
 	}
 	b := viewPage{place: "m:" + m.detail}
-	b.WriteString(pal.bold.Render(" "+w.Name) + pal.dim.Render("  "+core.Short(w.ID)+" · manager "+w.Manager) + "\n")
+	b.WriteString(pal.bold.Render(" "+w.Name) + pal.dim.Render("  "+core.Short(w.ID)+" · responsible "+m.agentName(w.Responsible())) + "\n")
 	panels := []string{"brief", "workstreams", "context", "history"}
 	for i, name := range panels {
 		if i == m.workPanel {
@@ -480,6 +511,13 @@ func (m Model) workView() viewPage {
 		m.field(&b, "assessment", w.Brief.Assessment)
 		m.field(&b, "changed", w.Brief.Changed)
 		m.field(&b, "purpose", w.Purpose)
+		m.field(&b, "owner", m.agentName(w.Owner))
+		m.field(&b, "next", w.Next)
+		m.field(&b, "waiting for", w.WaitFor)
+		m.field(&b, "parent", w.Parent)
+		m.field(&b, "result", w.Result)
+		m.field(&b, "verified by", w.VerifiedBy)
+		m.agentFields(&b, w)
 		m.field(&b, "approach", w.Brief.Rationale)
 		m.field(&b, "uncertain", w.Brief.Uncertainty)
 		m.field(&b, "next", w.Brief.Next)
@@ -538,6 +576,12 @@ func (m Model) workView() viewPage {
 	case 1:
 		for i, r := range m.rows() {
 			switch {
+			case r.work != nil && r.work.ID != w.ID && r.review == nil && r.session == nil:
+				b.WriteString(m.mark(i) + pad(r.work.State, 12) + " " + r.work.Name + "\n")
+				if i == m.cursor {
+					m.field(&b, "assessment", r.work.Brief.Assessment)
+					m.field(&b, "next", r.work.Next)
+				}
 			case r.target != "":
 				b.WriteString(m.mark(i) + pad("remote", 10) + " " + r.target + pal.dim.Render("  "+r.work.Host+" · s message · o native session") + "\n")
 			case r.review != nil:
@@ -551,8 +595,21 @@ func (m Model) workView() viewPage {
 		if strings.TrimSpace(w.Context.Text) == "" {
 			b.WriteString(pal.dim.Render(" No shared context recorded. Press e to add guidance for the project.") + "\n\n")
 		}
+		m.field(&b, "direction by", w.Context.Actor)
 		m.field(&b, "guidance", w.Context.Text)
 		b.WriteString("\n INCORPORATED BY\n")
+		ids := make([]string, 0, len(w.Adoptions))
+		for id := range w.Adoptions {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			state := fmt.Sprintf("r%d incorporated", w.Adoptions[id])
+			if w.Adoptions[id] < w.Context.Revision {
+				state = "awaiting incorporation"
+			}
+			b.WriteString("   " + m.agentName(id) + "  " + state + "\n")
+		}
 		sessions := make([]string, 0, len(w.Bindings))
 		for session := range w.Bindings {
 			sessions = append(sessions, session)
@@ -623,10 +680,12 @@ func (m Model) reviewView() viewPage {
 	m.field(&b, "changed", r.Changed)
 	m.field(&b, "feedback", r.Feedback)
 	m.field(&b, "judgment", r.Judgment)
+	m.field(&b, "follow-through", r.FollowThrough)
+	m.field(&b, "followed by", r.FollowedBy)
 	m.field(&b, "requester", r.Requester)
 	m.field(&b, "author", r.Author)
 	m.field(&b, "prepared by", r.Preparer)
-	m.field(&b, "next owner", r.NextOwner(w.Manager))
+	m.field(&b, "next owner", r.NextOwner(w.Responsible()))
 	m.field(&b, "source", r.URL)
 	m.field(&b, "version", r.Version)
 	b.WriteString("\n EVIDENCE\n")

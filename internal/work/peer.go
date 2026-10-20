@@ -26,8 +26,24 @@ func (s *Store) SavePeer(p Peer) error {
 		_, err = s.db.Exec(`UPDATE ym_work_peers SET error=? WHERE host=?`, p.Error, p.Host)
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE ym_work_peers SET state=?,error='',fetched=? WHERE host=?`, raw, p.Fetched.Format(time.RFC3339Nano), p.Host)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, w := range p.Scopes {
+		old, oldErr := scopeTx(tx, p.Host+"/"+w.ID)
+		if oldErr == nil && old.Revision >= w.Revision {
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO ym_agent_queue(agent,work,revision,queued) SELECT agent,work,?,? FROM ym_attachments WHERE work=? ON CONFLICT(agent,work) DO UPDATE SET revision=excluded.revision,error=''`, w.Revision, time.Now().UnixNano(), p.Host+"/"+w.ID); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`UPDATE ym_work_peers SET state=?,error='',fetched=? WHERE host=?`, raw, p.Fetched.Format(time.RFC3339Nano), p.Host); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) Peers() ([]Peer, error) {

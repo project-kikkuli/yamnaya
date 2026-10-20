@@ -111,6 +111,7 @@ func TestStaleJudgmentsAndAuthorityAreRejected(t *testing.T) {
 			s := open(t, filepath.Join(t.TempDir(), "ym.db"))
 			defer s.Close()
 			w := create(t, s)
+			w = commit(t, s, w, work.Event{Type: "manager", Target: "manager", Actor: "owner"})
 			w = commit(t, s, w, observed("v1", 1))
 			w = commit(t, s, w, prepared("v1", 0))
 			w = commit(t, s, w, tc.invalidate)
@@ -205,6 +206,7 @@ func TestGeneratedReviewHistoriesAgreeWithAnIndependentObligationLedger(t *testi
 			s := open(t, path)
 			defer func() { s.Close() }()
 			w := create(t, s)
+			w = commit(t, s, w, work.Event{Type: "manager", Target: "manager", Actor: "owner"})
 			rng := rand.New(rand.NewSource(seed))
 			type fact struct {
 				kind             string

@@ -10,6 +10,8 @@ const (
 )
 
 type Review struct {
+	FollowThrough   string
+	FollowedBy      string
 	ID              string
 	Kind            string
 	URL             string
@@ -46,6 +48,16 @@ func (r Review) NextOwner(manager string) string {
 			return r.Requester
 		}
 		return "author"
+	case Completed:
+		if r.Judgment != "" && r.FollowThrough == "" {
+			if manager != "" {
+				return manager
+			}
+			return "unassigned"
+		}
+		return "none"
+	case "incoming":
+		return "unassigned"
 	case Preparing:
 		if manager != "" {
 			return manager

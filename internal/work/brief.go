@@ -1,6 +1,7 @@
 package work
 
 type Brief struct {
+	Inputs      map[string]int64
 	Assessment  string
 	Rationale   string
 	Changed     string

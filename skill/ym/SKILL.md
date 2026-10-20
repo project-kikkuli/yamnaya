@@ -91,3 +91,17 @@ For an owner review, prepare `ym work prepare WORK REVIEW_ID` from JSON:
 Preserve prior feedback, explain how revisions address it, and own follow-through when feedback or a decision arrives. Never record the owner's judgment yourself. `ym work watch WORK URL --kind github|notion|file --requester PERSON --question TEXT` registers a source. Notion coverage requires shared, registered pages and configured credentials; do not claim a workspace-wide inbox. Coverage failures remain explicit.
 
 Persist the next wake request with `ym work trigger WORK RFC3339 "reason"` when waiting for external conditions. Source changes also wake managers. `ym work relate WORK OTHER "relationship"` connects work across repos. Use `ym work history WORK` to recover decisions and rationale. Closing the terminal does not stop the background service or native agents.
+
+## Delegated agents
+
+`ym agent snapshot AGENT` reads a persistent agent remit, authority, working brief, owned commitments, attachments, recent events, and pending input revisions. Native sessions are replaceable. Act within that authority, investigate consequential changes, verify child results, and own follow-through. Distinguish owner direction from your inference; context and priority retain the actor who wrote them.
+
+`ym agent spawn NAME --role manager --remit TEXT --authority TEXT --directory DIR --parent WORK` creates an accountable child agent. `ym work delegate PARENT NAME --agent AGENT --purpose TEXT --authority TEXT --next TEXT` creates a child commitment. `ym work result WORK EVIDENCE` submits a result; `ym work verify WORK EVIDENCE` requires independent verification by the delegator or owner. A process exit is not verified completion. `ym agent attach CHIEF WORK_OR_SESSION` adds oversight without transferring execution ownership.
+
+End a management pass with `ym agent checkpoint AGENT`, JSON on stdin:
+
+```json
+{"Brief":{"Assessment":"Current conclusion","Rationale":"Why","Changed":"New conclusions","Uncertainty":"What remains unknown","Context":2},"Inputs":{"WORK_ID":14},"Next":"Concrete next action","WaitFor":"Concrete source, child, message, or owner decision"}
+```
+
+Use exact pending revisions from the snapshot and the current workspace context revision. A checkpoint records incorporation, not completion. Leave WaitFor empty when independent work can continue; otherwise name the wake condition and include WakeAt in RFC3339 when external polling is needed. Omit WakeAt when there is no scheduled wake. Re-read the snapshot if new direction arrives before checkpointing. Background execution failures remain pending and wake the delegator; investigate the cause before `ym agent replace AGENT`.

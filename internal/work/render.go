@@ -7,11 +7,11 @@ import (
 )
 
 func Render(out io.Writer, w Scope) {
-	fmt.Fprintf(out, "%s\nwork %s · revision %d · manager %s\n\n", w.Name, w.ID, w.Revision, w.Manager)
+	fmt.Fprintf(out, "%s\nwork %s · revision %d · manager %s\n\n", w.Name, w.ID, w.Revision, w.Responsible())
 	if !w.BriefCurrent() {
 		fmt.Fprintln(out, "Assessment needs refreshing against current context or evidence.")
 	}
-	for _, field := range [][2]string{{"Assessment", w.Brief.Assessment}, {"Changed", w.Brief.Changed}, {"Purpose", w.Purpose}, {"Approach", w.Brief.Rationale}, {"Uncertainty", w.Brief.Uncertainty}, {"Next action", w.Brief.Next}, {"Authority", w.Authority}, {"Context", w.Context.Text}} {
+	for _, field := range [][2]string{{"Assessment", w.Brief.Assessment}, {"Changed", w.Brief.Changed}, {"Purpose", w.Purpose}, {"Approach", w.Brief.Rationale}, {"Uncertainty", w.Brief.Uncertainty}, {"Next action", w.Brief.Next}, {"Authority", w.Authority}, {"Context", w.Context.Text}, {"Direction by", w.Context.Actor}, {"Accountable agent", w.Owner}, {"Parent", w.Parent}, {"Next commitment", w.Next}, {"Waiting for", w.WaitFor}, {"Result evidence", w.Result}, {"Verified by", w.VerifiedBy}} {
 		if field[1] != "" {
 			fmt.Fprintf(out, "\n%s\n%s\n", field[0], field[1])
 		}

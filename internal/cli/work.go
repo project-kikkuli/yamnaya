@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			return err
 		}
 		if purpose != "" {
-			w, err = e.core.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "purpose", Actor: "owner", Text: purpose})
+			w, err = e.core.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "purpose", Actor: e.actor(), Text: purpose})
 			if err != nil {
 				return err
 			}
@@ -33,7 +34,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	})}
 	create.Flags().StringVar(&repo, "repo", "", "repository identity or git common directory")
 	create.Flags().StringVar(&purpose, "purpose", "", "outcome or ongoing responsibility")
-	root.AddCommand(create)
+	root.AddCommand(create, delegationCmd(with))
 	root.AddCommand(&cobra.Command{Use: "list", Short: "List continuing work", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		b, err := e.core.Board()
 		if err != nil {
@@ -74,7 +75,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if err != nil {
 				return err
 			}
-			_, err = e.core.ChangeWork(w, work.Event{Type: kind, Actor: "owner", Target: other.ID, Text: strings.Join(args[2:], " ")})
+			_, err = e.core.ChangeWork(w, work.Event{Type: kind, Actor: e.actor(), Target: other.ID, Text: strings.Join(args[2:], " ")})
 			return err
 		})}
 		root.AddCommand(relation)
@@ -108,7 +109,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(events)
 	})})
-	for _, kind := range []string{"context", "purpose", "authority", "manager", "bind", "message", "close", "resume"} {
+	for _, kind := range []string{"context", "purpose", "authority", "manager", "bind", "message", "close", "resume", "plan", "result", "verify", "reopen", "priority"} {
 		var file string
 		var revision int64 = -1
 		kind := kind
@@ -136,15 +137,28 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if revision >= 0 && revision != w.Revision {
 				return work.ErrConflict
 			}
-			event := work.Event{ID: uuid.NewString(), Type: kind, Actor: "owner", Text: text}
+			event := work.Event{ID: uuid.NewString(), Type: kind, Actor: e.actor(), Text: text}
 			if kind == "manager" || kind == "bind" {
 				event.Target = text
 			}
 			if kind == "message" {
 				event.Target = w.Manager
+				if w.Owner != "" {
+					event.Target = w.Owner
+				}
 				if event.Target == "" {
 					return fmt.Errorf("assign a manager before messaging this work")
 				}
+			}
+			if kind == "priority" {
+				n, parseErr := strconv.Atoi(text)
+				if parseErr != nil {
+					return parseErr
+				}
+				event.Priority = n
+			}
+			if kind == "result" || kind == "verify" {
+				event.Context = w.Context.Revision
 			}
 			w, err = e.core.ChangeWork(w, event)
 			if err == nil {
@@ -169,7 +183,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		if err = json.NewDecoder(io.LimitReader(cmd.InOrStdin(), 8<<20)).Decode(&brief); err != nil {
 			return err
 		}
-		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "brief", Actor: w.Manager, Brief: brief})
+		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "brief", Actor: e.actor(), Brief: brief})
 		return err
 	})})
 	var revision int64
@@ -216,7 +230,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		if kind == "notion" {
 			coverage = "registered pages shared with the integration; Notion has no workspace-wide review-request inbox API"
 		}
-		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "watch", Actor: "owner", Source: work.Source{Kind: kind, URL: address, Requester: requester, Question: question, Coverage: coverage}})
+		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "watch", Actor: e.actor(), Source: work.Source{Kind: kind, URL: address, Requester: requester, Question: question, Coverage: coverage}})
 		return err
 	})}
 	watch.Flags().StringVar(&kind, "kind", "github", "github, notion, or file")
@@ -232,7 +246,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		if err = json.NewDecoder(io.LimitReader(cmd.InOrStdin(), 8<<20)).Decode(&r); err != nil {
 			return err
 		}
-		actor := "owner"
+		actor := e.actor()
 		if caller, callerErr := e.caller(); callerErr == nil {
 			actor = caller.Session
 		} else if e.session != "" {
@@ -241,7 +255,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "prepare", Actor: actor, Target: args[1], Review: r, Context: r.PreparedContext})
 		return err
 	})})
-	for _, kind := range []string{"feedback", "decide"} {
+	for _, kind := range []string{"feedback", "decide", "follow-through"} {
 		kind := kind
 		var expected int64 = -1
 		cmd := &cobra.Command{Use: kind + " <work> <review> <text>", Short: "Record the owner's " + kind + " and preserve follow-through", Args: cobra.MinimumNArgs(3), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -252,7 +266,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if expected >= 0 && expected != w.Revision {
 				return work.ErrConflict
 			}
-			_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: kind, Actor: "owner", Target: args[1], Text: strings.Join(args[2:], " ")})
+			_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: kind, Actor: e.actor(), Target: args[1], Text: strings.Join(args[2:], " ")})
 			return err
 		})}
 		cmd.Flags().Int64Var(&expected, "revision", -1, "work revision you reviewed")
@@ -267,7 +281,7 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		if err != nil {
 			return err
 		}
-		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "trigger", Actor: w.Manager, WakeAt: at, Text: strings.Join(args[2:], " ")})
+		_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: "trigger", Actor: e.actor(), WakeAt: at, Text: strings.Join(args[2:], " ")})
 		return err
 	})})
 	root.AddCommand(&cobra.Command{Use: "export", Short: "Export host-scoped continuing work for a peer", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {

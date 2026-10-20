@@ -14,8 +14,11 @@ def main():
     variants = [
         ("stale-judgment", "internal/work/store.go", "if e.Expected != x.Revision {", "if false {", "TestConflictingContextEdits"),
         ("lost-feedback", "internal/work/event.go", "r.Feedback, r.Judgment = old.Feedback, old.Judgment", 'r.Feedback, r.Judgment = "", old.Judgment', "TestHumanReview"),
-        ("old-source-ready", "internal/work/event.go", 'r.State, r.PreparedVersion = Preparing, ""\n\t\tr.Updated = e.At', "r.State, r.PreparedVersion = old.State, old.PreparedVersion\n\t\tr.Updated = e.At", "TestStaleJudgments"),
+        ("old-source-ready", "internal/work/event.go", 'r.State, r.PreparedVersion = s.PreparationState(), ""\n\t\tr.Updated = e.At', "r.State, r.PreparedVersion = old.State, old.PreparedVersion\n\t\tr.Updated = e.At", "TestStaleJudgments"),
         ("agent-can-decide", "internal/work/event.go", 'if e.Actor != "owner" {', "if false {", "TestStaleJudgmentsAndAuthority"),
+        ("future-input-checkpoint", "internal/work/agent_store.go", "if revision > current.Revision {", "if false {", "TestManagement"),
+        ("empty-management-plan", "internal/work/agent_store.go", 'if strings.TrimSpace(c.Next) == "" && strings.TrimSpace(c.WaitFor) == "" {', "if false {", "TestManagement"),
+        ("obsolete-result-verification", "internal/work/event.go", 's.ResultContext != s.Context.Revision || ', '', "TestDelegator"),
     ]
     results = []
     for name, filename, old, new, test in variants:

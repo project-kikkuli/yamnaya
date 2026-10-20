@@ -125,6 +125,15 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 }
 
 func workCycle(ctx context.Context, c *core.Core, f intake.Fetcher) error {
+	if err := c.Store.Work.RetireDiscoveredManagers(); err != nil {
+		return err
+	}
+	if err := c.Store.Work.MigrateIntake(); err != nil {
+		return err
+	}
+	if err := routeUnassignedIntake(c); err != nil {
+		return err
+	}
 	b, err := c.Board()
 	if err != nil {
 		return err
@@ -254,6 +263,9 @@ func workCycle(ctx context.Context, c *core.Core, f intake.Fetcher) error {
 		if err = c.Store.Work.SavePeer(peer); err != nil {
 			return err
 		}
+	}
+	if err = reconcileAgents(c, b); err != nil {
+		failures = append(failures, err)
 	}
 	return errors.Join(failures...)
 }

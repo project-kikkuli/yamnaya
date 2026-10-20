@@ -164,7 +164,7 @@ func TestJudgmentChecksTheSourceAgainBeforeRecordingAcceptance(t *testing.T) {
 		t.Fatal("accepted a changed source")
 	}
 	current, _ := st.Work.Get(w.ID)
-	if current.Reviews["pr"].State != work.Preparing || current.Reviews["pr"].Version != "head2" {
+	if current.Reviews["pr"].State != "incoming" || current.Reviews["pr"].Version != "head2" {
 		t.Fatal("new evidence was not retained for preparation")
 	}
 }

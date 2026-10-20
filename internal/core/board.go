@@ -127,14 +127,17 @@ type Repo struct {
 }
 
 type Board struct {
-	WorkErrors []string
-	At         time.Time
-	Sessions   []Live
-	Projects   []Project
-	Repos      []Repo
-	Needs      []Need
-	Fleet      Fleet
-	Kills      map[string]time.Time
+	Agents      []work.Agent
+	Attachments []work.Attachment
+	AgentRules  []work.Rule
+	WorkErrors  []string
+	At          time.Time
+	Sessions    []Live
+	Projects    []Project
+	Repos       []Repo
+	Needs       []Need
+	Fleet       Fleet
+	Kills       map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
 
@@ -349,6 +352,19 @@ func (c *Core) Board() (Board, error) {
 	if err := c.attachWork(&b); err != nil {
 		return b, err
 	}
+	b.Agents, err = c.Store.Work.Agents()
+	if err != nil {
+		return b, err
+	}
+	b.Attachments, err = c.Store.Work.Attachments()
+	if err != nil {
+		return b, err
+	}
+	b.AgentRules, err = c.Store.Work.Rules()
+	if err != nil {
+		return b, err
+	}
+	attachAgentUsage(&b)
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)
 	wait, err := c.waiting(b, b.Needs)

@@ -36,6 +36,7 @@ const (
 	modeWork
 	modeReviews
 	modeReview
+	modeChiefs
 )
 
 type inputKind int
@@ -57,20 +58,26 @@ const (
 	inWorkDecision
 	inWorkMessage
 	inCommand
+	inChiefName
+	inChiefRemit
+	inChiefAuthority
+	inWorkVerify
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
-	target  string
-	work    *work.Scope
-	review  *work.Review
-	need    *core.Need
-	repo    *core.Repo
-	project *core.Project
-	session *core.Live
-	member  *core.Member
-	dormant *core.Dormant
-	item    *core.Item
+	chief     *work.Agent
+	attention string
+	target    string
+	work      *work.Scope
+	review    *work.Review
+	need      *core.Need
+	repo      *core.Repo
+	project   *core.Project
+	session   *core.Live
+	member    *core.Member
+	dormant   *core.Dormant
+	item      *core.Item
 	// stale is the collapsed line standing for every item whose mission has no live session.
 	stale bool
 }
@@ -86,6 +93,9 @@ type frame struct {
 }
 
 type Model struct {
+	chiefTarget  string
+	chiefDraft   work.Agent
+	chiefRemit   string
 	workID       string
 	workAction   string
 	reviewID     string
@@ -379,6 +389,10 @@ func (m *Model) follow(key string) {
 
 func rowKey(r row) string {
 	switch {
+	case r.chief != nil:
+		return "chief:" + r.chief.ID
+	case r.attention != "":
+		return "attention:" + r.work.ID + "/" + r.attention
 	case r.target != "":
 		return "target:" + r.work.ID + "/" + r.target
 	case r.review != nil:
@@ -414,6 +428,8 @@ func (m *Model) clamp() {
 func (m Model) rows() []row {
 	var out []row
 	switch m.listMode() {
+	case modeChiefs:
+		return m.chiefRows()
 	case modeReview:
 		return nil
 	case modeWork:
@@ -423,6 +439,17 @@ func (m Model) rows() []row {
 		w, ok := m.workScope()
 		if !ok {
 			return nil
+		}
+		linked := map[string]bool{}
+		for _, link := range m.board.Attachments {
+			if link.Agent == w.Owner {
+				linked[link.Work] = true
+			}
+		}
+		for _, p := range m.board.Projects {
+			if p.Work != nil && p.Work.ID != w.ID && (p.Work.Parent == w.ID || ((w.Kind == "chief" || w.Kind == "agent") && (p.Work.Owner == w.Owner || linked[p.Work.ID]))) {
+				out = append(out, row{work: p.Work, project: &p})
+			}
 		}
 		for _, review := range sortedReviews(w) {
 			r := review
@@ -502,6 +529,7 @@ func (m Model) rows() []row {
 			out = append(out, row{project: &r.Missions[i], repo: &r})
 		}
 	default:
+		out = append(out, m.managementAttention()...)
 		for _, r := range m.reviewRows(work.Ready) {
 			if m.matches(r.work.Name, r.review.Title) {
 				out = append(out, r)
@@ -527,6 +555,9 @@ func (m Model) rows() []row {
 			all := m.matches(r.Name)
 			var missions []row
 			for j := range r.Missions {
+				if r.Missions[j].Work != nil && (r.Missions[j].Work.Kind == "intake" || (r.Missions[j].Work.Kind == "chief" && len(r.Missions[j].Sessions) == 0)) {
+					continue
+				}
 				if all || m.matches(r.Missions[j].Name) {
 					missions = append(missions, row{project: &r.Missions[j], repo: r})
 				}

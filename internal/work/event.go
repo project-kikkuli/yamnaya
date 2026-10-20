@@ -25,6 +25,8 @@ type Event struct {
 	At              time.Time
 	WakeAt          time.Time
 	Execution       *Execution
+	Priority        int
+	Observation     ExecutionObservation
 }
 
 func Apply(s *Scope, e Event) error {
@@ -35,14 +37,75 @@ func Apply(s *Scope, e Event) error {
 		s.Reviews = map[string]Review{}
 	}
 	switch e.Type {
+	case "execution":
+		if _, bound := s.Bindings[e.Target]; !bound {
+			return errors.New("execution must belong to a bound native session")
+		}
+		if s.Observations == nil {
+			s.Observations = map[string]ExecutionObservation{}
+		}
+		s.Observations[e.Target] = e.Observation
+	case "kind":
+		if e.Text != "chief" && e.Text != "agent" && e.Text != "intake" && e.Text != "project" {
+			return errors.New("unknown work kind")
+		}
+		s.Kind = e.Text
+	case "owner":
+		if e.Target == "" {
+			return errors.New("accountable agent is required")
+		}
+		s.Owner = e.Target
+		for id, r := range s.Reviews {
+			if r.State == "incoming" {
+				r.State = s.PreparationState()
+				s.Reviews[id] = r
+			}
+		}
+	case "parent":
+		if e.Target == s.ID {
+			return errors.New("work cannot delegate to itself")
+		}
+		s.Parent = e.Target
+	case "plan":
+		if strings.TrimSpace(e.Text) == "" {
+			return errors.New("plan needs a next action or wait condition")
+		}
+		s.Next, s.WaitFor, s.WakeAt = e.Text, e.Target, e.WakeAt
+	case "priority":
+		s.Priority, s.PriorityBy = e.Priority, e.Actor
+	case "result":
+		if strings.TrimSpace(e.Text) == "" || e.Context != s.Context.Revision {
+			return errors.New("result needs evidence against current context")
+		}
+		s.Result, s.ResultContext, s.State = e.Text, e.Context, "verifying"
+		s.VerifiedBy = ""
+	case "verify":
+		if s.Result == "" || s.ResultContext != s.Context.Revision || e.Context != s.Context.Revision {
+			return errors.New("current result evidence is required")
+		}
+		if e.Actor == s.Owner || e.Actor == "" {
+			return errors.New("completion requires the delegator or owner to verify")
+		}
+		if strings.TrimSpace(e.Text) == "" {
+			return errors.New("verification needs evidence")
+		}
+		s.VerifiedBy, s.VerifiedContext, s.State = e.Actor, e.Context, "completed"
+	case "reopen":
+		s.State = "active"
+		s.VerifiedBy = ""
+		s.Next = e.Text
 	case "context":
+		if s.State == "completed" || s.State == "verifying" {
+			s.State = "active"
+			s.VerifiedBy = ""
+		}
 		if strings.TrimSpace(e.Text) == "" {
 			return errors.New("context must not be empty")
 		}
-		s.Context = Context{Revision: s.Context.Revision + 1, Text: e.Text}
+		s.Context = Context{Revision: s.Context.Revision + 1, Text: e.Text, Actor: e.Actor}
 		for id, r := range s.Reviews {
 			if r.State == Ready {
-				r.State = Preparing
+				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
 		}
@@ -69,6 +132,12 @@ func Apply(s *Scope, e Event) error {
 		}
 	case "manager":
 		s.Manager = e.Target
+		for id, r := range s.Reviews {
+			if r.State == Preparing || r.State == "incoming" {
+				r.State = s.PreparationState()
+				s.Reviews[id] = r
+			}
+		}
 		if e.Target != "" {
 			if _, ok := s.Bindings[e.Target]; !ok {
 				s.Bindings[e.Target] = 0
@@ -78,9 +147,13 @@ func Apply(s *Scope, e Event) error {
 		s.Purpose = e.Text
 		if e.Actor == "owner" {
 			s.Context.Revision++
+			if s.State == "completed" || s.State == "verifying" {
+				s.State = "active"
+				s.VerifiedBy = ""
+			}
 			for id, r := range s.Reviews {
 				if r.State == Ready {
-					r.State = Preparing
+					r.State = s.PreparationState()
 					s.Reviews[id] = r
 				}
 			}
@@ -88,9 +161,13 @@ func Apply(s *Scope, e Event) error {
 	case "authority":
 		s.Authority = e.Text
 		s.Context.Revision++
+		if s.State == "completed" || s.State == "verifying" {
+			s.State = "active"
+			s.VerifiedBy = ""
+		}
 		for id, r := range s.Reviews {
 			if r.State == Ready {
-				r.State = Preparing
+				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
 		}
@@ -143,7 +220,7 @@ func Apply(s *Scope, e Event) error {
 				r.Requester = old.Requester
 			}
 		}
-		r.State, r.PreparedVersion = Preparing, ""
+		r.State, r.PreparedVersion = s.PreparationState(), ""
 		r.Updated = e.At
 		if r.Closed {
 			r.State = "withdrawn"
@@ -176,6 +253,22 @@ func Apply(s *Scope, e Event) error {
 		r.Preparer = e.Actor
 		r.Updated = e.At
 		s.Reviews[e.Target] = r
+	case "follow-through":
+		r, ok := s.Reviews[e.Target]
+		if !ok || r.Judgment == "" || r.State != Completed {
+			return errors.New("follow-through requires a current owner decision")
+		}
+		if e.Context != s.Context.Revision || e.Review.Version != r.Version {
+			return errors.New("follow-through evidence or context changed")
+		}
+		if e.Actor != "owner" && e.Actor != s.Responsible() {
+			return errors.New("follow-through belongs to the accountable manager")
+		}
+		if strings.TrimSpace(e.Text) == "" {
+			return errors.New("follow-through requires result evidence")
+		}
+		r.FollowThrough, r.FollowedBy = e.Text, e.Actor
+		s.Reviews[e.Target] = r
 	case "feedback", "decide":
 		if e.Actor != "owner" {
 			return errors.New("this judgment is reserved for the owner")
@@ -194,6 +287,7 @@ func Apply(s *Scope, e Event) error {
 			r.State, r.Feedback = WithAuthor, e.Text
 		} else {
 			r.State, r.Judgment = Completed, e.Text
+			r.FollowThrough, r.FollowedBy = "", ""
 		}
 		r.Updated = e.At
 		s.Reviews[e.Target] = r
@@ -221,7 +315,7 @@ func Apply(s *Scope, e Event) error {
 				r.Question = e.Source.Question
 			}
 			if r.State == Completed || r.State == "withdrawn" {
-				r.State = Preparing
+				r.State = s.PreparationState()
 			}
 			r.Closed = false
 			r.Updated = e.At
