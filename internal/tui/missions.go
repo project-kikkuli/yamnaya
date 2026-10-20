@@ -95,28 +95,6 @@ func (c cols) workWidth() int {
 
 // missionLine is one mission: name, phase, state, progress, vibe, spend, then what its lead does now.
 func (m Model) missionLine(i int, p core.Project, c cols) string {
-	if p.Work != nil {
-		w := p.Work
-		assessment := w.Brief.Assessment
-		if assessment == "" {
-			assessment = "brief not published"
-			if w.Manager == "" {
-				assessment = "assign a manager · B context"
-			}
-		} else if !w.BriefCurrent() {
-			assessment = "assessment needs refresh · " + assessment
-		}
-		if len(w.CoverageErrors) > 0 {
-			assessment = "needs investigation · " + w.CoverageErrors[0]
-		}
-		width := max(14, min(36, m.width/3))
-		line := m.mark(i) + strings.Repeat(" ", c.indent) + m.hue(p.Key).Render(pad(p.Name, width)) + " " + fmt.Sprintf("%2d live  %2d review  ", len(p.Sessions), w.Ready())
-		line += pad(assessment, max(10, m.width-ansi.StringWidth(line)-1)) + "\n"
-		if i == m.cursor {
-			line += pal.dim.Render(fmt.Sprintf("     manager %s · %d changes · %d awaiting receipt · B brief · C context", w.Manager, w.Changes, w.Pending)) + "\n"
-		}
-		return line
-	}
 	exited := len(p.Sessions) == 0 && len(p.Dormant) > 0
 	name := m.hue(p.Key)
 	if exited {
@@ -153,7 +131,19 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
 		}
 	}
-	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+	line := strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+	if p.Work != nil && i == m.cursor {
+		w := p.Work
+		assessment := w.Brief.Assessment
+		if assessment == "" {
+			assessment = "brief not published"
+		} else if !w.BriefCurrent() {
+			assessment = "assessment needs refresh · " + assessment
+		}
+		line += pal.dim.Render("     "+pad(assessment, max(10, m.width-6))) + "\n"
+		line += pal.dim.Render(fmt.Sprintf("     %d decisions ready · B brief · C context", w.Ready())) + "\n"
+	}
+	return line
 }
 
 // hue is the project's color on this board, apart from every other project's while there are colors to spare.

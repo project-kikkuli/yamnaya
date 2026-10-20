@@ -16,6 +16,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 func usePalette(t *testing.T, color bool) {
@@ -243,5 +244,25 @@ func TestProjectsOnOneBoardGetDifferentHuesWhileThereAreSpare(t *testing.T) {
 				t.Fatalf("%d projects share hues %v", n, used)
 			}
 		})
+	}
+}
+
+func TestMissionActivityAndSpendRemainVisibleWithBriefs(t *testing.T) {
+	for _, width := range []int{80, 100, 160} {
+		for _, status := range []core.Status{core.Busy, core.Idle, core.Waiting} {
+			t.Run(fmt.Sprintf("%d/%s", width, status), func(t *testing.T) {
+				p := core.Project{Key: "ridge", Name: "Compatibility", Status: status, Spend: core.Spend{USD: 42.5}, Sessions: []core.Live{{Session: core.Session{ID: "worker", Status: status}}}, Work: &work.Scope{ID: "scope", Brief: work.Brief{Assessment: "Validating the new API"}}}
+				m := Model{board: core.Board{Fleet: core.Fleet{Ready: true}, Projects: []core.Project{p}}, width: width, cursor: 0}
+				lines := strings.Split(ansi.Strip(m.missionLine(0, p, m.missionCols(2))), "\n")
+				for _, want := range []string{status.String(), "$42.50"} {
+					if !strings.Contains(lines[0], want) {
+						t.Fatalf("missing %s: %s", want, lines[0])
+					}
+				}
+				if !strings.Contains(strings.Join(lines, "\n"), p.Work.Brief.Assessment) {
+					t.Fatal("missing assessment")
+				}
+			})
+		}
 	}
 }
