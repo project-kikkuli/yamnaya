@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,7 +30,12 @@ type Fetcher struct {
 
 func New() Fetcher {
 	return Fetcher{Discover: true, Client: &http.Client{Timeout: 30 * time.Second}, Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		return exec.CommandContext(ctx, name, args...).Output()
+		out, err := exec.CommandContext(ctx, name, args...).Output()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+		}
+		return out, err
 	}, NotionURL: "https://api.notion.com/v1", NotionToken: os.Getenv("NOTION_TOKEN"), NotionReviewer: os.Getenv("NOTION_REVIEWER_ID")}
 }
 
@@ -66,14 +72,18 @@ func (f Fetcher) github(ctx context.Context, source work.Source) (work.Review, e
 	if len(p) != 4 || p[2] != "pull" {
 		return work.Review{}, fmt.Errorf("expected owner/repo/pull/number")
 	}
-	b, err := f.Run(ctx, "gh", "pr", "view", source.URL, "--json", "title,body,headRefOid,updatedAt,reviewRequests,reviewDecision,statusCheckRollup,author,state")
+	b, err := f.Run(ctx, "gh", "api", "repos/"+p[0]+"/"+p[1]+"/pulls/"+p[3])
 	if err != nil {
 		return work.Review{}, fmt.Errorf("GitHub source unavailable: %w", err)
 	}
 	var r struct {
-		Title, Body, HeadRefOid, UpdatedAt, State string
-		Author                                    struct{ Login string }
-		ReviewRequests                            []json.RawMessage
+		Title, Body, State string
+		UpdatedAt          string `json:"updated_at"`
+		MergedAt           string `json:"merged_at"`
+		Head               struct{ SHA string }
+		User               struct{ Login string }
+		Reviewers          []struct{ Login string } `json:"requested_reviewers"`
+		Teams              []struct{ Slug string }  `json:"requested_teams"`
 	}
 	if err = json.Unmarshal(b, &r); err != nil {
 		return work.Review{}, err
@@ -84,7 +94,7 @@ func (f Fetcher) github(ctx context.Context, source work.Source) (work.Review, e
 	}
 	semantic, _ := json.Marshal(r)
 	sum := sha256.Sum256(semantic)
-	return work.Review{ID: source.URL, URL: source.URL, Kind: "PR", Title: r.Title, Version: r.HeadRefOid + ":" + hex.EncodeToString(sum[:8]), Order: at.UnixNano(), Requester: source.Requester, Author: r.Author.Login, Question: source.Question, Evidence: string(b), Provisional: source.Requester == "", Closed: r.State == "CLOSED" || r.State == "MERGED"}, nil
+	return work.Review{ID: source.URL, URL: source.URL, Kind: "PR", Title: r.Title, Version: r.Head.SHA + ":" + hex.EncodeToString(sum[:8]), Order: at.UnixNano(), Requester: source.Requester, Author: r.User.Login, Question: source.Question, Evidence: string(b), Provisional: source.Requester == "", Closed: r.State == "closed" || r.MergedAt != ""}, nil
 }
 
 var notionID = regexp.MustCompile(`[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}`)

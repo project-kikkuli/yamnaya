@@ -4,6 +4,7 @@ package gh
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -38,7 +39,12 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
 } } }`
 
 func query(url string) ([]byte, error) {
-	return exec.Command("gh", "api", "graphql", "-f", "url="+url, "-f", "query="+prQuery).Output()
+	out, err := exec.Command("gh", "api", "graphql", "-f", "url="+url, "-f", "query="+prQuery).Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+	}
+	return out, err
 }
 
 type count struct {

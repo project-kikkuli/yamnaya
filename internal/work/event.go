@@ -291,6 +291,36 @@ func Apply(s *Scope, e Event) error {
 		}
 		r.Updated = e.At
 		s.Reviews[e.Target] = r
+	case "withdraw-request":
+		for i, source := range s.Sources {
+			if source.URL != e.Target || !source.AutomaticRequest() {
+				continue
+			}
+			r, exists := s.Reviews[e.Target]
+			if exists && (r.Feedback != "" || r.Judgment != "") {
+				source.Origin, source.RequestVersion = "", ""
+				source.Coverage = "Retained after owner feedback or decision; automatic assignment no longer active"
+				s.Sources[i] = source
+			} else if source.LinkedPR() {
+				source.Requester, source.Question, source.RequestVersion = "", "", ""
+				source.Coverage = "linked agent PR; human review request not yet confirmed"
+				s.Sources[i] = source
+				if exists {
+					r.Requester, r.Question, r.PreparedVersion = "", "", ""
+					r.Provisional, r.State = true, s.PreparationState()
+				}
+			} else {
+				s.Sources = append(s.Sources[:i], s.Sources[i+1:]...)
+				if exists {
+					r.State = "withdrawn"
+				}
+			}
+			if exists {
+				r.Changed, r.Updated = e.Text, e.At
+				s.Reviews[e.Target] = r
+			}
+			break
+		}
 	case "watch":
 		if e.Source.URL == "" {
 			return errors.New("source address is required")

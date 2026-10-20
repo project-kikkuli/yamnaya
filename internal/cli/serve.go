@@ -118,7 +118,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	})}
 	cmd.Flags().BoolVar(&once, "once", false, "reconcile once without opening a terminal or HTTP listener")
 	cmd.Flags().BoolVar(&discover, "discover", true, "discover native sessions on this host")
-	cmd.Flags().BoolVar(&requests, "github-requests", true, "capture GitHub review-request assignments")
+	cmd.Flags().BoolVar(&requests, "github-requests", true, "capture GitHub review requests addressed directly to your account")
 	cmd.Flags().DurationVar(&interval, "interval", 5*time.Second, "background reconciliation cadence")
 	cmd.Flags().StringVar(&listen, "listen", "127.0.0.1:7763", "loopback address for stable manager briefs")
 	return cmd
@@ -151,15 +151,15 @@ func workCycle(ctx context.Context, c *core.Core, f intake.Fetcher) error {
 	if _, err = c.Redeliver(b); err != nil {
 		return err
 	}
+	var failures []error
 	if _, err = c.RefreshPRs(b); err != nil {
-		return err
+		failures = append(failures, err)
 	}
 	all, err := c.Store.Work.List()
 	if err != nil {
 		return err
 	}
 	budget := 16
-	var failures []error
 	if requestErr != nil {
 		failures = append(failures, requestErr)
 	}

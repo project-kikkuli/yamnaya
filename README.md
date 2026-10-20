@@ -76,7 +76,7 @@ Use the actual context revision and exact observed source versions from `ym work
 
 ## Review intake
 
-GitHub review assignments for the authenticated `gh` account are discovered automatically. A uniquely matching repository chief takes responsibility, falling back to a uniquely configured general chief. Ambiguous or unassigned requests appear in Incoming requests. Existing synthetic review projects migrate there with their evidence, feedback, and original history preserved. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
+GitHub review requests addressed directly to the authenticated `gh` account are discovered automatically. Team requests stay outside personal intake. Withdrawn automatic assignments leave the active queue while their review history remains available; explicit registrations and work with owner feedback or decisions stay tracked. A uniquely matching repository chief takes responsibility, falling back to a uniquely configured general chief. Ambiguous or unassigned requests appear in Incoming requests. Existing synthetic review projects migrate there with their evidence, feedback, and original history preserved. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
 
 ```
 ym work watch WORK https://github.com/owner/repo/pull/42 --requester Mira --question "Accept the migration?"

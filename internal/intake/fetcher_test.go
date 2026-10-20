@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -76,7 +77,7 @@ func TestSourceFailuresDoNotProduceReadyOrEmptyReviews(t *testing.T) {
 }
 
 func TestGitHubSourceVersionsIgnoreCheckChurnAndTrackTheReviewedContent(t *testing.T) {
-	content := map[string]any{"title": "Index change", "body": "Keep old index", "headRefOid": "abc", "updatedAt": "2026-01-01T00:00:00Z", "state": "OPEN", "author": map[string]string{"login": "developer"}, "statusCheckRollup": []string{"running"}}
+	content := map[string]any{"title": "Index change", "body": "Keep old index", "head": map[string]string{"sha": "abc"}, "updated_at": "2026-01-01T00:00:00Z", "state": "open", "user": map[string]string{"login": "developer"}, "statusCheckRollup": []string{"running"}}
 	f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) { return json.Marshal(content) }}
 	source := work.Source{Kind: "github", URL: "https://github.com/example/query/pull/241", Requester: "owner"}
 	a, err := f.Fetch(context.Background(), source)
@@ -91,8 +92,8 @@ func TestGitHubSourceVersionsIgnoreCheckChurnAndTrackTheReviewedContent(t *testi
 	if a.Version != b.Version {
 		t.Fatal("CI polling invalidated a source-identical review")
 	}
-	content["headRefOid"] = "def"
-	content["updatedAt"] = "2026-01-02T00:00:00Z"
+	content["head"] = map[string]string{"sha": "def"}
+	content["updated_at"] = "2026-01-02T00:00:00Z"
 	c, err := f.Fetch(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +108,9 @@ func TestGitHubIntakeReportsCoverageAndHumanRequestIdentity(t *testing.T) {
 		f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if args[0] == "api" && args[1] == "user" {
 				return []byte("reviewer\n"), nil
+			}
+			if strings.HasSuffix(args[len(args)-1], "/requested_reviewers") {
+				return []byte(`{"users":[{"login":"reviewer"}],"teams":[]}`), nil
 			}
 			return []byte(fmt.Sprintf(`[{"total_count":1,"incomplete_results":%t,"items":[{"updated_at":"2026-01-02T00:00:00Z","pull_request":{"html_url":"https://github.com/example/query/pull/241"}}]}]`, incomplete)), nil
 		}}
@@ -133,5 +137,73 @@ func TestEquivalentSourceLinksHaveOneIdentity(t *testing.T) {
 		if err != nil || a != b {
 			t.Fatalf("same source had different identities: %s %s %v", a, b, err)
 		}
+	}
+}
+
+func TestGitHubRequestsRequireAnIndividualReviewerEvenWithStaleSearchResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, reviewers string
+		want            int
+	}{
+		{"direct", `{"users":[{"login":"reviewer"}],"teams":[]}`, 1},
+		{"team only", `{"users":[],"teams":[{"slug":"reviewer"}]}`, 0},
+		{"mixed", `{"users":[{"login":"REVIEWER"}],"teams":[{"slug":"developers"}]}`, 1},
+		{"another user", `{"users":[{"login":"someone-else"}],"teams":[{"slug":"developers"}]}`, 0},
+		{"withdrawn", `{"users":[],"teams":[]}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				switch {
+				case args[1] == "user":
+					return []byte("reviewer"), nil
+				case strings.HasSuffix(args[len(args)-1], "/requested_reviewers"):
+					return []byte(tc.reviewers), nil
+				default:
+					endpoint, err := url.Parse(args[len(args)-1])
+					if err != nil || endpoint.Query().Get("q") != "is:pr is:open user-review-requested:reviewer" {
+						t.Fatalf("search includes indirect assignments: %v", args)
+					}
+					return []byte(`[{"total_count":1,"items":[{"updated_at":"2026-01-02T00:00:00Z","pull_request":{"html_url":"https://github.com/example/query/pull/241"}}]}]`), nil
+				}
+			}}
+			got, err := f.Requests(context.Background())
+			if err != nil || len(got) != tc.want {
+				t.Fatalf("requests = %+v, %v; want %d", got, err, tc.want)
+			}
+			if len(got) > 0 && !got[0].AutomaticRequest() {
+				t.Fatal("automatic provenance lost")
+			}
+		})
+	}
+}
+
+func TestGitHubPullRESTEvidenceTracksContentReviewersAndClosure(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, merged string
+		closed              bool
+	}{
+		{"open", "open", "", false},
+		{"closed", "closed", "", true},
+		{"merged", "closed", "2026-01-02T00:00:00Z", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := map[string]any{"title": "Index change", "body": "Replace the index", "head": map[string]string{"sha": "abc"}, "updated_at": "2026-01-01T00:00:00Z", "state": tc.state, "merged_at": tc.merged, "user": map[string]string{"login": "developer"}, "requested_reviewers": []map[string]string{{"login": "reviewer"}}}
+			f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if strings.Join(args, " ") != "api repos/example/query/pulls/241" {
+					t.Fatalf("not a REST pull read: %v", args)
+				}
+				return json.Marshal(content)
+			}}
+			source := work.Source{Kind: "github", URL: "https://github.com/example/query/pull/241"}
+			first, err := f.Fetch(context.Background(), source)
+			if err != nil || first.Closed != tc.closed || first.Author != "developer" || !strings.Contains(first.Evidence, "Replace the index") {
+				t.Fatalf("lost evidence: %+v %v", first, err)
+			}
+			content["requested_reviewers"] = []map[string]string{}
+			second, err := f.Fetch(context.Background(), source)
+			if err != nil || second.Version == first.Version {
+				t.Fatalf("reviewer withdrawal invisible: %+v %v", second, err)
+			}
+		})
 	}
 }

@@ -210,6 +210,11 @@ func (s *Store) Commit(e Event) (Scope, error) {
 	if _, err = tx.Exec(`UPDATE ym_work SET state=? WHERE id=?`, raw, x.ID); err != nil {
 		return x, err
 	}
+	if e.Type == "withdraw-request" {
+		if _, err = tx.Exec(`DELETE FROM ym_work_source_errors WHERE work=? AND url=?`, x.ID, e.Target); err != nil {
+			return x, err
+		}
+	}
 	raw, err = json.Marshal(e)
 	if err != nil {
 		return x, err
@@ -229,7 +234,7 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "message":
 		destinations = append(destinations, e.Target)
-	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "wake", "watch", "close", "resume", "relate", "unrelate":
+	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
 		destinations = append(destinations, "@manager")
 	case "purpose":
 		if e.Actor == "owner" {

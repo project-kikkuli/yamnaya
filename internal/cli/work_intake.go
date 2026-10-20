@@ -40,8 +40,22 @@ func captureRequests(ctx context.Context, c *core.Core, f intake.Fetcher) error 
 		}
 	}
 	byURL := map[string]work.Scope{}
+	active := map[string]bool{}
+	for _, source := range sources {
+		active[source.URL] = true
+	}
 	for _, w := range all {
 		for _, source := range w.Sources {
+			if source.AutomaticRequest() && !active[source.URL] {
+				current, err := c.Store.Work.Get(w.ID)
+				if err != nil {
+					return err
+				}
+				if _, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: current.Revision, Type: "withdraw-request", Actor: "GitHub", Target: source.URL, Text: "No active direct-user GitHub review request; team requests do not create personal obligations"}); err != nil {
+					return err
+				}
+				continue
+			}
 			byURL[source.URL] = w
 		}
 	}
@@ -53,7 +67,16 @@ func captureRequests(ctx context.Context, c *core.Core, f intake.Fetcher) error 
 		if found {
 			current := false
 			for _, old := range w.Sources {
-				if old.URL == source.URL && old.RequestVersion == source.RequestVersion && old.Requester != "" {
+				if old.URL != source.URL {
+					continue
+				}
+				if !old.AutomaticRequest() && !old.LinkedPR() {
+					current = true
+				}
+				if old.LinkedPR() {
+					source.Origin = "session-pr"
+				}
+				if old.AutomaticRequest() && old.RequestVersion == source.RequestVersion {
 					current = true
 				}
 			}
@@ -78,7 +101,7 @@ func captureRequests(ctx context.Context, c *core.Core, f intake.Fetcher) error 
 		if err != nil {
 			return err
 		}
-		if _, err = c.Store.Work.Commit(work.Event{ID: "request/" + source.URL + "/" + source.RequestVersion, Work: w.ID, Expected: w.Revision, Type: "watch", Actor: "GitHub", Source: source}); err != nil {
+		if _, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "watch", Actor: "GitHub", Source: source}); err != nil {
 			return err
 		}
 		byURL[source.URL] = w
@@ -121,7 +144,7 @@ func captureSessionPRs(c *core.Core, b core.Board) error {
 			if err != nil {
 				return err
 			}
-			source := work.Source{Kind: "github", URL: pr.URL, Coverage: "linked agent PR; human review request not yet confirmed"}
+			source := work.Source{Origin: "session-pr", Kind: "github", URL: pr.URL, Coverage: "linked agent PR; human review request not yet confirmed"}
 			if _, err = c.Store.Work.Commit(work.Event{ID: fmt.Sprintf("linked-pr/%s/%s", w.ID, pr.URL), Work: w.ID, Expected: current.Revision, Type: "watch", Actor: "discovery", Source: source}); err != nil {
 				return err
 			}
