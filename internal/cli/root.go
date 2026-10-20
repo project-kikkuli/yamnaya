@@ -2,9 +2,11 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,9 +16,11 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/health"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/intake"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
+	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 // Wire builds a core with every adapter and the store at path.
@@ -41,6 +45,13 @@ func Wire(path string) (*core.Core, error) {
 	if l, err := newLauncher(); err == nil {
 		l.core = c
 		c.Launches = l
+		c.BackgroundSend = func(s core.Live, text string) error { _, err := l.sendFrom(s, text, false); return err }
+	}
+	c.Wake = func(session, text string) error { return wakeWork(c, session, text) }
+	c.CheckReview = func(source work.Source) (work.Review, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return intake.New().Fetch(ctx, source)
 	}
 	return c, c.ScopeItems()
 }
@@ -81,6 +92,10 @@ func NewRoot() *cobra.Command {
 	}
 	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
 		adoptChildren()
+		if err := ensureWorkService(); err != nil {
+			return err
+		}
+		e.core.KeepAlive = ensureWorkService
 		dir, err := stateDir()
 		if err != nil {
 			return err
@@ -92,6 +107,10 @@ func NewRoot() *cobra.Command {
 		return tui.Run(e.core)
 	})
 	root.AddCommand(
+		workCmd(with),
+		serveCmd(with),
+		serviceCmd(),
+		workRunCmd(with),
 		itemCmd(with),
 		phaseCmd(with),
 		vibeCmd(with),

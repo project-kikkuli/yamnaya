@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,11 +150,11 @@ func TestVibeTableMigratesOnceAndKeepsHistory(t *testing.T) {
 
 type discoverCount struct {
 	Harness
-	n *int
+	n *atomic.Int64
 }
 
 func (d discoverCount) Discover(procs []proc.Proc) []Session {
-	*d.n++
+	d.n.Add(1)
 	return d.Harness.Discover(procs)
 }
 
@@ -181,7 +182,7 @@ func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 			w.run(10, 1, "/dev/t1", "claude", "lead", Busy)
 			w.run(11, 10, "/dev/t1", "codex", "worker", Busy)
 			w.run(30, 1, "/dev/t3", "claude", "other", Idle)
-			scans := 0
+			var scans atomic.Int64
 			w.core.Harnesses = []Harness{discoverCount{w.claude, &scans}, discoverCount{w.codex, &scans}}
 			if tc.setter != "" {
 				if _, err := w.core.Store.AddVibe(Vibe{Place: "Nebraska", Session: tc.setter, Harness: "claude"}); err != nil {
@@ -198,8 +199,8 @@ func TestVibeNudgeAsksUntilTheMissionHasAFreshVibe(t *testing.T) {
 					t.Fatalf("nudge = %q, want %q", got, tc.want)
 				}
 			}
-			if (scans > 0) != tc.scans {
-				t.Errorf("board scans = %d, want a scan %v", scans, tc.scans)
+			if (scans.Load() > 0) != tc.scans {
+				t.Errorf("board scans = %d, want a scan %v", scans.Load(), tc.scans)
 			}
 			if all, _ := w.core.Store.Vibes(); len(all) != map[bool]int{true: 1}[tc.setter != ""] {
 				t.Errorf("nudging stored vibes: %+v", all)

@@ -57,6 +57,12 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.agentView()
 		case modeItems:
 			body = bodyModel.itemsView()
+		case modeWork:
+			body = bodyModel.workView()
+		case modeReviews:
+			body = bodyModel.reviewsView()
+		case modeReview:
+			body = bodyModel.reviewView()
 		default:
 			body = bodyModel.listView()
 		}
@@ -82,7 +88,7 @@ func (m Model) prepareView() viewPage {
 		foot = append(foot, textPage(ansi.Wrap(line, max(20, m.width-1), " "), "").lines...)
 	}
 	room := max(1, m.height-len(foot))
-	if m.mode == modeAgent && len(lines) > room && room > top {
+	if (m.mode == modeScreen || m.mode == modeAgent || m.mode == modeReview || (m.mode == modeWork && m.workPanel != 1)) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -140,6 +146,9 @@ func (m Model) header() string {
 		}
 	}
 	h := pal.bold.Render(" ym") + "    " + strings.Join(parts, "  ")
+	if len(m.board.WorkErrors) > 0 {
+		h += "\n" + pal.yellow.Render(" coverage: "+strings.Join(m.board.WorkErrors, "; "))
+	}
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
@@ -163,6 +172,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
+			inWorkFeedback: "feedback; next action returns to author", inWorkDecision: "record judgment", inWorkMessage: "message " + m.inLabel, inCommand: "ym command",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)"}[m.inKind]
@@ -191,12 +201,26 @@ func (m Model) footer() []string {
 	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
 		return append(lines, pal.dim.Render(" ↑↓ move   enter open   ? help"))
 	}
-	lines = append(lines, pal.dim.Render(" "+m.hints()))
+	line := " "
+	for _, hint := range strings.Split(m.hints(), "   ") {
+		if ansi.StringWidth(line+hint) > max(20, m.width-1) && strings.TrimSpace(line) != "" {
+			lines = append(lines, pal.dim.Render(strings.TrimRight(line, " ")))
+			line = " "
+		}
+		line += hint + "   "
+	}
+	lines = append(lines, pal.dim.Render(strings.TrimRight(line, " ")))
 	return lines
 }
 
 func (m Model) hints() string {
 	switch m.mode {
+	case modeWork:
+		return "tab brief/work/context/history   C edit context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
+	case modeReviews:
+		return "↑↓ move   enter review   tab ready/preparing/author/completed   B brief   : command   esc back"
+	case modeReview:
+		return "↑↓ scroll   a judgment   f feedback   B manager brief   V source   esc back"
 	case modeHelp, modeScreen:
 		return "esc back"
 	case modeItems:
@@ -216,7 +240,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return "↑↓ scroll   space/b page   o go to its session   O beside   s send   K kill   L land   F forget   T switch   esc back"
 	}
-	return "↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   K kill   L land   F forget   T switch   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A scenery   ? help   q quit"
+	return "↑↓ move   enter open   B brief   R reviews   C context   V artifact   s message   a answer   g go ahead   : command   o session   n new   / filter   I items   U usage   A scenery   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -234,7 +258,7 @@ func (m Model) listView() viewPage {
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
-		if r.need != nil && !m.isStale(r.need) {
+		if r.review != nil || (r.need != nil && !m.isStale(r.need)) {
 			needs++
 		}
 	}
@@ -243,16 +267,30 @@ func (m Model) listView() viewPage {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
 	repos := false
+	nativeProgress := false
+	for _, r := range rows {
+		if r.project != nil && r.project.Work == nil {
+			nativeProgress = true
+			break
+		}
+	}
 	cols := m.missionCols(2)
 	for i, r := range rows {
-		if (r.repo != nil || r.project != nil) && !repos {
+		if r.review == nil && (r.repo != nil || r.project != nil) && !repos {
 			repos = true
 			b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n")
-			if cols.bar > 0 {
+			if cols.bar > 0 && nativeProgress {
 				b.WriteString(pal.dim.Render("   "+progressLegend) + "\n")
 			}
 		}
 		switch {
+		case r.review != nil:
+			b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.review.Kind, 9)) + " " + pad(r.work.Name, min(28, max(12, m.width/4))) + " " + r.review.Title + "\n")
+			if i == m.cursor {
+				m.field(&b, "ask", r.review.Question)
+				m.field(&b, "rec", r.review.Recommendation)
+				m.field(&b, "changed", r.review.Changed)
+			}
 		case r.stale:
 			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
 			if i == m.cursor {
@@ -291,6 +329,13 @@ func (m Model) needsIn(r core.Repo) int {
 		keys[p.Key] = true
 	}
 	n := 0
+	seen := map[string]bool{}
+	for _, p := range r.Missions {
+		if p.Work != nil && !seen[p.Work.ID] {
+			n += p.Work.Ready()
+			seen[p.Work.ID] = true
+		}
+	}
 	for _, need := range m.board.Needs {
 		if keys[need.Project] {
 			n++
@@ -1095,6 +1140,12 @@ func (m Model) pickView() string {
 }
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
+
+   B            open the selected project's living manager brief; tab switches brief, workstreams, context, and history
+   R            all review obligations; tab switches ready, preparing, with author, and completed
+   C            edit project context in $EDITOR, preserving the revision you started from
+   V            open the review's original source or the project's stable rich brief in the browser
+   :            run an owner command without leaving the board, for example work watch ID URL --kind notion
 
  NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
  whose last reply asks you with no item filed ("waiting:", the first question it asks).

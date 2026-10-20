@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 // Core composes harnesses, hosts and the store.
@@ -34,8 +35,12 @@ type Core struct {
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
 	Port func(cwd, id, to string) (string, error)
 	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean syscall.Kill and 3s.
-	Signal    func(pid int, sig syscall.Signal) error
-	KillGrace time.Duration
+	Signal         func(pid int, sig syscall.Signal) error
+	KillGrace      time.Duration
+	BackgroundSend func(Live, string) error
+	Wake           func(string, string) error
+	CheckReview    func(work.Source) (work.Review, error)
+	KeepAlive      func() error
 
 	gc gitCache
 }
@@ -74,6 +79,7 @@ func (l Live) Location() string {
 
 // Project is a mission: a root session and the sessions it spawned.
 type Project struct {
+	Work     *work.Scope
 	Key      string
 	Name     string
 	Repo     string
@@ -90,7 +96,9 @@ type Project struct {
 }
 
 // Shown reports whether the mission has a session running or one ym can revive.
-func (p Project) Shown() bool { return len(p.Sessions) > 0 || len(p.Dormant) > 0 }
+func (p Project) Shown() bool {
+	return (p.Work != nil && p.Work.InFlight()) || len(p.Sessions) > 0 || len(p.Dormant) > 0
+}
 
 // Duplicated reports whether any session of the project runs in more than one process.
 func (p Project) Duplicated() bool {
@@ -119,13 +127,14 @@ type Repo struct {
 }
 
 type Board struct {
-	At       time.Time
-	Sessions []Live
-	Projects []Project
-	Repos    []Repo
-	Needs    []Need
-	Fleet    Fleet
-	Kills    map[string]time.Time
+	WorkErrors []string
+	At         time.Time
+	Sessions   []Live
+	Projects   []Project
+	Repos      []Repo
+	Needs      []Need
+	Fleet      Fleet
+	Kills      map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
 
@@ -336,6 +345,9 @@ func (c *Core) Board() (Board, error) {
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}
+	}
+	if err := c.attachWork(&b); err != nil {
+		return b, err
 	}
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)

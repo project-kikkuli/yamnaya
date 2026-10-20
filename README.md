@@ -1,6 +1,6 @@
 # yamnaya
 
-`ym` is one full-screen terminal app that shows every running Claude Code and Codex session, what needs you, and how each project is going. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
+`ym` is an alpine terminal board for continuing software work: current assessments, active Claude Code and Codex sessions, and prepared decisions that need you. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
 
 ## Install
 
@@ -13,7 +13,7 @@
 
 ## The screen
 
-- **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result. Mission rows also show a progress bar and its percent done, with a dimmed legend under the header saying what done counts.
+- **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result. Continuing mission rows show the manager assessment, live sessions, pending judgments and changes. Native detail retains branch-gate progress.
 - **Progress**: `(crew finished + gates passed) / (crew dispatched + 6 × open branches)`. A branch passes six gates: branch, commits, pull request open, CI green, review threads resolved, merged. A subagent killed or failed mid-turn counts in neither part, so it neither inflates the bar nor holds it below 100%; one that ends by handing back its report counts as finished. Agent-set phases are a label and never move the bar. A mission's detail shows the raw counts and each branch's gate strip.
 - **Needs you**: permission prompts with the tool and command, then open items with the agent's recommendation, how much they block and which session filed them. Answer (`a`), later (`l`), why (`w`) or dismiss (`x`) inline. Last come idle sessions whose last reply asks you (the same block of questions `h` counts) while no open item of theirs, permission prompt or earlier dismissal of that reply covers it, shown as `waiting:` with the first question of that block: `w` or `enter` shows the whole reply, `a` sends your answer the way `ym send` does and clears the row, and `x` hides it until the session asks again.
 - **Fleet line**: each Claude and Codex limit window with its use and reset, and today's and the last seven days' spend at API prices. Every repo, mission, session and agent shows its own spend, subagents and child threads included.
@@ -32,6 +32,54 @@ Claude Code reports its limits only to the statusline, so pipe the statusline in
     printf '%s' "$input" | ym limits record >/dev/null 2>&1 &
 
 Spend covers the transcripts on the host ym runs on, and the board names that host; limits are account-wide.
+
+## Continuing work
+
+The repo view stays the entry point. Missions retain their purpose, manager, context, briefs, review obligations and history after their sessions exit. Discovery attaches existing sessions automatically. Use `ym work create "Compatibility" --repo /src/query/.git --purpose "Preserve v2 callers"` for work that starts without a session, then `ym work bind WORK SESSION` and `ym work manager WORK SESSION` to assign independent native sessions. `ym work relate WORK OTHER "depends on the schema migration"` connects work across repositories without changing repo grouping.
+
+- `B` reads the selected project's manager brief. `tab` moves through brief, workstreams, shared context and history. Changes since the last read appear in the brief; assessment freshness is tied to its cited sources and context.
+- `R` opens review obligations. `tab` switches ready, preparing, with author and completed. Opening an obligation restores its question, recommendation, evidence and previous feedback. `a` records a judgment; `f` sends feedback into the manager's durable inbox and transfers follow-through to them. Neither action posts to GitHub or Notion. Reading preserves the obligation.
+- `C` edits shared context in `$EDITOR`. Delivery, receipt and each session's explicit adoption of the context revision remain distinct. Context changes invalidate prepared judgments.
+- `s` messages the selected workstream or manager. `o` opens its native session. `V` opens the original source from a review, or the stable rich brief from a project. A manager can publish a separate artifact URL.
+- `:` runs owner CLI commands with quoted arguments, without shell expansion. Command output opens in a scrollable reader.
+
+`ym serve` runs discovery, source reconciliation, persisted triggers, delivery and the loopback brief server independently of the terminal. Opening the board starts it detached; closing the board leaves it and native agents running. It reloads when its binary changes. `ym service status` shows its heartbeat, address and errors. After changing credentials, `ym service restart` starts it with the current shell's environment. The default brief address is `http://127.0.0.1:7763/brief/WORK`.
+
+Managers receive durable updates through `ym work inbox` (also included in `ym item inbox`). Exited managers can resume through their native Claude or Codex CLI using their original directory and normal configuration. Up to four detached manager resumes run on a host; independently running agents are unrestricted. Execution failures appear in the brief's coverage status and logs under the state directory. This requires the native CLI's own authentication and tool permissions. Workstations and browser access retain their own lifecycle and configuration.
+
+Managers publish `ym work brief WORK` from JSON on stdin:
+
+```json
+{"Assessment":"v2 callers remain compatible","Rationale":"Keep one resolver","Changed":"Nested case verified","Uncertainty":"First-cohort traffic","Next":"Check the SDK","Context":2,"Evidence":{"REVIEW":"SOURCE_VERSION"}}
+```
+
+Use the actual context revision and exact observed source versions from `ym work show WORK --json`. `Artifact` is an optional browser artifact URL. `ym --session SESSION work adopt WORK --revision 2` records incorporation of changed direction. `ym work trigger WORK RFC3339 "reassess after CI"` persists the next wake request; registered source changes also wake managers.
+
+## Review intake
+
+GitHub review assignments for the authenticated `gh` account are discovered automatically. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
+
+```
+ym work watch WORK https://github.com/owner/repo/pull/42 --requester Mira --question "Accept the migration?"
+ym work watch WORK https://www.notion.so/PAGE_ID --kind notion --requester Mira --question "Accept the resolver design?"
+ym work watch WORK /src/design.html --kind file --requester Mira --question "Approve the proposal?"
+```
+
+Notion requires `NOTION_TOKEN` and pages shared with that integration, including read-comment access. Optional `NOTION_REVIEWER_ID` enables explicit mention detection on watched pages. Page blocks and comments are paginated. Coverage is limited to registered pages; Notion has no workspace-wide review-request inbox API. Missing credentials, incomplete GitHub search results and unavailable sources are surfaced as coverage gaps.
+
+Preparation uses `ym work prepare WORK REVIEW` with JSON on stdin:
+
+```json
+{"Version":"SOURCE_VERSION","PreparedContext":2,"Question":"Accept the migration?","Recommendation":"Accept","Evidence":"Compatibility and rollback results","Changed":"Nested case added"}
+```
+
+A source or context revision removes stale preparation from the ready queue. Feedback remains attached when a revision returns. Judgments recheck registered sources before committing; unavailable or changed evidence must be reconciled first. `ym work history WORK` retains decision rationale and follow-through events. `ym work close WORK "reason"` archives work while keeping outstanding reviews visible; `resume` reactivates it.
+
+`ym work host SSH_ALIAS` brings captured work from an independent host into the same board. Run a compatible `ym serve` there. Messages and judgments queue to their origin and remain visibly pending until applied; an unavailable host retains its last captured state. `ym work list` includes captured hosts, while `work export` exports local work only. Remote history in the local reader is the most recent 20 events; full history remains on its origin.
+
+## Validation
+
+Run `agent-slot -- go test ./...` and `agent-slot -- go vet ./...`. Lifecycle tests replay generated histories against SQLite and an independent obligation ledger, including restarts, duplicate events, stale decisions and context adoption. Process tests run the service, a fixture manager and the HTTP brief server with the terminal absent. `agent-slot -- python3 scripts/check-work-mutants.py` checks that behavioral tests reject deliberately broken implementations. The 1,000-workstream test simulates records and terminal aggregation; it does not run 1,000 autonomous agents or provide formal Go proofs.
 
 ## Remote hosts
 

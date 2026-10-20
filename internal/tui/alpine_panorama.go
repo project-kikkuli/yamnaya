@@ -81,6 +81,12 @@ func (m Model) drawPanorama(c *alpineCanvas, l alpineLayout) {
 		c.label(i*width, c.h-3, ansi.Truncate(name, width-2, "…"), ink)
 		c.label(i*width, c.h-2, ansi.Truncate(g.skylineState(), width-2, "…"), alpineCloud)
 		artifacts := fmt.Sprintf("%d PRs", g.prs)
+		if g.reviews > 0 {
+			artifacts += fmt.Sprintf(" · %d judgments ready", g.reviews)
+		}
+		if g.preparing > 0 {
+			artifacts += fmt.Sprintf(" · %d preparing", g.preparing)
+		}
 		if len(foreground.artifacts) > 0 {
 			a := foreground.artifacts[0]
 			artifacts = a.label + " · " + a.stateLabel()

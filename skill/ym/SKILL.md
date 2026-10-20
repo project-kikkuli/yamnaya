@@ -69,3 +69,25 @@ Say how your mission is going as a place: `ym vibe "<place>" --why "<one line>"`
 - Great: Hawaii, US-Annexed Iceland, Patagonia, the Amalfi Coast
 
 The place is just a place; status goes in `--why`. Set it when a phase changes, when something breaks or lands, and in your final report. Be honest; the board shows it next to the facts. `ym vibe` shows your mission's current vibe and history.
+
+## Continuing work
+
+`ym work list` finds durable work attached to native sessions. Read `ym work show WORK --json` for its purpose, authority, current context revision, source versions and review obligations. `ym work inbox` receives work updates; `ym item inbox` includes them too. Reading updates does not establish adoption. After incorporating direction into the plan and work, record `ym --session SESSION work adopt WORK --revision N`.
+
+As manager, keep a current assessment with `ym work brief WORK`, JSON on stdin:
+
+```json
+{"Assessment":"Current conclusion","Rationale":"Why this approach","Changed":"What changed","Uncertainty":"What remains unknown","Next":"Next independent action","Context":2,"Evidence":{"REVIEW_ID":"SOURCE_VERSION"}}
+```
+
+Use exact observed source versions and current context, never guessed revisions. Optional `Artifact` is a stable rich artifact URL; the service also renders each brief at a stable local address. Publish assessments even when no owner decision is pending. Scope work to delegated authority and preserve independent native execution and browser access.
+
+For an owner review, prepare `ym work prepare WORK REVIEW_ID` from JSON:
+
+```json
+{"Version":"SOURCE_VERSION","PreparedContext":2,"Question":"The judgment needed","Recommendation":"Recommended answer","Evidence":"Relevant evidence","Changed":"Changes since prior review"}
+```
+
+Preserve prior feedback, explain how revisions address it, and own follow-through when feedback or a decision arrives. Never record the owner's judgment yourself. `ym work watch WORK URL --kind github|notion|file --requester PERSON --question TEXT` registers a source. Notion coverage requires shared, registered pages and configured credentials; do not claim a workspace-wide inbox. Coverage failures remain explicit.
+
+Persist the next wake request with `ym work trigger WORK RFC3339 "reason"` when waiting for external conditions. Source changes also wake managers. `ym work relate WORK OTHER "relationship"` connects work across repos. Use `ym work history WORK` to recover decisions and rationale. Closing the terminal does not stop the background service or native agents.

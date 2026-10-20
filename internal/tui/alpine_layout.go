@@ -19,11 +19,20 @@ type alpineLayout struct {
 }
 
 func (m Model) sceneFocus() string {
+	if m.listMode() == modeWork || m.listMode() == modeReview {
+		for _, p := range m.board.Projects {
+			if p.Work != nil && p.Work.ID == m.workID {
+				return "m:" + p.Key
+			}
+		}
+	}
 	if m.listMode() == modeAgent {
 		return "a:" + m.sess + "/" + m.agent
 	}
 	if r, ok := m.selected(); ok {
 		switch {
+		case r.review != nil && r.project != nil:
+			return "m:" + r.project.Key
 		case r.need != nil:
 			return "m:" + r.need.Project
 		case r.member != nil:
@@ -59,7 +68,11 @@ func (m Model) sceneLayout(top, room, used int) alpineLayout {
 	if l.panelWidth > 0 {
 		rows := len(strings.Split(ansi.Wrap(l.focusGroup.states(), l.panelWidth, " "), "\n"))
 		summaryRows := len(strings.Split(ansi.Wrap(l.focusGroup.artifactSummary(), l.panelWidth, " "), "\n"))
-		desired := rows + 11 + summaryRows + min(2, l.focusGroup.artifactTotal())*5
+		assessmentRows := 0
+		if l.focusGroup.assessment != "" {
+			assessmentRows = min(3, len(strings.Split(ansi.Wrap(l.focusGroup.assessment, l.panelWidth, " "), "\n"))) + 1
+		}
+		desired := assessmentRows + rows + 11 + summaryRows + min(2, l.focusGroup.artifactTotal())*5
 		l.panelHeight = min(desired, max(0, room-top))
 	}
 	l.lakeStart = max(used+1, l.panelStart+l.panelHeight+1)
@@ -105,6 +118,9 @@ func (m Model) sceneLayout(top, room, used int) alpineLayout {
 			omitted++
 			other.projects += g.projects
 			other.prs += g.prs
+			other.reviews += g.reviews
+			other.preparing += g.preparing
+			other.withAuthor += g.withAuthor
 			other.needs += g.needs
 			other.cut += g.cut
 			for state := range g.counts {

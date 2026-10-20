@@ -2,6 +2,10 @@ package tui
 
 // Commands maps each ym command the owner runs to the board key that does the same.
 var Commands = map[string]string{
+	"ym service status": ":", "ym service restart": ":", "ym work relate": ":", "ym work unrelate": ":",
+	"ym work create": ":",
+	"ym work close":  ":", "ym work resume": ":",
+	"ym work list": ":", "ym work show": ":", "ym work history": ":", "ym work context": ":", "ym work purpose": ":", "ym work authority": ":", "ym work manager": ":", "ym work bind": ":", "ym work message": ":", "ym work watch": ":", "ym work feedback": ":", "ym work decide": ":", "ym work trigger": ":", "ym work host": ":",
 	"ym item answer":    "a",
 	"ym item go":        "g",
 	"ym item dismiss":   "x",

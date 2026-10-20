@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 type mode int
@@ -32,6 +33,9 @@ const (
 	modeScreen
 	modeConfirm
 	modeItems
+	modeWork
+	modeReviews
+	modeReview
 )
 
 type inputKind int
@@ -49,10 +53,17 @@ const (
 	inPhases
 	inVibe
 	inWaitAnswer
+	inWorkFeedback
+	inWorkDecision
+	inWorkMessage
+	inCommand
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
+	target  string
+	work    *work.Scope
+	review  *work.Review
 	need    *core.Need
 	repo    *core.Repo
 	project *core.Project
@@ -66,28 +77,39 @@ type row struct {
 
 // frame is a drill level to return to on esc.
 type frame struct {
-	mode   mode
-	cursor int
+	mode                                        mode
+	cursor                                      int
+	workID, reviewID, detail, sess, agent, repo string
+	panel, scroll                               int
+	since                                       int64
 }
 
 type Model struct {
-	alpine  alpine
-	page    *viewPage
-	core    *core.Core
-	host    string
-	board   core.Board
-	loaded  bool
-	err     error
-	mode    mode
-	back    mode
-	cursor  int
-	stack   []frame
-	repo    string
-	detail  string
-	sess    string
-	agent   string
-	scrollY int
-	prBusy  bool
+	workID       string
+	reviewID     string
+	workPanel    int
+	reviewFilter string
+	workHistory  []work.Event
+	workRevision int64
+	workSince    int64
+	inputWork    work.Scope
+	alpine       alpine
+	page         *viewPage
+	core         *core.Core
+	host         string
+	board        core.Board
+	loaded       bool
+	err          error
+	mode         mode
+	back         mode
+	cursor       int
+	stack        []frame
+	repo         string
+	detail       string
+	sess         string
+	agent        string
+	scrollY      int
+	prBusy       bool
 	// sending is set while queued answers are handed to sessions that became reachable.
 	sending   bool
 	showStale bool
@@ -164,6 +186,11 @@ type screenMsg struct {
 	err  error
 }
 
+type commandMsg struct {
+	text string
+	err  error
+}
+
 type prMsg struct {
 	n   int
 	err error
@@ -194,6 +221,11 @@ type adoptedMsg struct {
 func (m Model) refresh(tick bool) tea.Cmd {
 	c := m.core
 	return func() tea.Msg {
+		if c.KeepAlive != nil {
+			if err := c.KeepAlive(); err != nil {
+				return boardMsg{err: err, tick: tick}
+			}
+		}
 		b, err := c.Board()
 		return boardMsg{b, err, tick}
 	}
@@ -268,17 +300,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadItems()
 		}
 		m.follow(keep)
+		if m.mode == modeWork {
+			m.loadWorkHistory()
+		}
 		var cmds []tea.Cmd
 		if msg.tick {
 			cmds = append(cmds, m.tick())
-		}
-		if msg.err == nil && !m.prBusy {
-			m.prBusy = true
-			cmds = append(cmds, m.refreshPRs(msg.board))
-		}
-		if msg.err == nil && !m.sending {
-			m.sending = true
-			cmds = append(cmds, m.redeliver(msg.board))
 		}
 		return m, tea.Batch(cmds...)
 	case redeliveredMsg:
@@ -321,6 +348,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = "error: " + msg.err.Error()
 		}
 		return m, nil
+	case commandMsg:
+		text := msg.text
+		if msg.err != nil {
+			text += "\nerror: " + msg.err.Error()
+		}
+		m.show(":", text)
+		m.scrollY = 0
+		return m, nil
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -342,6 +377,10 @@ func (m *Model) follow(key string) {
 
 func rowKey(r row) string {
 	switch {
+	case r.target != "":
+		return "target:" + r.work.ID + "/" + r.target
+	case r.review != nil:
+		return "review:" + r.work.ID + "/" + r.review.ID
 	case r.item != nil:
 		return "item:" + r.item.Key()
 	case r.member != nil:
@@ -373,6 +412,47 @@ func (m *Model) clamp() {
 func (m Model) rows() []row {
 	var out []row
 	switch m.listMode() {
+	case modeReview:
+		return nil
+	case modeWork:
+		if m.workPanel != 1 {
+			return nil
+		}
+		w, ok := m.workScope()
+		if !ok {
+			return nil
+		}
+		for _, review := range sortedReviews(w) {
+			r := review
+			out = append(out, row{work: &w, review: &r})
+		}
+		for _, p := range m.board.Projects {
+			if p.Work != nil && p.Work.ID == w.ID {
+				for i := range p.Sessions {
+					out = append(out, row{work: &w, project: &p, session: &p.Sessions[i]})
+				}
+			}
+		}
+		if w.Host != "" {
+			targets := make([]string, 0, len(w.Bindings))
+			for target := range w.Bindings {
+				targets = append(targets, target)
+			}
+			slices.Sort(targets)
+			for _, target := range targets {
+				out = append(out, row{work: &w, target: target})
+			}
+		}
+	case modeReviews:
+		state := m.reviewFilter
+		if state == "" {
+			state = work.Ready
+		}
+		for _, r := range m.reviewRows(state) {
+			if m.matches(r.work.Name, r.review.Title) {
+				out = append(out, r)
+			}
+		}
 	case modeAgent:
 		return nil
 	case modeItems:
@@ -420,6 +500,11 @@ func (m Model) rows() []row {
 			out = append(out, row{project: &r.Missions[i], repo: &r})
 		}
 	default:
+		for _, r := range m.reviewRows(work.Ready) {
+			if m.matches(r.work.Name, r.review.Title) {
+				out = append(out, r)
+			}
+		}
 		for i := range m.board.Needs {
 			n := &m.board.Needs[i]
 			if m.matches(m.projectName(n.Project), needText(*n)) {
@@ -536,6 +621,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.Type == tea.KeyCtrlC {
 		return m, tea.Quit
 	}
+	if next, cmd, handled := m.workKey(k); handled {
+		return next, cmd
+	}
 	switch m.mode {
 	case modeInput:
 		return m.inputKey(k)
@@ -545,6 +633,20 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modeScreen:
+		switch k.String() {
+		case "up", "k":
+			m.scrollY = max(0, m.scrollY-1)
+			return m, nil
+		case "down", "j":
+			m.scrollY++
+			return m, nil
+		case "pgdown", " ":
+			m.scrollY += m.height / 2
+			return m, nil
+		case "pgup":
+			m.scrollY = max(0, m.scrollY-m.height/2)
+			return m, nil
+		}
 		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == m.screenKey {
 			m.mode = m.back
 		}
@@ -733,6 +835,10 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.push(modeSession)
 			m.sess = r.session.Key()
 		case r.project != nil:
+			if r.project.Work != nil {
+				m.openWork(*r.project.Work)
+				return m, nil
+			}
 			m.push(modeDetail)
 			m.detail = r.project.Key
 		case r.repo != nil:
@@ -904,6 +1010,7 @@ func (m *Model) confirm(ask string, yes tea.Cmd) {
 
 func (m *Model) show(key, text string) {
 	m.back, m.mode, m.screenKey, m.screen = m.mode, modeScreen, key, text
+	m.scrollY = 0
 }
 
 func (m *Model) loadItems() {
@@ -997,7 +1104,7 @@ func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
-	m.stack = append(m.stack, frame{m.mode, m.cursor})
+	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, workID: m.workID, reviewID: m.reviewID, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, panel: m.workPanel, scroll: m.scrollY, since: m.workSince})
 	m.mode, m.cursor = to, 0
 }
 
@@ -1005,6 +1112,12 @@ func (m *Model) pop() {
 	f := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
 	m.mode, m.cursor = f.mode, f.cursor
+	m.workID, m.reviewID, m.detail, m.sess, m.agent, m.repo = f.workID, f.reviewID, f.detail, f.sess, f.agent, f.repo
+	m.workPanel, m.scrollY, m.workSince = f.panel, f.scroll, f.since
+	m.workRevision = -1
+	if m.mode == modeWork {
+		m.loadWorkHistory()
+	}
 	m.clamp()
 }
 
@@ -1083,6 +1196,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		text := strings.TrimSpace(string(m.input))
 		m.mode = m.back
+		if next, cmd, handled := m.workInput(text); handled {
+			return next, cmd
+		}
 		switch m.inKind {
 		case inAdopt:
 			return m.adopt(m.inItem)

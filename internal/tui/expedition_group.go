@@ -9,16 +9,18 @@ import (
 )
 
 type expeditionGroup struct {
-	region, mission, name string
-	projects              int
-	artifacts             []alpineArtifact
-	artifactCounts        [artifactStates]int
-	prs                   int
-	scale                 int
-	cut                   int
-	needs                 int
-	counts                [6]int
-	sample                []expedition
+	region, mission, name          string
+	projects                       int
+	artifacts                      []alpineArtifact
+	artifactCounts                 [artifactStates]int
+	prs                            int
+	reviews, preparing, withAuthor int
+	assessment                     string
+	scale                          int
+	cut                            int
+	needs                          int
+	counts                         [6]int
+	sample                         []expedition
 }
 
 func (g expeditionGroup) total() int {
@@ -95,6 +97,15 @@ func (g expeditionGroup) states() string {
 
 func (g expeditionGroup) artifactSummary() string {
 	parts := []string{plural(g.prs, "PR")}
+	if g.reviews > 0 {
+		parts = append(parts, fmt.Sprintf("%d judgments ready", g.reviews))
+	}
+	if g.preparing > 0 {
+		parts = append(parts, fmt.Sprintf("%d preparing", g.preparing))
+	}
+	if g.withAuthor > 0 {
+		parts = append(parts, fmt.Sprintf("%d with authors", g.withAuthor))
+	}
 	for _, state := range []struct {
 		count int
 		name  string

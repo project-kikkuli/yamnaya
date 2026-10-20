@@ -71,9 +71,11 @@ type Pane struct {
 	PID     int
 }
 
+const paneFormat = "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_dead_signal}"
+
 // Start runs argv in a new detached session named name with cwd, starting the server from conf when it is down.
 func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
-	args := []string{"-f", conf, "new-session", "-d", "-P", "-F", "#{pane_id}", "-s", name, "-c", cwd, "-x", "200", "-y", "50"}
+	args := []string{"-f", conf, "new-session", "-d", "-P", "-F", paneFormat, "-s", name, "-c", cwd, "-x", "200", "-y", "50"}
 	cmd := h.command(append(args, argv...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -82,7 +84,7 @@ func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
 	h.mu.Lock()
 	h.panes = nil
 	h.mu.Unlock()
-	return h.Pane(name)
+	return parsePane(name, strings.TrimRight(string(out), "\n"))
 }
 
 // Respawn restarts a session's pane with argv in cwd, killing whatever still runs there.
@@ -96,13 +98,17 @@ func (h *Host) Respawn(name, cwd string, argv []string) error {
 
 // Pane reads the pane of session name; ErrNotFound when the session is gone.
 func (h *Host) Pane(name string) (Pane, error) {
-	out, err := h.run("list-panes", "-t", "="+name+":", "-F", "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_dead_signal}")
+	out, err := h.run("list-panes", "-t", "="+name+":", "-F", paneFormat)
 	if err != nil {
 		return Pane{}, fmt.Errorf("%s: %w", name, core.ErrNotFound)
 	}
+	return parsePane(name, out)
+}
+
+func parsePane(name, out string) (Pane, error) {
 	f := strings.Split(strings.Split(out, "\n")[0], "\t")
 	if len(f) != 6 {
-		return Pane{}, fmt.Errorf("tmux list-panes %s: unexpected %q", name, out)
+		return Pane{}, fmt.Errorf("tmux pane %s: unexpected %q", name, out)
 	}
 	status, _ := strconv.Atoi(f[3])
 	pid, _ := strconv.Atoi(f[4])

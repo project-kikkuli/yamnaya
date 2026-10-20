@@ -15,6 +15,14 @@ func (m Model) drawPanel(c *alpineCanvas, g expeditionGroup, place string) {
 		c.caption(0, i+1, line, alpineIce)
 	}
 	start := len(states) + 2
+	if g.assessment != "" {
+		lines := strings.Split(ansi.Wrap(g.assessment, c.w, " "), "\n")
+		for _, line := range lines[:min(3, len(lines))] {
+			c.caption(0, start, line, alpineMoss)
+			start++
+		}
+		start++
+	}
 	team := newAlpineCanvas(c.w, 6)
 	m.drawRopeTeam(&team, g)
 	if e, ok := m.alpine.effectAt(place); ok && e.artifact == "" {
@@ -35,7 +43,7 @@ func (m Model) drawPanel(c *alpineCanvas, g expeditionGroup, place string) {
 		}
 	}
 	if g.artifactTotal() == 0 {
-		c.caption(0, start, "no branch or PR linked", alpineCloud)
+		c.caption(0, start, "B brief · R review obligations", alpineCloud)
 		return
 	}
 	shown := 0
