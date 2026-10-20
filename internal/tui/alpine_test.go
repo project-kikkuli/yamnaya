@@ -179,8 +179,8 @@ func TestSceneryToggleFreesSpaceAndLeavesTypedAInTheInput(t *testing.T) {
 	}
 	before := firstRepo(m.View())
 	m = press(t, m, "A")
-	if hidden := firstRepo(m.View()); hidden < 0 || hidden != before {
-		t.Fatalf("toggling scenery changed table density: before=%d, after=%d", before, hidden)
+	if hidden := firstRepo(m.View()); hidden < 0 || hidden >= before {
+		t.Fatalf("hiding scenery did not recover vertical space: before=%d, after=%d", before, hidden)
 	}
 	if m.sceneWidth() != 0 {
 		t.Fatal("A did not hide the landscape")
@@ -254,12 +254,16 @@ func TestFailedBoardRefreshPreservesExpeditions(t *testing.T) {
 }
 
 func BenchmarkAlpineFrame(b *testing.B) {
-	for _, layout := range []string{"crew", "missions"} {
+	for _, layout := range []string{"crew", "missions", "artifacts"} {
 		for _, n := range []int{100, 1000, 10000} {
 			b.Run(fmt.Sprint(layout, "/", n), func(b *testing.B) {
 				m := Model{width: 160, height: 50, loaded: true}
 				board := alpineBoard()
-				if layout == "crew" {
+				if layout == "artifacts" {
+					for i := range n {
+						board.Projects[0].Sessions[0].PRs = append(board.Projects[0].Sessions[0].PRs, core.PR{URL: fmt.Sprintf("https://example.test/ridge/%d", i), Number: i, Repo: "ridge", Status: &core.PRStatus{State: "OPEN", Pending: 1, Commits: 3}})
+					}
+				} else if layout == "crew" {
 					for i := range n {
 						board.Projects[0].Sessions[0].Crew = append(board.Projects[0].Sessions[0].Crew, core.Member{ID: fmt.Sprint("climber", i), Status: core.Busy})
 					}
@@ -347,6 +351,9 @@ func TestTerrainAndEventsPreserveEveryVisibleTextCell(t *testing.T) {
 						t.Fatalf("view has %d lines, want %d", len(lines), m.height)
 					}
 					for y, line := range page.lines {
+						if line.scenery != 0 {
+							continue
+						}
 						want := ansi.Strip(line.text)
 						if got := ansi.Strip(ansi.Cut(lines[y], 0, ansi.StringWidth(want))); got != want {
 							t.Fatalf("row %d text changed: %q, want %q", y, got, want)
@@ -357,7 +364,7 @@ func TestTerrainAndEventsPreserveEveryVisibleTextCell(t *testing.T) {
 						if got != quiet {
 							t.Fatalf("scenery entered the quiet area at row %d: %q, want %q", y, got, quiet)
 						}
-						if !line.scene && lines[y] != line.text {
+						if (y < page.layout.panelStart || y >= page.layout.panelStart+page.layout.panelHeight) && lines[y] != line.text {
 							t.Fatalf("unrelated row %d gained scenery: %q", y, lines[y])
 						}
 						if ansi.StringWidth(lines[y]) > m.width {
@@ -401,8 +408,8 @@ func TestInterruptedClimberGetsAWreckMarker(t *testing.T) {
 			if cut {
 				mark = "×"
 			}
-			for y, line := range page.lines {
-				if line.place == "a:ridge/rope" && line.scene && strings.Contains(ansi.Strip(ansi.Cut(rendered[y], m.width-m.sceneWidth(), m.width)), mark) {
+			for y := range page.lines {
+				if y >= page.layout.panelStart && y < page.layout.panelStart+page.layout.panelHeight && strings.Contains(ansi.Strip(ansi.Cut(rendered[y], m.width-m.sceneWidth(), m.width)), mark) {
 					return
 				}
 			}
@@ -426,19 +433,9 @@ func TestDenseRegionsKeepOwnerNeedsVisible(t *testing.T) {
 			}
 			m := Model{board: b, width: 160, height: 40, loaded: true}
 			m.alpine.observe(b)
-			page := m.prepareView()
-			view := strings.Split(m.paintView(page), "\n")
-			seen := map[string]bool{}
-			for y, line := range page.lines {
-				if line.place != "m:ridge" && line.place != "r:/repo/ridge" {
-					continue
-				}
-				if strings.Contains(ansi.Strip(ansi.Cut(view[y], m.width-m.sceneWidth(), m.width)), "!2") {
-					seen[line.place] = true
-				}
-			}
-			if !seen["m:ridge"] || !strings.Contains(m.View(), "2 need you") {
-				t.Fatalf("owner needs disappeared in a fleet of %d: %v", n, seen)
+			view := m.View()
+			if !strings.Contains(view, "2 need you") || !strings.Contains(view, "✦") {
+				t.Fatalf("owner needs disappeared in a fleet of %d", n)
 			}
 		})
 	}
@@ -472,11 +469,15 @@ func TestSceneMotionMeansActivityOrOwnerAttention(t *testing.T) {
 			b.Repos[0].Missions[0] = b.Projects[0]
 			m := Model{board: b, loaded: true, width: 160, height: 30}
 			m.alpine.observe(b)
-			before := m.View()
+			group := *m.alpine.groups["m:ridge"]
+			before := newAlpineCanvas(44, 6)
+			m.drawRopeTeam(&before, group)
 			changed := false
 			for _, frame := range []uint64{6, 12, 18} {
 				m.alpine.frame = frame
-				changed = changed || m.View() != before
+				after := newAlpineCanvas(44, 6)
+				m.drawRopeTeam(&after, group)
+				changed = changed || string(before.text) != string(after.text)
 			}
 			if changed != tc.moving {
 				t.Fatalf("motion=%v, want %v", changed, tc.moving)
@@ -487,34 +488,36 @@ func TestSceneMotionMeansActivityOrOwnerAttention(t *testing.T) {
 
 func TestDenseScenesKeepCountsAndWorkingMotion(t *testing.T) {
 	usePalette(t, false)
-	for _, height := range []int{1, 2, 5} {
-		for _, count := range []int{10, 1000, 10000} {
-			t.Run(fmt.Sprint(height, "/", count), func(t *testing.T) {
-				g := expeditionGroup{mission: "ridge", region: "/repo/ridge", counts: [6]int{}, cut: count, needs: 3}
-				for _, state := range []core.Status{core.Busy, core.Waiting, core.Idle, core.Done, core.Unknown} {
-					g.counts[state] = count
+	for _, count := range []int{10, 1000, 10000} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			g := expeditionGroup{mission: "ridge", region: "/repo/ridge", name: "North ridge", cut: count, needs: 3}
+			for _, state := range []core.Status{core.Busy, core.Waiting, core.Idle, core.Done, core.Unknown} {
+				g.counts[state] = count
+			}
+			g.counts[core.Done] += count
+			m := Model{}
+			before := newAlpineCanvas(44, 30)
+			m.drawPanel(&before, g, "m:ridge")
+			m.alpine.frame = 6
+			after := newAlpineCanvas(44, 30)
+			m.drawPanel(&after, g, "m:ridge")
+			if string(before.text) == string(after.text) {
+				t.Fatal("dense active team stopped moving")
+			}
+			var rows []string
+			for y := range after.h {
+				rows = append(rows, ansi.Strip(after.row(y, 0, after.w)))
+			}
+			text := strings.Join(strings.Fields(strings.Join(rows, " ")), " ")
+			for _, state := range []string{"working", "waiting", "idle", "done", "unknown", "interrupted"} {
+				if !strings.Contains(text, fmt.Sprintf("%d %s", count, state)) {
+					t.Fatalf("missing %d %s in %q", count, state, text)
 				}
-				g.counts[core.Done] += count
-				m := Model{}
-				before := newAlpineCanvas(44, height)
-				m.drawScene(&before, g, "m:ridge")
-				m.alpine.frame = 6
-				after := newAlpineCanvas(44, height)
-				m.drawScene(&after, g, "m:ridge")
-				if string(before.text) == string(after.text) {
-					t.Fatal("dense active team stopped moving")
-				}
-				summary := ansi.Strip(after.row(height-1, 0, 44))
-				for _, glyph := range []rune{'ʎ', '△', '⌂', '⚑', '?', '×'} {
-					if !strings.Contains(summary, fmt.Sprintf("%c%d", glyph, count)) {
-						t.Fatalf("missing %c%d in %q", glyph, count, summary)
-					}
-				}
-				if !strings.Contains(summary, "!3") {
-					t.Fatalf("owner signal disappeared: %q", summary)
-				}
-			})
-		}
+			}
+			if !strings.Contains(text, "3 need you") {
+				t.Fatal("owner signal disappeared")
+			}
+		})
 	}
 }
 
@@ -524,24 +527,22 @@ func TestProjectEventsStayWithTheirOwnTeam(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			b := alpineBoard()
 			b.Projects[0].Sessions = append(b.Projects[0].Sessions, core.Live{Session: core.Session{ID: "other", Status: core.Idle}})
-			m := Model{board: b, loaded: true, width: 160, height: 40, mode: modeDetail, detail: "ridge"}
+			m := Model{board: b}
 			m.alpine.observe(b)
-			page := m.prepareView()
-			before := strings.Split(m.paintView(page), "\n")
+			own, sibling := *m.alpine.groups["s:ridge"], *m.alpine.groups["s:other"]
+			m.alpine.frame = 17
+			beforeOwn, beforeSibling := newAlpineCanvas(44, 25), newAlpineCanvas(44, 25)
+			m.drawPanel(&beforeOwn, own, "s:ridge")
+			m.drawPanel(&beforeSibling, sibling, "s:other")
 			m.alpine.emit(alpineEvent{kind: kind, mountain: "ridge", team: "ridge", people: 3})
 			m.alpine.group()
-			m.alpine.frame = 17
-			after := strings.Split(m.paintView(page), "\n")
-			affected := false
-			for y, line := range page.lines {
-				if line.place == "s:other" && before[y] != after[y] {
-					t.Fatalf("%s affected a sibling team", kind)
-				}
-				if before[y] != after[y] {
-					affected = true
-				}
+			afterOwn, afterSibling := newAlpineCanvas(44, 25), newAlpineCanvas(44, 25)
+			m.drawPanel(&afterOwn, own, "s:ridge")
+			m.drawPanel(&afterSibling, sibling, "s:other")
+			if string(beforeSibling.text) != string(afterSibling.text) {
+				t.Fatalf("%s affected a sibling team", kind)
 			}
-			if !affected {
+			if string(beforeOwn.text) == string(afterOwn.text) {
 				t.Fatalf("%s had no visible event", kind)
 			}
 		})

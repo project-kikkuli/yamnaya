@@ -1,9 +1,9 @@
 package tui
 
 type alpineEvent struct {
-	kind, mountain, team string
-	frame                uint64
-	people               int
+	kind, mountain, team, artifact string
+	frame                          uint64
+	people                         int
 }
 
 func (e alpineEvent) life() uint64 {

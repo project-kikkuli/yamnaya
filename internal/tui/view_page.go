@@ -3,15 +3,9 @@ package tui
 import "strings"
 
 type viewPage struct {
-	lines []viewLine
-	place string
-}
-
-func (p *viewPage) markScene() {
-	if len(p.lines) == 0 {
-		p.lines = append(p.lines, viewLine{})
-	}
-	p.lines[len(p.lines)-1].scene = true
+	lines  []viewLine
+	place  string
+	layout alpineLayout
 }
 
 func (p *viewPage) WriteString(text string) (int, error) {

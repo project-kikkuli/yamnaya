@@ -24,6 +24,8 @@ type alpine struct {
 	events        []alpineEvent
 	eventIndex    map[string]int
 	hues          map[string]int
+	artifacts     map[string]alpineArtifact
+	regions       []string
 }
 
 func (a *alpine) observe(b core.Board) {
@@ -33,11 +35,29 @@ func (a *alpine) observe(b core.Board) {
 	for i, e := range a.events {
 		a.eventIndex[e.kind+"\x00"+e.mountain] = i
 	}
-	keys := make([]string, len(b.Projects))
-	for i, p := range b.Projects {
-		keys[i] = p.Key
+	if a.hues == nil {
+		a.hues = map[string]int{}
 	}
-	a.hues = hueSlots(keys)
+	used := make([]int, len(hueColors))
+	for _, p := range b.Projects {
+		if h, ok := a.hues[p.Key]; ok {
+			used[h]++
+		}
+	}
+	for _, p := range b.Projects {
+		if _, ok := a.hues[p.Key]; ok {
+			continue
+		}
+		hue := hueIndex(p.Key)
+		for j := range len(used) {
+			if used[(hue+j)%len(used)] == 0 {
+				hue = (hue + j) % len(used)
+				break
+			}
+		}
+		a.hues[p.Key] = hue
+		used[hue]++
+	}
 
 	if a.index == nil {
 		a.index = map[string]int{}
@@ -96,8 +116,43 @@ func (a *alpine) observe(b core.Board) {
 			a.emit(alpineEvent{kind: kind, mountain: e.mountain, team: id, frame: a.frame, people: 1})
 		}
 	}
-	a.teams, a.kills, a.ready = teams, maps.Clone(b.Kills), true
+	a.teams = teams
+	artifacts := a.observeArtifacts(b)
+	a.kills, a.ready = maps.Clone(b.Kills), true
 	a.group()
+	a.foldArtifacts(artifacts)
+	for _, p := range b.Projects {
+		if g := a.groups["m:"+p.Key]; g != nil {
+			g.name = p.Name
+			g.projects = 1
+		}
+		for _, s := range p.Sessions {
+			if g := a.groups["s:"+s.Key()]; g != nil {
+				g.name = titleOf(s)
+			}
+			for _, c := range s.Crew {
+				if g := a.groups["a:"+s.Key()+"/"+c.ID]; g != nil {
+					g.name = c.Name
+					if g.name == "" {
+						g.name = core.Short(c.ID)
+					}
+				}
+			}
+		}
+	}
+	regions := map[string]bool{}
+	for _, region := range a.regions {
+		regions[region] = true
+	}
+	for _, r := range b.Repos {
+		if !regions[r.Key] {
+			a.regions = append(a.regions, r.Key)
+			regions[r.Key] = true
+		}
+		if g := a.groups["r:"+r.Key]; g != nil {
+			g.name, g.projects = r.Name, len(r.Missions)
+		}
+	}
 	for _, p := range b.Projects {
 		for _, s := range p.Sessions {
 			for _, member := range s.Crew {
@@ -124,7 +179,7 @@ func (a *alpine) emit(e alpineEvent) {
 }
 
 func (a *alpine) group() {
-	a.groups = map[string]*expeditionGroup{}
+	a.groups = map[string]*expeditionGroup{"*": {name: "all repositories"}}
 	all := slices.Collect(maps.Values(a.teams))
 	slices.SortFunc(all, func(a, b expedition) int {
 		if rank := expeditionRank(a) - expeditionRank(b); rank != 0 {
@@ -133,7 +188,7 @@ func (a *alpine) group() {
 		return strings.Compare(a.id, b.id)
 	})
 	for _, e := range all {
-		for scale, key := range []string{"r:" + e.region, "m:" + e.mountain, "s:" + e.session, "a:" + e.id} {
+		for scale, key := range []string{"r:" + e.region, "m:" + e.mountain, "s:" + e.session, "a:" + e.id, "*"} {
 			g := a.groups[key]
 			if g == nil {
 				g = &expeditionGroup{region: e.region, mission: e.mountain, scale: scale}
@@ -149,6 +204,7 @@ func (a *alpine) group() {
 		if a.groups["r:"+p.region] == nil {
 			a.groups["r:"+p.region] = &expeditionGroup{region: p.region}
 		}
+		a.groups["*"].needs += p.needs
 		a.groups["m:"+p.key].needs = p.needs
 		a.groups["r:"+p.region].needs += p.needs
 	}
@@ -162,21 +218,7 @@ func (a *alpine) group() {
 			keys = append(keys, "s:"+e.team)
 		}
 		for _, key := range keys {
-			effects := a.effects[key]
-			replaced := false
-			for i, old := range effects {
-				if old.kind == e.kind {
-					if e.frame >= old.frame {
-						effects[i] = e
-					}
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				effects = append(effects, e)
-			}
-			a.effects[key] = effects
+			a.indexEffect(key, e)
 		}
 	}
 }
@@ -188,7 +230,7 @@ func (a alpine) effectAt(place string) (alpineEvent, bool) {
 		if a.frame-e.frame >= e.life() {
 			continue
 		}
-		rank := map[string]int{"storm": 5, "summit": 4, "fall": 3, "depart": 2, "work": 1}[e.kind]
+		rank := map[string]int{"storm": 7, "merge": 6, "fracture": 5, "summit": 4, "fall": 3, "depart": 2, "work": 1}[e.kind]
 		if rank > score || rank == score && e.frame > best.frame {
 			best, score = e, rank
 		}
@@ -203,3 +245,25 @@ func alpineTick() tea.Cmd {
 }
 
 type alpineFrame struct{}
+
+func (a alpine) kindAt(place, kind string) (alpineEvent, bool) {
+	for _, e := range a.effects[place] {
+		if e.kind == kind && a.frame-e.frame < e.life() {
+			return e, true
+		}
+	}
+	return alpineEvent{}, false
+}
+
+func (a *alpine) indexEffect(key string, e alpineEvent) {
+	effects := a.effects[key]
+	for i, old := range effects {
+		if old.kind == e.kind {
+			if e.frame >= old.frame {
+				effects[i] = e
+			}
+			return
+		}
+	}
+	a.effects[key] = append(effects, e)
+}

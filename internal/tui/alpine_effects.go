@@ -29,7 +29,7 @@ func (c *alpineCanvas) effect(e alpineEvent, x, peak int, frame uint64) {
 			r := []rune{'o', 'λ', '╱', '⚑', '╲'}[j%5]
 			c.put(xx, y, r, alpineGold)
 		}
-	case "summit":
+	case "summit", "merge":
 		c.put(x, peak, '⚑', alpineGold)
 		for j := range 12 {
 			angle := float64(j) * math.Pi / 6
@@ -44,6 +44,12 @@ func (c *alpineCanvas) effect(e alpineEvent, x, peak int, frame uint64) {
 			c.put(x+j, end-j/2, '·', alpineGold)
 		}
 		c.put(x+int(age/10), max(0, end-int(age/20)), '⚑', alpineGold)
+	case "fracture":
+		for j := range 9 {
+			xx := x + int(math.Cos(float64(j))*age/5)
+			yy := peak + int(age/10) + j%2
+			c.put(xx, yy, []rune{'╱', '╲', '⠄'}[j%3], alpineFlare)
+		}
 	case "work", "fall":
 		for j := range 5 {
 			xx := x + int(age/9) + j
