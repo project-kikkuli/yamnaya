@@ -216,6 +216,11 @@ func (m Model) footer() []string {
 }
 
 func (m Model) hints() string {
+	if m.mode == modeList {
+		if r, ok := m.selected(); ok && r.attention == "unassigned" {
+			return "enter checklist   o/V open first source   B brief   M agents   ↑↓ move"
+		}
+	}
 	switch m.mode {
 	case modeChiefs:
 		return "n new chief · enter brief · s message · a attach project · d repo default · D global default · p pause/resume · esc back"
@@ -228,9 +233,9 @@ func (m Model) hints() string {
 		}
 		return "↑↓ scroll   space/b page   a verify result   tab brief/work/context/history   C context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
 	case modeReviews:
-		return "↑↓ move   enter review   tab ready/preparing/author/completed   B brief   : command   esc back"
+		return "↑↓ move   o/V source   x/space reviewed   u undo reviewed   enter details   tab queues   B brief   esc back"
 	case modeReview:
-		return "↑↓ scroll   a judgment   f feedback   B manager brief   V source   esc back"
+		return "o/V source   x reviewed + next   n/p next/previous   u undo reviewed   a judgment   f feedback   ↑↓ scroll   esc back"
 	case modeHelp, modeScreen:
 		return "esc back"
 	case modeItems:
@@ -299,8 +304,27 @@ func (m Model) listView() viewPage {
 		}
 		switch {
 		case r.attention != "":
-			b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.attention, 12)) + " " + r.work.Name + "\n")
+			label := r.attention
+			if label == "unassigned" {
+				label = fmt.Sprintf("reviews (%d)", pendingReviews(*r.work))
+			}
+			b.WriteString(m.mark(i) + pal.yellow.Render(pad(label, 12)) + " " + r.work.Name + "\n")
 			if i == m.cursor {
+				if r.attention == "unassigned" {
+					shown := 0
+					for _, review := range sortedReviews(*r.work) {
+						if review.Pending() {
+							m.field(&b, "review", review.Title)
+							shown++
+							if shown == 3 {
+								break
+							}
+						}
+					}
+					if remaining := pendingReviews(*r.work) - shown; remaining > 0 {
+						m.field(&b, "more", fmt.Sprintf("%d more · enter checklist", remaining))
+					}
+				}
 				m.field(&b, "next", r.work.Next)
 				m.field(&b, "result", clip(r.work.Result, 3))
 			}
@@ -1170,7 +1194,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
    M            chiefs and managers: n creates a chief; enter reads its brief; s messages; a attaches the selected project; d/D toggle repo/global defaults
    B            read the full manager brief; on a repo choose its project first; V opens the browser version
-   R            all review obligations; tab switches ready, preparing, with author, and completed
+   R            review checklist; tab switches pending, ready, author, reviewed and completed queues
    C            read project context; e opens $EDITOR from the context panel, preserving its starting revision
    V            open the review's original source or the project's stable rich brief in the browser
    :            run an owner command without leaving the board, for example work watch ID URL --kind notion
@@ -1185,7 +1209,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    A            hide or show scenery
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
-   o            go to the selected row's session: jump to its tmux pane, or say where it runs;
+   o            open a selected review source; otherwise go to its session or tmux pane;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
@@ -1196,8 +1220,8 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 on a waiting session, send the answer as your message, the same way s does, and clear the row
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    l            later: snooze the item
-   u            reopen a snoozed item (detail)
-   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again
+   u            return a reviewed request to the checklist; reopen a snoozed item (detail)
+   x            mark a review as reviewed and advance; dismiss an item; hide a waiting session until it asks again
    w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another

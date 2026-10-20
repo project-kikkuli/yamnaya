@@ -104,7 +104,7 @@ func Apply(s *Scope, e Event) error {
 		}
 		s.Context = Context{Revision: s.Context.Revision + 1, Text: e.Text, Actor: e.Actor}
 		for id, r := range s.Reviews {
-			if r.State == Ready {
+			if r.State == Ready || r.State == Reviewed {
 				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
@@ -152,7 +152,7 @@ func Apply(s *Scope, e Event) error {
 				s.VerifiedBy = ""
 			}
 			for id, r := range s.Reviews {
-				if r.State == Ready {
+				if r.State == Ready || r.State == Reviewed {
 					r.State = s.PreparationState()
 					s.Reviews[id] = r
 				}
@@ -166,7 +166,7 @@ func Apply(s *Scope, e Event) error {
 			s.VerifiedBy = ""
 		}
 		for id, r := range s.Reviews {
-			if r.State == Ready {
+			if r.State == Ready || r.State == Reviewed {
 				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
@@ -213,6 +213,7 @@ func Apply(s *Scope, e Event) error {
 				return errors.New("source revision order is ambiguous")
 			}
 			r.Feedback, r.Judgment = old.Feedback, old.Judgment
+			r.ReviewedVersion, r.ReviewedContext = old.ReviewedVersion, old.ReviewedContext
 			if r.Question == "" {
 				r.Question = old.Question
 			}
@@ -224,8 +225,8 @@ func Apply(s *Scope, e Event) error {
 		r.Updated = e.At
 		if r.Closed {
 			r.State = "withdrawn"
-			if old.State == Completed {
-				r.State = Completed
+			if old.State == Completed || old.State == Reviewed {
+				r.State = old.State
 			}
 			r.Changed = "Source closed; no outstanding review request"
 		}
@@ -238,7 +239,7 @@ func Apply(s *Scope, e Event) error {
 		if r.Version != e.Review.Version || e.Context != s.Context.Revision {
 			return errors.New("review evidence or context changed")
 		}
-		if r.State == Completed {
+		if r.State == Completed || r.State == Reviewed {
 			return errors.New("completed review needs a new source revision")
 		}
 		if r.Closed {
@@ -251,6 +252,27 @@ func Apply(s *Scope, e Event) error {
 		r.State, r.PreparedVersion, r.PreparedContext = Ready, r.Version, s.Context.Revision
 		r.Preparation++
 		r.Preparer = e.Actor
+		r.Updated = e.At
+		s.Reviews[e.Target] = r
+	case "reviewed", "unreview":
+		if e.Actor != "owner" {
+			return errors.New("review checklist actions belong to the owner")
+		}
+		r, ok := s.Reviews[e.Target]
+		if !ok || r.Version == "" || r.Version != e.Review.Version || e.Context != s.Context.Revision {
+			return errors.New("review source or context changed; refresh before updating the checklist")
+		}
+		if e.Type == "reviewed" {
+			if !r.Pending() {
+				return errors.New("review is not awaiting owner review")
+			}
+			r.ReviewedVersion, r.ReviewedContext, r.State = r.Version, s.Context.Revision, Reviewed
+		} else {
+			if r.State != Reviewed || r.Closed {
+				return errors.New("only an open reviewed item can return to the checklist")
+			}
+			r.ReviewedVersion, r.ReviewedContext, r.State = "", 0, s.PreparationState()
+		}
 		r.Updated = e.At
 		s.Reviews[e.Target] = r
 	case "follow-through":
@@ -297,9 +319,9 @@ func Apply(s *Scope, e Event) error {
 				continue
 			}
 			r, exists := s.Reviews[e.Target]
-			if exists && (r.Feedback != "" || r.Judgment != "") {
+			if exists && (r.Feedback != "" || r.Judgment != "" || r.ReviewedVersion != "") {
 				source.Origin, source.RequestVersion = "", ""
-				source.Coverage = "Retained after owner feedback or decision; automatic assignment no longer active"
+				source.Coverage = "Retained after owner review; automatic assignment no longer active"
 				s.Sources[i] = source
 			} else if source.LinkedPR() {
 				source.Requester, source.Question, source.RequestVersion = "", "", ""

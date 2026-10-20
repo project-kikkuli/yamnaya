@@ -36,6 +36,9 @@ func Render(out io.Writer, w Scope) {
 	for _, id := range ids {
 		r := w.Reviews[id]
 		fmt.Fprintf(out, "\n%s · %s\nreview %s · source %s\nrequester: %s\nquestion: %s\nrecommendation: %s\nchanged: %s\nfeedback: %s\njudgment: %s\n", r.Title, r.State, r.ID, r.Version, r.Requester, r.Question, r.Recommendation, r.Changed, r.Feedback, r.Judgment)
+		if r.ReviewedVersion != "" {
+			fmt.Fprintf(out, "reviewed source: %s · context r%d\n", r.ReviewedVersion, r.ReviewedContext)
+		}
 	}
 	for _, source := range w.Sources {
 		fmt.Fprintf(out, "\nCoverage: %s · %s\n", source.URL, source.Coverage)

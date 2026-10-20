@@ -258,7 +258,7 @@ func (c *Core) ChangeWork(w work.Scope, e work.Event) (work.Scope, error) {
 	if e.Type == "context" {
 		e.Context = w.Context.Revision
 	}
-	if e.Type == "decide" || e.Type == "feedback" || e.Type == "follow-through" {
+	if e.Type == "decide" || e.Type == "feedback" || e.Type == "follow-through" || e.Type == "reviewed" || e.Type == "unreview" {
 		e.Review = w.Reviews[e.Target]
 		e.Context = w.Context.Revision
 	}
@@ -278,7 +278,7 @@ func (c *Core) ApplyWork(e work.Event) (work.Scope, error) {
 	if err != nil {
 		return w, err
 	}
-	if (e.Type == "feedback" || e.Type == "decide") && c.CheckReview != nil {
+	if (e.Type == "feedback" || e.Type == "decide" || e.Type == "reviewed") && c.CheckReview != nil {
 		r, ok := w.Reviews[e.Target]
 		if !ok {
 			return w, fmt.Errorf("review not found")

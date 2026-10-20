@@ -51,7 +51,7 @@ func (m Model) managementAttention() []row {
 			continue
 		}
 		w := p.Work
-		if w.Kind == "intake" && len(w.Sources) > 0 && w.Owner == "" {
+		if w.Kind == "intake" && pendingReviews(*w) > 0 && w.Owner == "" {
 			out = append(out, row{attention: "unassigned", work: w})
 			continue
 		}

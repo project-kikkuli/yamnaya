@@ -272,6 +272,17 @@ func workCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		cmd.Flags().Int64Var(&expected, "revision", -1, "work revision you reviewed")
 		root.AddCommand(cmd)
 	}
+	for _, action := range []string{"reviewed", "unreview"} {
+		action := action
+		root.AddCommand(&cobra.Command{Use: action + " <work> <review>", Short: "Update the owner's local review checklist", Args: cobra.ExactArgs(2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			w, err := resolve(e, args[0])
+			if err != nil {
+				return err
+			}
+			_, err = e.core.ChangeWork(w, work.Event{ID: uuid.NewString(), Type: action, Actor: e.actor(), Target: args[1]})
+			return err
+		})})
+	}
 	root.AddCommand(&cobra.Command{Use: "trigger <work> <RFC3339> <reason>", Short: "Persist the manager's next wake trigger", Args: cobra.MinimumNArgs(3), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		w, err := resolve(e, args[0])
 		if err != nil {

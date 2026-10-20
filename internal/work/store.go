@@ -188,6 +188,10 @@ func (s *Store) Commit(e Event) (Scope, error) {
 			r, ok := x.Reviews[e.Target]
 			compatible = ok && r.State == Ready && e.Review.Version == r.Version && e.Review.Preparation != 0 && e.Review.Preparation == r.Preparation && e.Context == x.Context.Revision
 		}
+		if e.Type == "reviewed" || e.Type == "unreview" {
+			r, ok := x.Reviews[e.Target]
+			compatible = ok && r.Version == e.Review.Version && e.Context == x.Context.Revision
+		}
 		if !compatible {
 			return x, ErrConflict
 		}
@@ -234,7 +238,7 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "message":
 		destinations = append(destinations, e.Target)
-	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
+	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "reviewed", "unreview", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
 		destinations = append(destinations, "@manager")
 	case "purpose":
 		if e.Actor == "owner" {

@@ -7,9 +7,12 @@ const (
 	Ready      = "ready"
 	WithAuthor = "with author"
 	Completed  = "completed"
+	Reviewed   = "reviewed"
 )
 
 type Review struct {
+	ReviewedVersion string
+	ReviewedContext int64
 	FollowThrough   string
 	FollowedBy      string
 	ID              string
@@ -34,6 +37,10 @@ type Review struct {
 	Provisional     bool
 	Closed          bool
 	Updated         time.Time
+}
+
+func (r Review) Pending() bool {
+	return !r.Closed && !r.Provisional && (r.State == "incoming" || r.State == Preparing || r.State == Ready)
 }
 
 func (r Review) NextOwner(manager string) string {

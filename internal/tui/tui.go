@@ -88,40 +88,43 @@ type frame struct {
 	cursor                                      int
 	workID, reviewID, detail, sess, agent, repo string
 	workAction                                  string
+	reviewWork, reviewFilter                    string
 	panel, scroll                               int
 	since                                       int64
 }
 
 type Model struct {
-	chiefTarget  string
-	chiefDraft   work.Agent
-	chiefRemit   string
-	workID       string
-	workAction   string
-	reviewID     string
-	workPanel    int
-	reviewFilter string
-	workHistory  []work.Event
-	workRevision int64
-	workSince    int64
-	inputWork    work.Scope
-	alpine       alpine
-	page         *viewPage
-	core         *core.Core
-	host         string
-	board        core.Board
-	loaded       bool
-	err          error
-	mode         mode
-	back         mode
-	cursor       int
-	stack        []frame
-	repo         string
-	detail       string
-	sess         string
-	agent        string
-	scrollY      int
-	prBusy       bool
+	chiefTarget   string
+	chiefDraft    work.Agent
+	chiefRemit    string
+	workID        string
+	workAction    string
+	reviewID      string
+	reviewWork    string
+	pendingReview *reviewActionMsg
+	workPanel     int
+	reviewFilter  string
+	workHistory   []work.Event
+	workRevision  int64
+	workSince     int64
+	inputWork     work.Scope
+	alpine        alpine
+	page          *viewPage
+	core          *core.Core
+	host          string
+	board         core.Board
+	loaded        bool
+	err           error
+	mode          mode
+	back          mode
+	cursor        int
+	stack         []frame
+	repo          string
+	detail        string
+	sess          string
+	agent         string
+	scrollY       int
+	prBusy        bool
 	// sending is set while queued answers are handed to sessions that became reachable.
 	sending   bool
 	showStale bool
@@ -312,6 +315,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadItems()
 		}
 		m.follow(keep)
+		m.finishPendingReview()
 		if m.mode == modeWork {
 			m.loadWorkHistory()
 		}
@@ -348,6 +352,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.message
 		}
 		return m, m.refresh(false)
+	case reviewActionMsg:
+		return m.finishReviewAction(msg)
 	case adoptedMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
@@ -473,11 +479,7 @@ func (m Model) rows() []row {
 			}
 		}
 	case modeReviews:
-		state := m.reviewFilter
-		if state == "" {
-			state = work.Ready
-		}
-		for _, r := range m.reviewRows(state) {
+		for _, r := range m.reviewQueueRows() {
 			if m.matches(r.work.Name, r.review.Title) {
 				out = append(out, r)
 			}
@@ -531,6 +533,9 @@ func (m Model) rows() []row {
 	default:
 		out = append(out, m.managementAttention()...)
 		for _, r := range m.reviewRows(work.Ready) {
+			if r.work.Kind == "intake" && r.work.Owner == "" {
+				continue
+			}
 			if m.matches(r.work.Name, r.review.Title) {
 				out = append(out, r)
 			}
@@ -1137,7 +1142,7 @@ func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
-	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, workID: m.workID, reviewID: m.reviewID, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, panel: m.workPanel, scroll: m.scrollY, since: m.workSince, workAction: m.workAction})
+	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, workID: m.workID, reviewID: m.reviewID, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, panel: m.workPanel, scroll: m.scrollY, since: m.workSince, workAction: m.workAction, reviewWork: m.reviewWork, reviewFilter: m.reviewFilter})
 	m.mode, m.cursor = to, 0
 }
 
@@ -1148,6 +1153,7 @@ func (m *Model) pop() {
 	m.workID, m.reviewID, m.detail, m.sess, m.agent, m.repo = f.workID, f.reviewID, f.detail, f.sess, f.agent, f.repo
 	m.workPanel, m.scrollY, m.workSince = f.panel, f.scroll, f.since
 	m.workAction = f.workAction
+	m.reviewWork, m.reviewFilter = f.reviewWork, f.reviewFilter
 	m.workRevision = -1
 	if m.mode == modeWork {
 		m.loadWorkHistory()

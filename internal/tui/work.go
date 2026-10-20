@@ -193,16 +193,35 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return next, cmd, true
 	}
 	key := k.String()
+	if m.mode == modeReviews || m.mode == modeReview {
+		if key == "x" || key == "u" || (key == " " && m.mode == modeReviews) {
+			if key == " " {
+				key = "x"
+			}
+			return m, m.reviewAction(key), true
+		}
+		if m.mode == modeReview && (key == "n" || key == "p") {
+			delta := 1
+			if key == "p" {
+				delta = -1
+			}
+			m.moveReview(delta)
+			return m, nil, true
+		}
+	}
 	if key == "enter" {
 		if r, ok := m.selected(); ok && r.attention != "" {
-			m.openWork(*r.work)
+			if r.attention == "unassigned" {
+				m.openReviewQueue(*r.work)
+			} else {
+				m.openWork(*r.work)
+			}
 			return m, nil, true
 		}
 	}
 	if key == "enter" {
 		if r, ok := m.selected(); ok && r.review != nil {
-			m.push(modeReview)
-			m.workID, m.reviewID, m.scrollY = r.work.ID, r.review.ID, 0
+			m.openReview(r)
 			return m, nil, true
 		}
 	}
@@ -212,7 +231,7 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if key == "R" {
 		m.push(modeReviews)
-		m.reviewFilter = ""
+		m.reviewWork, m.reviewFilter = "", ""
 		return m, nil, true
 	}
 	if m.mode == modeRepo && m.workAction != "" && key == "enter" {
@@ -236,7 +255,15 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return m, m.editContext(w), true
 		}
 	}
-	if key == "V" {
+	sourceKey := key == "o" && (m.mode == modeReviews || m.mode == modeReview)
+	if r, ok := m.selected(); ok && r.review != nil && key == "o" {
+		sourceKey = true
+	}
+	if r, ok := m.selected(); ok && r.attention == "unassigned" && (key == "o" || key == "V") {
+		m.openReviewQueue(*r.work)
+		sourceKey = true
+	}
+	if key == "V" || sourceKey {
 		w, ok := m.selectedWork()
 		if !ok {
 			return m, nil, true
@@ -248,6 +275,10 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			address = r.review.URL
 		}
 		if address == "" {
+			if m.mode == modeReview || m.mode == modeReviews {
+				m.message = "This review has no source URL."
+				return m, nil, true
+			}
 			var err error
 			address, err = briefAddress(w)
 			if err != nil {
@@ -266,7 +297,10 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.mode == modeReviews {
 		if key == "tab" {
-			states := []string{"", "incoming", work.Preparing, work.WithAuthor, work.Completed}
+			states := []string{"pending", "", "incoming", work.Preparing, work.WithAuthor, work.Reviewed, work.Completed}
+			if m.reviewWork != "" {
+				states = []string{"pending", work.Reviewed, work.WithAuthor, work.Completed}
+			}
 			for i, s := range states {
 				if s == m.reviewFilter {
 					m.reviewFilter = states[(i+1)%len(states)]
@@ -278,8 +312,7 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		if key == "enter" {
 			if r, ok := m.selected(); ok && r.review != nil {
-				m.push(modeReview)
-				m.workID, m.reviewID, m.scrollY = r.work.ID, r.review.ID, 0
+				m.openReview(r)
 			}
 			return m, nil, true
 		}
@@ -331,8 +364,7 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		if key == "enter" {
 			if r, ok := m.selected(); ok && r.review != nil {
-				m.push(modeReview)
-				m.reviewID, m.scrollY = r.review.ID, 0
+				m.openReview(r)
 				return m, nil, true
 			}
 		}
@@ -645,21 +677,34 @@ func (m Model) reviewsView() viewPage {
 	if state == "" {
 		state = work.Ready
 	}
-	b.WriteString(pal.bold.Render(" REVIEW OBLIGATIONS") + pal.dim.Render("  "+state+" · tab changes next owner") + "\n\n")
+	label := ""
+	if m.reviewWork != "" {
+		label = " · " + m.workName(m.reviewWork)
+	}
+	b.WriteString(pal.bold.Render(" REVIEW CHECKLIST") + pal.dim.Render(fmt.Sprintf("  %s%s · %d items", state, label, len(m.rows()))) + "\n\n")
 	for i, r := range m.rows() {
-		b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.review.Kind, 10)) + " " + pad(r.work.Name, min(30, max(12, m.width/4))) + " " + r.review.Title + "\n")
+		check := "[ ]"
+		if r.review.State == work.Reviewed || r.review.State == work.Completed {
+			check = "[x]"
+		}
+		b.WriteString(m.mark(i) + check + " " + pal.yellow.Render(pad(r.review.Kind, 10)) + " " + r.review.Title + "\n")
 		if i == m.cursor {
 			m.field(&b, "ask", r.review.Question)
 			m.field(&b, "rec", r.review.Recommendation)
 			m.field(&b, "changed", r.review.Changed)
 			m.field(&b, "requester", r.review.Requester)
+			m.field(&b, "source", r.review.URL)
 			if r.review.Provisional {
 				b.WriteString(pal.yellow.Render("             inferred request; ownership needs confirmation") + "\n")
 			}
 		}
 	}
 	if len(m.rows()) == 0 {
-		b.WriteString(pal.dim.Render(" No obligations in this state. Reading never completes a review.") + "\n")
+		if state == "pending" {
+			b.WriteString(pal.dim.Render(" All caught up. Tab shows other queues, including reviewed items.") + "\n")
+		} else {
+			b.WriteString(pal.dim.Render(" No requests in this queue.") + "\n")
+		}
 	}
 	return b
 }
@@ -675,6 +720,7 @@ func (m Model) reviewView() viewPage {
 	}
 	b := viewPage{}
 	b.WriteString(pal.bold.Render(" "+r.Title) + pal.dim.Render(" · "+r.State+" · "+w.Name) + "\n\n")
+	m.field(&b, "checklist", m.reviewPosition())
 	m.field(&b, "ask", r.Question)
 	m.field(&b, "rec", r.Recommendation)
 	m.field(&b, "changed", r.Changed)
@@ -688,11 +734,12 @@ func (m Model) reviewView() viewPage {
 	m.field(&b, "next owner", r.NextOwner(w.Responsible()))
 	m.field(&b, "source", r.URL)
 	m.field(&b, "version", r.Version)
+	m.field(&b, "reviewed", r.ReviewedVersion)
 	b.WriteString("\n EVIDENCE\n")
 	for _, line := range strings.Split(ansi.Wrap(r.Evidence, max(20, m.width-4), " "), "\n") {
 		b.WriteString("   " + line + "\n")
 	}
-	b.WriteString("\n Reading preserves the obligation. Feedback transfers the next action.\n")
+	b.WriteString("\n o/V opens the source. x marks reviewed and advances. n/p skips between requests.\n")
 	return b
 }
 
