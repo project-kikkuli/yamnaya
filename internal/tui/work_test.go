@@ -186,6 +186,7 @@ func TestTerminalProgramEditsContextOpensSourceAndMessagesItsManager(t *testing.
 	key("V")
 	wait(func() bool { raw, _ := os.ReadFile(marker); return string(raw) == "https://example.test/design" })
 	key("C")
+	key("e")
 	wait(func() bool {
 		latest, _ := m.core.Store.Work.Get(w.ID)
 		return latest.Context.Text == "Preserve both API and SDK"
@@ -207,5 +208,83 @@ func TestTerminalProgramEditsContextOpensSourceAndMessagesItsManager(t *testing.
 	latest, err := m.core.Store.Work.Get(w.ID)
 	if err != nil || latest.Context.Revision != 1 || latest.Bindings[w.Manager] != 0 {
 		t.Fatalf("editor delivery was mistaken for incorporation: %+v %v", latest, err)
+	}
+}
+
+func TestRepoBriefAndContextKeysChooseTheProjectTheyBelongTo(t *testing.T) {
+	for _, key := range []string{"B", "C"} {
+		t.Run(key, func(t *testing.T) {
+			m, _ := continuing(t)
+			for i, r := range m.rows() {
+				if r.repo != nil && r.project == nil {
+					m.cursor = i
+					break
+				}
+			}
+			m.detail = m.board.Projects[0].Key
+			m = press(t, m, key)
+			if m.mode != modeRepo {
+				t.Fatalf("repo key %s skipped choosing among %d projects: mode %v", key, len(m.board.Projects), m.mode)
+			}
+			rows := m.rows()
+			if len(rows) < 2 {
+				t.Fatal("fixture needs two projects")
+			}
+			target := rows[1].project.Work.ID
+			m = press(t, m, "down", "enter")
+			if m.mode != modeWork || m.workID != target {
+				t.Fatalf("%s opened the wrong project: %s, want %s", key, m.workID, target)
+			}
+			want := 0
+			if key == "C" {
+				want = 2
+			}
+			if m.workPanel != want {
+				t.Fatalf("%s opened panel %d, want %d", key, m.workPanel, want)
+			}
+			m = press(t, m, "esc", "esc")
+			if m.mode != modeList {
+				t.Fatal("project selection lost the board navigation")
+			}
+		})
+	}
+}
+
+func TestBriefShowsItsPublishedContentAndBrowserAddressThroughScrolling(t *testing.T) {
+	m, w := continuing(t)
+	dir := t.TempDir()
+	t.Setenv("YAMNAYA_STATE_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "work-service.json"), []byte(`{"address":"http://127.0.0.1:7763"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	brief := work.Brief{Assessment: "Current assessment", Context: 0, Rationale: strings.Repeat("Preserve the public contract. ", 20) + "Rationale ends here.", Changed: "Nested case verified", Uncertainty: strings.Repeat("Traffic remains unproven. ", 20) + "Uncertainty ends here.", Next: "The next independent action is the SDK check."}
+	var err error
+	_, err = m.core.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "brief", Brief: brief})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	m.openWork(w)
+	m.width, m.height = 80, 24
+	m.page = nil
+	var seen strings.Builder
+	for i := 0; i < 20; i++ {
+		seen.WriteString(ansi.Strip(m.View()))
+		seen.WriteByte('\n')
+		m = press(t, m, " ")
+	}
+	visible := strings.Join(strings.Fields(seen.String()), " ")
+	for _, text := range []string{brief.Assessment, "Rationale ends here.", "Uncertainty ends here.", brief.Next, "http://127.0.0.1:7763/brief/" + w.ID} {
+		if !strings.Contains(strings.Join(strings.Fields(visible), ""), strings.Join(strings.Fields(text), "")) {
+			t.Fatalf("terminal brief lost published content %q", text)
+		}
+	}
+	m = press(t, m, "C")
+	if m.mode != modeWork || m.workPanel != 2 {
+		t.Fatal("C did not open readable context")
+	}
+	m = press(t, m, "B")
+	if m.workPanel != 0 {
+		t.Fatal("B did not return to the manager brief")
 	}
 }

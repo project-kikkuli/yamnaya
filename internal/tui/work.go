@@ -84,8 +84,10 @@ func (m Model) selectedWork() (work.Scope, bool) {
 			}
 		}
 	}
-	if p, ok := m.board.Project(m.detail); ok && p.Work != nil {
-		return *p.Work, true
+	if m.mode == modeDetail || m.mode == modeSession || m.mode == modeAgent {
+		if p, ok := m.board.Project(m.detail); ok && p.Work != nil {
+			return *p.Work, true
+		}
 	}
 	return work.Scope{}, false
 }
@@ -105,6 +107,64 @@ func (m *Model) openWork(w work.Scope) {
 	if m.core != nil {
 		m.core.Store.Work.Seen(w.ID, w.Revision)
 	}
+}
+
+func (m *Model) openWorkPanel(w work.Scope, panel int) {
+	if m.mode != modeWork || m.workID != w.ID {
+		m.openWork(w)
+	}
+	m.workPanel, m.scrollY, m.workAction = panel, 0, ""
+}
+
+func (m *Model) chooseWork(key string) {
+	panel := 0
+	if key == "C" {
+		panel = 2
+	}
+	if w, ok := m.selectedWork(); ok {
+		m.openWorkPanel(w, panel)
+		return
+	}
+	if r, ok := m.selected(); ok && r.repo != nil && r.project == nil {
+		var scopes []work.Scope
+		seen := map[string]bool{}
+		for _, p := range r.repo.Missions {
+			if p.Work != nil && !seen[p.Work.ID] {
+				scopes = append(scopes, *p.Work)
+				seen[p.Work.ID] = true
+			}
+		}
+		if len(scopes) == 1 {
+			m.openWorkPanel(scopes[0], panel)
+			return
+		}
+		if len(scopes) > 1 {
+			repo := r.repo.Key
+			m.push(modeRepo)
+			m.repo, m.workAction = repo, key
+			return
+		}
+	}
+	m.message = "Choose a project with continuing work to read its brief or context."
+}
+
+func briefAddress(w work.Scope) (string, error) {
+	path, err := core.DefaultStorePath()
+	if err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(path), "work-service.json"))
+	if err != nil {
+		return "", err
+	}
+	var service struct{ Address string }
+	if err = json.Unmarshal(raw, &service); err != nil {
+		return "", err
+	}
+	if service.Address == "" {
+		return "", fmt.Errorf("brief service has no address")
+	}
+	return service.Address + "/brief/" + w.ID, nil
 }
 
 func (m *Model) loadWorkHistory() {
@@ -146,20 +206,26 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.reviewFilter = ""
 		return m, nil, true
 	}
-	if key == "B" {
-		if w, ok := m.selectedWork(); ok {
-			m.openWork(w)
+	if m.mode == modeRepo && m.workAction != "" && key == "enter" {
+		if r, ok := m.selected(); ok && r.project != nil && r.project.Work != nil {
+			panel := 0
+			if m.workAction == "C" {
+				panel = 2
+			}
+			m.openWorkPanel(*r.project.Work, panel)
 		} else {
-			m.message = "No continuing work is linked yet; background discovery will attach it."
+			m.message = "This project has no continuing work record yet."
 		}
 		return m, nil, true
 	}
-	if key == "C" {
-		w, ok := m.selectedWork()
-		if !ok {
-			return m, nil, true
+	if key == "B" || key == "C" {
+		m.chooseWork(key)
+		return m, nil, true
+	}
+	if key == "e" && m.mode == modeWork && m.workPanel == 2 {
+		if w, ok := m.workScope(); ok {
+			return m, m.editContext(w), true
 		}
-		return m, m.editContext(w), true
 	}
 	if key == "V" {
 		w, ok := m.selectedWork()
@@ -173,18 +239,14 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			address = r.review.URL
 		}
 		if address == "" {
-			path, _ := core.DefaultStorePath()
-			raw, err := os.ReadFile(filepath.Join(filepath.Dir(path), "work-service.json"))
-			var service struct{ Address string }
-			if err == nil {
-				err = json.Unmarshal(raw, &service)
-			}
-			if err != nil || service.Address == "" {
+			var err error
+			address, err = briefAddress(w)
+			if err != nil {
 				m.message = "Brief service is unavailable; run ym serve."
 				return m, nil, true
 			}
-			address = service.Address + "/brief/" + w.ID
 		}
+
 		return m, m.do(func() (string, error) {
 			bin := "xdg-open"
 			if runtime.GOOS == "darwin" {
@@ -284,7 +346,7 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		case "pgdown", " ":
 			m.scrollY += m.height / 2
 			return m, nil, true
-		case "pgup":
+		case "pgup", "b":
 			m.scrollY = max(0, m.scrollY-m.height/2)
 			return m, nil, true
 		}
@@ -412,21 +474,6 @@ func (m Model) workView() viewPage {
 	b.WriteString("\n\n")
 	switch m.workPanel {
 	case 0:
-		if m.workSince < int64(len(m.workHistory)) {
-			b.WriteString(pal.bold.Render(" CHANGED SINCE YOUR LAST READ") + "\n")
-			changes := m.workHistory[m.workSince:]
-			for _, e := range changes[max(0, len(changes)-5):] {
-				summary := e.Text
-				if e.Type == "brief" {
-					summary = e.Brief.Changed
-				}
-				if e.Type == "observe" {
-					summary = e.Review.Title + " · " + e.Review.Version
-				}
-				m.field(&b, e.Type, summary)
-			}
-			b.WriteString("\n")
-		}
 		if !w.BriefCurrent() {
 			b.WriteString(pal.yellow.Render(" Assessment needs refreshing against current context or evidence.") + "\n\n")
 		}
@@ -437,6 +484,11 @@ func (m Model) workView() viewPage {
 		m.field(&b, "uncertain", w.Brief.Uncertainty)
 		m.field(&b, "next", w.Brief.Next)
 		m.field(&b, "authority", w.Authority)
+		m.field(&b, "context", w.Context.Text)
+		if address, err := briefAddress(w); err == nil {
+			m.field(&b, "browser", address)
+		}
+		m.field(&b, "artifact", w.Brief.Artifact)
 		related := make([]string, 0, len(w.Related))
 		for id := range w.Related {
 			related = append(related, id)
@@ -467,6 +519,22 @@ func (m Model) workView() viewPage {
 		for _, issue := range w.CoverageErrors {
 			m.field(&b, "unavailable", issue)
 		}
+		if m.workSince < int64(len(m.workHistory)) {
+			b.WriteString(pal.bold.Render(" CHANGED SINCE YOUR LAST READ") + "\n")
+			changes := m.workHistory[m.workSince:]
+			for _, e := range changes[max(0, len(changes)-5):] {
+				summary := e.Text
+				if e.Type == "brief" {
+					summary = e.Brief.Changed
+				}
+				if e.Type == "observe" {
+					summary = e.Review.Title + " · " + e.Review.Version
+				}
+				m.field(&b, e.Type, summary)
+			}
+			b.WriteString("\n")
+		}
+
 	case 1:
 		for i, r := range m.rows() {
 			switch {
@@ -479,7 +547,10 @@ func (m Model) workView() viewPage {
 			}
 		}
 	case 2:
-		b.WriteString(fmt.Sprintf(" CONTEXT r%d\n\n", w.Context.Revision))
+		b.WriteString(fmt.Sprintf(" CONTEXT r%d · e edits in $EDITOR\n\n", w.Context.Revision))
+		if strings.TrimSpace(w.Context.Text) == "" {
+			b.WriteString(pal.dim.Render(" No shared context recorded. Press e to add guidance for the project.") + "\n\n")
+		}
 		m.field(&b, "guidance", w.Context.Text)
 		b.WriteString("\n INCORPORATED BY\n")
 		sessions := make([]string, 0, len(w.Bindings))

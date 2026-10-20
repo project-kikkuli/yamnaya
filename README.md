@@ -37,9 +37,9 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 The repo view stays the entry point. Missions retain their purpose, manager, context, briefs, review obligations and history after their sessions exit. Discovery attaches existing sessions automatically. Use `ym work create "Compatibility" --repo /src/query/.git --purpose "Preserve v2 callers"` for work that starts without a session, then `ym work bind WORK SESSION` and `ym work manager WORK SESSION` to assign independent native sessions. `ym work relate WORK OTHER "depends on the schema migration"` connects work across repositories without changing repo grouping.
 
-- `B` reads the selected project's manager brief. `tab` moves through brief, workstreams, shared context and history. Changes since the last read appear in the brief; assessment freshness is tied to its cited sources and context.
+- `B` reads the selected project's full manager brief and shows its browser address. On a repo row, `B` and `C` first choose a project. `tab` moves through brief, workstreams, shared context and history. Changes since the last read appear in the brief; assessment freshness is tied to its cited sources and context.
 - `R` opens review obligations. `tab` switches ready, preparing, with author and completed. Opening an obligation restores its question, recommendation, evidence and previous feedback. `a` records a judgment; `f` sends feedback into the manager's durable inbox and transfers follow-through to them. Neither action posts to GitHub or Notion. Reading preserves the obligation.
-- `C` edits shared context in `$EDITOR`. Delivery, receipt and each session's explicit adoption of the context revision remain distinct. Context changes invalidate prepared judgments.
+- `C` reads shared context in the terminal; `e` on that panel edits it in `$EDITOR`. Delivery, receipt and each session's explicit adoption of the context revision remain distinct. Context changes invalidate prepared judgments.
 - `s` messages the selected workstream or manager. `o` opens its native session. `V` opens the original source from a review, or the stable rich brief from a project. A manager can publish a separate artifact URL.
 - `:` runs owner CLI commands with quoted arguments, without shell expansion. Command output opens in a scrollable reader.
 

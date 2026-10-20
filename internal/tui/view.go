@@ -216,7 +216,13 @@ func (m Model) footer() []string {
 func (m Model) hints() string {
 	switch m.mode {
 	case modeWork:
-		return "tab brief/work/context/history   C edit context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
+		if m.workPanel == 1 {
+			return "↑↓ choose workstream   enter open   s message   B brief   C context   tab next panel   esc back"
+		}
+		if m.workPanel == 2 {
+			return "↑↓ scroll   e edit context   B brief   tab next panel   s message manager   esc back"
+		}
+		return "↑↓ scroll   space/b page   tab brief/work/context/history   C context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
 	case modeReviews:
 		return "↑↓ move   enter review   tab ready/preparing/author/completed   B brief   : command   esc back"
 	case modeReview:
@@ -232,6 +238,9 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
+		if m.workAction != "" {
+			return "↑↓ choose project   enter open   B brief   C context   esc back"
+		}
 		return "↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
 		return "↑↓ move   enter open session, agent or item   o go to session   O beside   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
@@ -674,7 +683,14 @@ func (m Model) repoView() viewPage {
 	}
 	b.WriteString(pal.bold.Render(" "+r.Name) + pal.dim.Render("  "+key) + "\n")
 	b.WriteString(" " + m.repoCounts(r) + "\n")
-	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
+	heading := "MISSIONS"
+	if m.workAction == "B" {
+		heading = "CHOOSE A PROJECT BRIEF"
+	}
+	if m.workAction == "C" {
+		heading = "CHOOSE PROJECT CONTEXT"
+	}
+	b.WriteString("\n" + pal.bold.Render(" "+heading) + "\n")
 	cols := m.missionCols(0)
 	for i, p := range r.Missions {
 		b.place = "m:" + p.Key
@@ -1141,9 +1157,9 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
-   B            open the selected project's living manager brief; tab switches brief, workstreams, context, and history
+   B            read the full manager brief; on a repo choose its project first; V opens the browser version
    R            all review obligations; tab switches ready, preparing, with author, and completed
-   C            edit project context in $EDITOR, preserving the revision you started from
+   C            read project context; e opens $EDITOR from the context panel, preserving its starting revision
    V            open the review's original source or the project's stable rich brief in the browser
    :            run an owner command without leaving the board, for example work watch ID URL --kind notion
 

@@ -80,12 +80,14 @@ type frame struct {
 	mode                                        mode
 	cursor                                      int
 	workID, reviewID, detail, sess, agent, repo string
+	workAction                                  string
 	panel, scroll                               int
 	since                                       int64
 }
 
 type Model struct {
 	workID       string
+	workAction   string
 	reviewID     string
 	workPanel    int
 	reviewFilter string
@@ -1104,7 +1106,7 @@ func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
-	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, workID: m.workID, reviewID: m.reviewID, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, panel: m.workPanel, scroll: m.scrollY, since: m.workSince})
+	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, workID: m.workID, reviewID: m.reviewID, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, panel: m.workPanel, scroll: m.scrollY, since: m.workSince, workAction: m.workAction})
 	m.mode, m.cursor = to, 0
 }
 
@@ -1114,6 +1116,7 @@ func (m *Model) pop() {
 	m.mode, m.cursor = f.mode, f.cursor
 	m.workID, m.reviewID, m.detail, m.sess, m.agent, m.repo = f.workID, f.reviewID, f.detail, f.sess, f.agent, f.repo
 	m.workPanel, m.scrollY, m.workSince = f.panel, f.scroll, f.since
+	m.workAction = f.workAction
 	m.workRevision = -1
 	if m.mode == modeWork {
 		m.loadWorkHistory()
