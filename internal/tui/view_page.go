@@ -7,6 +7,13 @@ type viewPage struct {
 	place string
 }
 
+func (p *viewPage) markScene() {
+	if len(p.lines) == 0 {
+		p.lines = append(p.lines, viewLine{})
+	}
+	p.lines[len(p.lines)-1].scene = true
+}
+
 func (p *viewPage) WriteString(text string) (int, error) {
 	if len(p.lines) == 0 {
 		p.lines = append(p.lines, viewLine{place: p.place})

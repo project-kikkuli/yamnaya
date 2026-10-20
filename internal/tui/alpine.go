@@ -2,7 +2,6 @@ package tui
 
 import (
 	"maps"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -95,13 +94,6 @@ func (a *alpine) observe(b core.Board) {
 				continue
 			}
 			a.emit(alpineEvent{kind: kind, mountain: e.mountain, team: id, frame: a.frame, people: 1})
-			if kind == "work" {
-				if i, ok := a.index[e.mountain]; ok {
-					p := &a.mountains[i]
-					p.relief = math.Min(1, p.height(a.frame)+0.12)
-					p.frame = a.frame
-				}
-			}
 		}
 	}
 	a.teams, a.kills, a.ready = teams, maps.Clone(b.Kills), true

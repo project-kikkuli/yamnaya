@@ -33,7 +33,7 @@ func TestExpeditionTransitions(t *testing.T) {
 		{"cut crew falls without a summit", func(b *core.Board) {
 			b.Projects[0].Sessions[0].Crew[0].Status, b.Projects[0].Sessions[0].Crew[0].Cut = core.Done, true
 		}, "fall"},
-		{"work reshapes the terrain", func(b *core.Board) { b.Projects[0].Sessions[0].Crew[0].Facts.Tools = map[string]int{"Read": 2} }, "work"},
+		{"observed work signals activity", func(b *core.Board) { b.Projects[0].Sessions[0].Crew[0].Facts.Tools = map[string]int{"Read": 2} }, "work"},
 		{"new crew departs", func(b *core.Board) {
 			b.Projects[0].Sessions[0].Crew = append(b.Projects[0].Sessions[0].Crew, core.Member{ID: "new", Status: core.Busy})
 		}, "depart"},
@@ -83,7 +83,7 @@ func TestLandscapeStartsFromCurrentStateWithoutReplayingHistory(t *testing.T) {
 	var a alpine
 	a.observe(b)
 	a.observe(b)
-	if len(a.events) > 0 || a.mountains[0].relief != 0 {
+	if len(a.events) > 0 {
 		t.Fatalf("startup replayed old work: %+v", a)
 	}
 	child := core.Live{Session: core.Session{ID: "rope", Status: core.Busy}}
@@ -94,9 +94,9 @@ func TestLandscapeStartsFromCurrentStateWithoutReplayingHistory(t *testing.T) {
 	}
 }
 
-func TestWeatherMovesWithoutReadingTheBoardOrMovingInput(t *testing.T) {
+func TestActivityMovesWithoutReadingTheBoardOrMovingInput(t *testing.T) {
 	usePalette(t, false)
-	m := Model{width: 120, height: 40, loaded: true, mode: modeInput, inKind: inFilter, input: []rune("ridge"), cursor: 2}
+	m := Model{width: 160, height: 40, loaded: true, mode: modeInput, inKind: inFilter, input: []rune("ridge"), cursor: 2}
 	m.board = alpineBoard()
 	m.alpine.observe(m.board)
 	before := m.View()
@@ -105,7 +105,7 @@ func TestWeatherMovesWithoutReadingTheBoardOrMovingInput(t *testing.T) {
 		m = next.(Model)
 	}
 	if m.View() == before {
-		t.Fatal("resting landscape stopped moving")
+		t.Fatal("active team stopped moving")
 	}
 	if m.cursor != 2 || string(m.input) != "ridge" || m.mode != modeInput {
 		t.Fatalf("animation changed the controls: %+v", m)
@@ -167,6 +167,8 @@ func TestAnimationPreservesSelectionAndScrollAcrossFrames(t *testing.T) {
 
 func TestSceneryToggleFreesSpaceAndLeavesTypedAInTheInput(t *testing.T) {
 	m, _, _ := setup(t)
+	m.width = 160
+	m.page = nil
 	firstRepo := func(view string) int {
 		for y, line := range strings.Split(ansi.Strip(view), "\n") {
 			if strings.Contains(line, "2 missions") {
@@ -177,14 +179,14 @@ func TestSceneryToggleFreesSpaceAndLeavesTypedAInTheInput(t *testing.T) {
 	}
 	before := firstRepo(m.View())
 	m = press(t, m, "A")
-	if hidden := firstRepo(m.View()); hidden < 0 || hidden >= before {
-		t.Fatalf("hiding scenery did not recover table space: before=%d, after=%d", before, hidden)
+	if hidden := firstRepo(m.View()); hidden < 0 || hidden != before {
+		t.Fatalf("toggling scenery changed table density: before=%d, after=%d", before, hidden)
 	}
-	if left, _ := m.sceneMargins(); left != 0 {
+	if m.sceneWidth() != 0 {
 		t.Fatal("A did not hide the landscape")
 	}
 	m = press(t, m, "A", "/", "A")
-	if left, _ := m.sceneMargins(); left == 0 || string(m.input) != "A" {
+	if m.sceneWidth() == 0 || string(m.input) != "A" {
 		t.Fatal("typing A toggled the landscape instead of entering text")
 	}
 }
@@ -346,8 +348,17 @@ func TestTerrainAndEventsPreserveEveryVisibleTextCell(t *testing.T) {
 					}
 					for y, line := range page.lines {
 						want := ansi.Strip(line.text)
-						if got := ansi.Strip(ansi.Cut(lines[y], line.offset, line.offset+ansi.StringWidth(want))); got != want {
+						if got := ansi.Strip(ansi.Cut(lines[y], 0, ansi.StringWidth(want))); got != want {
 							t.Fatalf("row %d text changed: %q, want %q", y, got, want)
+						}
+						edge := m.width - m.sceneWidth()
+						got := pad(ansi.Strip(ansi.Cut(lines[y], 0, edge)), edge)
+						quiet := pad(ansi.Strip(ansi.Cut(line.text, 0, edge)), edge)
+						if got != quiet {
+							t.Fatalf("scenery entered the quiet area at row %d: %q, want %q", y, got, quiet)
+						}
+						if !line.scene && lines[y] != line.text {
+							t.Fatalf("unrelated row %d gained scenery: %q", y, lines[y])
 						}
 						if ansi.StringWidth(lines[y]) > m.width {
 							t.Fatalf("row %d overflows", y)
@@ -382,24 +393,20 @@ func TestInterruptedClimberGetsAWreckMarker(t *testing.T) {
 			b := alpineBoard()
 			b.Projects[0].Sessions[0].Crew[0].Status = core.Done
 			b.Projects[0].Sessions[0].Crew[0].Cut = cut
-			m := Model{width: 120, height: 40, loaded: true, board: b, mode: modeAgent, detail: "ridge", sess: "ridge", agent: "rope"}
+			m := Model{width: 160, height: 40, loaded: true, board: b, mode: modeAgent, detail: "ridge", sess: "ridge", agent: "rope"}
 			m.alpine.observe(b)
 			page := m.prepareView()
 			rendered := strings.Split(m.paintView(page), "\n")
-			for y, line := range page.lines {
-				if line.place != "a:ridge/rope" {
-					continue
-				}
-				mark := "▴"
-				if cut {
-					mark = "×"
-				}
-				if !strings.Contains(ansi.Strip(ansi.Cut(rendered[y], 0, line.offset)), mark) {
-					t.Fatalf("interrupted=%v, marker missing: %q", cut, rendered[y])
-				}
-				return
+			mark := "⚑"
+			if cut {
+				mark = "×"
 			}
-			t.Fatal("climber has no location")
+			for y, line := range page.lines {
+				if line.place == "a:ridge/rope" && line.scene && strings.Contains(ansi.Strip(ansi.Cut(rendered[y], m.width-m.sceneWidth(), m.width)), mark) {
+					return
+				}
+			}
+			t.Fatalf("interrupted=%v, marker %q missing", cut, mark)
 		})
 	}
 }
@@ -426,12 +433,116 @@ func TestDenseRegionsKeepOwnerNeedsVisible(t *testing.T) {
 				if line.place != "m:ridge" && line.place != "r:/repo/ridge" {
 					continue
 				}
-				if strings.Contains(ansi.Strip(ansi.Cut(view[y], 0, line.offset)), "!2") {
+				if strings.Contains(ansi.Strip(ansi.Cut(view[y], m.width-m.sceneWidth(), m.width)), "!2") {
 					seen[line.place] = true
 				}
 			}
-			if !seen["m:ridge"] || !seen["r:/repo/ridge"] {
+			if !seen["m:ridge"] || !strings.Contains(m.View(), "2 need you") {
 				t.Fatalf("owner needs disappeared in a fleet of %d: %v", n, seen)
+			}
+		})
+	}
+}
+
+func TestSceneMotionMeansActivityOrOwnerAttention(t *testing.T) {
+	usePalette(t, false)
+	for _, tc := range []struct {
+		name               string
+		status             core.Status
+		cut, needs, moving bool
+	}{
+		{name: "working", status: core.Busy, moving: true},
+		{name: "waiting camp", status: core.Waiting},
+		{name: "idle camp", status: core.Idle},
+		{name: "completed", status: core.Done},
+		{name: "interrupted", status: core.Done, cut: true},
+		{name: "unknown", status: core.Unknown},
+		{name: "needs owner", status: core.Idle, needs: true, moving: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := alpineBoard()
+			b.Projects[0].Sessions[0].Crew = nil
+			b.Projects[0].Sessions[0].Status = tc.status
+			if tc.cut {
+				b.Projects[0].Sessions[0].Crew = []core.Member{{ID: "cut", Status: core.Done, Cut: true}}
+			}
+			if tc.needs {
+				b.Needs = []core.Need{{Project: "ridge", Item: &core.Item{ID: "D1", Session: "ridge", Question: "Choose a crossing?", Kind: core.KindDecision, State: core.ItemOpen}}}
+			}
+			b.Repos[0].Missions[0] = b.Projects[0]
+			m := Model{board: b, loaded: true, width: 160, height: 30}
+			m.alpine.observe(b)
+			before := m.View()
+			changed := false
+			for _, frame := range []uint64{6, 12, 18} {
+				m.alpine.frame = frame
+				changed = changed || m.View() != before
+			}
+			if changed != tc.moving {
+				t.Fatalf("motion=%v, want %v", changed, tc.moving)
+			}
+		})
+	}
+}
+
+func TestDenseScenesKeepCountsAndWorkingMotion(t *testing.T) {
+	usePalette(t, false)
+	for _, height := range []int{1, 2, 5} {
+		for _, count := range []int{10, 1000, 10000} {
+			t.Run(fmt.Sprint(height, "/", count), func(t *testing.T) {
+				g := expeditionGroup{mission: "ridge", region: "/repo/ridge", counts: [6]int{}, cut: count, needs: 3}
+				for _, state := range []core.Status{core.Busy, core.Waiting, core.Idle, core.Done, core.Unknown} {
+					g.counts[state] = count
+				}
+				g.counts[core.Done] += count
+				m := Model{}
+				before := newAlpineCanvas(44, height)
+				m.drawScene(&before, g, "m:ridge")
+				m.alpine.frame = 6
+				after := newAlpineCanvas(44, height)
+				m.drawScene(&after, g, "m:ridge")
+				if string(before.text) == string(after.text) {
+					t.Fatal("dense active team stopped moving")
+				}
+				summary := ansi.Strip(after.row(height-1, 0, 44))
+				for _, glyph := range []rune{'ʎ', '△', '⌂', '⚑', '?', '×'} {
+					if !strings.Contains(summary, fmt.Sprintf("%c%d", glyph, count)) {
+						t.Fatalf("missing %c%d in %q", glyph, count, summary)
+					}
+				}
+				if !strings.Contains(summary, "!3") {
+					t.Fatalf("owner signal disappeared: %q", summary)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectEventsStayWithTheirOwnTeam(t *testing.T) {
+	usePalette(t, false)
+	for _, kind := range []string{"summit", "storm", "depart", "work", "fall"} {
+		t.Run(kind, func(t *testing.T) {
+			b := alpineBoard()
+			b.Projects[0].Sessions = append(b.Projects[0].Sessions, core.Live{Session: core.Session{ID: "other", Status: core.Idle}})
+			m := Model{board: b, loaded: true, width: 160, height: 40, mode: modeDetail, detail: "ridge"}
+			m.alpine.observe(b)
+			page := m.prepareView()
+			before := strings.Split(m.paintView(page), "\n")
+			m.alpine.emit(alpineEvent{kind: kind, mountain: "ridge", team: "ridge", people: 3})
+			m.alpine.group()
+			m.alpine.frame = 17
+			after := strings.Split(m.paintView(page), "\n")
+			affected := false
+			for y, line := range page.lines {
+				if line.place == "s:other" && before[y] != after[y] {
+					t.Fatalf("%s affected a sibling team", kind)
+				}
+				if before[y] != after[y] {
+					affected = true
+				}
+			}
+			if !affected {
+				t.Fatalf("%s had no visible event", kind)
 			}
 		})
 	}

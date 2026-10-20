@@ -8,7 +8,7 @@ import (
 )
 
 func (m Model) itemsView() viewPage {
-	b := viewPage{place: "m:" + m.itemsOf}
+	b := viewPage{}
 	title := "every project"
 	if p, ok := m.board.Project(m.itemsOf); ok && m.itemsOf != "" {
 		title = p.Name
@@ -19,7 +19,6 @@ func (m Model) itemsView() viewPage {
 	}
 	ids := itemIDs(m.items)
 	for i, it := range m.items {
-		b.place = m.itemPlace(it.Session)
 		b.WriteString(m.itemLines(i, it, ids))
 	}
 	return b

@@ -23,10 +23,12 @@ func (m Model) View() string {
 }
 
 func (m Model) prepareView() viewPage {
-	left, right := m.sceneMargins()
+	right := m.sceneWidth()
+	if right > 0 {
+		right += sceneGap
+	}
 	bodyModel := m
-	bodyModel.width = max(20, m.width-left-right)
-	bodyModel.alpine.hidden = left == 0
+	bodyModel.width = max(20, m.width-right)
 	var body viewPage
 	switch m.mode {
 	case modeHelp:
@@ -34,7 +36,7 @@ func (m Model) prepareView() viewPage {
 	case modeScreen:
 		body = textPage(m.screen, "")
 	case modeWhy:
-		body = textPage(ansi.Wrap(bodyModel.whyView(), bodyModel.width, " "), m.sceneFocus())
+		body = textPage(ansi.Wrap(bodyModel.whyView(), bodyModel.width, " "), "")
 	case modePick:
 		body = textPage(bodyModel.pickView(), "")
 	case modeInput:
@@ -66,7 +68,6 @@ func (m Model) prepareView() viewPage {
 	}
 	m.locateLines(body.lines)
 	for _, line := range body.lines {
-		line.offset = left
 		lines = append(lines, line)
 	}
 	var foot []viewLine
@@ -80,22 +81,16 @@ func (m Model) prepareView() viewPage {
 	} else if len(lines) > room {
 		lines = m.scroll(lines, room, top)
 	}
-	place := m.sceneFocus()
-	world := 0
-	for i := len(lines) - 1; i >= 0; i-- {
-		if lines[i].place != "" {
-			place = lines[i].place
-			world = lines[i].world + 1
-			break
-		}
-	}
 	for len(lines) < room {
-		lines = append(lines, viewLine{place: place, offset: left, open: true, world: world, extent: world + room - len(lines)})
-		world++
+		lines = append(lines, viewLine{})
 	}
 	lines = append(lines, foot...)
 	for i := range lines {
-		lines[i].text = ansi.Truncate(lines[i].text, max(1, m.width-lines[i].offset), "…")
+		width := m.width
+		if i >= top && i < len(lines)-len(foot) {
+			width -= right
+		}
+		lines[i].text = ansi.Truncate(lines[i].text, max(1, width), "…")
 	}
 	return viewPage{lines: lines}
 }
@@ -257,12 +252,10 @@ func (m Model) listView() viewPage {
 			b.WriteString(m.needLines(i, *r.need))
 		case r.project == nil:
 			b.place = "r:" + r.repo.Key
-			if !m.alpine.hidden {
-				b.WriteString("\n\n")
-			}
 			b.WriteString(m.repoLine(i, *r.repo, cols))
 		default:
 			b.place = "m:" + r.project.Key
+			b.markScene()
 			b.WriteString(m.missionLine(i, *r.project, cols))
 		}
 	}
@@ -629,6 +622,7 @@ func (m Model) repoView() viewPage {
 	cols := m.missionCols(0)
 	for i, p := range r.Missions {
 		b.place = "m:" + p.Key
+		b.markScene()
 		b.WriteString(m.missionLine(i, p, cols))
 		if len(p.Sessions) > 0 {
 			lead := p.Sessions[0]
@@ -652,6 +646,7 @@ func (m Model) detailView() viewPage {
 		return textPage(pal.dim.Render("   this mission has no live sessions now; esc back"), "")
 	}
 	b := viewPage{place: "m:" + p.Key}
+	b.markScene()
 	b.WriteString(pal.bold.Render(" "+p.Name) + pal.dim.Render("  "+p.RepoName+"  "+p.Key) + "\n")
 	if len(p.Phases.Names) > 0 {
 		var ps []string
@@ -700,6 +695,7 @@ func (m Model) detailView() viewPage {
 			line += pal.dim.Render("   o adopt")
 		}
 		b.place = "s:" + s.Key()
+		b.markScene()
 		b.WriteString(line + "\n")
 		if d := doingText(m.board.At, s.Session); d != "" {
 			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
@@ -707,6 +703,7 @@ func (m Model) detailView() viewPage {
 		i++
 		for _, c := range s.Crew {
 			b.place = "a:" + s.Key() + "/" + c.ID
+			b.markScene()
 			b.WriteString(m.crewLine(i, s, c))
 			i++
 		}
@@ -834,6 +831,7 @@ func (m Model) sessionView() viewPage {
 		return textPage(pal.dim.Render("   this session is gone; esc back"), "")
 	}
 	b := viewPage{place: "s:" + s.Key()}
+	b.markScene()
 	title := s.Title
 	if title == "" {
 		title = core.Short(s.Key())
@@ -876,6 +874,7 @@ func (m Model) sessionView() viewPage {
 	i := 0
 	for _, c := range s.Crew {
 		b.place = "a:" + s.Key() + "/" + c.ID
+		b.markScene()
 		b.WriteString(m.crewLine(i, *s, c))
 		i++
 	}
@@ -950,6 +949,7 @@ func (m Model) agentView() viewPage {
 		return textPage(pal.dim.Render("   this agent is gone; esc back"), "")
 	}
 	b := viewPage{place: "a:" + s.Key() + "/" + c.ID}
+	b.markScene()
 	b.WriteString(pal.bold.Render(" "+c.Name) + pal.dim.Render("  in "+s.Title+"  "+c.ID) + "\n\n")
 	kind := c.Type
 	if c.Teammate {

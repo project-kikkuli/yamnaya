@@ -4,7 +4,7 @@ import "math"
 
 func (c *alpineCanvas) effect(e alpineEvent, x, peak int, frame uint64) {
 	age := float64(frame - e.frame)
-	end := c.h - 3
+	end := c.h - 1
 	switch e.kind {
 	case "storm":
 		strength := math.Min(1, age/9) * math.Min(1, (75-age)/16)

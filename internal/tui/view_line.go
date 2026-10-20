@@ -2,7 +2,6 @@ package tui
 
 type viewLine struct {
 	text, place   string
-	offset        int
-	open          bool
+	scene         bool
 	world, extent int
 }
