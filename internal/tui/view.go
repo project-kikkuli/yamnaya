@@ -213,6 +213,9 @@ func (m Model) footer() []string {
 }
 
 func (m Model) hints() string {
+	if r, ok := m.selected(); ok && r.item != nil && r.item.Action == "chat" && (m.mode == modeList || m.mode == modeDetail || m.mode == modeSession || m.mode == modeItems) {
+		return "o open chat   O beside   enter context   l later   x dismiss   ? help"
+	}
 	controls := m.sessionHints()
 
 	if r, ok := m.currentReview(); ok && r.Action == "merge" && (m.mode == modeList || m.mode == modeReviews || m.mode == modeReview) {
@@ -636,6 +639,9 @@ func (m Model) needLines(i int, n core.Need) string {
 	}
 	it := n.Item
 	q, keys := it.Question, "enter expand   a answer   l later   x dismiss   o go to session   O beside"
+	if it.Action == "chat" {
+		q, keys = pal.yellow.Render("action in chat · ")+q, "enter context   o open chat   O beside   l later   x dismiss"
+	}
 	if it.Kind == core.KindGo {
 		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
 	}
@@ -1158,6 +1164,9 @@ func (m Model) whyView() string {
 	it := m.why
 	var b strings.Builder
 	b.WriteString(pal.bold.Render(" "+it.ID+"  "+it.Kind+"  "+it.State) + "\n " + it.Question + "\n\n")
+	if it.Action == "chat" {
+		b.WriteString(pal.yellow.Render("Action in the originating chat · o opens it, O opens beside") + "\n\n")
+	}
 	field := func(k, v string) {
 		if v != "" {
 			b.WriteString(" " + pal.bold.Render(k) + "  " + v + "\n")

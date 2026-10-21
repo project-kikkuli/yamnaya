@@ -11,6 +11,7 @@ const (
 )
 
 type Review struct {
+	Handoff         *Handoff
 	Dismissed       bool
 	Action          string
 	StatusError     string

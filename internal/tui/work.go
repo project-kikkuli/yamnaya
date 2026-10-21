@@ -744,6 +744,14 @@ func (m Model) reviewView() viewPage {
 	m.field(&b, "requester", r.Requester)
 	m.field(&b, "author", r.Author)
 	m.field(&b, "prepared by", r.Preparer)
+	if r.Handoff != nil {
+		m.field(&b, "agent claim", r.Handoff.Quote)
+		m.field(&b, "requested by", r.Handoff.Agent)
+		m.field(&b, "source event", r.Handoff.Event)
+		m.field(&b, "requested version", r.Handoff.Version)
+		m.field(&b, "requested at", r.Handoff.At.String())
+		m.field(&b, "transcript", fmt.Sprintf("%s · byte %d", r.Handoff.Path, r.Handoff.Offset))
+	}
 	m.field(&b, "next owner", r.NextOwner(w.Responsible()))
 	m.field(&b, "source", r.URL)
 	m.field(&b, "version", r.Version)

@@ -108,6 +108,8 @@ func NewRoot() *cobra.Command {
 	})
 	root.AddCommand(
 		workCmd(with),
+		handoffCmd(with),
+		handoffRunCmd(with),
 		agentCmd(with),
 		agentRunCmd(with),
 		serveCmd(with),

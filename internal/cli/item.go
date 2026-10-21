@@ -142,6 +142,7 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 			return nil
 		}),
 	}
+	cmd.Flags().StringVar(&it.Action, "action", "", "chat when the owner must act in the originating conversation")
 	cmd.Flags().StringVar(&it.Kind, "kind", "", "decision, default, chore, or go")
 	cmd.Flags().StringVar(&it.Question, "question", "", "one-line question")
 	cmd.Flags().StringVar(&it.Rec, "rec", "", "what you recommend")
@@ -270,6 +271,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 					fmt.Fprintf(w, "%s: %s\n", k, v)
 				}
 			}
+			line("action", it.Action)
 			line("rec", it.Rec)
 			for _, o := range it.Options {
 				line("option", o.Label+" = "+o.Effect)
@@ -294,6 +296,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 }
 
 type itemJSON struct {
+	Action     string        `json:"action,omitempty"`
 	ID         string        `json:"id"`
 	Project    string        `json:"project"`
 	Scope      string        `json:"scope"`
@@ -322,7 +325,7 @@ func ts(t time.Time) string {
 }
 
 func toJSON(it core.Item) itemJSON {
-	return itemJSON{ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }

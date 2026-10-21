@@ -199,6 +199,43 @@ func Apply(s *Scope, e Event) error {
 			}
 		}
 		s.Brief = e.Brief
+
+	case "handoff":
+		incoming := e.Review
+		if incoming.ID == "" || incoming.Version == "" || incoming.Handoff == nil || e.Source.Requester == "" {
+			return errors.New("handoff needs its source version, requester and transcript provenance")
+		}
+		old, exists := s.Reviews[incoming.ID]
+		if exists {
+			old.Handoff = incoming.Handoff
+			if old.Requester == "" {
+				old.Requester = incoming.Requester
+				old.Question = incoming.Question
+			}
+			old.Provisional = false
+			s.Reviews[old.ID] = old
+		} else {
+			incoming.State = s.PreparationState()
+			if incoming.Closed {
+				incoming.State = "withdrawn"
+			}
+			incoming.Updated = e.At
+			s.Reviews[incoming.ID] = incoming
+		}
+		found := false
+		for i, source := range s.Sources {
+			if source.URL == e.Source.URL {
+				found = true
+				s.Sources[i].AgentPR = source.AgentPR || e.Source.AgentPR
+				if source.Requester == "" {
+					s.Sources[i].Requester = e.Source.Requester
+					s.Sources[i].Question = e.Source.Question
+				}
+			}
+		}
+		if !found && e.Source.Kind != "artifact" {
+			s.Sources = append(s.Sources, e.Source)
+		}
 	case "link-pr":
 		found := false
 		for i, source := range s.Sources {
@@ -244,6 +281,7 @@ func Apply(s *Scope, e Event) error {
 			if r.Order == old.Order && e.PreviousVersion != old.Version {
 				return errors.New("source revision order is ambiguous")
 			}
+			r.Handoff = old.Handoff
 			r.Feedback, r.Judgment = old.Feedback, old.Judgment
 			r.ReviewedVersion, r.ReviewedContext = old.ReviewedVersion, old.ReviewedContext
 			if r.Question == "" {

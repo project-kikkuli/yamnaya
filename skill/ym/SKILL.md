@@ -45,6 +45,10 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
 
 Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
 
+## Actions in the conversation
+
+When the owner must act in the native chat, file `ym item add --kind chore --action chat --question "<specific action>" --rec "<necessary context>"`. The board labels it action in chat and opens the originating session with `o` or `O`. Opening it is not an approval or completion. Yamnaya also recovers missed handoffs from native output; every inferred request retains its source. Existing owner answers in the ledger are authoritative even when an agent repeats the question in prose.
+
 ## Answers
 
 - An answer can arrive as your next prompt, as `re D4: <answer>` (a Claude session gets it as a cross-session message from ym, after its current turn). Act on it.

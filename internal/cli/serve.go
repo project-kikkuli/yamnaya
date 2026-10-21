@@ -267,6 +267,9 @@ func workCycle(ctx context.Context, c *core.Core, f intake.Fetcher) error {
 			return err
 		}
 	}
+	if err = reconcileHandoffs(c); err != nil {
+		failures = append(failures, err)
+	}
 	if err = reconcileAgents(c, b); err != nil {
 		failures = append(failures, err)
 	}

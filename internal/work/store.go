@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/project-kikkuli/yamnaya/internal/handoff"
 )
 
 type Store struct{ db *sql.DB }
@@ -30,6 +31,9 @@ func New(db *sql.DB) (*Store, error) {
 	}
 	if err == nil {
 		_, err = db.Exec(agentSchema)
+	}
+	if err == nil {
+		_, err = handoff.New(db)
 	}
 	return &Store{db: db}, err
 }
@@ -87,7 +91,7 @@ func (s *Store) List() ([]Scope, error) {
 		return nil, err
 	}
 	rows.Close()
-	errors, err := s.db.Query(`SELECT work,url,error FROM ym_work_source_errors WHERE error!=''`)
+	errors, err := s.db.Query(`SELECT work,url,error FROM ym_work_source_errors WHERE error!='' UNION ALL SELECT work,'handoff',error FROM ym_handoff_events WHERE error<>'' UNION ALL SELECT work,'handoff',error FROM ym_handoff_claims WHERE error<>'' UNION ALL SELECT work,'handoff',printf('%d messages awaiting semantic capture',count(*)) FROM ym_handoff_events WHERE state='pending' GROUP BY work`)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +246,7 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "message":
 		destinations = append(destinations, e.Target)
-	case "owner", "parent", "result", "verify", "reopen", "observe", "link-pr", "merge-status", "dismiss-merge", "restore-merge", "feedback", "decide", "reviewed", "unreview", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
+	case "owner", "parent", "result", "verify", "reopen", "observe", "handoff", "link-pr", "merge-status", "dismiss-merge", "restore-merge", "feedback", "decide", "reviewed", "unreview", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
 		destinations = append(destinations, "@manager")
 	case "purpose":
 		if e.Actor == "owner" {
@@ -429,7 +433,7 @@ func (s *Store) Due(id, url string, at time.Time) bool {
 }
 
 func (s *Store) Coverage(id string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT url,error FROM ym_work_source_errors WHERE work=? AND error!=''`, id)
+	rows, err := s.db.Query(`SELECT url,error FROM ym_work_source_errors WHERE work=? AND error!='' UNION SELECT 'handoff',error FROM ym_handoff_events WHERE work=? AND error<>'' UNION SELECT 'handoff',error FROM ym_handoff_claims WHERE work=? AND error<>'' UNION SELECT 'handoff',printf('%d messages awaiting semantic capture',count(*)) FROM ym_handoff_events WHERE work=? AND state='pending' HAVING count(*)>0`, id, id, id, id)
 	if err != nil {
 		return nil, err
 	}

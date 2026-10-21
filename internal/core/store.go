@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/project-kikkuli/yamnaya/internal/handoff"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ type Item struct {
 	// Alias is the ID the item had before IDs were numbered per scope.
 	Alias      string
 	Kind       string
+	Action     string
 	Question   string
 	Rec        string
 	Options    []Option
@@ -77,8 +79,9 @@ type Event struct {
 
 // Store keeps items, phases, vibes, lineage links, project names and merges.
 type Store struct {
-	db   *sql.DB
-	Work *work.Store
+	db       *sql.DB
+	Work     *work.Store
+	Handoffs *handoff.Store
 }
 
 const schema = `
@@ -215,12 +218,21 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate held items: %w", err)
 	}
+	if err := itemActions(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	w, err := work.New(db)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, Work: w}, nil
+	h, err := handoff.New(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db, Work: w, Handoffs: h}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

@@ -36,6 +36,9 @@ func Render(out io.Writer, w Scope) {
 	for _, id := range ids {
 		r := w.Reviews[id]
 		fmt.Fprintf(out, "\n%s · %s\nreview %s · source %s\nrequester: %s\nquestion: %s\nrecommendation: %s\nchanged: %s\nfeedback: %s\njudgment: %s\n", r.Title, r.State, r.ID, r.Version, r.Requester, r.Question, r.Recommendation, r.Changed, r.Feedback, r.Judgment)
+		if r.Handoff != nil {
+			fmt.Fprintf(out, "agent claim: %s\nrequesting agent: %s\nsource event: %s\ntranscript: %s · byte %d\n", r.Handoff.Quote, r.Handoff.Agent, r.Handoff.Event, r.Handoff.Path, r.Handoff.Offset)
+		}
 		if r.StatusError != "" {
 			fmt.Fprintf(out, "source status: %s\n", r.StatusError)
 		}

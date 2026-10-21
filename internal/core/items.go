@@ -146,14 +146,14 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
 	var opts string
 	var created, answered, delivered, held sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
@@ -164,9 +164,16 @@ func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 }
 
 // AddItem files it in its Scope with that scope's next ID.
-func (s *Store) AddItem(it Item) (Item, error) {
+func (s *Store) AddItem(it Item) (Item, error) { return s.addItem(it, "") }
+
+func (s *Store) AddHandoffItem(key string, it Item) (Item, error) { return s.addItem(it, key) }
+
+func (s *Store) addItem(it Item, key string) (Item, error) {
 	if _, ok := kindPrefix[it.Kind]; !ok {
 		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, or go)", it.Kind)
+	}
+	if it.Action != "" && it.Action != "chat" {
+		return it, errors.New("item action must be chat or empty")
 	}
 	if strings.TrimSpace(it.Question) == "" {
 		return it, errors.New("question is required")
@@ -186,20 +193,35 @@ func (s *Store) AddItem(it Item) (Item, error) {
 		return it, err
 	}
 	defer tx.Rollback()
+	if key != "" {
+		old, e := scanItem(tx.QueryRow(`SELECT `+itemCols+` FROM ym_items WHERE seq=(SELECT item FROM ym_handoff_items WHERE id=?)`, key))
+		if e == nil {
+			return old, nil
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			return it, e
+		}
+	}
+
 	num, err := nextNum(tx, it.Scope)
 	if err != nil {
 		return it, err
 	}
 	it.ID, it.State, it.CreatedAt = idFor(it.Kind, num), ItemOpen, time.Now().UTC()
-	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state,action)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?) RETURNING seq`,
 		it.Scope, num, it.ID, it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.Blocks, it.Session, it.Harness,
-		it.CreatedAt.Format(time.RFC3339Nano), it.State).Scan(&it.Seq)
+		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action).Scan(&it.Seq)
 	if err != nil {
 		return it, err
 	}
 	if err := addEvent(tx, it.Key(), "", ItemOpen, ""); err != nil {
 		return it, err
+	}
+	if key != "" {
+		if _, err = tx.Exec(`INSERT INTO ym_handoff_items(id,item) VALUES(?,?)`, key, it.Seq); err != nil {
+			return it, err
+		}
 	}
 	it.History = []Event{{At: it.CreatedAt, To: ItemOpen}}
 	return it, tx.Commit()
@@ -489,4 +511,16 @@ func (c *Core) ItemsIn(b Board, project string, all bool) ([]Item, error) {
 		}
 	}
 	return kept, nil
+}
+
+func itemActions(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name='action'`).Scan(&has); err != nil {
+		return err
+	}
+	if has > 0 {
+		return nil
+	}
+	_, err := db.Exec(`ALTER TABLE ym_items ADD COLUMN action TEXT NOT NULL DEFAULT ''`)
+	return err
 }

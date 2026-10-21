@@ -144,6 +144,16 @@ func (c *Core) attachWork(b *Board) error {
 	if err != nil {
 		return err
 	}
+	capture, err := c.Store.Handoffs.Status()
+	if err != nil {
+		return err
+	}
+	if pending := capture["events/pending"]; pending > 0 {
+		b.WorkErrors = append(b.WorkErrors, fmt.Sprintf("handoffs: %d messages awaiting capture", pending))
+	}
+	if unresolved := capture["events/error"] + capture["claims/blocked"]; unresolved > 0 {
+		b.WorkErrors = append(b.WorkErrors, fmt.Sprintf("handoffs: %d unresolved records; open project brief or : handoff status", unresolved))
+	}
 	byOrigin := map[string]*work.Scope{}
 	bySession := map[string]*work.Scope{}
 	for i := range all {
