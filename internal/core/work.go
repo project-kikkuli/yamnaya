@@ -96,12 +96,40 @@ func (c *Core) ObserveWork(b Board) error {
 	if err != nil {
 		return err
 	}
+	kills, err := c.Store.Kills(time.Time{})
+	if err != nil {
+		return err
+	}
 	for _, w := range latest {
 		for session, observed := range w.Observations {
 			if !alive[session] && observed.State != "exited" {
 				observed.State = "exited"
 				w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "execution", Target: session, Actor: "discovery", Observation: observed, Text: "Native session " + session + " exited; assess its result evidence and retain unfinished responsibility"})
 				if err != nil {
+					return err
+				}
+			}
+		}
+		if w.State != "archived" && w.Kind == "" && w.Owner == "" && w.Manager == "" && w.Parent == "" && strings.HasPrefix(w.Origin, ThisHost()+"/") {
+			stopped, running := false, false
+			for session := range w.Bindings {
+				running = running || alive[session]
+				if at := kills[session]; !at.IsZero() {
+					history, err := c.Store.Work.History(w.ID, 0)
+					if err != nil {
+						return err
+					}
+					resumed := false
+					for _, e := range history {
+						if e.Type == "execution" && e.Target == session && e.Observation.State != "exited" && e.At.After(at) {
+							resumed = true
+						}
+					}
+					stopped = stopped || !resumed
+				}
+			}
+			if stopped && !running {
+				if _, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "close", Actor: "owner", Text: "Owner stopped the mission's native sessions"}); err != nil {
 					return err
 				}
 			}

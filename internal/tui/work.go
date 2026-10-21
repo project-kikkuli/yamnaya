@@ -40,7 +40,7 @@ func (m Model) reviewRows(state string) []row {
 		}
 		seen[p.Work.ID] = true
 		for _, review := range sortedReviews(*p.Work) {
-			if review.State == state {
+			if review.QueueState() == state && !review.Closed {
 				r := review
 				out = append(out, row{work: p.Work, review: &r, project: &p})
 			}
@@ -193,12 +193,11 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return next, cmd, true
 	}
 	key := k.String()
+	if r, ok := m.currentReview(); ok && r.Action == "merge" && (key == "x" || key == "u") {
+		return m, m.reviewAction(key), true
+	}
 	if m.mode == modeReviews || m.mode == modeReview {
 		if key == "x" || key == "u" || (key == " " && m.mode == modeReviews) {
-			if r, ok := m.currentReview(); ok && r.Action == "merge" {
-				m.message = "Open the PR with o/V to merge it. This item clears when GitHub reports merged or closed."
-				return m, nil, true
-			}
 			if key == " " {
 				key = "x"
 			}
@@ -301,9 +300,9 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.mode == modeReviews {
 		if key == "tab" {
-			states := []string{"pending", "", "incoming", work.Preparing, work.WithAuthor, work.Reviewed, work.Completed}
+			states := []string{"pending", "", "incoming", work.Preparing, work.WithAuthor, work.Reviewed, "dismissed", work.Completed}
 			if m.reviewWork != "" {
-				states = []string{"pending", work.Reviewed, work.WithAuthor, work.Completed}
+				states = []string{"pending", work.Reviewed, "dismissed", work.WithAuthor, work.Completed}
 			}
 			for i, s := range states {
 				if s == m.reviewFilter {
@@ -704,6 +703,7 @@ func (m Model) reviewsView() viewPage {
 			m.field(&b, "rec", r.review.Recommendation)
 			m.field(&b, "changed", r.review.Changed)
 			m.field(&b, "requester", r.review.Requester)
+			m.field(&b, "author", r.review.Author)
 			m.field(&b, "source", r.review.URL)
 			m.field(&b, "status", r.review.StatusError)
 			if r.review.Provisional {
@@ -731,7 +731,7 @@ func (m Model) reviewView() viewPage {
 		return textPage(" review unavailable", "")
 	}
 	b := viewPage{}
-	b.WriteString(pal.bold.Render(" "+r.Title) + pal.dim.Render(" · "+r.State+" · "+w.Name) + "\n\n")
+	b.WriteString(pal.bold.Render(" "+r.Title) + pal.dim.Render(" · "+r.QueueState()+" · "+w.Name) + "\n\n")
 	m.field(&b, "checklist", m.reviewPosition())
 	m.field(&b, "status", r.StatusError)
 	m.field(&b, "ask", r.Question)
@@ -753,7 +753,7 @@ func (m Model) reviewView() viewPage {
 		b.WriteString("   " + line + "\n")
 	}
 	if r.Action == "merge" {
-		b.WriteString("\n o/V opens the PR. GitHub merge/close status completes this item.\n")
+		b.WriteString("\n o/V opens the PR. x dismisses; u restores. GitHub merge/close status completes this item.\n")
 	} else {
 		b.WriteString("\n o/V opens the source. x marks reviewed and advances. n/p skips between requests.\n")
 	}

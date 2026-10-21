@@ -7,20 +7,24 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-// Source asks GitHub for a pull request's state, checks and review threads in one GraphQL query.
+// Source reads PR lifecycle over REST and readiness details over GraphQL.
 type Source struct {
-	Run func(url string) ([]byte, error)
+	REST     func(endpoint string) ([]byte, error)
+	viewerMu sync.Mutex
+	viewer   string
+	Run      func(url string) ([]byte, error)
 	// Repo reports whether GitHub has repository owner/name.
 	Repo func(repo string) (bool, error)
 	Now  func() time.Time
 }
 
-func New() *Source { return &Source{Run: query, Repo: repoExists, Now: time.Now} }
+func New() *Source { return &Source{Run: query, REST: rest, Repo: repoExists, Now: time.Now} }
 
 func repoExists(repo string) (bool, error) {
 	out, err := exec.Command("gh", "api", "repos/"+repo, "--silent").CombinedOutput()
@@ -84,7 +88,7 @@ type prJSON struct {
 	} `json:"last"`
 }
 
-func (s *Source) PRStatus(url string) (core.PRStatus, error) {
+func (s *Source) details(url string) (core.PRStatus, error) {
 	out, err := s.Run(url)
 	if err != nil {
 		return core.PRStatus{}, err

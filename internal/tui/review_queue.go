@@ -39,7 +39,7 @@ func (m Model) reviewQueueRows() []row {
 		}
 		seen[p.Work.ID] = true
 		for _, r := range sortedReviews(*p.Work) {
-			if (state == "pending" && r.Pending()) || r.State == state {
+			if (state == "pending" && r.Pending()) || r.QueueState() == state {
 				out = append(out, row{work: p.Work, review: &r, project: &p})
 			}
 		}
@@ -86,12 +86,18 @@ func (m Model) reviewAction(key string) tea.Cmd {
 	} else if selected, ok := m.selected(); ok && selected.review != nil {
 		r = *selected.review
 	}
-	if r.ID == "" || (key == "x" && !r.Pending()) || (key == "u" && r.State != work.Reviewed) {
+	if r.ID == "" || (key == "x" && !r.Pending()) || (key == "u" && r.State != work.Reviewed && !r.Dismissed) {
 		return nil
 	}
 	action := "reviewed"
 	if key == "u" {
 		action = "unreview"
+	}
+	if r.Action == "merge" {
+		action = "dismiss-merge"
+		if key == "u" {
+			action = "restore-merge"
+		}
 	}
 	index := 0
 	for i, row := range m.reviewQueueRows() {
@@ -133,18 +139,28 @@ func (m Model) finishReviewAction(msg reviewActionMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) completeReviewAction(msg reviewActionMsg) {
 	m.message = "Review returned to the checklist"
-	if msg.action != "reviewed" {
+	if msg.action == "restore-merge" {
+		m.message = "Merge item restored"
+		if m.mode == modeReview {
+			m.reviewFilter = "pending"
+		}
+		return
+	}
+	if msg.action != "reviewed" && msg.action != "dismiss-merge" {
 		if m.mode == modeReview && m.workID == msg.scope.ID && m.reviewID == msg.target {
 			m.reviewFilter = "pending"
 		}
 		return
 	}
 	m.message = "Marked reviewed for this source version"
+	if msg.action == "dismiss-merge" {
+		m.message = "Merge item dismissed; Tab shows dismissed items, u restores"
+	}
 	if m.mode != modeReview || m.workID != msg.scope.ID || m.reviewID != msg.target {
 		return
 	}
 	w, ok := m.workScope()
-	if !ok || w.Reviews[msg.target].State != work.Reviewed {
+	if !ok || (msg.action == "reviewed" && w.Reviews[msg.target].State != work.Reviewed) || (msg.action == "dismiss-merge" && !w.Reviews[msg.target].Dismissed) {
 		m.message = "Source changed; the request remains in the checklist"
 		return
 	}
@@ -173,7 +189,7 @@ func (m *Model) finishPendingReview() {
 			continue
 		}
 		r := p.Work.Reviews[msg.target]
-		if (msg.action == "reviewed" && r.State == work.Reviewed && r.ReviewedVersion == msg.scope.Reviews[msg.target].Version) || (msg.action == "unreview" && r.Pending()) {
+		if (msg.action == "reviewed" && r.State == work.Reviewed && r.ReviewedVersion == msg.scope.Reviews[msg.target].Version) || (msg.action == "unreview" && r.Pending()) || (msg.action == "dismiss-merge" && r.Dismissed) || (msg.action == "restore-merge" && !r.Dismissed) {
 			m.pendingReview = nil
 			m.completeReviewAction(msg)
 		}

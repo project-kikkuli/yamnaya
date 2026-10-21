@@ -217,7 +217,7 @@ func (m Model) footer() []string {
 
 func (m Model) hints() string {
 	if r, ok := m.currentReview(); ok && r.Action == "merge" {
-		return "o/V open PR to merge   enter details   n/p next/previous in detail   B context   esc back"
+		return "o/V open PR   x dismiss   u restore   tab queues   enter details   n/p next/previous   B context   esc back"
 	}
 	if m.mode == modeList {
 		if r, ok := m.selected(); ok && r.attention == "unassigned" {
@@ -1198,7 +1198,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
    M            chiefs and managers: n creates a chief; enter reads its brief; s messages; a attaches the selected project; d/D toggle repo/global defaults
    B            read the full manager brief; on a repo choose its project first; V opens the browser version
-   R            review checklist; tab switches pending, ready, author, reviewed and completed queues
+   R            review checklist; tab switches pending, ready, author, reviewed, dismissed and completed queues
    C            read project context; e opens $EDITOR from the context panel, preserving its starting revision
    V            open the review's original source or the project's stable rich brief in the browser
    :            run an owner command without leaving the board, for example work watch ID URL --kind notion
@@ -1224,8 +1224,8 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 on a waiting session, send the answer as your message, the same way s does, and clear the row
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    l            later: snooze the item
-   u            return a reviewed request to the checklist; reopen a snoozed item (detail)
-   x            mark a review as reviewed and advance; dismiss an item; hide a waiting session until it asks again
+   u            restore a dismissed merge or reviewed request; reopen a snoozed item (detail)
+   x            dismiss a merge request; mark a review as reviewed and advance; dismiss an item; hide a waiting session until it asks again
    w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another

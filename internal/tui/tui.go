@@ -971,6 +971,17 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			label = fmt.Sprintf("%s's %d exited sessions", p.Name, len(refs))
 		}
+		if len(refs) == 0 {
+			if w, ok := m.selectedWork(); ok && w.InFlight() {
+				m.confirm("archive "+w.Name+"? briefs and pending queue items stay", m.do(func() (string, error) {
+					_, err := m.core.ChangeWork(w, work.Event{Type: "close", Actor: "owner"})
+					return "archived " + w.Name, err
+				}))
+			} else {
+				m.message = "No session or mission to land"
+			}
+			break
+		}
 		if len(refs) > 0 && m.core.Launches != nil {
 			l := m.core.Launches
 			if k.String() == "F" {

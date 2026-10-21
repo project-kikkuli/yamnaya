@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/work"
@@ -195,5 +196,82 @@ func TestAProjectMessageSurvivesAConcurrentContextUpdate(t *testing.T) {
 	updates, err := s.Work.Inbox(w.Manager)
 	if err != nil || !strings.Contains(strings.Join(updates, "\n"), "Retain the SDK example") {
 		t.Fatalf("message missing from inbox: %v %v", updates, err)
+	}
+}
+
+func TestExplicitKillRetiresSessionMissionAndKeepsItsBrief(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		delegated, revived, pending bool
+	}{
+		{name: "stopped mission"}, {name: "delegated commitment", delegated: true}, {name: "session resumed", revived: true}, {name: "pending merge", pending: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			world := newWorld(t)
+			world.run(42, 0, "/dev/a", "claude", "lead", Idle)
+			c := world.core
+			b, err := c.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = c.ObserveWork(b); err != nil {
+				t.Fatal(err)
+			}
+			all, _ := c.Store.Work.List()
+			if len(all) != 1 {
+				t.Fatalf("work %d", len(all))
+			}
+			w := all[0]
+			apply := func(e work.Event) {
+				t.Helper()
+				e.Work, e.Expected = w.ID, w.Revision
+				w, err = c.Store.Work.Commit(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			apply(work.Event{Type: "brief", Brief: work.Brief{Assessment: "Keep caller compatibility"}})
+			if tc.delegated {
+				a, err := c.Store.Work.CreateAgent("Chief", "chief", "", "Coordinate caller migration", "Inspect and coordinate", work.Execution{Harness: "codex", Directory: t.TempDir()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				apply(work.Event{Type: "owner", Actor: "owner", Target: a.ID})
+			}
+			if tc.pending {
+				url := "https://github.com/example/query/pull/42"
+				apply(work.Event{Type: "merge-status", Review: work.Review{ID: work.MergeReviewID(url), URL: url, Version: "head1", Action: "merge", State: work.Ready}})
+			}
+			at := c.now().Add(time.Second)
+			if err = c.Store.RecordKill("lead", at); err != nil {
+				t.Fatal(err)
+			}
+			if tc.revived {
+				apply(work.Event{Type: "execution", At: at.Add(time.Second), Target: "lead", Observation: work.ExecutionObservation{State: "busy"}})
+			}
+			c.Procs = func() ([]proc.Proc, error) { return nil, nil }
+			c.Harnesses = nil
+			b, err = c.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = c.ObserveWork(b); err != nil {
+				t.Fatal(err)
+			}
+			w, _ = c.Store.Work.Get(w.ID)
+			wantArchived := !tc.delegated && !tc.revived
+			if (w.State == "archived") != wantArchived || w.Brief.Assessment != "Keep caller compatibility" {
+				t.Fatalf("mission %+v", w)
+			}
+			b, err = c.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range b.Projects {
+				if p.Work != nil && p.Work.ID == w.ID && p.Shown() != (tc.delegated || tc.revived || tc.pending) {
+					t.Fatalf("visibility %+v", p)
+				}
+			}
+		})
 	}
 }

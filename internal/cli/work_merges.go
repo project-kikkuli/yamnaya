@@ -48,7 +48,7 @@ func mergeReview(url string, st core.PRStatus) work.Review {
 	st.Fetched = time.Time{}
 	raw, _ := json.Marshal(st)
 	sum := sha256.Sum256(raw)
-	r := work.Review{ID: work.MergeReviewID(url), URL: url, Kind: "merge", Action: "merge", Title: st.Title, Version: st.Merge.OID + ":" + hex.EncodeToString(sum[:8]), State: "waiting", Requester: "Tracked agent work", Question: "Merge this pull request?"}
+	r := work.Review{ID: work.MergeReviewID(url), URL: url, Kind: "merge", Action: "merge", Title: st.Title, Author: st.Merge.Author, Version: st.Merge.OID + ":" + hex.EncodeToString(sum[:8]), State: "waiting", Requester: "Tracked agent work", Question: "Merge this pull request?"}
 	if r.Title == "" {
 		r.Title = url
 	}
@@ -58,7 +58,9 @@ func mergeReview(url string, st core.PRStatus) work.Review {
 		r.State, r.Closed, r.Changed = work.Completed, true, "GitHub reports merged"
 	case st.Closed():
 		r.State, r.Closed, r.Changed = "withdrawn", true, "GitHub reports closed"
-	case st.State == "UNKNOWN" || st.State == "" || st.Merge.OID == "":
+	case !st.OwnedPR():
+		r.State, r.Closed, r.Changed = "withdrawn", true, "Automatic merge intake requires verified authorship by your GitHub account"
+	case st.State == "UNKNOWN" || st.State == "" || st.Merge.OID == "" || st.Merge.Error != "":
 		r.StatusError = st.Merge.Error
 		if r.StatusError == "" {
 			r.StatusError = "Merge readiness has not been verified"

@@ -11,6 +11,7 @@ const (
 )
 
 type Review struct {
+	Dismissed       bool
 	Action          string
 	StatusError     string
 	ReviewedVersion string
@@ -42,10 +43,13 @@ type Review struct {
 }
 
 func (r Review) Pending() bool {
-	return !r.Closed && !r.Provisional && (r.State == "incoming" || r.State == Preparing || r.State == Ready)
+	return !r.Dismissed && !r.Closed && !r.Provisional && (r.State == "incoming" || r.State == Preparing || r.State == Ready)
 }
 
 func (r Review) NextOwner(manager string) string {
+	if r.Dismissed {
+		return "none"
+	}
 	switch r.State {
 	case Ready:
 		return "owner"
@@ -78,3 +82,10 @@ func (r Review) NextOwner(manager string) string {
 }
 
 func MergeReviewID(url string) string { return "merge/" + url }
+
+func (r Review) QueueState() string {
+	if r.Dismissed && !r.Closed {
+		return "dismissed"
+	}
+	return r.State
+}

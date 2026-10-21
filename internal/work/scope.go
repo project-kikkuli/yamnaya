@@ -48,6 +48,9 @@ func (s Scope) InFlight() bool {
 		return true
 	}
 	for _, r := range s.Reviews {
+		if r.Closed || r.Dismissed {
+			continue
+		}
 		if r.State == "incoming" || r.State == Ready || r.State == Preparing || r.State == WithAuthor || (r.State == Completed && r.Judgment != "" && r.FollowThrough == "") {
 			return true
 		}
@@ -70,6 +73,9 @@ func (s Scope) BriefCurrent() bool {
 func (s Scope) Ready() int {
 	n := 0
 	for _, r := range s.Reviews {
+		if r.Closed || r.Dismissed {
+			continue
+		}
 		if r.State == Ready {
 			n++
 		}

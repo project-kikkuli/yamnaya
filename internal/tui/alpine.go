@@ -160,7 +160,7 @@ func (a *alpine) observe(b core.Board) {
 		for _, key := range []string{"*", "r:" + p.Repo, "m:" + p.Key} {
 			if g := a.groups[key]; g != nil {
 				for _, r := range p.Work.Reviews {
-					switch r.State {
+					switch r.QueueState() {
 					case work.Ready:
 						g.reviews++
 					case work.Preparing:

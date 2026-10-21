@@ -32,7 +32,7 @@ func TestMergeObligationSurvivesReviewCompletionAndStatusFailures(t *testing.T) 
 	apply(work.Event{Type: "watch", Source: work.Source{Kind: "github", URL: url, Origin: "session-pr", Requester: "Mira"}})
 	apply(work.Event{Type: "observe", Review: work.Review{ID: url, URL: url, Title: "Caller migration", Requester: "Mira", Version: "head1:content", Order: 1}})
 	apply(work.Event{Type: "close"})
-	st := core.PRStatus{State: "OPEN", Title: "Caller migration", Passed: 12, Review: "APPROVED", Fetched: time.Now(), Merge: core.PRMergeFacts{OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	st := core.PRStatus{State: "OPEN", Title: "Caller migration", Passed: 12, Review: "APPROVED", Fetched: time.Now(), Merge: core.PRMergeFacts{Author: "mira", Viewer: "mira", OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
 	capture := func() {
 		t.Helper()
 		if err := s.SavePRStatus(url, st); err != nil {
@@ -132,7 +132,7 @@ func TestAgentPRLinkRetainsExplicitRegistrationAndPriorReview(t *testing.T) {
 	if err != nil || !w.Sources[0].LinkedPR() {
 		t.Fatal("updating the explicit registration lost the agent PR after its session exited")
 	}
-	st := core.PRStatus{State: "OPEN", Merge: core.PRMergeFacts{OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	st := core.PRStatus{State: "OPEN", Merge: core.PRMergeFacts{Author: "mira", Viewer: "mira", OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
 	if err = s.SavePRStatus(url, st); err != nil {
 		t.Fatal(err)
 	}
@@ -142,5 +142,46 @@ func TestAgentPRLinkRetainsExplicitRegistrationAndPriorReview(t *testing.T) {
 	w, _ = s.Work.Get(w.ID)
 	if w.Reviews[work.MergeReviewID(url)].State != work.Ready {
 		t.Fatal("an explicitly watched PR linked to agent work had no merge task")
+	}
+}
+
+func TestAutomaticMergeIntakeRequiresVerifiedAccountAuthorship(t *testing.T) {
+	for _, tc := range []struct {
+		name, author, viewer string
+		want                 bool
+	}{
+		{"owner", "mira", "mira", true}, {"case insensitive", "Mira", "mira", true},
+		{"mentioned colleague PR", "sol", "mira", false}, {"missing author", "", "mira", false}, {"missing viewer", "mira", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			c := &core.Core{Store: s}
+			w, _ := s.Work.Ensure("fixture", "", "Caller migration")
+			url := "https://github.com/example/query/pull/42"
+			id := work.MergeReviewID(url)
+			w, err = s.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "watch", Source: work.Source{Kind: "github", URL: url, Origin: "session-pr"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w, err = s.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "merge-status", Review: work.Review{ID: id, URL: url, Action: "merge", State: work.Ready, Version: "legacy"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := core.PRStatus{State: "OPEN", Merge: core.PRMergeFacts{Author: tc.author, Viewer: tc.viewer, OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+			if err = s.SavePRStatus(url, st); err != nil {
+				t.Fatal(err)
+			}
+			if err = captureMergeReadiness(c); err != nil {
+				t.Fatal(err)
+			}
+			w, _ = s.Work.Get(w.ID)
+			if w.Reviews[id].Pending() != tc.want || w.Ready() != map[bool]int{true: 1, false: 0}[tc.want] {
+				t.Fatalf("unexpected obligation %+v", w.Reviews[id])
+			}
+		})
 	}
 }

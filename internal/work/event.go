@@ -221,8 +221,16 @@ func Apply(s *Scope, e Event) error {
 		if r.StatusError != "" && old.State == Ready && !old.Closed {
 			r.State, r.Evidence = Ready, old.Evidence
 		}
+		r.Dismissed = old.Dismissed
 		r.Updated = e.At
 		s.Reviews[r.ID] = r
+	case "dismiss-merge", "restore-merge":
+		r, ok := s.Reviews[e.Target]
+		if e.Actor != "owner" || !ok || r.Action != "merge" || r.Closed {
+			return errors.New("only the owner can dismiss or restore an open merge item")
+		}
+		r.Dismissed, r.Updated = e.Type == "dismiss-merge", e.At
+		s.Reviews[e.Target] = r
 	case "observe":
 		r := e.Review
 		if r.ID == "" || r.Version == "" {

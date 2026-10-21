@@ -100,7 +100,13 @@ func TestIncomingStackOpensSourcesAndDrainsAsAVersionedChecklist(t *testing.T) {
 					t.Fatalf("manual review fabricated an approval packet: %+v", r)
 				}
 			}
-			m = press(t, m, "tab", "u", "tab", "tab", "tab")
+			m = press(t, m, "tab", "u")
+			for range 10 {
+				if m.reviewFilter == "pending" {
+					break
+				}
+				m = press(t, m, "tab")
+			}
 			if m.reviewFilter != "pending" || len(m.rows()) != 1 {
 				t.Fatal("reviewed history cannot undo back into the checklist")
 			}
