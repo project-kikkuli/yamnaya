@@ -1237,7 +1237,7 @@ func (m Model) pickView() string {
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
    c            give the selected project or session a chief: enter attaches the highlighted chief, x detaches it
-   M            chiefs and managers: n creates a chief; enter reads its brief; s messages; a attaches the selected project; d/D toggle repo/global defaults; K kills the chief so it never wakes again
+   M            chiefs and managers: n creates a chief; B reads its brief (enter too, unless opened on a project, where enter attaches); s messages; a attaches the selected project; d/D toggle repo/global defaults; K kills the chief so it never wakes again
    B            read the full manager brief; on a repo choose its project first; V opens the browser version
    R            review checklist; tab switches pending, ready, author, reviewed, dismissed and completed queues
    C            read project context; e opens $EDITOR from the context panel, preserving its starting revision

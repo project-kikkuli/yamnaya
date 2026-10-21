@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
@@ -82,4 +85,30 @@ func namesChief(page, name string) bool {
 		}
 	}
 	return false
+}
+
+func TestMissionRowNamesItsChiefWithinTheScreenWhileTheLeadIsBusy(t *testing.T) {
+	usePalette(t, false)
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	for _, width := range []int{100, 160, 220} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			b := missionBoard(now)
+			for i := range b.Projects {
+				b.Projects[i].Work = &work.Scope{ID: "w-" + b.Projects[i].Key, Name: b.Projects[i].Name}
+				b.Attachments = append(b.Attachments, work.Attachment{Agent: "chief-1", Work: "w-" + b.Projects[i].Key})
+			}
+			b.Agents = []work.Agent{{ID: "chief-1", Name: "Atlas"}}
+			m := Model{core: &core.Core{}, board: b, loaded: true, width: width, cursor: -1}
+			c := m.missionCols(2)
+			for _, p := range b.Projects {
+				line := strings.TrimRight(m.missionLine(0, p, c), "\n")
+				if w := ansi.StringWidth(line); w > width {
+					t.Fatalf("%s row is %d cells on a %d screen: %q", p.Key, w, width, ansi.Strip(line))
+				}
+				if c.doing > 0 && !strings.HasSuffix(ansi.Strip(line), "chief Atlas") {
+					t.Errorf("%s row lost its chief: %q", p.Key, ansi.Strip(line))
+				}
+			}
+		})
+	}
 }

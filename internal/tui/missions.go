@@ -123,18 +123,25 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 	if c.workWidth() > 0 {
 		cells = append(cells, workCell(p, c.work))
 	}
-	if c.doing > 0 {
-		switch {
-		case p.Duplicated():
-			cells = append(cells, pal.red.Render(pad(copiesWhere(p), c.doing)))
-		case len(p.Sessions) > 0:
-			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
+	chief := ""
+	if p.Work != nil {
+		if names := m.chiefsOn(p.Work.ID); names != "" {
+			chief = "chief " + names
 		}
 	}
-	if p.Work != nil {
-		if chiefs := m.chiefsOn(p.Work.ID); chiefs != "" {
-			cells = append(cells, pal.dim.Render("chief "+chiefs))
+	if ansi.StringWidth(chief) > c.doing {
+		chief = ""
+	}
+	if doing := c.doing - ansi.StringWidth(chief) - min(1, len(chief)); doing > 0 {
+		switch {
+		case p.Duplicated():
+			cells = append(cells, pal.red.Render(pad(copiesWhere(p), doing)))
+		case len(p.Sessions) > 0:
+			cells = append(cells, doingCell(m.board.At, p.Sessions[0], doing))
 		}
+	}
+	if chief != "" {
+		cells = append(cells, pal.dim.Render(chief))
 	}
 	line := strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
 	if p.Work != nil && i == m.cursor {
