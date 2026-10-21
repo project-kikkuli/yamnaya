@@ -1,6 +1,8 @@
 package core
 
 import (
+	"bufio"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -10,11 +12,23 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-// child starts a process this test owns and reports whether it still runs.
+// child starts a process this test owns, returns once it prints a line, and reports whether it still runs.
 func child(t *testing.T, script string) (int, func() bool) {
 	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
 	cmd := exec.Command("/bin/sh", "-c", script)
-	if err := cmd.Start(); err != nil {
+	cmd.Stdout = w
+	err = cmd.Start()
+	w.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bufio.NewReader(r).ReadString('\n'); err != nil {
+		cmd.Process.Kill()
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -38,12 +52,11 @@ func TestKillTermsTheAgentAndReportsOneThatOutlivesIt(t *testing.T) {
 		name, script, want string
 		alive              bool
 	}{
-		{"ends on SIGTERM", "exec sleep 30", "killed claude s1", false},
-		{"ignores SIGTERM", `trap "" TERM; exec sleep 30`, "still running (pid ", true},
+		{"ends on SIGTERM", "echo ready; exec sleep 30", "killed claude s1", false},
+		{"ignores SIGTERM", `trap "" TERM; echo ready; exec sleep 30`, "still running (pid ", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			pid, runs := child(t, c.script)
-			time.Sleep(100 * time.Millisecond)
 			h := &fakeHarness{name: "claude", sessions: map[int]Session{pid: {ID: "s1"}}}
 			core := &Core{Harnesses: []Harness{h}, KillGrace: 500 * time.Millisecond, Procs: func() ([]proc.Proc, error) {
 				if !runs() {
