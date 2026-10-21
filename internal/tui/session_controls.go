@@ -68,6 +68,9 @@ func (m Model) sessionHints() string {
 		}
 		hints = append(hints, "T switch")
 	}
+	if _, ok := m.selectedWork(); ok && m.chiefPickable() {
+		hints = append(hints, "c chief")
+	}
 	return strings.Join(hints, "   ")
 }
 

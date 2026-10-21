@@ -131,6 +131,11 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
 		}
 	}
+	if p.Work != nil {
+		if chiefs := m.chiefsOn(p.Work.ID); chiefs != "" {
+			cells = append(cells, pal.dim.Render("chief "+chiefs))
+		}
+	}
 	line := strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
 	if p.Work != nil && i == m.cursor {
 		w := p.Work

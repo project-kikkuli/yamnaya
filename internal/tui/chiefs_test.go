@@ -106,7 +106,7 @@ func TestChiefCreationAttachmentConversationAndBriefNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key("enter")
+	key("B")
 	page := ansi.Strip(m.workView().String())
 	if !strings.Contains(page, "Caller compatibility takes priority") || !strings.Contains(page, "Compatibility") {
 		t.Fatalf("chief brief lost assessment or attachments: %s", page)

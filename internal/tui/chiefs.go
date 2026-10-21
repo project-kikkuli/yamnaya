@@ -93,7 +93,7 @@ func (m Model) chiefsView() viewPage {
 		m.field(&b, "message", batchSummary(batch)+" · v receipts")
 	}
 	if m.chiefTarget != "" {
-		m.field(&b, "attach to", m.chiefTarget)
+		m.field(&b, "attach to", m.workName(m.chiefTarget))
 		b.WriteString("\n")
 	}
 	for i, r := range m.rows() {
@@ -112,7 +112,11 @@ func (m Model) chiefsView() viewPage {
 		if _, ok := m.chiefSelected[a.ID]; ok {
 			selected = "[x] "
 		}
-		b.WriteString(m.mark(i) + selected + m.hue(a.ID).Render(pad(a.Name, min(28, max(12, m.width/3)))) + " " + pad(a.Role, 8) + " " + style.Render(m.chiefState(*a)) + "  " + m.missionSpend(*r.project) + "\n")
+		attached := ""
+		if m.chiefTarget != "" && m.attached(a.ID, m.chiefTarget) {
+			attached = "  " + pal.green.Render("attached")
+		}
+		b.WriteString(m.mark(i) + selected + m.hue(a.ID).Render(pad(a.Name, min(28, max(12, m.width/3)))) + " " + pad(a.Role, 8) + " " + style.Render(m.chiefState(*a)) + "  " + m.missionSpend(*r.project) + attached + "\n")
 		if i == m.cursor {
 			m.field(&b, "remit", r.work.Purpose)
 			m.field(&b, "assessment", r.work.Brief.Assessment)
@@ -163,6 +167,16 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.push(modeChiefs)
 		return m, nil, true
 	}
+	if k.String() == "c" && m.chiefPickable() {
+		w, ok := m.selectedWork()
+		if !ok {
+			m.message = "This row has no continuing work record to give a chief."
+			return m, nil, true
+		}
+		m.chiefTarget = w.ID
+		m.push(modeChiefs)
+		return m, nil, true
+	}
 	if m.mode != modeChiefs {
 		return m, nil, false
 	}
@@ -204,18 +218,23 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		_, selected := m.chiefSelected[a.ID]
 		return m.selectChief(a, !selected), nil, true
 	case "enter", "B":
+		if k.String() == "enter" && m.chiefTarget != "" {
+			return m.attachChief(a)
+		}
 		m.openWork(*r.work)
 		return m, nil, true
 	case "s":
 		return m.composeChiefMessage([]work.Agent{a})
 	case "a":
-		if m.chiefTarget == "" {
-			m.message = "Open M from a project or session to attach its work."
+		return m.attachChief(a)
+	case "x":
+		target := m.chiefTarget
+		if target == "" || !m.attached(a.ID, target) {
+			m.message = a.Name + " is not attached here."
 			return m, nil, true
 		}
-		target := m.chiefTarget
 		return m, m.do(func() (string, error) {
-			return "Chief attached to " + m.workName(target), m.core.Store.Work.Attach(a.ID, target, "Carry context and coordinate follow-through under the chief remit")
+			return "Chief detached from " + m.workName(target), m.core.Store.Work.Detach(a.ID, target)
 		}), true
 	case "d", "D":
 		repo := ""
@@ -244,6 +263,44 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, m.do(func() (string, error) { return "Agent availability updated", m.core.Store.Work.SaveAgent(a) }), true
 	}
 	return m, nil, false
+}
+
+func (m Model) attachChief(a work.Agent) (tea.Model, tea.Cmd, bool) {
+	if m.chiefTarget == "" {
+		m.message = "Press c on a project or session to attach its work."
+		return m, nil, true
+	}
+	target := m.chiefTarget
+	return m, m.do(func() (string, error) {
+		return "Chief attached to " + m.workName(target), m.core.Store.Work.Attach(a.ID, target, "Carry context and coordinate follow-through under the chief remit")
+	}), true
+}
+
+func (m Model) chiefPickable() bool {
+	switch m.mode {
+	case modeList, modeRepo, modeDetail, modeSession:
+		return m.workAction == ""
+	}
+	return false
+}
+
+func (m Model) attached(agent, id string) bool {
+	for _, link := range m.board.Attachments {
+		if link.Agent == agent && link.Work == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) chiefsOn(id string) string {
+	var names []string
+	for _, link := range m.board.Attachments {
+		if link.Work == id {
+			names = append(names, m.agentName(link.Agent))
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 func (m Model) chiefInput(text string) (tea.Model, tea.Cmd, bool) {

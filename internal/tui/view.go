@@ -243,7 +243,10 @@ func (m Model) hints() string {
 
 	switch m.mode {
 	case modeChiefs:
-		return "space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   enter brief   a attach   d/D defaults   p pause/resume   esc back"
+		if m.chiefTarget != "" {
+			return "enter attach   x detach   B brief   space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   d/D defaults   p pause/resume   esc back"
+		}
+		return "space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   enter brief   d/D defaults   p pause/resume   esc back"
 	case modeAgentBatch:
 		return "↑↓ scroll   r retry failed   [ previous message   ] next message   esc back"
 	case modeWork:
@@ -796,6 +799,11 @@ func (m Model) detailView() viewPage {
 	if pr := prSummary(prsOf(p.Sessions)); pr != "" {
 		b.WriteString(" prs     " + pr + "\n")
 	}
+	if p.Work != nil {
+		if chiefs := m.chiefsOn(p.Work.ID); chiefs != "" {
+			b.WriteString(" chiefs  " + chiefs + "\n")
+		}
+	}
 	pg := progress.Of(p)
 	if f, ok := pg.Fraction(); ok {
 		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + pal.dim.Render(pg.Parts()) + "\n")
@@ -975,6 +983,13 @@ func (m Model) sessionView() viewPage {
 	m.field(&b, "status", status)
 	m.field(&b, "where", s.Location())
 	m.field(&b, "repo", strings.TrimSpace(s.Repo+" "+s.Branch))
+	for _, p := range m.board.Projects {
+		if p.Work != nil {
+			if _, ok := p.Work.Bindings[s.Key()]; ok {
+				m.field(&b, "chiefs", m.chiefsOn(p.Work.ID))
+			}
+		}
+	}
 	if s.Worktree != "" && s.Worktree != s.Cwd {
 		m.field(&b, "worktree", s.Worktree)
 	}
@@ -1221,6 +1236,7 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
+   c            give the selected project or session a chief: enter attaches the highlighted chief, x detaches it
    M            chiefs and managers: n creates a chief; enter reads its brief; s messages; a attaches the selected project; d/D toggle repo/global defaults
    B            read the full manager brief; on a repo choose its project first; V opens the browser version
    R            review checklist; tab switches pending, ready, author, reviewed, dismissed and completed queues
