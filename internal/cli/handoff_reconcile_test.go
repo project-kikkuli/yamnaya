@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/handoff"
@@ -286,5 +287,78 @@ func TestReadinessHeadRaceRetainsReviewButCannotOfferMerge(t *testing.T) {
 	statuses, err := c.Store.PRStatuses()
 	if err != nil || statuses[url].ReadyToMerge() || !statuses[url].Fetched.IsZero() {
 		t.Fatalf("mismatched cache not due for refresh: %+v %v", statuses[url], err)
+	}
+}
+
+func TestCapturedRequesterIsTheNamedHumanOrTheAgent(t *testing.T) {
+	for _, tc := range []struct{ name, requester, want string }{
+		{"named human", "Brian", "Brian"},
+		{"agent's own request", "", "Agent shepherd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, w, _ := handoffWorld(t)
+			review := reviewClaim(w, "review")
+			review.Event.Text += " Brian asked for it."
+			review.Requester = tc.requester
+			if _, err := applyHandoff(c, review); err != nil {
+				t.Fatal(err)
+			}
+			decision := handoff.Claim{ID: "choice", Event: handoff.Event{ID: "choice", Work: w.ID, Session: "lead", Agent: "shepherd", Harness: "claude", Text: "Brian asked: which cache layout?"}, Kind: "decision", Topic: "cache layout", Question: "Choose the cache layout", Quote: "which cache layout?", Requester: tc.requester}
+			if _, err := applyHandoff(c, decision); err != nil {
+				t.Fatal(err)
+			}
+			w, _ = c.Store.Work.Get(w.ID)
+			r := w.Reviews["https://github.com/example/query/pull/42"]
+			if r.Requester != tc.want || r.Handoff == nil || r.Handoff.Agent != "shepherd" {
+				t.Fatalf("review requester %q handoff %+v", r.Requester, r.Handoff)
+			}
+			items, _ := c.Store.Items(core.ItemFilter{Scopes: []string{w.Repo}})
+			if len(items) != 1 || strings.Contains(items[0].Assumption, "on behalf of Brian") != (tc.requester != "") {
+				t.Fatalf("item assumption %+v", items)
+			}
+		})
+	}
+}
+
+func TestArchivedWorkSkipsBacklogFromBeforeItsArchival(t *testing.T) {
+	closed := time.Date(2026, 10, 21, 2, 17, 0, 0, time.UTC)
+	for _, archived := range []bool{false, true} {
+		for _, offset := range []time.Duration{-time.Hour, time.Hour} {
+			for _, kind := range []string{"review", "decision"} {
+				t.Run(fmt.Sprint(archived, offset, kind), func(t *testing.T) {
+					c, w, _ := handoffWorld(t)
+					if archived {
+						var err error
+						if w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "close", At: closed}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					claim := reviewClaim(w, "backlog")
+					if kind == "decision" {
+						claim = handoff.Claim{ID: "backlog", Event: handoff.Event{ID: "backlog", Work: w.ID, Session: "lead", Agent: "lead", Harness: "claude", Text: "Which cache layout should we use?"}, Kind: "decision", Topic: "cache layout", Question: "Choose the cache layout", Quote: "Which cache layout should we use?"}
+					}
+					claim.Event.At = closed.Add(offset)
+					if err := c.Store.Handoffs.Classified([]handoff.Event{claim.Event}, []handoff.Claim{claim}); err != nil {
+						t.Fatal(err)
+					}
+					if err := applyHandoffs(c); err != nil {
+						t.Fatal(err)
+					}
+					if err := c.Store.Handoffs.Resume(); err != nil {
+						t.Fatal(err)
+					}
+					status, _ := c.Store.Handoffs.Status()
+					skipped := archived && offset < 0
+					if (status["claims/archived"] == 1) != skipped || (status["claims/applied"] == 1) == skipped {
+						t.Fatalf("status %+v", status)
+					}
+					w, _ = c.Store.Work.Get(w.ID)
+					items, _ := c.Store.Items(core.ItemFilter{Scopes: []string{w.Repo}})
+					if (len(w.Reviews)+len(items) == 0) != skipped {
+						t.Fatalf("reviews %+v items %+v", w.Reviews, items)
+					}
+				})
+			}
+		}
 	}
 }

@@ -3,6 +3,7 @@ package handoff_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -27,6 +28,29 @@ func TestExtractionRequiresSourceGroundingAndCompleteEventCoverage(t *testing.T)
 			claims, err := handoff.Parse(events, []byte(tc.raw))
 			if (err == nil) != tc.valid {
 				t.Fatalf("claims %+v err %v", claims, err)
+			}
+		})
+	}
+}
+
+func TestRequesterIsTheHumanNamedInTheSourceEvent(t *testing.T) {
+	events := []handoff.Event{{ID: "one", Work: "work", Text: "Waiting on you: review the key decisions doc. Brian asked in today's sync."}}
+	for _, tc := range []struct {
+		name, requester string
+		valid           bool
+	}{
+		{"named human", "Brian", true},
+		{"agent's own request", "", true},
+		{"name absent from the event", "Dana", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"Events":[{"ID":"one","Requests":[{"Kind":"review","Topic":"key decisions","Question":"Review the doc?","Quote":"review the key decisions doc","Requester":%q}]}]}`, tc.requester)
+			claims, err := handoff.Parse(events, []byte(raw))
+			if (err == nil) != tc.valid {
+				t.Fatalf("claims %+v err %v", claims, err)
+			}
+			if tc.valid && claims[0].Requester != tc.requester {
+				t.Fatalf("requester %q", claims[0].Requester)
 			}
 		})
 	}

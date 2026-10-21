@@ -20,9 +20,9 @@ type Event struct {
 }
 
 type Claim struct {
-	ID                                                             string
-	Event                                                          Event
-	Kind, Target, Topic, Question, Quote, Existing, Recommendation string
+	ID                                                                        string
+	Event                                                                     Event
+	Kind, Target, Topic, Question, Quote, Existing, Recommendation, Requester string
 }
 
 func Key(parts ...string) string {

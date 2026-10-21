@@ -155,6 +155,11 @@ func (s *Store) Issue(id string, cause error) error {
 	return err
 }
 
+func (s *Store) Skip(id string) error {
+	_, err := s.db.Exec(`UPDATE ym_handoff_claims SET state='archived',error='' WHERE id=?`, id)
+	return err
+}
+
 func (s *Store) Resume() error {
 	_, err := s.db.Exec(`UPDATE ym_handoff_events SET state='pending',error='' WHERE state='error' AND json_extract(CAST(event AS TEXT),'$.Error')=''; UPDATE ym_handoff_claims SET state='pending',error='' WHERE state='blocked'`)
 	return err

@@ -126,6 +126,12 @@ func applyHandoffs(c *core.Core) error {
 			break
 		}
 		target, err := applyHandoff(c, claim)
+		if errors.Is(err, errHandoffPredatesArchive) {
+			if err = c.Store.Handoffs.Skip(claim.ID); err != nil {
+				return err
+			}
+			continue
+		}
 		if err != nil {
 			if errors.Is(err, work.ErrConflict) {
 				continue
@@ -142,10 +148,27 @@ func applyHandoffs(c *core.Core) error {
 	return nil
 }
 
+var errHandoffPredatesArchive = errors.New("handoff predates the work's archival")
+
 func applyHandoff(c *core.Core, claim handoff.Claim) (string, error) {
 	w, err := c.Store.Work.Get(claim.Event.Work)
 	if err != nil {
 		return "", err
+	}
+	if w.State == "archived" {
+		history, err := c.Store.Work.History(w.ID, 0)
+		if err != nil {
+			return "", err
+		}
+		var closed time.Time
+		for _, e := range history {
+			if e.Type == "close" {
+				closed = e.At
+			}
+		}
+		if claim.Event.At.Before(closed) {
+			return "", errHandoffPredatesArchive
+		}
 	}
 	existing := claim.Existing
 	if strings.HasPrefix(existing, "claim:") {
@@ -226,7 +249,7 @@ func applyHandoff(c *core.Core, claim handoff.Claim) (string, error) {
 		kind = core.KindGo
 	}
 	key := handoff.Key(w.ID, claim.Kind, strings.ToLower(strings.Join(strings.Fields(claim.Topic), " ")))
-	it, err := c.Store.AddHandoffItem(key, core.Item{Scope: w.Repo, Session: claim.Event.Session, Harness: claim.Event.Harness, Kind: kind, Action: action, Question: claim.Question, Rec: claim.Recommendation, Assumption: fmt.Sprintf("Recovered request from agent %s. Source %s at byte %d, event %s.\n%s", claim.Event.Agent, claim.Event.Path, claim.Event.Offset, claim.Event.ID, claim.Quote)})
+	it, err := c.Store.AddHandoffItem(key, core.Item{Scope: w.Repo, Session: claim.Event.Session, Harness: claim.Event.Harness, Kind: kind, Action: action, Question: claim.Question, Rec: claim.Recommendation, Assumption: fmt.Sprintf("Recovered request from agent %s%s. Source %s at byte %d, event %s.\n%s", claim.Event.Agent, onBehalfOf(claim), claim.Event.Path, claim.Event.Offset, claim.Event.ID, claim.Quote)})
 	if err != nil {
 		return "", err
 	}
@@ -234,6 +257,20 @@ func applyHandoff(c *core.Core, claim handoff.Claim) (string, error) {
 		return "", err
 	}
 	return "item:" + it.Key(), nil
+}
+
+func onBehalfOf(claim handoff.Claim) string {
+	if claim.Requester == "" {
+		return ""
+	}
+	return " on behalf of " + claim.Requester
+}
+
+func handoffRequester(claim handoff.Claim) string {
+	if claim.Requester != "" {
+		return claim.Requester
+	}
+	return "Agent " + claim.Event.Agent
 }
 
 func deliverHandoffAnswer(c *core.Core, w work.Scope, claim handoff.Claim, it core.Item) error {
@@ -272,7 +309,7 @@ func captureHandoffReview(c *core.Core, w work.Scope, claim handoff.Claim, targe
 		}
 	}
 	if !registered {
-		source = work.Source{Kind: "github", URL: target, Origin: "agent-handoff", Requester: "Agent " + claim.Event.Agent, Question: claim.Question, Coverage: "explicit agent handoff; source and readiness independently checked"}
+		source = work.Source{Kind: "github", URL: target, Origin: "agent-handoff", Requester: handoffRequester(claim), Question: claim.Question, Coverage: "explicit agent handoff; source and readiness independently checked"}
 		if prs := core.PRsIn(target); len(prs) == 1 && prs[0].URL == target {
 			source.Kind = "github"
 		} else if strings.HasPrefix(target, "https://www.notion.so/") {
@@ -304,7 +341,7 @@ func captureHandoffReview(c *core.Core, w work.Scope, claim handoff.Claim, targe
 		}
 	}
 	if source.Requester == "" {
-		source.Requester = "Agent " + claim.Event.Agent
+		source.Requester = handoffRequester(claim)
 		source.Question = claim.Question
 	}
 	var review work.Review
