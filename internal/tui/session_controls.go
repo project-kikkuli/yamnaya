@@ -12,10 +12,16 @@ func (m Model) landingTargets(r row) ([]string, string) {
 		return []string{r.dormant.Key}, r.dormant.Key
 	}
 	if s := m.sessionOf(r); s != nil && s.ID != "" {
-		return []string{s.ID}, s.Label()
+		if m.hasLaunch(s.ID) {
+			return []string{s.ID}, s.Label()
+		}
+		return nil, ""
 	}
 	if p := m.projectOf(r); p != nil && len(p.Sessions) == 1 && p.Sessions[0].ID != "" {
-		return []string{p.Sessions[0].ID}, p.Sessions[0].Label()
+		if m.hasLaunch(p.Sessions[0].ID) {
+			return []string{p.Sessions[0].ID}, p.Sessions[0].Label()
+		}
+		return nil, ""
 	}
 	if p := m.projectOf(r); p != nil && len(p.Dormant) > 0 {
 		var refs []string
@@ -43,6 +49,10 @@ func (m Model) sessionHints() string {
 	var hints []string
 	if m.killable(r) != nil {
 		hints = append(hints, "K kill")
+	} else if ids, _ := m.stoppedTargets(r); len(ids) > 0 {
+		hints = append(hints, "K archive")
+	} else if _, ok := m.archivableWork(r); ok {
+		hints = append(hints, "K archive")
 	}
 	refs, _ := m.landingTargets(r)
 	if len(refs) > 0 {
@@ -66,5 +76,28 @@ func (m Model) archivableWork(r row) (work.Scope, bool) {
 	if p := m.projectOf(r); p != nil && len(p.Sessions) > 0 {
 		return w, false
 	}
-	return w, ok && w.InFlight()
+	return w, ok && w.State != "archived" && w.State != "completed"
+}
+
+func (m Model) hasLaunch(session string) bool {
+	for _, l := range m.board.Launched {
+		if l.Session == session && l.Landed.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+func (m Model) stoppedTargets(r row) ([]string, string) {
+	if r.dormant != nil {
+		return []string{r.dormant.ID()}, r.dormant.Title
+	}
+	if p := m.projectOf(r); p != nil && len(p.Sessions) == 0 {
+		var ids []string
+		for _, d := range p.Dormant {
+			ids = append(ids, d.ID())
+		}
+		return ids, p.Name
+	}
+	return nil, ""
 }

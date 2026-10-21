@@ -39,6 +39,9 @@ func (c *Core) Kill(s Live) (string, error) {
 		sent = append(sent, pid)
 	}
 	if len(sent) == 0 {
+		if err := c.StopSession(s.Key()); err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s %s already ended", s.Harness, Short(s.Key())), nil
 	}
 	var left []string
@@ -56,10 +59,8 @@ func (c *Core) Kill(s Live) (string, error) {
 	if len(left) > 0 {
 		return "", fmt.Errorf("%s %s still running (pid %s) after SIGTERM", s.Harness, Short(s.Key()), strings.Join(left, ", "))
 	}
-	if c.Store != nil {
-		if err := c.Store.RecordKill(s.Key(), c.now()); err != nil {
-			return "", fmt.Errorf("killed %s %s; recording exit: %w", s.Harness, Short(s.Key()), err)
-		}
+	if err := c.StopSession(s.Key()); err != nil {
+		return "", fmt.Errorf("killed %s %s; recording exit: %w", s.Harness, Short(s.Key()), err)
 	}
 	return fmt.Sprintf("killed %s %s", s.Harness, Short(s.Key())), nil
 }

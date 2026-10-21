@@ -10,6 +10,10 @@ import (
 )
 
 func (c *Core) ObserveWork(b Board) error {
+	kills, err := c.Store.Kills(time.Time{})
+	if err != nil {
+		return err
+	}
 	all, err := c.Store.Work.List()
 	if err != nil {
 		return err
@@ -34,6 +38,7 @@ func (c *Core) ObserveWork(b Board) error {
 	}
 	alive := map[string]bool{}
 	for _, p := range b.Projects {
+		p.Sessions = freshSessions(p.Sessions, kills, b.At)
 		if len(p.Sessions) == 0 {
 			continue
 		}
@@ -75,9 +80,17 @@ func (c *Core) ObserveWork(b Board) error {
 					return err
 				}
 			}
-			observed := work.ExecutionObservation{State: session.Status.String(), Result: session.Result}
-			if w.Observations[session.Key()] != observed {
+			previous := w.Observations[session.Key()]
+			observed := work.ExecutionObservation{State: session.Status.String(), Result: session.Result, LastLiveAt: b.At}
+			stop := kills[session.Key()]
+			if previous.State != observed.State || previous.Result != observed.Result || (!stop.IsZero() && !previous.LastLiveAt.After(stop)) {
 				w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "execution", Target: session.Key(), Actor: "discovery", Observation: observed, Text: "Native session " + session.Key() + " is " + observed.State + "\n" + observed.Result})
+				if err != nil {
+					return err
+				}
+			}
+			if w.State == "archived" && sessionMission(w) && !stop.IsZero() && b.At.After(stop) {
+				w, err = c.Store.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "resume", Actor: "discovery", Text: "Native session resumed after owner stop"})
 				if err != nil {
 					return err
 				}
@@ -96,10 +109,6 @@ func (c *Core) ObserveWork(b Board) error {
 	if err != nil {
 		return err
 	}
-	kills, err := c.Store.Kills(time.Time{})
-	if err != nil {
-		return err
-	}
 	for _, w := range latest {
 		for session, observed := range w.Observations {
 			if !alive[session] && observed.State != "exited" {
@@ -110,22 +119,12 @@ func (c *Core) ObserveWork(b Board) error {
 				}
 			}
 		}
-		if w.State != "archived" && w.Kind == "" && w.Owner == "" && w.Manager == "" && w.Parent == "" && strings.HasPrefix(w.Origin, ThisHost()+"/") {
+		if w.State != "archived" && sessionMission(w) {
 			stopped, running := false, false
 			for session := range w.Bindings {
 				running = running || alive[session]
 				if at := kills[session]; !at.IsZero() {
-					history, err := c.Store.Work.History(w.ID, 0)
-					if err != nil {
-						return err
-					}
-					resumed := false
-					for _, e := range history {
-						if e.Type == "execution" && e.Target == session && e.Observation.State != "exited" && e.At.After(at) {
-							resumed = true
-						}
-					}
-					stopped = stopped || !resumed
+					stopped = stopped || !w.Observations[session].LastLiveAt.After(at)
 				}
 			}
 			if stopped && !running {
@@ -184,6 +183,9 @@ func (c *Core) attachWork(b *Board) error {
 		if !attached[w.ID] {
 			b.Projects = append(b.Projects, Project{Key: "work:" + w.ID, Name: w.Name, Repo: w.Repo, RepoName: workRepoName(w.Repo), Work: w})
 		}
+	}
+	if err = c.projectSessionStops(b, all); err != nil {
+		return err
 	}
 	peers, err := c.Store.Work.Peers()
 	if err != nil {

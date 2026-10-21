@@ -24,9 +24,45 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 	}
 	s, err := c.Find(ref)
 	if errors.Is(err, core.ErrNotFound) && c.Launches != nil {
+		var matches []core.Launched
 		for _, l := range c.Launches.Launched() {
-			if l.Key == ref && l.Session != "" {
+			if l.Key == ref || l.Session != "" && strings.HasPrefix(l.Session, ref) {
+				matches = append(matches, l)
+			}
+		}
+		if len(matches) > 1 {
+			return fmt.Errorf("several launches match %q; use the full session id or launch key", ref)
+		}
+		for _, l := range matches {
+			if l.Session != "" {
 				s, err = c.Find(l.Session)
+			}
+			if errors.Is(err, core.ErrNotFound) {
+				s = core.Live{Session: core.Session{ID: core.Dormant{Key: l.Key, Session: l.Session}.ID(), Harness: l.Harness}}
+				err = nil
+			}
+		}
+	}
+	if errors.Is(err, core.ErrNotFound) && c.Store != nil {
+		all, loadErr := c.Store.Work.List()
+		if loadErr != nil {
+			return loadErr
+		}
+		matches := map[string]core.Live{}
+		for _, w := range all {
+			for id, x := range w.Executions {
+				if strings.HasPrefix(id, ref) {
+					matches[id] = core.Live{Session: core.Session{ID: id, Harness: x.Harness, Title: w.Name}}
+				}
+			}
+		}
+		if exact, ok := matches[ref]; ok {
+			s, err = exact, nil
+		} else if len(matches) > 1 {
+			return fmt.Errorf("several ended sessions match %q; use the full session id", ref)
+		} else {
+			for _, match := range matches {
+				s, err = match, nil
 			}
 		}
 	}
@@ -39,11 +75,6 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 		if strings.TrimSpace(strings.ToLower(answer)) != "y" {
 			fmt.Fprintln(out, "not killed")
 			return nil
-		}
-	}
-	if l, ok := c.Launches.(launcher); ok {
-		if err := l.markKilled(s.ID); err != nil {
-			return err
 		}
 	}
 	msg, err := c.Kill(s)

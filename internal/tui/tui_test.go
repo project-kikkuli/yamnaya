@@ -332,14 +332,15 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 }
 
 type launches struct {
-	dormant []core.Dormant
-	revived []string
-	adopted []string
-	sent    []string
-	started []core.NewLaunch
-	landed  []string
-	forgot  []string
-	swept   int
+	launched []core.Launched
+	dormant  []core.Dormant
+	revived  []string
+	adopted  []string
+	sent     []string
+	started  []core.NewLaunch
+	landed   []string
+	forgot   []string
+	swept    int
 	// startErr is what Start fails with, if anything.
 	startErr   error
 	relaunched []string
@@ -379,7 +380,10 @@ func (l *launches) GC() (string, error) {
 }
 
 func (l *launches) Launched() []core.Launched {
-	return []core.Launched{{Key: "fix-login", Harness: "claude", Session: "kid", State: "exited 1", Path: "/src/app-wt-fix-login"}}
+	if l.launched != nil {
+		return l.launched
+	}
+	return []core.Launched{{Key: "fix-login", Harness: "claude", Session: "kid", State: "exited 1", Path: "/src/app-wt-fix-login"}, {Key: "lead", Harness: "claude", Session: "lead", State: "running"}, {Key: "twin", Harness: "claude", Session: "twin", State: "running"}}
 }
 
 func (l *launches) Adopt(s core.Live, say func(string)) (core.Target, error) {

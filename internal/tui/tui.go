@@ -957,11 +957,30 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if s := m.killable(r); s != nil {
 			live := *s
 			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
+		} else if ids, label := m.stoppedTargets(r); len(ids) > 0 {
+			m.confirm("archive "+label+"? files, briefs and queued actions stay", m.do(func() (string, error) {
+				for _, id := range ids {
+					if err := m.core.StopSession(id); err != nil {
+						return "", err
+					}
+				}
+				if w, ok := m.archivableWork(r); ok {
+					if _, err := m.core.ChangeWork(w, work.Event{Type: "close", Actor: "owner"}); err != nil {
+						return "", err
+					}
+				}
+				return "archived " + label, nil
+			}))
+		} else if w, ok := m.archivableWork(r); ok {
+			m.confirm("archive "+w.Name+"? briefs and pending queue items stay", m.do(func() (string, error) {
+				_, err := m.core.ChangeWork(w, work.Event{Type: "close", Actor: "owner"})
+				return "archived " + w.Name, err
+			}))
 		}
 	case "L", "F":
 		refs, label := m.landingTargets(r)
 		if len(refs) == 0 {
-			if w, ok := m.archivableWork(r); ok {
+			if w, ok := m.archivableWork(r); ok && k.String() == "L" {
 				m.confirm("archive "+w.Name+"? briefs and pending queue items stay", m.do(func() (string, error) {
 					_, err := m.core.ChangeWork(w, work.Event{Type: "close", Actor: "owner"})
 					return "archived " + w.Name, err

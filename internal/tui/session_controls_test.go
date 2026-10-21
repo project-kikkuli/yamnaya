@@ -17,6 +17,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", where, width), func(t *testing.T) {
 				m, c, _ := setup(t)
 				c.Launches = &launches{}
+				m = refresh(t, m)
 				wantKill, wantLand, wantArchive := false, false, false
 				switch where {
 				case "board mission":

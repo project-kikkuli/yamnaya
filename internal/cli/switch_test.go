@@ -40,7 +40,8 @@ func (r *relauncher) Relaunch(from core.Live, harness, id string) (string, error
 	return "revived adopt-" + id, r.err
 }
 
-func (r *relauncher) Dormant() []core.Dormant { return nil }
+func (r *relauncher) Dormant() []core.Dormant   { return nil }
+func (r *relauncher) Launched() []core.Launched { return nil }
 
 func TestSwitchRelaunchesOnlyWithTheFlag(t *testing.T) {
 	for _, c := range []struct {

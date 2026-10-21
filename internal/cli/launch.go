@@ -512,8 +512,7 @@ func (l launcher) Land(ref string) (string, error) {
 	return l.land(rec)
 }
 
-// markKilled records that ym kill is ending the launched session id, so its exit is not landed for a day.
-func (l launcher) markKilled(id string) error {
+func (l launcher) SessionStopped(id string) error {
 	rec, ok := l.records.Find(id)
 	if !ok || rec.IsLanded() {
 		return nil
@@ -527,6 +526,11 @@ func (l launcher) landed(rec launch.Record, why string) error {
 	rec.Landed = time.Now()
 	if err := l.records.Save(rec); err != nil {
 		return err
+	}
+	if l.core != nil {
+		if err := l.core.StopSession(core.Dormant{Key: rec.Key, Session: rec.Session}.ID()); err != nil {
+			return err
+		}
 	}
 	if l.landings == "" {
 		return nil
@@ -546,6 +550,11 @@ func (l launcher) Forget(ref string) (string, error) {
 	}
 	if err := l.records.Delete(rec.Key); err != nil {
 		return "", err
+	}
+	if l.core != nil {
+		if err := l.core.StopSession(core.Dormant{Key: rec.Key, Session: rec.Session}.ID()); err != nil {
+			return "", err
+		}
 	}
 	return fmt.Sprintf("forgot %s; %s and branch %s stay", rec.Key, rec.Worktree.Path, rec.Worktree.Branch), nil
 }

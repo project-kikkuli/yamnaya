@@ -201,10 +201,10 @@ func TestAProjectMessageSurvivesAConcurrentContextUpdate(t *testing.T) {
 
 func TestExplicitKillRetiresSessionMissionAndKeepsItsBrief(t *testing.T) {
 	for _, tc := range []struct {
-		name                        string
-		delegated, revived, pending bool
+		name                               string
+		delegated, revived, pending, stale bool
 	}{
-		{name: "stopped mission"}, {name: "delegated commitment", delegated: true}, {name: "session resumed", revived: true}, {name: "pending merge", pending: true},
+		{name: "stopped mission"}, {name: "delegated commitment", delegated: true}, {name: "session resumed", revived: true}, {name: "pending merge", pending: true}, {name: "late commit of old observation", stale: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			world := newWorld(t)
@@ -247,6 +247,12 @@ func TestExplicitKillRetiresSessionMissionAndKeepsItsBrief(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.revived {
+				c.Now = func() time.Time { return at.Add(time.Second) }
+				if err = c.ObserveWork(world.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.stale {
 				apply(work.Event{Type: "execution", At: at.Add(time.Second), Target: "lead", Observation: work.ExecutionObservation{State: "busy"}})
 			}
 			c.Procs = func() ([]proc.Proc, error) { return nil, nil }
@@ -268,9 +274,12 @@ func TestExplicitKillRetiresSessionMissionAndKeepsItsBrief(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, p := range b.Projects {
-				if p.Work != nil && p.Work.ID == w.ID && p.Shown() != (tc.delegated || tc.revived || tc.pending) {
+				if p.Work != nil && p.Work.ID == w.ID && p.Shown() != (tc.delegated || tc.revived) {
 					t.Fatalf("visibility %+v", p)
 				}
+			}
+			if tc.pending && !w.Reviews[work.MergeReviewID("https://github.com/example/query/pull/42")].Pending() {
+				t.Fatal("archiving the session removed its owner merge obligation")
 			}
 		})
 	}

@@ -97,7 +97,7 @@ type Project struct {
 
 // Shown reports whether the mission has a session running or one ym can revive.
 func (p Project) Shown() bool {
-	return (p.Work != nil && p.Work.InFlight()) || len(p.Sessions) > 0 || len(p.Dormant) > 0
+	return (p.Work != nil && p.Work.State != "archived" && p.Work.State != "completed") || len(p.Sessions) > 0 || len(p.Dormant) > 0
 }
 
 // Duplicated reports whether any session of the project runs in more than one process.
@@ -127,6 +127,7 @@ type Repo struct {
 }
 
 type Board struct {
+	Launched    []Launched
 	Agents      []work.Agent
 	Attachments []work.Attachment
 	AgentRules  []work.Rule
@@ -314,6 +315,9 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	dormant := c.dormant(b.Sessions, b.moved)
+	if c.Launches != nil {
+		b.Launched = c.Launches.Launched()
+	}
 	for _, d := range dormant {
 		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
 			parents[d.ID()] = d.Parent
