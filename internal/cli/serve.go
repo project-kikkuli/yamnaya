@@ -155,6 +155,9 @@ func workCycle(ctx context.Context, c *core.Core, f intake.Fetcher) error {
 	if _, err = c.RefreshPRs(b); err != nil {
 		failures = append(failures, err)
 	}
+	if err = captureMergeReadiness(c); err != nil {
+		return err
+	}
 	all, err := c.Store.Work.List()
 	if err != nil {
 		return err

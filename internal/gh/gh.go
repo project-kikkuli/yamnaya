@@ -31,7 +31,7 @@ func repoExists(repo string) (bool, error) {
 }
 
 const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
-  state title reviewDecision headRefName
+  state title reviewDecision headRefName headRefOid isDraft mergeable mergeStateStatus
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
@@ -53,6 +53,10 @@ type count struct {
 }
 
 type prJSON struct {
+	HeadRefOID     string `json:"headRefOid"`
+	Draft          bool   `json:"isDraft"`
+	Mergeable      string `json:"mergeable"`
+	MergeState     string `json:"mergeStateStatus"`
 	State          string `json:"state"`
 	Title          string `json:"title"`
 	ReviewDecision string `json:"reviewDecision"`
@@ -102,7 +106,7 @@ func (s *Source) PRStatus(url string) (core.PRStatus, error) {
 		}
 		return core.PRStatus{}, errors.New("no pull request at " + url)
 	}
-	st := core.PRStatus{State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
+	st := core.PRStatus{Merge: core.PRMergeFacts{OID: pr.HeadRefOID, Draft: pr.Draft, Mergeable: pr.Mergeable, MergeState: pr.MergeState}, State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
 		Commits: pr.Commits.TotalCount, Threads: pr.ReviewThreads.TotalCount, Fetched: s.Now()}
 	for _, t := range pr.ReviewThreads.Nodes {
 		if !t.IsResolved {

@@ -86,6 +86,8 @@ ym work watch WORK /src/design.html --kind file --requester Mira --question "App
 
 Notion requires `NOTION_TOKEN` and pages shared with that integration, including read-comment access. Optional `NOTION_REVIEWER_ID` enables explicit mention detection on watched pages. Page blocks and comments are paginated. Coverage is limited to registered pages; Notion has no workspace-wide review-request inbox API. Missing credentials, incomplete GitHub search results and unavailable sources are surfaced as coverage gaps.
 
+Tracked agent PRs gain a separate **merge** queue item when GitHub reports an open, non-draft PR with a known head, a clean merge state, satisfied reviews and checks, and no unresolved review threads. Those PRs remain watched after their native agent exits. Merge items open on GitHub with `o`/`V`; they clear from the queue when GitHub reports merged or closed, or return to agent work when prerequisites regress. A status failure keeps a previously ready item visible with a verification warning. Reviewing a PR does not complete its merge item.
+
 Open the incoming stack with Enter to work through its pending checklist. `o` or `V` opens the selected source; `x` (or Space in the list) records it as reviewed and advances. In a review, `n`/`p` moves between requests. Tab switches queues, including reviewed items where `u` returns a request to the checklist. These are local owner receipts tied to the source and context revisions. Changed evidence or direction brings the request back. GitHub approval and manager-prepared judgments are separate actions. The CLI equivalents are `ym work reviewed WORK REVIEW` and `ym work unreview WORK REVIEW`.
 
 Preparation uses `ym work prepare WORK REVIEW` with JSON on stdin:

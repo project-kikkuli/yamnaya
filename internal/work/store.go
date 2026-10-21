@@ -238,7 +238,7 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		}
 	case "message":
 		destinations = append(destinations, e.Target)
-	case "owner", "parent", "result", "verify", "reopen", "observe", "feedback", "decide", "reviewed", "unreview", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
+	case "owner", "parent", "result", "verify", "reopen", "observe", "link-pr", "merge-status", "feedback", "decide", "reviewed", "unreview", "wake", "watch", "withdraw-request", "close", "resume", "relate", "unrelate":
 		destinations = append(destinations, "@manager")
 	case "purpose":
 		if e.Actor == "owner" {

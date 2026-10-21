@@ -255,6 +255,9 @@ func (c *Core) DeliverWork(b Board) error {
 
 func (c *Core) ChangeWork(w work.Scope, e work.Event) (work.Scope, error) {
 	e.Work, e.Expected = w.ID, w.Revision
+	if (e.Type == "reviewed" || e.Type == "unreview" || e.Type == "decide" || e.Type == "feedback" || e.Type == "prepare") && w.Reviews[e.Target].Action == "merge" {
+		return w, fmt.Errorf("merge outcomes are tracked from GitHub; open the PR to merge it")
+	}
 	if e.Type == "context" {
 		e.Context = w.Context.Revision
 	}

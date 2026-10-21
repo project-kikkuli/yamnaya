@@ -104,7 +104,7 @@ func Apply(s *Scope, e Event) error {
 		}
 		s.Context = Context{Revision: s.Context.Revision + 1, Text: e.Text, Actor: e.Actor}
 		for id, r := range s.Reviews {
-			if r.State == Ready || r.State == Reviewed {
+			if r.Action != "merge" && (r.State == Ready || r.State == Reviewed) {
 				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
@@ -152,7 +152,7 @@ func Apply(s *Scope, e Event) error {
 				s.VerifiedBy = ""
 			}
 			for id, r := range s.Reviews {
-				if r.State == Ready || r.State == Reviewed {
+				if r.Action != "merge" && (r.State == Ready || r.State == Reviewed) {
 					r.State = s.PreparationState()
 					s.Reviews[id] = r
 				}
@@ -166,7 +166,7 @@ func Apply(s *Scope, e Event) error {
 			s.VerifiedBy = ""
 		}
 		for id, r := range s.Reviews {
-			if r.State == Ready || r.State == Reviewed {
+			if r.Action != "merge" && (r.State == Ready || r.State == Reviewed) {
 				r.State = s.PreparationState()
 				s.Reviews[id] = r
 			}
@@ -199,6 +199,30 @@ func Apply(s *Scope, e Event) error {
 			}
 		}
 		s.Brief = e.Brief
+	case "link-pr":
+		found := false
+		for i, source := range s.Sources {
+			if source.URL == e.Target && source.Kind == "github" {
+				s.Sources[i].AgentPR, found = true, true
+			}
+		}
+		if !found {
+			return errors.New("agent PR link requires a registered GitHub source")
+		}
+	case "merge-status":
+		r := e.Review
+		if r.Action != "merge" || r.URL == "" || r.ID != MergeReviewID(r.URL) || r.Version == "" {
+			return errors.New("merge status requires its PR identity and version")
+		}
+		old := s.Reviews[r.ID]
+		if old.Version == r.Version {
+			return nil
+		}
+		if r.StatusError != "" && old.State == Ready && !old.Closed {
+			r.State, r.Evidence = Ready, old.Evidence
+		}
+		r.Updated = e.At
+		s.Reviews[r.ID] = r
 	case "observe":
 		r := e.Review
 		if r.ID == "" || r.Version == "" {
@@ -236,6 +260,9 @@ func Apply(s *Scope, e Event) error {
 		if !ok {
 			return errors.New("review not found")
 		}
+		if r.Action == "merge" {
+			return errors.New("merge outcomes are tracked from GitHub")
+		}
 		if r.Version != e.Review.Version || e.Context != s.Context.Revision {
 			return errors.New("review evidence or context changed")
 		}
@@ -261,6 +288,9 @@ func Apply(s *Scope, e Event) error {
 		r, ok := s.Reviews[e.Target]
 		if !ok || r.Version == "" || r.Version != e.Review.Version || e.Context != s.Context.Revision {
 			return errors.New("review source or context changed; refresh before updating the checklist")
+		}
+		if r.Action == "merge" {
+			return errors.New("merge outcomes are tracked from GitHub")
 		}
 		if e.Type == "reviewed" {
 			if !r.Pending() {
@@ -299,6 +329,9 @@ func Apply(s *Scope, e Event) error {
 		if !ok {
 			return errors.New("review not found")
 		}
+		if r.Action == "merge" {
+			return errors.New("merge outcomes are tracked from GitHub")
+		}
 		if r.State != Ready || r.PreparedVersion != r.Version || r.PreparedContext != s.Context.Revision {
 			return errors.New("review needs preparation against current source and context")
 		}
@@ -324,6 +357,7 @@ func Apply(s *Scope, e Event) error {
 				source.Coverage = "Retained after owner review; automatic assignment no longer active"
 				s.Sources[i] = source
 			} else if source.LinkedPR() {
+				source.Origin = "session-pr"
 				source.Requester, source.Question, source.RequestVersion = "", "", ""
 				source.Coverage = "linked agent PR; human review request not yet confirmed"
 				s.Sources[i] = source
@@ -350,6 +384,7 @@ func Apply(s *Scope, e Event) error {
 		found := false
 		for i, source := range s.Sources {
 			if source.URL == e.Source.URL {
+				e.Source.AgentPR = e.Source.AgentPR || source.LinkedPR()
 				s.Sources[i] = e.Source
 				found = true
 			}

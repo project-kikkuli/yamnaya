@@ -11,6 +11,8 @@ const (
 )
 
 type Review struct {
+	Action          string
+	StatusError     string
 	ReviewedVersion string
 	ReviewedContext int64
 	FollowThrough   string
@@ -74,3 +76,5 @@ func (r Review) NextOwner(manager string) string {
 		return "none"
 	}
 }
+
+func MergeReviewID(url string) string { return "merge/" + url }

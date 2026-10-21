@@ -82,6 +82,8 @@ As manager, keep a current assessment with `ym work brief WORK`, JSON on stdin:
 
 Use exact observed source versions and current context, never guessed revisions. Optional `Artifact` is a stable rich artifact URL; the service also renders each brief at a stable local address. Publish assessments even when no owner decision is pending. Scope work to delegated authority and preserve independent native execution and browser access.
 
+Queue records with `Action: "merge"` track agent PRs that meet GitHub merge prerequisites. Open their source for the owner to merge; never prepare, check off, or decide these as human reviews. Background status updates own their lifecycle, including readiness regressions, API coverage warnings, and actual merge/close outcomes. Reviewing a PR and merging it are separate obligations.
+
 For an owner review, prepare `ym work prepare WORK REVIEW_ID` from JSON:
 
 ```json

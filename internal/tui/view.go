@@ -216,6 +216,9 @@ func (m Model) footer() []string {
 }
 
 func (m Model) hints() string {
+	if r, ok := m.currentReview(); ok && r.Action == "merge" {
+		return "o/V open PR to merge   enter details   n/p next/previous in detail   B context   esc back"
+	}
 	if m.mode == modeList {
 		if r, ok := m.selected(); ok && r.attention == "unassigned" {
 			return "enter checklist   o/V open first source   B brief   M agents   ↑↓ move"
@@ -334,6 +337,7 @@ func (m Model) listView() viewPage {
 				m.field(&b, "ask", r.review.Question)
 				m.field(&b, "rec", r.review.Recommendation)
 				m.field(&b, "changed", r.review.Changed)
+				m.field(&b, "status", r.review.StatusError)
 			}
 		case r.stale:
 			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")

@@ -195,6 +195,10 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	key := k.String()
 	if m.mode == modeReviews || m.mode == modeReview {
 		if key == "x" || key == "u" || (key == " " && m.mode == modeReviews) {
+			if r, ok := m.currentReview(); ok && r.Action == "merge" {
+				m.message = "Open the PR with o/V to merge it. This item clears when GitHub reports merged or closed."
+				return m, nil, true
+			}
 			if key == " " {
 				key = "x"
 			}
@@ -376,6 +380,10 @@ func (m Model) workKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				return m, nil, true
 			}
 			r := w.Reviews[m.reviewID]
+			if r.Action == "merge" {
+				m.message = "Open the PR with o/V to merge it. Its outcome is tracked from GitHub."
+				return m, nil, true
+			}
 			if r.State != work.Ready {
 				m.message = "This review is not prepared for your judgment."
 				return m, nil, true
@@ -681,9 +689,12 @@ func (m Model) reviewsView() viewPage {
 	if m.reviewWork != "" {
 		label = " · " + m.workName(m.reviewWork)
 	}
-	b.WriteString(pal.bold.Render(" REVIEW CHECKLIST") + pal.dim.Render(fmt.Sprintf("  %s%s · %d items", state, label, len(m.rows()))) + "\n\n")
+	b.WriteString(pal.bold.Render(" YOUR QUEUE") + pal.dim.Render(fmt.Sprintf("  %s%s · %d items", state, label, len(m.rows()))) + "\n\n")
 	for i, r := range m.rows() {
 		check := "[ ]"
+		if r.review.Action == "merge" {
+			check = " → "
+		}
 		if r.review.State == work.Reviewed || r.review.State == work.Completed {
 			check = "[x]"
 		}
@@ -694,6 +705,7 @@ func (m Model) reviewsView() viewPage {
 			m.field(&b, "changed", r.review.Changed)
 			m.field(&b, "requester", r.review.Requester)
 			m.field(&b, "source", r.review.URL)
+			m.field(&b, "status", r.review.StatusError)
 			if r.review.Provisional {
 				b.WriteString(pal.yellow.Render("             inferred request; ownership needs confirmation") + "\n")
 			}
@@ -721,6 +733,7 @@ func (m Model) reviewView() viewPage {
 	b := viewPage{}
 	b.WriteString(pal.bold.Render(" "+r.Title) + pal.dim.Render(" · "+r.State+" · "+w.Name) + "\n\n")
 	m.field(&b, "checklist", m.reviewPosition())
+	m.field(&b, "status", r.StatusError)
 	m.field(&b, "ask", r.Question)
 	m.field(&b, "rec", r.Recommendation)
 	m.field(&b, "changed", r.Changed)
@@ -739,7 +752,11 @@ func (m Model) reviewView() viewPage {
 	for _, line := range strings.Split(ansi.Wrap(r.Evidence, max(20, m.width-4), " "), "\n") {
 		b.WriteString("   " + line + "\n")
 	}
-	b.WriteString("\n o/V opens the source. x marks reviewed and advances. n/p skips between requests.\n")
+	if r.Action == "merge" {
+		b.WriteString("\n o/V opens the PR. GitHub merge/close status completes this item.\n")
+	} else {
+		b.WriteString("\n o/V opens the source. x marks reviewed and advances. n/p skips between requests.\n")
+	}
 	return b
 }
 

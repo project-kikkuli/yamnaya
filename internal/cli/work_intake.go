@@ -70,10 +70,11 @@ func captureRequests(ctx context.Context, c *core.Core, f intake.Fetcher) error 
 				if old.URL != source.URL {
 					continue
 				}
-				if !old.AutomaticRequest() && !old.LinkedPR() {
+				if !old.AutomaticRequest() && !old.DiscoveredPR() {
 					current = true
 				}
-				if old.LinkedPR() {
+				source.AgentPR = old.AgentPR
+				if old.DiscoveredPR() {
 					source.Origin = "session-pr"
 				}
 				if old.AutomaticRequest() && old.RequestVersion == source.RequestVersion {
@@ -119,9 +120,11 @@ func captureSessionPRs(c *core.Core, b core.Board) error {
 	}
 	bySession := map[string]work.Scope{}
 	knownSources := map[string]bool{}
+	byURL := map[string]work.Scope{}
 	for _, w := range all {
 		for _, source := range w.Sources {
 			knownSources[source.URL] = true
+			byURL[source.URL] = w
 		}
 		for session := range w.Bindings {
 			bySession[session] = w
@@ -138,6 +141,21 @@ func captureSessionPRs(c *core.Core, b core.Board) error {
 		}
 		for _, pr := range session.AllPRs() {
 			if known[pr.URL] || knownSources[pr.URL] {
+				registered := byURL[pr.URL]
+				for _, source := range registered.Sources {
+					if source.URL != pr.URL || source.LinkedPR() {
+						continue
+					}
+					current, err := c.Store.Work.Get(registered.ID)
+					if err != nil {
+						return err
+					}
+					updated, err := c.Store.Work.Commit(work.Event{Work: current.ID, Expected: current.Revision, Type: "link-pr", Actor: "discovery", Target: source.URL})
+					if err != nil {
+						return err
+					}
+					byURL[pr.URL] = updated
+				}
 				continue
 			}
 			current, err := c.Store.Work.Get(w.ID)

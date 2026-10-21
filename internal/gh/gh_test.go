@@ -76,3 +76,13 @@ func TestAMissingPullRequestIsGoneOnlyWhenItsRepoIsMissing(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubMergeFactsAreReadWithTheHeadAndThreadEvidence(t *testing.T) {
+	s := &Source{Now: time.Now, Run: func(string) ([]byte, error) {
+		return []byte(`{"data":{"resource":{"state":"OPEN","title":"Caller migration","headRefOid":"head1","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","reviewThreads":{"totalCount":0,"nodes":[]},"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"checkRunCountsByState":[{"state":"SUCCESS","count":8}]}}}}]}}}}`), nil
+	}}
+	st, err := s.PRStatus(url)
+	if err != nil || st.Merge.OID != "head1" || !st.ReadyToMerge() {
+		t.Fatalf("merge facts were lost: %+v %v", st, err)
+	}
+}

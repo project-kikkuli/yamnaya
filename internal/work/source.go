@@ -3,6 +3,7 @@ package work
 import "strings"
 
 type Source struct {
+	AgentPR        bool
 	Origin         string
 	Kind           string
 	URL            string
@@ -13,10 +14,12 @@ type Source struct {
 }
 
 func (s Source) AutomaticRequest() bool {
-	return s.Origin == "github-request" || (s.LinkedPR() && s.RequestVersion != "") ||
+	return s.Origin == "github-request" || (s.DiscoveredPR() && s.RequestVersion != "") ||
 		(s.Origin == "" && s.Kind == "github" && s.Coverage == "explicit GitHub review-request assignment" && strings.HasPrefix(s.Requester, "GitHub review assignment to "))
 }
 
-func (s Source) LinkedPR() bool {
+func (s Source) LinkedPR() bool { return s.AgentPR || s.DiscoveredPR() }
+
+func (s Source) DiscoveredPR() bool {
 	return s.Origin == "session-pr" || (s.Origin == "" && s.Coverage == "linked agent PR; human review request not yet confirmed")
 }

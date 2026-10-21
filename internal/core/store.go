@@ -203,6 +203,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate prs: %w", err)
 	}
+	if err := prMergeDetails(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate merge facts: %w", err)
+	}
 	if err := vibes(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate vibes: %w", err)
@@ -373,7 +377,7 @@ func (s *Store) SaveScan(path string, offset int64, data []byte) error {
 
 // PRStatuses returns the last fetched status of every pull request ym knows.
 func (s *Store) PRStatuses() (map[string]PRStatus, error) {
-	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at FROM ym_prs`)
+	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at, merge_details FROM ym_prs`)
 	if err != nil {
 		return nil, err
 	}
@@ -382,8 +386,12 @@ func (s *Store) PRStatuses() (map[string]PRStatus, error) {
 	for rows.Next() {
 		var url string
 		var st PRStatus
+		var details []byte
 		var at sql.NullString
-		if err := rows.Scan(&url, &st.State, &st.Title, &st.Review, &st.Passed, &st.Failed, &st.Pending, &st.Head, &st.Commits, &st.Threads, &st.Unresolved, &at); err != nil {
+		if err := rows.Scan(&url, &st.State, &st.Title, &st.Review, &st.Passed, &st.Failed, &st.Pending, &st.Head, &st.Commits, &st.Threads, &st.Unresolved, &at, &details); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(details, &st.Merge); err != nil {
 			return nil, err
 		}
 		st.Fetched = parseTime(at)
@@ -393,13 +401,17 @@ func (s *Store) PRStatuses() (map[string]PRStatus, error) {
 }
 
 func (s *Store) SavePRStatus(url string, st PRStatus) error {
-	_, err := s.db.Exec(`INSERT INTO ym_prs (url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	details, err := json.Marshal(st.Merge)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO ym_prs (url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at, merge_details)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url) DO UPDATE SET state = excluded.state, title = excluded.title, review = excluded.review,
 		passed = excluded.passed, failed = excluded.failed, pending = excluded.pending, head = excluded.head, commits = excluded.commits,
-		threads = excluded.threads, unresolved = excluded.unresolved, fetched_at = excluded.fetched_at`,
+		threads = excluded.threads, unresolved = excluded.unresolved, fetched_at = excluded.fetched_at, merge_details = excluded.merge_details`,
 		url, st.State, st.Title, st.Review, st.Passed, st.Failed, st.Pending, st.Head, st.Commits, st.Threads, st.Unresolved,
-		st.Fetched.UTC().Format(time.RFC3339Nano))
+		st.Fetched.UTC().Format(time.RFC3339Nano), details)
 	return err
 }
 

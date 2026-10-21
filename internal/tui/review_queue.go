@@ -190,3 +190,16 @@ func (m Model) reviewPosition() string {
 	}
 	return ""
 }
+
+func (m Model) currentReview() (work.Review, bool) {
+	if m.mode == modeReview {
+		if w, ok := m.workScope(); ok {
+			r, found := w.Reviews[m.reviewID]
+			return r, found
+		}
+	}
+	if r, ok := m.selected(); ok && r.review != nil {
+		return *r.review, true
+	}
+	return work.Review{}, false
+}
