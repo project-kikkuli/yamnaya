@@ -43,21 +43,6 @@ type Scope struct {
 	Activity        []Event
 }
 
-func (s Scope) InFlight() bool {
-	if s.State != "archived" && s.State != "completed" {
-		return true
-	}
-	for _, r := range s.Reviews {
-		if r.Closed || r.Dismissed || r.Provisional {
-			continue
-		}
-		if r.State == "incoming" || r.State == Ready || r.State == Preparing || r.State == WithAuthor || (r.State == Completed && r.Judgment != "" && r.FollowThrough == "") {
-			return true
-		}
-	}
-	return false
-}
-
 func (s Scope) BriefCurrent() bool {
 	if s.Brief.Assessment == "" || s.Brief.Context != s.Context.Revision || s.PendingInputs > 0 {
 		return false

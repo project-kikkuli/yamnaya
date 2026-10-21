@@ -103,7 +103,7 @@ func TestCapturedReviewRemainsIndependentOfMergeClaimsAndOwnerReceipts(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !w.InFlight() || !w.Reviews[url].Pending() {
+	if !w.Reviews[url].Pending() {
 		t.Fatal("session archival lost outstanding request")
 	}
 }

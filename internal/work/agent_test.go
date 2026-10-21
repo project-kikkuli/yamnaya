@@ -249,9 +249,6 @@ func TestIntakeMigrationPreservesEvidenceFeedbackAndHistory(t *testing.T) {
 		t.Fatal("migration discarded review context")
 	}
 	old, _ := s.Work.Get(w.ID)
-	if old.InFlight() {
-		t.Fatal("synthetic review project still active")
-	}
 	events, err := s.Work.History(old.ID, 0)
 	if err != nil || len(events) != 4 {
 		t.Fatal("source history lost")

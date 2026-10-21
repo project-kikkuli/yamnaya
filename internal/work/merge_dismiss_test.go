@@ -39,7 +39,7 @@ func TestMergeDismissalSurvivesStatusChangesAndRestart(t *testing.T) {
 	for _, state := range []string{"waiting", work.Ready} {
 		status("head2:"+state, state)
 		r := w.Reviews[id]
-		if !r.Dismissed || r.Pending() || r.QueueState() != "dismissed" || w.Ready() != 0 || w.InFlight() || r.Judgment != "" {
+		if !r.Dismissed || r.Pending() || r.QueueState() != "dismissed" || w.Ready() != 0 || r.Judgment != "" {
 			t.Fatalf("dismissal lost: %+v", r)
 		}
 	}
@@ -56,7 +56,7 @@ func TestMergeDismissalSurvivesStatusChangesAndRestart(t *testing.T) {
 		t.Fatal("restart lost dismissal")
 	}
 	apply(work.Event{Type: "restore-merge", Actor: "owner", Target: id})
-	if !w.Reviews[id].Pending() || w.Ready() != 1 || !w.InFlight() {
+	if !w.Reviews[id].Pending() || w.Ready() != 1 {
 		t.Fatal("restore failed")
 	}
 	apply(work.Event{Type: "dismiss-merge", Actor: "owner", Target: id})

@@ -48,7 +48,7 @@ func TestMergeObligationSurvivesReviewCompletionAndStatusFailures(t *testing.T) 
 	}
 	id := work.MergeReviewID(url)
 	capture()
-	if w.Reviews[id].State != work.Ready || !w.InFlight() || w.Reviews[id].Action != "merge" {
+	if w.Reviews[id].State != work.Ready || w.Reviews[id].Action != "merge" {
 		t.Fatal("a ready PR in archived agent work did not create a merge obligation")
 	}
 	before := w.Revision
