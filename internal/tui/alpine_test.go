@@ -96,7 +96,7 @@ func TestLandscapeStartsFromCurrentStateWithoutReplayingHistory(t *testing.T) {
 
 func TestActivityMovesWithoutReadingTheBoardOrMovingInput(t *testing.T) {
 	usePalette(t, false)
-	m := Model{width: 160, height: 40, loaded: true, mode: modeInput, inKind: inFilter, input: []rune("ridge"), cursor: 2}
+	m := Model{core: &core.Core{}, width: 160, height: 40, loaded: true, mode: modeInput, inKind: inFilter, input: []rune("ridge"), cursor: 2}
 	m.board = alpineBoard()
 	m.alpine.observe(m.board)
 	before := m.View()
@@ -198,7 +198,7 @@ func TestWideMissionNamesKeepTheirCellsWithAndWithoutColor(t *testing.T) {
 			b := alpineBoard()
 			b.Projects[0].Name = "雪山 🏔 expedition"
 			b.Repos[0].Missions[0].Name = b.Projects[0].Name
-			m := Model{width: 80, height: 32, board: b, loaded: true}
+			m := Model{core: &core.Core{}, width: 80, height: 32, board: b, loaded: true}
 			m.alpine.observe(b)
 			v := m.View()
 			if !strings.Contains(ansi.Strip(v), "雪山 🏔") {
@@ -257,7 +257,7 @@ func BenchmarkAlpineFrame(b *testing.B) {
 	for _, layout := range []string{"crew", "missions", "artifacts"} {
 		for _, n := range []int{100, 1000, 10000} {
 			b.Run(fmt.Sprint(layout, "/", n), func(b *testing.B) {
-				m := Model{width: 160, height: 50, loaded: true}
+				m := Model{core: &core.Core{}, width: 160, height: 50, loaded: true}
 				board := alpineBoard()
 				if layout == "artifacts" {
 					for i := range n {
@@ -400,7 +400,7 @@ func TestInterruptedClimberGetsAWreckMarker(t *testing.T) {
 			b := alpineBoard()
 			b.Projects[0].Sessions[0].Crew[0].Status = core.Done
 			b.Projects[0].Sessions[0].Crew[0].Cut = cut
-			m := Model{width: 160, height: 40, loaded: true, board: b, mode: modeAgent, detail: "ridge", sess: "ridge", agent: "rope"}
+			m := Model{core: &core.Core{}, width: 160, height: 40, loaded: true, board: b, mode: modeAgent, detail: "ridge", sess: "ridge", agent: "rope"}
 			m.alpine.observe(b)
 			page := m.prepareView()
 			rendered := strings.Split(m.paintView(page), "\n")
@@ -431,7 +431,7 @@ func TestDenseRegionsKeepOwnerNeedsVisible(t *testing.T) {
 			for i := range 2 {
 				b.Needs = append(b.Needs, core.Need{Project: "ridge", Item: &core.Item{ID: fmt.Sprint("D", i+1), Session: "ridge", Question: "Choose a crossing?", Kind: core.KindDecision, State: core.ItemOpen}})
 			}
-			m := Model{board: b, width: 160, height: 40, loaded: true}
+			m := Model{core: &core.Core{}, board: b, width: 160, height: 40, loaded: true}
 			m.alpine.observe(b)
 			view := m.View()
 			if !strings.Contains(view, "2 need you") || !strings.Contains(view, "✦") {
@@ -467,7 +467,7 @@ func TestSceneMotionMeansActivityOrOwnerAttention(t *testing.T) {
 				b.Needs = []core.Need{{Project: "ridge", Item: &core.Item{ID: "D1", Session: "ridge", Question: "Choose a crossing?", Kind: core.KindDecision, State: core.ItemOpen}}}
 			}
 			b.Repos[0].Missions[0] = b.Projects[0]
-			m := Model{board: b, loaded: true, width: 160, height: 30}
+			m := Model{core: &core.Core{}, board: b, loaded: true, width: 160, height: 30}
 			m.alpine.observe(b)
 			group := *m.alpine.groups["m:ridge"]
 			before := newAlpineCanvas(44, 6)
@@ -527,7 +527,7 @@ func TestProjectEventsStayWithTheirOwnTeam(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			b := alpineBoard()
 			b.Projects[0].Sessions = append(b.Projects[0].Sessions, core.Live{Session: core.Session{ID: "other", Status: core.Idle}})
-			m := Model{board: b}
+			m := Model{core: &core.Core{}, board: b}
 			m.alpine.observe(b)
 			own, sibling := *m.alpine.groups["s:ridge"], *m.alpine.groups["s:other"]
 			m.alpine.frame = 17

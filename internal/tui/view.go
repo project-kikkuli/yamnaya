@@ -200,11 +200,8 @@ func (m Model) footer() []string {
 	if m.filter != "" {
 		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
 	}
-	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
-		return append(lines, pal.dim.Render(" ↑↓ move   enter open   ? help"))
-	}
 	line := " "
-	for _, hint := range strings.Split(m.hints(), "   ") {
+	for _, hint := range strings.Split(strings.TrimSpace(m.hints()), "   ") {
 		if ansi.StringWidth(line+hint) > max(20, m.width-1) && strings.TrimSpace(line) != "" {
 			lines = append(lines, pal.dim.Render(strings.TrimRight(line, " ")))
 			line = " "
@@ -216,7 +213,9 @@ func (m Model) footer() []string {
 }
 
 func (m Model) hints() string {
-	if r, ok := m.currentReview(); ok && r.Action == "merge" {
+	controls := m.sessionHints()
+
+	if r, ok := m.currentReview(); ok && r.Action == "merge" && (m.mode == modeList || m.mode == modeReviews || m.mode == modeReview) {
 		return "o/V open PR   x dismiss   u restore   tab queues   enter details   n/p next/previous   B context   esc back"
 	}
 	if m.mode == modeList {
@@ -224,6 +223,12 @@ func (m Model) hints() string {
 			return "enter checklist   o/V open first source   B brief   M agents   ↑↓ move"
 		}
 	}
+	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
+		if r, ok := m.currentReview(); !ok || r.Action != "merge" {
+			return strings.TrimSpace(controls + "   ↑↓ move   enter open   B brief   ? help")
+		}
+	}
+
 	switch m.mode {
 	case modeChiefs:
 		return "n new chief · enter brief · s message · a attach project · d repo default · D global default · p pause/resume · esc back"
@@ -253,15 +258,15 @@ func (m Model) hints() string {
 		if m.workAction != "" {
 			return "↑↓ choose project   enter open   B brief   C context   esc back"
 		}
-		return "↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   K kill   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
+		return controls + "   ↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return "↑↓ move   enter open session, agent or item   o go to session   O beside   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return controls + "   ↑↓ move   enter open session, agent or item   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return "↑↓ move   enter open agent or item   o go to session   O beside   s send   K kill   L land   F forget   T switch   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return controls + "   ↑↓ move   enter open agent or item   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
-		return "↑↓ scroll   space/b page   o go to its session   O beside   s send   K kill   L land   F forget   T switch   esc back"
+		return controls + "   ↑↓ scroll   space/b page   o go to its session   O beside   esc back"
 	}
-	return "↑↓ move   enter open   B brief   R reviews   C context   V artifact   s message   a answer   g go ahead   : command   o session   n new   / filter   I items   U usage   A scenery   ? help   q quit"
+	return controls + "   ↑↓ move   enter open   B brief   R reviews   C context   V artifact   a answer   g go ahead   : command   o session   n new   / filter   I items   U usage   A scenery   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {

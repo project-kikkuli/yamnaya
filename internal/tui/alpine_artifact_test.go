@@ -158,7 +158,7 @@ func TestBranchConstructionUsesCommitsWithoutDuplicatingItsPR(t *testing.T) {
 func TestMergeRipplesOnlyAfterObservedMerge(t *testing.T) {
 	usePalette(t, false)
 	b := artifactBoard(&core.PRStatus{State: "OPEN", Pending: 1})
-	m := Model{board: b, loaded: true, width: 160, height: 60, mode: modeRepo, repo: "/repo/ridge"}
+	m := Model{core: &core.Core{}, board: b, loaded: true, width: 160, height: 60, mode: modeRepo, repo: "/repo/ridge"}
 	m.alpine.observe(b)
 	page := m.prepareView()
 	if page.layout.lakeHeight == 0 {
@@ -208,7 +208,7 @@ func TestScenerySelectionAndOverflowKeepFleetCounts(t *testing.T) {
 				b.Projects = append(b.Projects, p)
 				b.Repos = append(b.Repos, core.Repo{Key: repo, Name: repo, Missions: []core.Project{p}})
 			}
-			m := Model{board: b, loaded: true, width: 160, height: 50, cursor: n*2 - 1}
+			m := Model{core: &core.Core{}, board: b, loaded: true, width: 160, height: 50, cursor: n*2 - 1}
 			m.alpine.observe(b)
 			l := m.prepareView().layout
 			if l.focus != "m:"+b.Projects[n-1].Key {
@@ -264,7 +264,7 @@ func TestSelectedProjectSuppliesSkylineArtifact(t *testing.T) {
 		other.Sessions = []core.Live{{Project: "other", Session: core.Session{ID: "other", Status: core.Busy, Facts: core.Facts{PRs: []core.PR{{URL: "https://example.test/ridge/43", Repo: "org/ridge", Number: 43, Status: &core.PRStatus{State: "OPEN", Pending: 1}}}}}}}
 		b.Projects = append(b.Projects, other)
 		b.Repos[0].Missions = append(b.Repos[0].Missions, other)
-		m := Model{board: b, loaded: true, width: 100, height: 40, cursor: cursor}
+		m := Model{core: &core.Core{}, board: b, loaded: true, width: 100, height: 40, cursor: cursor}
 		m.alpine.observe(b)
 		l := m.prepareView().layout
 		c := newAlpineCanvas(m.width, l.sky)

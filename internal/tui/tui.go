@@ -959,20 +959,9 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
 		}
 	case "L", "F":
-		var refs []string
-		label := ""
-		if r.dormant != nil {
-			refs, label = []string{r.dormant.Key}, r.dormant.Key
-		} else if s := m.sessionOf(r); s != nil && s.ID != "" {
-			refs, label = []string{s.ID}, s.Label()
-		} else if p := m.projectOf(r); p != nil && len(p.Dormant) > 0 {
-			for _, d := range p.Dormant {
-				refs = append(refs, d.Key)
-			}
-			label = fmt.Sprintf("%s's %d exited sessions", p.Name, len(refs))
-		}
+		refs, label := m.landingTargets(r)
 		if len(refs) == 0 {
-			if w, ok := m.selectedWork(); ok && w.InFlight() {
+			if w, ok := m.archivableWork(r); ok {
 				m.confirm("archive "+w.Name+"? briefs and pending queue items stay", m.do(func() (string, error) {
 					_, err := m.core.ChangeWork(w, work.Event{Type: "close", Actor: "owner"})
 					return "archived " + w.Name, err

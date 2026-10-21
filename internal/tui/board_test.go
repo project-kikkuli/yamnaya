@@ -73,7 +73,7 @@ func TestMissionColumnsStartAtOneXWhateverIsMissing(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	for _, width := range []int{100, 160, 220} {
 		t.Run(strconv.Itoa(width), func(t *testing.T) {
-			m := Model{board: missionBoard(now), loaded: true, width: width, cursor: -1}
+			m := Model{core: &core.Core{}, board: missionBoard(now), loaded: true, width: width, cursor: -1}
 			c := m.missionCols(2)
 			rows := map[string]string{}
 			for _, p := range m.board.Projects {
@@ -252,7 +252,7 @@ func TestMissionActivityAndSpendRemainVisibleWithBriefs(t *testing.T) {
 		for _, status := range []core.Status{core.Busy, core.Idle, core.Waiting} {
 			t.Run(fmt.Sprintf("%d/%s", width, status), func(t *testing.T) {
 				p := core.Project{Key: "ridge", Name: "Compatibility", Status: status, Spend: core.Spend{USD: 42.5}, Sessions: []core.Live{{Session: core.Session{ID: "worker", Status: status}}}, Work: &work.Scope{ID: "scope", Brief: work.Brief{Assessment: "Validating the new API"}}}
-				m := Model{board: core.Board{Fleet: core.Fleet{Ready: true}, Projects: []core.Project{p}}, width: width, cursor: 0}
+				m := Model{core: &core.Core{}, board: core.Board{Fleet: core.Fleet{Ready: true}, Projects: []core.Project{p}}, width: width, cursor: 0}
 				lines := strings.Split(ansi.Strip(m.missionLine(0, p, m.missionCols(2))), "\n")
 				for _, want := range []string{status.String(), "$42.50"} {
 					if !strings.Contains(lines[0], want) {
