@@ -48,7 +48,7 @@ func (s Scope) InFlight() bool {
 		return true
 	}
 	for _, r := range s.Reviews {
-		if r.Closed || r.Dismissed {
+		if r.Closed || r.Dismissed || r.Provisional {
 			continue
 		}
 		if r.State == "incoming" || r.State == Ready || r.State == Preparing || r.State == WithAuthor || (r.State == Completed && r.Judgment != "" && r.FollowThrough == "") {
