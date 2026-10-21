@@ -258,6 +258,10 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, m.do(func() (string, error) {
 			return "New-session attachment rule updated", m.core.Store.Work.SetRule(a.ID, repo, remove)
 		}), true
+	case "K":
+		b := m.board
+		m.confirm("kill "+a.Name+"? stops its execution and drops its attachments and defaults; it never wakes again", m.do(func() (string, error) { return m.core.KillAgent(a, b) }))
+		return m, nil, true
 	case "p":
 		a.Paused = !a.Paused
 		return m, m.do(func() (string, error) { return "Agent availability updated", m.core.Store.Work.SaveAgent(a) }), true

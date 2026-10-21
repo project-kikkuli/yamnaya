@@ -250,6 +250,28 @@ func (s *Store) Detach(agent, id string) error {
 	return tx.Commit()
 }
 
+func (s *Store) RetireAgent(agent string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM ym_attachments WHERE agent=?`,
+		`DELETE FROM ym_agent_rules WHERE agent=?`,
+		`DELETE FROM ym_agent_queue WHERE agent=?`,
+		`DELETE FROM ym_agent_notifications WHERE agent=?`,
+		`DELETE FROM ym_agent_checkpoints WHERE agent=?`,
+		`UPDATE ym_agent_recipients SET error='chief retired' WHERE agent=? AND revision=0 AND error=''`,
+		`DELETE FROM ym_agents WHERE id=?`,
+	} {
+		if _, err = tx.Exec(q, agent); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) Attachments() ([]Attachment, error) {
 	rows, err := s.db.Query(`SELECT agent,work,reason FROM ym_attachments ORDER BY agent,work`)
 	if err != nil {

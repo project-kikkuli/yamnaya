@@ -120,6 +120,21 @@ func agentCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		})}
 		root.AddCommand(cmd)
 	}
+	root.AddCommand(&cobra.Command{Use: "kill <agent>", Short: "Stop this chief's native execution, drop its attachments and defaults, and close its workspace so it never wakes again", Args: cobra.ExactArgs(1), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		a, err := e.core.Store.Work.Agent(args[0])
+		if err != nil {
+			return err
+		}
+		b, err := e.core.Board()
+		if err != nil {
+			return err
+		}
+		msg, err := e.core.KillAgent(a, b)
+		if err == nil {
+			fmt.Fprintln(cmd.OutOrStdout(), msg)
+		}
+		return err
+	})})
 	var remove bool
 	rule := &cobra.Command{Use: "default <agent> [repo]", Short: "Attach this chief to new sessions globally or within one repository", Args: cobra.RangeArgs(1, 2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		repo := ""

@@ -4,7 +4,7 @@ package tui
 var Commands = map[string]string{
 	"ym agent broadcast": "M", "ym agent batches": "M", "ym agent retry-batch": "M",
 	"ym handoff scan": ":", "ym handoff status": ":", "ym handoff resume": ":",
-	"ym agent capacity": ":", "ym agent spawn": "M", "ym agent list": "M", "ym agent snapshot": ":", "ym agent attach": "M", "ym agent detach": ":", "ym agent assign": ":", "ym agent default": "M", "ym agent pause": "M", "ym agent resume": "M", "ym agent replace": ":", "ym agent message": "M",
+	"ym agent capacity": ":", "ym agent spawn": "M", "ym agent list": "M", "ym agent snapshot": ":", "ym agent attach": "M", "ym agent detach": "c", "ym agent assign": ":", "ym agent default": "M", "ym agent pause": "M", "ym agent kill": "M", "ym agent resume": "M", "ym agent replace": ":", "ym agent message": "M",
 	"ym work follow-through": ":", "ym work delegate": ":", "ym work plan": ":", "ym work result": ":", "ym work verify": ":", "ym work reopen": ":", "ym work priority": ":",
 
 	"ym service status": ":", "ym service restart": ":", "ym work relate": ":", "ym work unrelate": ":",
