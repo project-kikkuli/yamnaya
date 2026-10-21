@@ -30,6 +30,9 @@ func agentLock(dir, id string) (*os.File, error) {
 }
 
 func reconcileAgents(c *core.Core, b core.Board) error {
+	if err := c.Store.Work.DispatchAgentBatches(); err != nil {
+		return err
+	}
 	agents, err := c.Store.Work.DueAgents()
 	if err != nil {
 		return err
@@ -53,9 +56,14 @@ func reconcileAgents(c *core.Core, b core.Board) error {
 				signature := fmt.Sprintf("%x", sha256.Sum256(raw))
 				if !c.Store.Work.AgentNotified(a.ID, signature) && c.BackgroundSend != nil {
 					if err = c.BackgroundSend(session, agentPrompt(x)); err == nil {
+						if err = c.Store.Work.AgentMessagesDelivered(x.Messages); err != nil {
+							return err
+						}
 						if err = c.Store.Work.AgentNotification(a.ID, signature); err != nil {
 							return err
 						}
+					} else if err = c.Store.Work.AgentFailure(a.ID, x.Pending, err); err != nil {
+						return err
 					}
 				}
 				continue
@@ -167,6 +175,7 @@ func agentRunCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		prefix := "YAMNAYA_STATE_DIR=" + shellWord(dir) + " YAMNAYA_AGENT_ID=" + shellWord(x.Agent.ID) + " YAMNAYA_AGENT_RUN=" + shellWord(token) + " " + shellWord(self)
 		prompt = "For EVERY ym command below, replace the word ym with this exact command prefix. Native tool shells may reset PATH and inherited environment; the prefix preserves your identity, run, state, and the matching CLI version:\n" + prefix + "\n\n" + prompt
 		argv := append([]string(nil), x.Agent.Execution.Command...)
+		promptPassed := len(argv) == 0
 		if len(argv) == 0 {
 			switch x.Agent.Execution.Harness {
 			case "codex":
@@ -191,6 +200,7 @@ func agentRunCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			}
 		} else {
 			for i, a := range argv {
+				promptPassed = promptPassed || strings.Contains(a, "{prompt}")
 				argv[i] = strings.ReplaceAll(a, "{prompt}", prompt)
 			}
 		}
@@ -219,7 +229,17 @@ func agentRunCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		}
 		run.Stdout = &output
 		run.Stderr = cmd.ErrOrStderr()
-		err = run.Run()
+		err = run.Start()
+		if err == nil {
+			var deliveryErr error
+			if promptPassed {
+				deliveryErr = e.core.Store.Work.AgentMessagesDelivered(x.Messages)
+			}
+			err = run.Wait()
+			if deliveryErr != nil {
+				return deliveryErr
+			}
+		}
 		if output.Err != nil {
 			return output.Err
 		}

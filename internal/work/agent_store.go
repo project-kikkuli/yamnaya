@@ -404,7 +404,8 @@ func (s *Store) AgentSnapshot(id string) (AgentSnapshot, error) {
 			}
 		}
 	}
-	return x, nil
+	x.Messages, err = s.AgentMessages(a.ID)
+	return x, err
 }
 
 func (s *Store) DueAgents() ([]Agent, error) {
@@ -526,6 +527,10 @@ func (s *Store) Checkpoint(agent, token string, c Checkpoint) error {
 		return err
 	}
 	for id, rev := range c.Inputs {
+		at := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err = tx.Exec(`UPDATE ym_agent_recipients SET incorporated=?,delivered=CASE WHEN delivered='' THEN ? ELSE delivered END WHERE agent=? AND workspace=? AND revision>0 AND revision<=? AND incorporated=''`, at, at, a.ID, id, rev); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(`DELETE FROM ym_agent_queue WHERE agent=? AND work=? AND revision<=?`, a.ID, id, rev); err != nil {
 			return err
 		}

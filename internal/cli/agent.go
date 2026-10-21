@@ -17,6 +17,7 @@ import (
 
 func agentCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	root := &cobra.Command{Use: "agent", Short: "Persistent chiefs and managers, independent of execution sessions"}
+	root.AddCommand(agentBatchCommands(with)...)
 	var role, repo, remit, authority, directory, harness, session, parent string
 	spawn := &cobra.Command{Use: "spawn <name>", Short: "Create a delegated agent and schedule its first management pass", Args: cobra.ExactArgs(1), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		dir, err := filepath.Abs(core.ExpandHome(directory))

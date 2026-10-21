@@ -40,6 +40,10 @@ func (m Model) prepareView() viewPage {
 	case modePick:
 		body = textPage(bodyModel.pickView(), "")
 	case modeInput:
+		if m.inKind == inChiefMessage {
+			body = bodyModel.chiefComposeView()
+			break
+		}
 		if m.inKind == inNewRepo {
 			body = textPage(bodyModel.repoPickView(), "")
 			break
@@ -59,6 +63,8 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.itemsView()
 		case modeChiefs:
 			body = bodyModel.chiefsView()
+		case modeAgentBatch:
+			body = bodyModel.agentBatchView()
 		case modeWork:
 			body = bodyModel.workView()
 		case modeReviews:
@@ -90,7 +96,7 @@ func (m Model) prepareView() viewPage {
 		foot = append(foot, textPage(ansi.Wrap(line, max(20, m.width-1), " "), "").lines...)
 	}
 	room := max(1, m.height-len(foot))
-	if (m.mode == modeScreen || m.mode == modeAgent || m.mode == modeReview || (m.mode == modeWork && m.workPanel != 1)) && len(lines) > room && room > top {
+	if (m.mode == modeScreen || m.mode == modeAgent || m.mode == modeReview || m.mode == modeAgentBatch || (m.mode == modeInput && m.inKind == inChiefMessage) || (m.mode == modeWork && m.workPanel != 1)) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -172,6 +178,9 @@ func (m Model) footer() []string {
 		return lines
 	}
 	if m.mode == modeInput {
+		if m.inKind == inChiefMessage {
+			return []string{" " + pal.bold.Render("message:") + " " + string(m.input) + "█", pal.dim.Render(" enter send   esc cancel   ↑↓ recipients   ctrl+u clear text")}
+		}
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
 			inWorkFeedback: "feedback; next action returns to author", inWorkDecision: "record judgment", inWorkMessage: "message " + m.inLabel, inCommand: "ym command", inWorkVerify: "record independent verification evidence", inChiefName: "name this chief", inChiefRemit: "what should this chief own?", inChiefAuthority: "what may this chief do independently?",
@@ -234,7 +243,9 @@ func (m Model) hints() string {
 
 	switch m.mode {
 	case modeChiefs:
-		return "n new chief · enter brief · s message · a attach project · d repo default · D global default · p pause/resume · esc back"
+		return "space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   enter brief   a attach   d/D defaults   p pause/resume   esc back"
+	case modeAgentBatch:
+		return "↑↓ scroll   r retry failed   [ previous message   ] next message   esc back"
 	case modeWork:
 		if m.workPanel == 1 {
 			return "↑↓ choose workstream   enter open   s message   B brief   C context   tab next panel   esc back"

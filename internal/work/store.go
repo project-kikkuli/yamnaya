@@ -33,6 +33,9 @@ func New(db *sql.DB) (*Store, error) {
 		_, err = db.Exec(agentSchema)
 	}
 	if err == nil {
+		_, err = db.Exec(agentBatchSchema)
+	}
+	if err == nil {
 		_, err = handoff.New(db)
 	}
 	return &Store{db: db}, err
@@ -232,6 +235,9 @@ func (s *Store) Commit(e Event) (Scope, error) {
 		return x, err
 	}
 	if _, err = tx.Exec(`INSERT INTO ym_work_events(id,work,event) VALUES(?,?,?)`, e.ID, x.ID, raw); err != nil {
+		return x, err
+	}
+	if _, err = tx.Exec(`UPDATE ym_agent_recipients SET revision=?,error='' WHERE event=? AND revision=0`, x.Revision, e.ID); err != nil {
 		return x, err
 	}
 	destinations := []string{}

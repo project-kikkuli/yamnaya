@@ -117,11 +117,15 @@ func parsePane(name, out string) (Pane, error) {
 
 // Kill ends session name; a session that is already gone is not an error.
 func (h *Host) Kill(name string) error {
-	if _, err := h.Pane(name); err != nil {
+	out, err := h.command("kill-session", "-t", "="+name).CombinedOutput()
+	if err == nil {
 		return nil
 	}
-	_, err := h.run("kill-session", "-t", "="+name)
-	return err
+	text := strings.TrimSpace(string(out))
+	if strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") || strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)") {
+		return nil
+	}
+	return fmt.Errorf("tmux kill-session %s: %w: %s", name, err, text)
 }
 
 // Attach is the command that shows the session holding hd in the caller's terminal until the owner detaches.

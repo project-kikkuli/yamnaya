@@ -37,6 +37,7 @@ const (
 	modeReviews
 	modeReview
 	modeChiefs
+	modeAgentBatch
 )
 
 type inputKind int
@@ -62,6 +63,7 @@ const (
 	inChiefRemit
 	inChiefAuthority
 	inWorkVerify
+	inChiefMessage
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -94,37 +96,41 @@ type frame struct {
 }
 
 type Model struct {
-	chiefTarget   string
-	chiefDraft    work.Agent
-	chiefRemit    string
-	workID        string
-	workAction    string
-	reviewID      string
-	reviewWork    string
-	pendingReview *reviewActionMsg
-	workPanel     int
-	reviewFilter  string
-	workHistory   []work.Event
-	workRevision  int64
-	workSince     int64
-	inputWork     work.Scope
-	alpine        alpine
-	page          *viewPage
-	core          *core.Core
-	host          string
-	board         core.Board
-	loaded        bool
-	err           error
-	mode          mode
-	back          mode
-	cursor        int
-	stack         []frame
-	repo          string
-	detail        string
-	sess          string
-	agent         string
-	scrollY       int
-	prBusy        bool
+	chiefSelected   map[string]work.Agent
+	chiefRecipients []work.Agent
+	chiefBatchID    string
+	receiptBatch    string
+	chiefTarget     string
+	chiefDraft      work.Agent
+	chiefRemit      string
+	workID          string
+	workAction      string
+	reviewID        string
+	reviewWork      string
+	pendingReview   *reviewActionMsg
+	workPanel       int
+	reviewFilter    string
+	workHistory     []work.Event
+	workRevision    int64
+	workSince       int64
+	inputWork       work.Scope
+	alpine          alpine
+	page            *viewPage
+	core            *core.Core
+	host            string
+	board           core.Board
+	loaded          bool
+	err             error
+	mode            mode
+	back            mode
+	cursor          int
+	stack           []frame
+	repo            string
+	detail          string
+	sess            string
+	agent           string
+	scrollY         int
+	prBusy          bool
 	// sending is set while queued answers are handed to sessions that became reachable.
 	sending   bool
 	showStale bool
@@ -434,6 +440,8 @@ func (m *Model) clamp() {
 func (m Model) rows() []row {
 	var out []row
 	switch m.listMode() {
+	case modeAgentBatch:
+		return nil
 	case modeChiefs:
 		return m.chiefRows()
 	case modeReview:
@@ -1208,11 +1216,7 @@ func (m Model) projectOf(r row) *core.Project {
 
 // startInput opens the input line. A fresh initial text is a default: enter accepts it, typing replaces it.
 func (m *Model) startInput(kind inputKind, item, project, initial string, fresh bool) {
-	if kind != inFilter {
-		m.back = m.mode
-	} else {
-		m.back = modeList
-	}
+	m.back = m.mode
 	m.mode, m.inKind, m.inItem, m.inProj, m.input = modeInput, kind, item, project, []rune(initial)
 	m.fresh = fresh && initial != ""
 }
@@ -1239,6 +1243,14 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input, m.fresh, m.repoCur, m.pickErr = nil, false, 0, ""
 		return m, nil
 	case tea.KeyUp, tea.KeyDown:
+		if m.inKind == inChiefMessage {
+			if k.Type == tea.KeyUp {
+				m.scrollY = max(0, m.scrollY-1)
+			} else {
+				m.scrollY++
+			}
+			return m, nil
+		}
 		if m.inKind == inNewRepo {
 			if k.Type == tea.KeyUp {
 				m.repoCur = max(0, m.repoCur-1)

@@ -86,6 +86,12 @@ func (m Model) chiefState(a work.Agent) string {
 func (m Model) chiefsView() viewPage {
 	b := viewPage{}
 	b.WriteString(pal.bold.Render(" YOUR AGENTS") + pal.dim.Render("  context · judgment · follow-through") + "\n\n")
+	if len(m.chiefSelected) > 0 {
+		m.field(&b, "selected", fmt.Sprintf("%d managers; includes selections outside the current filter", len(m.chiefSelected)))
+	}
+	if batch, ok := m.currentAgentBatch(); ok {
+		m.field(&b, "message", batchSummary(batch)+" · v receipts")
+	}
 	if m.chiefTarget != "" {
 		m.field(&b, "attach to", m.chiefTarget)
 		b.WriteString("\n")
@@ -102,7 +108,11 @@ func (m Model) chiefsView() viewPage {
 				style = pal.yellow
 			}
 		}
-		b.WriteString(m.mark(i) + m.hue(a.ID).Render(pad(a.Name, min(28, max(12, m.width/3)))) + " " + pad(a.Role, 8) + " " + style.Render(m.chiefState(*a)) + "  " + m.missionSpend(*r.project) + "\n")
+		selected := "[ ] "
+		if _, ok := m.chiefSelected[a.ID]; ok {
+			selected = "[x] "
+		}
+		b.WriteString(m.mark(i) + selected + m.hue(a.ID).Render(pad(a.Name, min(28, max(12, m.width/3)))) + " " + pad(a.Role, 8) + " " + style.Render(m.chiefState(*a)) + "  " + m.missionSpend(*r.project) + "\n")
 		if i == m.cursor {
 			m.field(&b, "remit", r.work.Purpose)
 			m.field(&b, "assessment", r.work.Brief.Assessment)
@@ -142,6 +152,9 @@ func (m Model) workName(id string) string {
 }
 
 func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	if next, cmd, handled := m.agentBatchKey(k); handled {
+		return next, cmd, true
+	}
 	if k.String() == "M" {
 		m.chiefTarget = ""
 		if w, ok := m.selectedWork(); ok {
@@ -152,6 +165,29 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	if m.mode != modeChiefs {
 		return m, nil, false
+	}
+	switch k.String() {
+	case "/":
+		m.startInput(inFilter, "", "", m.filter, false)
+		return m, nil, true
+	case "ctrl+u":
+		m.chiefSelected = nil
+		return m, nil, true
+	case "*":
+		for _, r := range m.chiefRows() {
+			m = m.selectChief(*r.chief, true)
+		}
+		return m, nil, true
+	case "v":
+		if b, ok := m.currentAgentBatch(); ok {
+			m.receiptBatch = b.ID
+			m.push(modeAgentBatch)
+		}
+		return m, nil, true
+	case "s":
+		if len(m.chiefSelected) > 0 {
+			return m.composeChiefMessage(m.selectedChiefs())
+		}
 	}
 	if k.String() == "n" {
 		m.chiefDraft = work.Agent{Role: "chief", Execution: work.Execution{Harness: "codex"}}
@@ -164,14 +200,14 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	}
 	a := *r.chief
 	switch k.String() {
+	case " ":
+		_, selected := m.chiefSelected[a.ID]
+		return m.selectChief(a, !selected), nil, true
 	case "enter", "B":
 		m.openWork(*r.work)
 		return m, nil, true
 	case "s":
-		m.inputWork = *r.work
-		m.startInput(inWorkMessage, a.ID, "", "", false)
-		m.inLabel = a.Name
-		return m, nil, true
+		return m.composeChiefMessage([]work.Agent{a})
 	case "a":
 		if m.chiefTarget == "" {
 			m.message = "Open M from a project or session to attach its work."
@@ -211,6 +247,17 @@ func (m Model) chiefKey(k tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 }
 
 func (m Model) chiefInput(text string) (tea.Model, tea.Cmd, bool) {
+	if m.inKind == inChiefMessage {
+		if strings.TrimSpace(text) == "" {
+			return m, nil, true
+		}
+		id, recipients := m.chiefBatchID, append([]work.Agent(nil), m.chiefRecipients...)
+		m.receiptBatch = id
+		return m, m.do(func() (string, error) {
+			b, err := m.core.Store.Work.SendAgentBatch(id, "owner", text, recipients)
+			return batchSummary(b), err
+		}), true
+	}
 	if m.inKind != inChiefName && m.inKind != inChiefRemit && m.inKind != inChiefAuthority {
 		return m, nil, false
 	}

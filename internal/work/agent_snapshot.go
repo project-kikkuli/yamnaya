@@ -1,6 +1,7 @@
 package work
 
 type AgentSnapshot struct {
+	Messages    []AgentMessage
 	Agent       Agent
 	Workspace   Scope
 	Work        []Scope
