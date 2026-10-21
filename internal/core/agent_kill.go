@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"syscall"
@@ -24,7 +25,7 @@ func (c *Core) KillAgent(a work.Agent, b Board) (string, error) {
 		}
 		for _, p := range ps {
 			if i := slices.Index(p.Args, "agent-run"); i >= 0 && i+1 < len(p.Args) && p.Args[i+1] == a.ID {
-				if err := signal(-p.PID, syscall.SIGTERM); err != nil {
+				if err := signal(-p.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 					return "", fmt.Errorf("pid %d: %w", p.PID, err)
 				}
 			}

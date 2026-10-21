@@ -9,8 +9,13 @@ import (
 )
 
 func TestKillingAChiefStopsItsExecutionAndItNeverWakesAgain(t *testing.T) {
-	for _, running := range []bool{false, true} {
-		t.Run(map[bool]string{false: "idle", true: "running"}[running], func(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		running     bool
+		exitedFirst bool
+	}{{"idle", false, false}, {"running", true, false}, {"exits before the signal", true, true}} {
+		running := tc.running
+		t.Run(tc.name, func(t *testing.T) {
 			m, agents := managers(t)
 			c := m.core
 			a, err := c.Store.Work.CreateAgent("Atlas", "chief", "", "Keep compatibility work coherent", "Coordinate; publication needs owner approval", work.Execution{Harness: "codex", Directory: t.TempDir()})
@@ -30,6 +35,9 @@ func TestKillingAChiefStopsItsExecutionAndItNeverWakesAgain(t *testing.T) {
 			var signalled []int
 			c.Signal = func(pid int, sig syscall.Signal) error {
 				signalled = append(signalled, pid)
+				if tc.exitedFirst {
+					return syscall.ESRCH
+				}
 				return nil
 			}
 			if running {
@@ -38,6 +46,7 @@ func TestKillingAChiefStopsItsExecutionAndItNeverWakesAgain(t *testing.T) {
 				}
 			}
 			m = refresh(t, m)
+			m.cursor = 0
 			m = to(t, m, func(r row) bool { return r.chief != nil && r.chief.ID == a.ID })
 			m = refresh(t, press(t, m, "K", "y"))
 			for _, r := range m.rows() {
