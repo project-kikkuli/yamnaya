@@ -102,8 +102,8 @@ short() { cut -c1-${1:-160} | tr '\n' ' '; }
 prs() {
 	local jq=${*: -1} heads
 	heads=$(git -C "$repo" worktree list --porcelain | sed -n 's#^HEAD ##p' | jq -R . | jq -sc .)
-	gh pr list --repo "$ground" "${@:1:$#-1}" --json commits --search "created:>=$started" \
-		--jq ".[] | select([.commits[].oid] - (. as \$x | $heads) != [.commits[].oid]) | $jq" 2>/dev/null || true
+	gh pr list --repo "$ground" "${@:1:$#-1}" --limit 20 --json commits,createdAt \
+		--jq ".[] | select(.createdAt >= \"$started\") | select([.commits[].oid] - (. as \$x | $heads) != [.commits[].oid]) | $jq" 2>/dev/null || true
 }
 
 # snapshot prints one line per fact the timeline tracks; only changed lines are logged.
@@ -117,15 +117,20 @@ snapshot() {
 	has_table ym_goal_verifications && q "SELECT 'verify ' || num || ' attempt=' || attempt || ' verdict=' || verdict || ' verifier=' || substr(verifier_session,1,8) || ' failures=' || failures || ' facts=' || replace(substr(fact_checks,1,100),char(10),' ') || ' findings=' || replace(substr(findings,1,140),char(10),' ') FROM ym_goal_verifications"
 	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" '.[] | select((.cwd // "") | startswith($run)) | "session \(.id[0:8]) \(.status) pid=\(.pid) crew=\(.crew) \((.title // "")[0:60])"' 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" list-panes -a -F 'pane #{session_name} dead=#{pane_dead} status=#{pane_dead_status} pid=#{pane_pid}' 2>/dev/null || true
-	prs --state all --json number,state,headRefName,reviewDecision,statusCheckRollup,comments,reviews \
-		'"pr #\(.number) \(.state) \(.headRefName) checks=\([.statusCheckRollup[]? | (.conclusion // .status)] | join(",")) comments=\(.comments | length) reviews=\(.reviews | length)"'
+	if [ $((ticks % 4)) -eq 0 ] || [ ! -f "$run/snap/prs" ]; then
+		prs --state all --json number,state,headRefName,reviewDecision,statusCheckRollup,comments,reviews \
+		'"pr #\(.number) \(.state) \(.headRefName) checks=\([.statusCheckRollup[]? | (.conclusion // .status)] | join(",")) comments=\(.comments | length) reviews=\(.reviews | length)"' >"$run/snap/prs"
+	fi
+	cat "$run/snap/prs"
 	for b in "$run"/state/goals/*/brief.md; do [ -f "$b" ] && echo "brief $(basename "$(dirname "$b")") $(md5 -q "$b") $(sed -n '1,3p' "$b" | short 100)"; done
 	[ -f "$run/state/work-service.json" ] && jq -r '"serve error=" + (.error[0:160])' "$run/state/work-service.json" 2>/dev/null || true
 }
 
 prev=$run/snap/prev cur=$run/snap/cur
 : >"$prev"
+ticks=0
 tick() {
+	ticks=$((ticks + 1))
 	snapshot | sort >"$cur"
 	comm -13 "$prev" "$cur" | while IFS= read -r l; do note "+ $l"; done
 	comm -23 "$prev" "$cur" | grep -v '^session \|^brief \|^pane ' | while IFS= read -r l; do note "- $l"; done || true
@@ -181,8 +186,12 @@ chaos() {
 	review-comment)
 		read -r pr branch <<<"$(first_pr)"
 		[ -n "${pr:-}" ] && [ "$pr" != null ] || return 0
+		local head
+		head=$(gh pr view "$pr" --repo "$ground" --json headRefOid --jq .headRefOid)
+		gh api "repos/$ground/pulls/$pr/comments" -f commit_id="$head" -f path=cmd/tally/main.go -f subject_type=file \
+			-f body="Rehearsal reviewer: the new flag's usage string should say what happens at its default value." >/dev/null
 		gh pr review "$pr" --repo "$ground" --comment --body "Rehearsal reviewer: please add a one-line mention of the new flag to README.md before this merges." >/dev/null
-		note "CHAOS left a review comment on PR #$pr asking for a README line" && chaos_done=1
+		note "CHAOS left a file review thread on cmd/tally/main.go and a top-level review asking for a README line on PR #$pr" && chaos_done=1
 		;;
 	esac
 	return 0
