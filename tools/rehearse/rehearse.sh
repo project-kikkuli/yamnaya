@@ -3,6 +3,15 @@
 # goal on the proving-ground repository and records everything that happens; a scenario adds one fault and checks it is handled.
 set -euo pipefail
 
+# Bash reads a script as it runs, so run from a private copy that edits to this file cannot shift under a long rehearsal.
+if [ -z "${YM_REHEARSAL_SRC:-}" ]; then
+	YM_REHEARSAL_SRC=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+	export YM_REHEARSAL_SRC
+	copy=$(mktemp -t ym-rehearse)
+	cp "$0" "$copy"
+	exec bash "$copy" "$@"
+fi
+
 usage() {
 	cat <<'EOF'
 usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF] [--keep]
@@ -27,7 +36,7 @@ while [ $# -gt 0 ]; do
 done
 
 ground=${YM_REHEARSAL_REPO:-rajatscode/yamnaya-proving-ground}
-src=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+src=$YM_REHEARSAL_SRC
 stamp=$(date +%Y%m%d-%H%M%S)
 run=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/$stamp-$scenario
 mkdir -p "$run/bin" "$run/state" "$run/src" "$run/snap"
@@ -89,12 +98,12 @@ q() { sqlite3 -readonly -separator ' | ' "$db" "$1" 2>/dev/null || true; }
 has_table() { [ -n "$(q "SELECT name FROM sqlite_master WHERE type='table' AND name='$1'")" ]; }
 short() { cut -c1-${1:-160} | tr '\n' ' '; }
 
-# prs lists the pull requests whose head is a branch of this run's worktrees, so concurrent runs on the proving ground stay apart.
+# prs lists the pull requests holding a commit one of this run's worktrees is on, so concurrent runs on the proving ground stay apart.
 prs() {
-	local jq=${*: -1} branches
-	branches=$(git -C "$repo" worktree list --porcelain | sed -n 's#^branch refs/heads/##p' | jq -R . | jq -sc .)
-	gh pr list --repo "$ground" "${@:1:$#-1}" --search "created:>=$started" \
-		--jq ".[] | select(.headRefName as \$b | $branches | index(\$b)) | $jq" 2>/dev/null || true
+	local jq=${*: -1} heads
+	heads=$(git -C "$repo" worktree list --porcelain | sed -n 's#^HEAD ##p' | jq -R . | jq -sc .)
+	gh pr list --repo "$ground" "${@:1:$#-1}" --json commits --search "created:>=$started" \
+		--jq ".[] | select([.commits[].oid] - (. as \$x | $heads) != [.commits[].oid]) | $jq" 2>/dev/null || true
 }
 
 # snapshot prints one line per fact the timeline tracks; only changed lines are logged.
@@ -105,7 +114,7 @@ snapshot() {
 	q "SELECT 'msg ' || seq || ' ' || state || ' to=' || substr(session,1,8) || ' ' || replace(substr(text,1,170),char(10),' ') FROM ym_messages"
 	has_table ym_goal_events && q "SELECT 'event ' || rowid || ' ' || replace(substr(kind || ' ' || payload,1,170),char(10),' ') FROM ym_goal_events"
 	has_table ym_goal_timers && q "SELECT 'timer ' || rowid || ' ' || replace(substr(quote(due) || ' ' || quote(why),1,140),char(10),' ') FROM ym_goal_timers"
-	has_table ym_goal_verifications && q "SELECT 'verify ' || rowid || ' ' || replace(substr(quote(verdict) || ' ' || quote(findings),1,170),char(10),' ') FROM ym_goal_verifications"
+	has_table ym_goal_verifications && q "SELECT 'verify ' || num || ' attempt=' || attempt || ' verdict=' || verdict || ' verifier=' || substr(verifier_session,1,8) || ' failures=' || failures || ' facts=' || replace(substr(fact_checks,1,100),char(10),' ') || ' findings=' || replace(substr(findings,1,140),char(10),' ') FROM ym_goal_verifications"
 	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" '.[] | select((.cwd // "") | startswith($run)) | "session \(.id[0:8]) \(.status) pid=\(.pid) crew=\(.crew) \((.title // "")[0:60])"' 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" list-panes -a -F 'pane #{session_name} dead=#{pane_dead} status=#{pane_dead_status} pid=#{pane_pid}' 2>/dev/null || true
 	prs --state all --json number,state,headRefName,reviewDecision,statusCheckRollup,comments,reviews \
@@ -155,7 +164,10 @@ chaos() {
 	freeze-worker)
 		pid=$(worker_pid busy)
 		[ -n "$pid" ] || return 0
-		kill -STOP "$pid" && note "CHAOS SIGSTOP busy worker claude pid $pid" && chaos_done=1 && echo "$pid" >"$run/frozen"
+		# tmux continues a pane's process the moment it stops, so keep stopping it until the run ends.
+		(while kill -STOP "$pid" 2>/dev/null && [ ! -f "$run/thaw" ]; do :; done) &
+		echo "$!" >"$run/freezer"
+		note "CHAOS froze busy worker claude pid $pid (SIGSTOP held against tmux's SIGCONT)" && chaos_done=1 && echo "$pid" >"$run/frozen"
 		;;
 	break-ci)
 		read -r pr branch <<<"$(first_pr)"
@@ -192,7 +204,11 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 	sleep 15
 done
 tick
-[ -f "$run/frozen" ] && kill -CONT "$(cat "$run/frozen")" 2>/dev/null || true
+if [ -f "$run/frozen" ]; then
+	touch "$run/thaw"
+	sleep 1
+	kill -CONT "$(cat "$run/frozen")" 2>/dev/null || true
+fi
 note "OUTCOME $outcome after $(( ($(date +%s) - deadline + timeout * 60) / 60 )) min"
 pr=$(prs --state all --json number,state,url,headRefName '"\(.url) \(.state)"' | tr '\n' ' ')
 note "PRs: ${pr:-none}"
