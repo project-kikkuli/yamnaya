@@ -184,7 +184,13 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	if n.Manager.LastError != "" {
 		meta = append(meta, "launch: "+n.Manager.LastError)
 	}
-	meta = append(meta, briefMeta(m.board.At, n))
+	if n.Goal == nil || n.Goal.State != core.GoalDone {
+		if f := n.Fresh; f.Stale() {
+			meta = append(meta, pal.yellow.Render(briefMeta(m.board.At, n)))
+		} else {
+			meta = append(meta, briefMeta(m.board.At, n))
+		}
+	}
 	keys := "enter open   B brief   W brief page   o session   s send   S steer plan   space select   R relaunch"
 	if n.Goal != nil {
 		keys += "   K drop"
@@ -195,24 +201,12 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	return b + pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n" + pal.dim.Render("         "+keys) + "\n"
 }
 
-// planTags flag a steer the manager has not adopted and a brief that fell behind, so both show at a glance.
+// planTags flag a steer the manager has not adopted, so it shows at a glance; the brief's freshness shows on the selected row.
 func planTags(n core.Node) string {
-	var tags []string
-	if n.Steer != nil && !n.Steer.Adopted() {
-		tags = append(tags, pal.yellow.Render(fmt.Sprintf("steer r%d not adopted", n.Steer.Revision)))
-	}
-	if n.Goal == nil || n.Goal.State != core.GoalDone {
-		switch {
-		case n.Fresh.Brief == nil:
-			tags = append(tags, pal.yellow.Render("no brief"))
-		case n.Fresh.Stale():
-			tags = append(tags, pal.yellow.Render("brief stale"))
-		}
-	}
-	if len(tags) == 0 {
+	if n.Steer == nil || n.Steer.Adopted() {
 		return ""
 	}
-	return strings.Join(tags, " ") + "  "
+	return pal.yellow.Render(fmt.Sprintf("steer r%d not adopted", n.Steer.Revision)) + "  "
 }
 
 func briefMeta(at time.Time, n core.Node) string {

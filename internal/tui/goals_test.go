@@ -261,3 +261,27 @@ func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
 		t.Fatalf("the row still shows unread news after reading it:\n%s", m.View().Content)
 	}
 }
+
+func TestAGoalRowFlagsAnUnadoptedSteerAndTheSelectedRowItsBrief(t *testing.T) {
+	m, c, ms := goalSetup(t, "make the importer handle CSV")
+	m = to(t, m, isNode(ms[0].ID))
+	if v := m.View(); !strings.Contains(v, "no brief yet") || strings.Contains(v, "not adopted") {
+		t.Fatalf("a fresh goal row should say it has no brief and no steer:\n%s", v)
+	}
+	st, err := c.SteerContext(m.board, ms[0].ID, "CSV and TSV", core.Owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := refresh(t, m).View(); !strings.Contains(v, "steer r1 not adopted") {
+		t.Fatalf("the row does not flag the unadopted steer:\n%s", v)
+	}
+	if _, err := c.Adopt(ms[0].Session, "", st.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.WriteBrief(ms[0].Session, core.Brief{Assessment: "TSV next", Changed: "adopted r1", Uncertainty: "none", Next: "TSV", WaitingOn: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	if v := refresh(t, m).View(); strings.Contains(v, "not adopted") || !strings.Contains(v, "brief v1") {
+		t.Fatalf("after adopting and briefing, the row should show brief v1 and no steer flag:\n%s", v)
+	}
+}
