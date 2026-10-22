@@ -56,3 +56,14 @@ func Ask(text string) string {
 func plain(line string) string {
 	return strings.TrimSpace(emphasis.Replace(strings.TrimLeft(strings.TrimSpace(line), "#> ")))
 }
+
+// FollowUp is what asked becomes after reply: reply alone when it asks the owner, else reply appended to the replies since one did.
+func FollowUp(asked, reply string) string {
+	if Asks(reply) {
+		return reply
+	}
+	if asked == "" {
+		return ""
+	}
+	return asked + "\n\n" + reply
+}

@@ -99,8 +99,6 @@ func NewRoot() *cobra.Command {
 		return tui.Run(e.core)
 	})
 	root.AddCommand(
-		handoffCmd(with),
-		handoffRunCmd(with),
 		serveCmd(with),
 		serviceCmd(),
 		goalCmd(with),

@@ -72,7 +72,7 @@ A chief (`ym chief "<name>" --over <id>,<id>`) oversees managers and other chief
 
 ## Actions in the conversation
 
-When the owner must act in the native chat, file `ym item add --kind chore --action chat --question "<specific action>" --rec "<necessary context>"`. The board labels it action in chat and opens the originating session with `o` or `O`. Opening it is not an approval or completion. Yamnaya also recovers missed handoffs from native output and routes each the way `ym item add` does; every inferred request retains its source. Existing owner answers in the ledger are authoritative even when an agent repeats the question in prose.
+When the owner must act in the native chat, file `ym item add --kind chore --action chat --question "<specific action>" --rec "<necessary context>"`. The board labels it action in chat and opens the originating session with `o` or `O`. Opening it is not an approval or completion. Existing owner answers in the ledger are authoritative even when an agent repeats the question in prose.
 
 ## Answers
 

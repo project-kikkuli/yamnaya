@@ -152,21 +152,10 @@ func (c *Core) parentsFor(b Board, berr error) map[string]string {
 // manager runs goes to that manager's session instead of the owner's queue.
 func (c *Core) AddItem(it Item) (Item, error) {
 	b, err := c.Board()
-	return c.file(b, err, it, "")
+	return c.file(b, err, it)
 }
 
-// AddHandoffItem files the item a captured handoff asks for, once per key, routed the way AddItem routes.
-func (c *Core) AddHandoffItem(key string, it Item) (Item, error) {
-	b, err := c.Board()
-	return c.file(b, err, it, key)
-}
-
-// AddHandoffItemOn is AddHandoffItem on a board the caller already read.
-func (c *Core) AddHandoffItemOn(b Board, key string, it Item) (Item, error) {
-	return c.file(b, nil, it, key)
-}
-
-func (c *Core) file(b Board, berr error, it Item, key string) (Item, error) {
+func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 	if it.Scope == "" {
 		it.Scope = c.ScopeOf(b, it.Session)
 	}
@@ -175,8 +164,8 @@ func (c *Core) file(b Board, berr error, it Item, key string) (Item, error) {
 		return it, err
 	}
 	it.Recipient = o.Recipient(c.Resolve(it.Session), c.parentsFor(b, berr))
-	added, fresh, err := c.Store.addItem(it, key)
-	if err != nil || !fresh || added.Recipient == Owner {
+	added, err := c.Store.addItem(it)
+	if err != nil || added.Recipient == Owner {
 		return added, err
 	}
 	return added, c.tell(b, o.Managers[added.Recipient].Session, askText(b, o, added), false)

@@ -115,7 +115,7 @@ type Need struct {
 	Session *Live
 	Item    *Item
 	Project string
-	// Reply is the waiting session's last reply and Line the first question it asks.
+	// Reply is the waiting session's last reply, or its replies back to the last one that holds the questions; Line is the first question.
 	Reply, Line string
 	// Asks are every open owner item of a session no manager runs, folded into this one row; Item is the oldest.
 	Asks []Item

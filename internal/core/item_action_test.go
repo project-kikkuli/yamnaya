@@ -31,7 +31,7 @@ func TestItemActionUpgradeRetainsOwnerAnswersAndPersistsChatRequests(t *testing.
 	if err != nil || old.Answer != it.Answer || old.State != ItemAnswered || old.Action != "" {
 		t.Fatalf("legacy owner record changed: %+v %v", old, err)
 	}
-	chat, _, err := s.addItem(Item{Scope: "repo", Session: "lead", Harness: "codex", Kind: KindChore, Action: "chat", Question: "Enter the native login code"}, "native-login")
+	chat, err := s.AddItem(Item{Scope: "repo", Session: "lead", Harness: "codex", Kind: KindChore, Action: "chat", Question: "Enter the native login code"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,8 +41,8 @@ func TestItemActionUpgradeRetainsOwnerAnswersAndPersistsChatRequests(t *testing.
 		t.Fatal(err)
 	}
 	defer s.Close()
-	same, _, err := s.addItem(Item{Scope: "repo", Session: "lead", Kind: KindChore, Action: "chat", Question: "Enter the native login code"}, "native-login")
-	if err != nil || same.Key() != chat.Key() || same.Action != "chat" {
-		t.Fatalf("restart lost chat identity: %+v %v", same, err)
+	same, err := s.Item(chat.Key())
+	if err != nil || same.Action != "chat" {
+		t.Fatalf("restart lost the chat action: %+v %v", same, err)
 	}
 }

@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
-const scanFormat = 5
+const scanFormat = 6
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -25,8 +26,9 @@ type scan struct {
 	Brief    string
 	Creating map[string]bool
 	Facts    core.Facts
-	// Before is the result as it stood before the latest reply, restored when that reply was a compaction summary.
-	Before string
+	// Before is the result as it stood before the latest reply, written at BeforeAt, restored when that reply was a compaction summary.
+	Before   string
+	BeforeAt time.Time
 
 	modified time.Time
 }
@@ -87,7 +89,7 @@ func (t *scan) add(l rolloutLine, cwd string) {
 	}
 	switch l.Type {
 	case "compacted":
-		t.Facts.Result = t.Before
+		t.Facts.Result, t.Facts.ResultAt = t.Before, t.BeforeAt
 	case "event_msg":
 		switch p.Type {
 		case "task_started":
@@ -105,7 +107,9 @@ func (t *scan) add(l rolloutLine, cwd string) {
 				t.prompt(p.text("input_text"))
 			case "assistant":
 				if s := p.text("output_text"); s != "" {
-					t.Before, t.Facts.Result = t.Facts.Result, s
+					t.Before, t.BeforeAt = t.Facts.Result, t.Facts.ResultAt
+					t.Facts.Result, t.Facts.ResultAt = s, l.Timestamp
+					t.Facts.Asked = health.FollowUp(t.Facts.Asked, s)
 				}
 			}
 		case "agent_message":
@@ -151,7 +155,7 @@ func (t *scan) prompt(text string) {
 		if t.First == "" {
 			t.First = s
 		}
-		t.Facts.Ask = s
+		t.Facts.Ask, t.Facts.Asked = s, ""
 	}
 }
 

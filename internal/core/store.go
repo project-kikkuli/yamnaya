@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/project-kikkuli/yamnaya/internal/handoff"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -80,8 +79,7 @@ type Event struct {
 
 // Store keeps items, phases, vibes, lineage links, project names and merges.
 type Store struct {
-	db       *sql.DB
-	Handoffs *handoff.Store
+	db *sql.DB
 }
 
 const schema = `
@@ -194,7 +192,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema + orgSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + forwardSchema + orgSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
@@ -226,11 +224,6 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate item recipients: %w", err)
 	}
-	h, err := handoff.New(db)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
 	if err := retireWork(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("retire work layer: %w", err)
@@ -239,7 +232,11 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate session asks: %w", err)
 	}
-	return &Store{db: db, Handoffs: h}, nil
+	if err := retireHandoffs(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("retire handoff capture: %w", err)
+	}
+	return &Store{db: db}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

@@ -72,11 +72,15 @@ type Facts struct {
 	Ask    string
 	Doing  Action
 	Result string
-	Model  string
-	Tools  map[string]int
-	Files  []string
-	Trail  []Action
-	PRs    []PR
+	// ResultAt is when the agent wrote Result.
+	ResultAt time.Time
+	// Asked is the latest reply since the owner's last prompt that asks the owner something and every reply after it, "" when none.
+	Asked string
+	Model string
+	Tools map[string]int
+	Files []string
+	Trail []Action
+	PRs   []PR
 }
 
 // Member is a subagent or teammate running inside a session.

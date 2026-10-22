@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
 type record struct {
@@ -116,7 +117,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 5
+const scanFormat = 6
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -216,7 +217,7 @@ func (t *scan) add(r record) {
 			if t.First == "" {
 				t.First = p
 			}
-			t.Facts.Ask = p
+			t.Facts.Ask, t.Facts.Asked = p, ""
 		}
 		t.Open = true
 	}
@@ -231,7 +232,8 @@ func (t *scan) assistant(r record) {
 		switch b.Type {
 		case "text":
 			if s := strings.TrimSpace(b.Text); s != "" {
-				t.Facts.Result = s
+				t.Facts.Result, t.Facts.ResultAt = s, r.Timestamp
+				t.Facts.Asked = health.FollowUp(t.Facts.Asked, s)
 			}
 		case "tool_use":
 			if b.Name == "SubagentHandback" {

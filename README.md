@@ -8,11 +8,11 @@
 - **Manager**: an ordinary interactive Claude session on ym's tmux server with a persistent identity: when its session is replaced, the manager, its goal and its agents stay. Its launch prompt carries the goal, its authority, how to start agents (`ym new`, which links them under it), the markdown brief it keeps (`B` shows it) and how to register a richer artifact (`V` opens it). Open it with `o` and talk to it like any session; that is how you change direction.
 - **Authority**: a manager owns its goal outright, go-aheads, decisions and fixes included. It may merge its own pull requests only in repositories `ym goal authority` clears (seeded: auth-plane may merge, august may not); elsewhere a green pull request comes to your merge queue. It writes to other humans only with a model-name prefix.
 - **Chief**: `ym chief "<name>" --over <id>,<id>` (or `C` over the selected rows) oversees managers and other chiefs, to any depth. It reads their briefs, steers them, relaunches stuck ones and keeps a rolled-up brief. A manager needs no chief, and work never waits on one: a stuck or retired chief is passed over.
-- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you. The handoff catcher routes what it recovers from transcripts the same way.
+- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you. When an agent a manager runs goes idle, its last message reaches that manager verbatim, once per message, and the manager judges it.
 - **Supervision**: `ym serve` watches every active goal. A dead manager is relaunched with its prompt and brief, with backoff so a launch that keeps failing never spins. When nothing moves (no turns, brief edits or agent activity) for 30 minutes, the manager is nudged; still nothing after two nudges, and the goal shows one stuck row in your queue with the evidence.
 - **Steering**: `s` sends your message to the selected goal or chief, or to every row picked with `space`; on a chief, `tab` widens it to its whole subtree. `ym goal send <id>[,<id>] [--subtree] <text>` does the same from a shell.
 
-Sessions you start yourself (`+` on the board, or `ym new` from your own shell) get no manager. Each shows as one row in your queue when it asks you anything, however many asks it filed.
+Sessions you start yourself (`+` on the board, or `ym new` from your own shell) get no manager. Each shows as one row in your queue when it asks you anything, however many asks it filed. One that goes idle with a block of questions for you, or with a follow-up to one since you last wrote, shows as a waiting row carrying that message in full.
 
 ## Install
 
@@ -50,13 +50,9 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 ## Background service
 
-`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes and captures handoffs, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
+`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes and forwards idle agents' last messages to their managers, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
 
-The background service also captures explicit owner handoffs from the transcripts of live Claude and Codex sessions, including their subagents and child threads. A bounded native semantic pass identifies review requests, proposals, choices, authorization requests and actions that require the originating chat, and files each as one item for that session, routed the way `ym item add` routes: choices as decisions, authorization requests as go items, chat actions as chores marked `action in chat`, and review requests and proposals as chores naming the artifact. Items retain the agent, quoted request and transcript location. Repeated summaries match the existing item instead of filing another. Agent prose never records owner approval.
-
-Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents can file this directly with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action. Structured submissions remain the direct path; background capture recovers omissions without requiring special headings.
-
-Capture uses durable file cursors and source-event identities, so partial writes, restarts and later replies keep outstanding requests. `ym handoff status` reports the backlog; after correcting a reported provider or source failure, `ym handoff resume` reconsiders unresolved records. `ym handoff scan` captures live sessions' transcripts and reconciles extracted requests. One native classifier runs at a time, outside the reconciliation loop, with tools and hooks disabled.
+Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents file them with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action.
 
 ## Validation
 
@@ -87,7 +83,7 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym sessions [--json]                every live session with host and project
     ym new [--codex] [--repo P] [--slug S] "<prompt>"
                                         start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
-    ym waiting [--json]                 idle sessions whose last reply asks you with no item filed; answer with ym send
+    ym waiting [--json]                 idle sessions whose last reply asks you with no item filed, with that reply; answer with ym send
     ym open <session|item|key>          show a session: ym's own sessions attach in this terminal; detach (C-b d) returns to the board
     ym launched [--landed]              sessions ym started, and whether each agent still runs; --landed adds landed ones
     ym revive <key|session>             resume an exited or landed one in its worktree, recreating the worktree and branch at its

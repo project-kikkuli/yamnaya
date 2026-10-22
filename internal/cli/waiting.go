@@ -23,7 +23,7 @@ func waitingCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "waiting",
-		Short: "List idle sessions whose last reply asks you, with no open item; answer one with ym send",
+		Short: "Show idle sessions whose last reply asks you, with no open item, and that reply in full; answer one with ym send",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			b, err := e.core.Board()
@@ -47,7 +47,7 @@ func waitingCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			for _, w := range out {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-6s %-24s waiting: %s\n", core.Short(w.Session), w.Harness, w.Project, w.Line)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-8s %-6s %-24s waiting on you:\n%s\n\n", core.Short(w.Session), w.Harness, w.Project, w.Reply)
 			}
 			return nil
 		}),

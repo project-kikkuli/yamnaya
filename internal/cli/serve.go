@@ -23,7 +23,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var once bool
 	var interval time.Duration
 	var discover bool
-	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and handoffs independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		if interval <= 0 {
 			return fmt.Errorf("interval must be positive")
 		}
@@ -107,7 +107,7 @@ func serveCycle(c *core.Core) error {
 	if _, err = c.RefreshPRs(b); err != nil {
 		failures = append(failures, err)
 	}
-	if err = reconcileHandoffs(c, b); err != nil {
+	if err = c.ForwardIdle(b); err != nil {
 		failures = append(failures, err)
 	}
 	if err = c.Supervise(b); err != nil {
