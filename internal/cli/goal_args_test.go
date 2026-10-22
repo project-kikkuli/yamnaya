@@ -29,7 +29,7 @@ func TestGoalStartsOnlyFromOneQuotedAsk(t *testing.T) {
 					return nil
 				}
 			}
-			cmd := goalCmd(with)
+			cmd := goalCmd(with, with)
 			cmd.SetArgs(c.args)
 			cmd.SilenceUsage, cmd.SilenceErrors = true, true
 			err := cmd.Execute()
