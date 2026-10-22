@@ -166,8 +166,6 @@ func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 // AddItem files it in its Scope with that scope's next ID.
 func (s *Store) AddItem(it Item) (Item, error) { return s.addItem(it, "") }
 
-func (s *Store) AddHandoffItem(key string, it Item) (Item, error) { return s.addItem(it, key) }
-
 func (s *Store) addItem(it Item, key string) (Item, error) {
 	if _, ok := kindPrefix[it.Kind]; !ok {
 		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, or go)", it.Kind)

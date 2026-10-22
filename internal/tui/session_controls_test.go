@@ -8,12 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/project-kikkuli/yamnaya/internal/core"
-	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 	for _, width := range []int{40, 79, 80, 160} {
-		for _, where := range []string{"board mission", "session row", "session detail", "exited launch", "mission only", "launcher unavailable", "several live sessions", "repository"} {
+		for _, where := range []string{"board mission", "session row", "session detail", "exited launch", "launcher unavailable", "several live sessions", "repository"} {
 			t.Run(fmt.Sprintf("%s/%d", where, width), func(t *testing.T) {
 				m, c, _ := setup(t)
 				c.Launches = &launches{}
@@ -40,21 +39,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 					m = to(t, m, func(r row) bool {
 						return r.project != nil && len(r.project.Dormant) > 0 && len(r.project.Sessions) == 0
 					})
-					wantLand = true
-				case "mission only":
-					var wID string
-					if err := c.ObserveWork(m.board); err != nil {
-						t.Fatal(err)
-					}
-					all, _ := c.Store.Work.List()
-					wID = all[0].ID
-					c.Procs = func() ([]proc.Proc, error) { return nil, nil }
-					c.Harnesses = nil
-					m = refresh(t, m)
-					m = to(t, m, func(r row) bool {
-						return r.project != nil && r.project.Work != nil && r.project.Work.ID == wID && r.item == nil && r.need == nil
-					})
-					wantArchive = true
+					wantLand, wantArchive = true, true
 				case "launcher unavailable":
 					c.Launches = nil
 					m = to(t, m, mission("lead"))
@@ -77,7 +62,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				for _, check := range []struct {
 					hint string
 					want bool
-				}{{"K kill", wantKill}, {"L land", wantLand}, {"L archive", wantArchive}, {"F forget", wantLand}} {
+				}{{"K kill", wantKill}, {"L land", wantLand}, {"K archive", wantArchive}, {"F forget", wantLand}} {
 					if strings.Contains(footer, check.hint) != check.want || strings.Contains(rendered, check.hint) != check.want {
 						t.Fatalf("%s present=%v want=%v:\n%s", check.hint, strings.Contains(footer, check.hint), check.want, footer)
 					}
@@ -85,7 +70,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				for _, action := range []struct {
 					key, label string
 					want       bool
-				}{{"K", "kill ", wantKill}, {"L", "land ", wantLand}, {"L", "archive ", wantArchive}} {
+				}{{"K", "kill ", wantKill}, {"L", "land ", wantLand}, {"K", "archive ", wantArchive}} {
 					if !action.want {
 						continue
 					}

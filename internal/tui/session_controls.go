@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 func (m Model) landingTargets(r row) ([]string, string) {
@@ -43,24 +41,15 @@ func (m Model) sessionHints() string {
 	if !ok && m.mode != modeSession && m.mode != modeAgent {
 		return ""
 	}
-	if r.review != nil || r.attention != "" {
-		return ""
-	}
 	var hints []string
 	if m.killable(r) != nil {
 		hints = append(hints, "K kill")
 	} else if ids, _ := m.stoppedTargets(r); len(ids) > 0 {
 		hints = append(hints, "K archive")
-	} else if _, ok := m.archivableWork(r); ok {
-		hints = append(hints, "K archive")
 	}
 	refs, _ := m.landingTargets(r)
-	if len(refs) > 0 {
-		if m.core.Launches != nil {
-			hints = append(hints, "L land", "F forget")
-		}
-	} else if _, ok := m.archivableWork(r); ok {
-		hints = append(hints, "L archive")
+	if len(refs) > 0 && m.core.Launches != nil {
+		hints = append(hints, "L land", "F forget")
 	}
 	if s := m.sessionOf(r); s != nil {
 		if s.ID != "" && m.core.Launches != nil {
@@ -68,18 +57,7 @@ func (m Model) sessionHints() string {
 		}
 		hints = append(hints, "T switch")
 	}
-	if _, ok := m.selectedWork(); ok && m.chiefPickable() {
-		hints = append(hints, "c chief")
-	}
 	return strings.Join(hints, "   ")
-}
-
-func (m Model) archivableWork(r row) (work.Scope, bool) {
-	w, ok := m.selectedWork()
-	if p := m.projectOf(r); p != nil && len(p.Sessions) > 0 {
-		return w, false
-	}
-	return w, ok && w.State != "archived" && w.State != "completed"
 }
 
 func (m Model) hasLaunch(session string) bool {

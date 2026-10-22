@@ -40,10 +40,6 @@ func (m Model) prepareView() viewPage {
 	case modePick:
 		body = textPage(bodyModel.pickView(), "")
 	case modeInput:
-		if m.inKind == inChiefMessage {
-			body = bodyModel.chiefComposeView()
-			break
-		}
 		if m.inKind == inNewRepo {
 			body = textPage(bodyModel.repoPickView(), "")
 			break
@@ -61,16 +57,6 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.agentView()
 		case modeItems:
 			body = bodyModel.itemsView()
-		case modeChiefs:
-			body = bodyModel.chiefsView()
-		case modeAgentBatch:
-			body = bodyModel.agentBatchView()
-		case modeWork:
-			body = bodyModel.workView()
-		case modeReviews:
-			body = bodyModel.reviewsView()
-		case modeReview:
-			body = bodyModel.reviewView()
 		default:
 			body = bodyModel.listView()
 		}
@@ -88,15 +74,13 @@ func (m Model) prepareView() viewPage {
 	for len(body.lines) > 0 && body.lines[len(body.lines)-1].text == "" {
 		body.lines = body.lines[:len(body.lines)-1]
 	}
-	for _, line := range body.lines {
-		lines = append(lines, line)
-	}
+	lines = append(lines, body.lines...)
 	var foot []viewLine
 	for _, line := range m.footer() {
 		foot = append(foot, textPage(ansi.Wrap(line, max(20, m.width-1), " "), "").lines...)
 	}
 	room := max(1, m.height-len(foot))
-	if (m.mode == modeScreen || m.mode == modeAgent || m.mode == modeReview || m.mode == modeAgentBatch || (m.mode == modeInput && m.inKind == inChiefMessage) || (m.mode == modeWork && m.workPanel != 1)) && len(lines) > room && room > top {
+	if (m.mode == modeScreen || m.mode == modeAgent) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -154,9 +138,6 @@ func (m Model) header() string {
 		}
 	}
 	h := pal.bold.Render(" ym") + "    " + strings.Join(parts, "  ")
-	if len(m.board.WorkErrors) > 0 {
-		h += "\n" + pal.yellow.Render(" coverage: "+strings.Join(m.board.WorkErrors, "; "))
-	}
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
@@ -178,12 +159,8 @@ func (m Model) footer() []string {
 		return lines
 	}
 	if m.mode == modeInput {
-		if m.inKind == inChiefMessage {
-			return []string{" " + pal.bold.Render("message:") + " " + string(m.input) + "█", pal.dim.Render(" enter send   esc cancel   ↑↓ recipients   ctrl+u clear text")}
-		}
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inWorkFeedback: "feedback; next action returns to author", inWorkDecision: "record judgment", inWorkMessage: "message " + m.inLabel, inCommand: "ym command", inWorkVerify: "record independent verification evidence", inChiefName: "name this chief", inChiefRemit: "what should this chief own?", inChiefAuthority: "what may this chief do independently?",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)"}[m.inKind]
@@ -226,41 +203,11 @@ func (m Model) hints() string {
 		return "o open chat   O beside   enter context   l later   x dismiss   ? help"
 	}
 	controls := m.sessionHints()
-
-	if r, ok := m.currentReview(); ok && r.Action == "merge" && (m.mode == modeList || m.mode == modeReviews || m.mode == modeReview) {
-		return "o/V open PR   x dismiss   u restore   tab queues   enter details   n/p next/previous   B context   esc back"
-	}
-	if m.mode == modeList {
-		if r, ok := m.selected(); ok && r.attention == "unassigned" {
-			return "enter checklist   o/V open first source   B brief   M agents   ↑↓ move"
-		}
-	}
 	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
-		if r, ok := m.currentReview(); !ok || r.Action != "merge" {
-			return strings.TrimSpace(controls + "   ↑↓ move   enter open   B brief   ? help")
-		}
+		return strings.TrimSpace(controls + "   ↑↓ move   enter open   ? help")
 	}
 
 	switch m.mode {
-	case modeChiefs:
-		if m.chiefTarget != "" {
-			return "enter attach   x detach   B brief   space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   d/D defaults   p pause/resume   K kill   esc back"
-		}
-		return "space select   * select visible   ctrl+u clear selection   / filter   s message   v receipts   n new chief   enter brief   d/D defaults   p pause/resume   K kill   esc back"
-	case modeAgentBatch:
-		return "↑↓ scroll   r retry failed   [ previous message   ] next message   esc back"
-	case modeWork:
-		if m.workPanel == 1 {
-			return "↑↓ choose workstream   enter open   s message   B brief   C context   tab next panel   esc back"
-		}
-		if m.workPanel == 2 {
-			return "↑↓ scroll   e edit context   B brief   tab next panel   s message manager   esc back"
-		}
-		return "↑↓ scroll   space/b page   a verify result   tab brief/work/context/history   C context   s message manager   enter open workstream   R reviews   V rich brief   : command   esc back"
-	case modeReviews:
-		return "↑↓ move   o/V source   x/space reviewed   u undo reviewed   enter details   tab queues   B brief   esc back"
-	case modeReview:
-		return "o/V source   x reviewed + next   n/p next/previous   u undo reviewed   a judgment   f feedback   ↑↓ scroll   esc back"
 	case modeHelp, modeScreen:
 		return "esc back"
 	case modeItems:
@@ -272,9 +219,6 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		if m.workAction != "" {
-			return "↑↓ choose project   enter open   B brief   C context   esc back"
-		}
 		return controls + "   ↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
 		return controls + "   ↑↓ move   enter open session, agent or item   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
@@ -283,7 +227,7 @@ func (m Model) hints() string {
 	case modeAgent:
 		return controls + "   ↑↓ scroll   space/b page   o go to its session   O beside   esc back"
 	}
-	return controls + "   ↑↓ move   enter open   B brief   R reviews   C context   V artifact   a answer   g go ahead   : command   o session   n new   / filter   I items   U usage   A scenery   ? help   q quit"
+	return controls + "   ↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A scenery   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -301,66 +245,25 @@ func (m Model) listView() viewPage {
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
-		if r.attention != "" || r.review != nil || (r.need != nil && !m.isStale(r.need)) {
+		if r.need != nil && !m.isStale(r.need) {
 			needs++
 		}
 	}
-	b.WriteString(pal.dim.Render(fmt.Sprintf(" %d chiefs · M management · B brief · C context", m.chiefCount())) + "\n\n")
 	b.WriteString(pal.bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
 	if needs == 0 {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
 	repos := false
-	nativeProgress := false
-	for _, r := range rows {
-		if r.project != nil && r.project.Work == nil {
-			nativeProgress = true
-			break
-		}
-	}
 	cols := m.missionCols(2)
 	for i, r := range rows {
-		if r.review == nil && (r.repo != nil || r.project != nil) && !repos {
+		if (r.repo != nil || r.project != nil) && !repos {
 			repos = true
 			b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n")
-			if cols.bar > 0 && nativeProgress {
+			if cols.bar > 0 {
 				b.WriteString(pal.dim.Render("   "+progressLegend) + "\n")
 			}
 		}
 		switch {
-		case r.attention != "":
-			label := r.attention
-			if label == "unassigned" {
-				label = fmt.Sprintf("reviews (%d)", pendingReviews(*r.work))
-			}
-			b.WriteString(m.mark(i) + pal.yellow.Render(pad(label, 12)) + " " + r.work.Name + "\n")
-			if i == m.cursor {
-				if r.attention == "unassigned" {
-					shown := 0
-					for _, review := range sortedReviews(*r.work) {
-						if review.Pending() {
-							m.field(&b, "review", review.Title)
-							shown++
-							if shown == 3 {
-								break
-							}
-						}
-					}
-					if remaining := pendingReviews(*r.work) - shown; remaining > 0 {
-						m.field(&b, "more", fmt.Sprintf("%d more · enter checklist", remaining))
-					}
-				}
-				m.field(&b, "next", r.work.Next)
-				m.field(&b, "result", clip(r.work.Result, 3))
-			}
-		case r.review != nil:
-			b.WriteString(m.mark(i) + pal.yellow.Render(pad(r.review.Kind, 9)) + " " + pad(r.work.Name, min(28, max(12, m.width/4))) + " " + r.review.Title + "\n")
-			if i == m.cursor {
-				m.field(&b, "ask", r.review.Question)
-				m.field(&b, "rec", r.review.Recommendation)
-				m.field(&b, "changed", r.review.Changed)
-				m.field(&b, "status", r.review.StatusError)
-			}
 		case r.stale:
 			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
 			if i == m.cursor {
@@ -399,13 +302,6 @@ func (m Model) needsIn(r core.Repo) int {
 		keys[p.Key] = true
 	}
 	n := 0
-	seen := map[string]bool{}
-	for _, p := range r.Missions {
-		if p.Work != nil && !seen[p.Work.ID] {
-			n += p.Work.Ready()
-			seen[p.Work.ID] = true
-		}
-	}
 	for _, need := range m.board.Needs {
 		if keys[need.Project] {
 			n++
@@ -747,14 +643,7 @@ func (m Model) repoView() viewPage {
 	}
 	b.WriteString(pal.bold.Render(" "+r.Name) + pal.dim.Render("  "+key) + "\n")
 	b.WriteString(" " + m.repoCounts(r) + "\n")
-	heading := "MISSIONS"
-	if m.workAction == "B" {
-		heading = "CHOOSE A PROJECT BRIEF"
-	}
-	if m.workAction == "C" {
-		heading = "CHOOSE PROJECT CONTEXT"
-	}
-	b.WriteString("\n" + pal.bold.Render(" "+heading) + "\n")
+	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
 	cols := m.missionCols(0)
 	for i, p := range r.Missions {
 		b.place = "m:" + p.Key
@@ -798,11 +687,6 @@ func (m Model) detailView() viewPage {
 	}
 	if pr := prSummary(prsOf(p.Sessions)); pr != "" {
 		b.WriteString(" prs     " + pr + "\n")
-	}
-	if p.Work != nil {
-		if chiefs := m.chiefsOn(p.Work.ID); chiefs != "" {
-			b.WriteString(" chiefs  " + chiefs + "\n")
-		}
 	}
 	pg := progress.Of(p)
 	if f, ok := pg.Fraction(); ok {
@@ -983,13 +867,6 @@ func (m Model) sessionView() viewPage {
 	m.field(&b, "status", status)
 	m.field(&b, "where", s.Location())
 	m.field(&b, "repo", strings.TrimSpace(s.Repo+" "+s.Branch))
-	for _, p := range m.board.Projects {
-		if p.Work != nil {
-			if _, ok := p.Work.Bindings[s.Key()]; ok {
-				m.field(&b, "chiefs", m.chiefsOn(p.Work.ID))
-			}
-		}
-	}
 	if s.Worktree != "" && s.Worktree != s.Cwd {
 		m.field(&b, "worktree", s.Worktree)
 	}
@@ -1236,14 +1113,6 @@ func (m Model) pickView() string {
 
 const Help = ` ym shows every Claude Code and Codex session and what needs you.
 
-   c            give the selected project or session a chief: enter attaches the highlighted chief, x detaches it
-   M            chiefs and managers: n creates a chief; B reads its brief (enter too, unless opened on a project, where enter attaches); s messages; a attaches the selected project; d/D toggle repo/global defaults; K kills the chief so it never wakes again
-   B            read the full manager brief; on a repo choose its project first; V opens the browser version
-   R            review checklist; tab switches pending, ready, author, reviewed, dismissed and completed queues
-   C            read project context; e opens $EDITOR from the context panel, preserving its starting revision
-   V            open the review's original source or the project's stable rich brief in the browser
-   :            run an owner command without leaving the board, for example work watch ID URL --kind notion
-
  NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
  whose last reply asks you with no item filed ("waiting:", the first question it asks).
  REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
@@ -1254,7 +1123,7 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
    A            hide or show scenery
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
-   o            open a selected review source; otherwise go to its session or tmux pane;
+   o            go to the selected row's session: jump to its tmux pane, or say where it runs;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
@@ -1265,8 +1134,8 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 on a waiting session, send the answer as your message, the same way s does, and clear the row
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    l            later: snooze the item
-   u            restore a dismissed merge or reviewed request; reopen a snoozed item (detail)
-   x            dismiss a merge request; mark a review as reviewed and advance; dismiss an item; hide a waiting session until it asks again
+   u            reopen a snoozed item (detail)
+   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again
    w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another

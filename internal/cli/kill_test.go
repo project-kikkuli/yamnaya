@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 type agent struct{}
@@ -27,44 +25,6 @@ func (agent) Discover(procs []proc.Proc) []core.Session {
 		out = append(out, core.Session{Harness: "claude", ID: "06456f12-aaaa", PID: p.PID, TTY: p.TTY, Title: "Allergies rollout"})
 	}
 	return out
-}
-
-func TestKillEndedNativeSessionNeedsNoLaunchRecord(t *testing.T) {
-	for _, tc := range []struct {
-		name, answer string
-		stop         bool
-	}{{"declined", "n\n", false}, {"confirmed", "y\n", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			id := "06456f12-aaaa"
-			w, err := s.Work.Ensure(core.ThisHost()+"/"+id, "/src/query/.git", "Caller migration")
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = s.Work.Commit(work.Event{Work: w.ID, Expected: w.Revision, Type: "bind", Target: id, Execution: &work.Execution{Harness: "claude", Directory: "/src/query"}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			c := &core.Core{Store: s, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-			var out bytes.Buffer
-			if err = kill(c, "06456f12", false, true, strings.NewReader(tc.answer), &out); err != nil {
-				t.Fatal(err)
-			}
-			b, err := c.Board()
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, p := range b.Projects {
-				if p.Work != nil && p.Work.ID == w.ID && p.Shown() == tc.stop {
-					t.Fatalf("ended native session stop=%t, shown=%t", tc.stop, p.Shown())
-				}
-			}
-		})
-	}
 }
 
 func TestKillAsksOnATerminalAndNeedsYesWithout(t *testing.T) {

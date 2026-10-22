@@ -16,7 +16,6 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 func usePalette(t *testing.T, color bool) {
@@ -172,7 +171,8 @@ func TestProjectHueIsStableAndSpreadsOverColorsNoStateUses(t *testing.T) {
 	seen := map[int]bool{}
 	for i := range 30 {
 		key := fmt.Sprintf("/Users/someone/dev/repo-%d", i)
-		if pal.hue(key).Render("id") != pal.hue(key).Render("id") || hueIndex(key) != hueIndex(key) {
+		first, firstIndex := pal.hue(key).Render("id"), hueIndex(key)
+		if pal.hue(key).Render("id") != first || hueIndex(key) != firstIndex {
 			t.Fatalf("%s changes hue between calls", key)
 		}
 		seen[hueIndex(key)] = true
@@ -247,20 +247,17 @@ func TestProjectsOnOneBoardGetDifferentHuesWhileThereAreSpare(t *testing.T) {
 	}
 }
 
-func TestMissionActivityAndSpendRemainVisibleWithBriefs(t *testing.T) {
+func TestMissionActivityAndSpendRemainVisible(t *testing.T) {
 	for _, width := range []int{80, 100, 160} {
 		for _, status := range []core.Status{core.Busy, core.Idle, core.Waiting} {
 			t.Run(fmt.Sprintf("%d/%s", width, status), func(t *testing.T) {
-				p := core.Project{Key: "ridge", Name: "Compatibility", Status: status, Spend: core.Spend{USD: 42.5}, Sessions: []core.Live{{Session: core.Session{ID: "worker", Status: status}}}, Work: &work.Scope{ID: "scope", Brief: work.Brief{Assessment: "Validating the new API"}}}
+				p := core.Project{Key: "ridge", Name: "Compatibility", Status: status, Spend: core.Spend{USD: 42.5}, Sessions: []core.Live{{Session: core.Session{ID: "worker", Status: status}}}}
 				m := Model{core: &core.Core{}, board: core.Board{Fleet: core.Fleet{Ready: true}, Projects: []core.Project{p}}, width: width, cursor: 0}
 				lines := strings.Split(ansi.Strip(m.missionLine(0, p, m.missionCols(2))), "\n")
 				for _, want := range []string{status.String(), "$42.50"} {
 					if !strings.Contains(lines[0], want) {
 						t.Fatalf("missing %s: %s", want, lines[0])
 					}
-				}
-				if !strings.Contains(strings.Join(lines, "\n"), p.Work.Brief.Assessment) {
-					t.Fatal("missing assessment")
 				}
 			})
 		}

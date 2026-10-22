@@ -7,11 +7,15 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
-func (f Fetcher) Requests(ctx context.Context) ([]work.Source, error) {
+// Request is an open pull request GitHub asks the owner to review as an individual reviewer.
+type Request struct {
+	URL, Updated string
+}
+
+// Requests lists the owner's direct review requests, failing rather than returning a partial list.
+func (f Fetcher) Requests(ctx context.Context) ([]Request, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	user, err := f.Run(ctx, "gh", "api", "user", "--jq", ".login")
@@ -40,7 +44,7 @@ func (f Fetcher) Requests(ctx context.Context) ([]work.Source, error) {
 	if err = json.Unmarshal(raw, &pages); err != nil {
 		return nil, err
 	}
-	var out []work.Source
+	var out []Request
 	count := 0
 	for _, page := range pages {
 		if page.Incomplete || page.Total > 1000 {
@@ -64,7 +68,7 @@ func (f Fetcher) Requests(ctx context.Context) ([]work.Source, error) {
 				}
 				for _, user := range reviewers.Users {
 					if strings.EqualFold(user.Login, login) {
-						out = append(out, work.Source{Origin: "github-request", Kind: "github", URL: item.Pull.URL, Requester: "GitHub review assignment to " + login, Question: "Review this pull request", Coverage: "direct GitHub user review-request assignment", RequestVersion: item.Updated})
+						out = append(out, Request{URL: item.Pull.URL, Updated: item.Updated})
 						break
 					}
 				}

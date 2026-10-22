@@ -41,7 +41,7 @@ func Read(file File, offset int64) ([]Event, int64, error) {
 		offset += int64(len(line))
 		texts, id, at, decodeErr := decode(file.Harness, line)
 		if decodeErr != nil {
-			out = append(out, Event{ID: Key(file.Path, string(line)), Work: file.Work, Harness: file.Harness, Session: file.Session, Agent: file.Agent, Path: file.Path, Offset: start, Error: fmt.Sprintf("Unreadable transcript record at byte %d: %v", start, decodeErr)})
+			out = append(out, Event{ID: Key(file.Path, string(line)), Work: file.Work, Harness: file.Harness, Session: file.Session, Agent: file.Agent, Path: file.Path, Dir: file.Dir, Offset: start, Error: fmt.Sprintf("Unreadable transcript record at byte %d: %v", start, decodeErr)})
 			continue
 		}
 		for i, text := range texts {
@@ -53,7 +53,7 @@ func Read(file File, offset int64) ([]Event, int64, error) {
 			if identity == "" {
 				identity = Key(string(line))
 			}
-			out = append(out, Event{ID: Key(file.Harness, file.Session, identity, fmt.Sprint(i)), Work: file.Work, Harness: file.Harness, Session: file.Session, Agent: agent, Path: file.Path, Offset: start, At: at, Text: text.text})
+			out = append(out, Event{ID: Key(file.Harness, file.Session, identity, fmt.Sprint(i)), Work: file.Work, Harness: file.Harness, Session: file.Session, Agent: agent, Path: file.Path, Dir: file.Dir, Offset: start, At: at, Text: text.text})
 		}
 	}
 }

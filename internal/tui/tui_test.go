@@ -146,7 +146,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			next, cmd = m.Update(out)
 			m = next.(Model)
 			switch out.(type) {
-			case doneMsg, adoptedMsg, reposMsg, reviewActionMsg:
+			case doneMsg, adoptedMsg, reposMsg:
 			default:
 				cmd = nil
 			}
@@ -474,7 +474,7 @@ func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
 	if !strings.Contains(m.View(), "Older question?") {
 		t.Fatalf("enter on the stale line did not expand it:\n%s", m.View())
 	}
-	m = press(t, m, "x", "enter")
+	press(t, m, "x", "enter")
 	for _, id := range []string{"D3", "D4"} {
 		if it, _ := c.Store.Item(id); it.State != core.ItemDismissed {
 			t.Errorf("%s = %s after dismissing every stale item", id, it.State)

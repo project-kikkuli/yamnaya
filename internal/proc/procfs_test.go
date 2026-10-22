@@ -36,7 +36,7 @@ func TestReadProcParsesStatAndCmdline(t *testing.T) {
 }
 
 func TestTTYName(t *testing.T) {
-	for dev, want := range map[int64]string{0: "", 136<<8 | 0: "/dev/pts/0", 4<<8 | 1: "/dev/tty1", 4<<8 | 65: "/dev/ttyS1", 5<<8 | 1: ""} {
+	for dev, want := range map[int64]string{0: "", 136 << 8: "/dev/pts/0", 4<<8 | 1: "/dev/tty1", 4<<8 | 65: "/dev/ttyS1", 5<<8 | 1: ""} {
 		if got := ttyName(dev); got != want {
 			t.Errorf("ttyName(%d) = %q, want %q", dev, got, want)
 		}

@@ -1,43 +1,33 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/handoff"
-	"github.com/project-kikkuli/yamnaya/internal/intake"
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 type existingItem struct{ ID, Kind, Question, Recommendation, State, Answer, Session, AnsweredAt string }
-type existingRequest struct{ ID, Kind, Target, Question, State string }
+type existingRequest struct{ ID, Kind, Target, Question string }
 
-func handoffLedger(c *core.Core, id string) (any, error) {
-	w, err := c.Store.Work.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	items, err := c.Store.Items(core.ItemFilter{Scopes: []string{w.Repo}})
+// handoffLedger is what the classifier matches requests against: the session's open and answered items and its prior applied claims.
+func handoffLedger(c *core.Core, e handoff.Event) (any, error) {
+	items, err := c.Store.Items(core.ItemFilter{Sessions: []string{e.Session}, States: []string{core.ItemOpen, core.ItemAnswered}})
 	if err != nil {
 		return nil, err
 	}
 	ledger := struct {
-		Project, Repository string
+		Session, Repository string
 		ExistingItems       []existingItem
 		ExistingRequests    []existingRequest
-	}{Project: w.Name, Repository: handoffRepo(w.Repo)}
+	}{Session: e.Session, Repository: handoffRepo(e.Dir)}
 	for _, it := range items {
 		ledger.ExistingItems = append(ledger.ExistingItems, existingItem{ID: "item:" + it.Key(), Kind: it.Kind, Question: it.Question, Recommendation: it.Rec, State: it.State, Answer: it.Answer, Session: it.Session, AnsweredAt: it.AnsweredAt.String()})
 	}
-	for _, r := range w.Reviews {
-		ledger.ExistingRequests = append(ledger.ExistingRequests, existingRequest{ID: "review:" + r.ID, Kind: r.Kind, Target: r.URL, Question: r.Question, State: r.QueueState()})
-	}
-	claims, err := c.Store.Handoffs.Claims(w.ID, false)
+	claims, err := c.Store.Handoffs.Claims(e.Work, false)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +87,7 @@ func resolveHandoffTarget(claim handoff.Claim, repo string) (string, error) {
 		}
 		return candidate, nil
 	}
-	if target != "" && !strings.Contains(claim.Event.Text, target) && !strings.HasPrefix(claim.Existing, "review:") {
+	if target != "" && !strings.Contains(claim.Event.Text, target) {
 		return "", fmt.Errorf("target %s is not grounded in the source event", target)
 	}
 	if strings.HasPrefix(target, "https://github.com/") {
@@ -107,16 +97,13 @@ func resolveHandoffTarget(claim handoff.Claim, repo string) (string, error) {
 		}
 		return prs[0].URL, nil
 	}
-	if strings.HasPrefix(target, "file://") || filepath.IsAbs(target) {
-		return intake.Identity("file", target)
-	}
-	if strings.Contains(target, "notion.so/") || strings.Contains(target, "notion.site/") {
-		return intake.Identity("notion", target)
+	if path := strings.TrimPrefix(target, "file://"); path != target || filepath.IsAbs(target) {
+		return "file://" + filepath.Clean(path), nil
 	}
 	return target, nil
 }
 
-func applyHandoffs(c *core.Core) error {
+func applyHandoffs(c *core.Core, b core.Board) error {
 	claims, err := c.Store.Handoffs.Claims("", true)
 	if err != nil {
 		return err
@@ -125,17 +112,8 @@ func applyHandoffs(c *core.Core) error {
 		if i == 16 {
 			break
 		}
-		target, err := applyHandoff(c, claim)
-		if errors.Is(err, errHandoffPredatesArchive) {
-			if err = c.Store.Handoffs.Skip(claim.ID); err != nil {
-				return err
-			}
-			continue
-		}
+		target, err := applyHandoff(c, b, claim)
 		if err != nil {
-			if errors.Is(err, work.ErrConflict) {
-				continue
-			}
 			if e := c.Store.Handoffs.Issue(claim.ID, err); e != nil {
 				return e
 			}
@@ -148,112 +126,65 @@ func applyHandoffs(c *core.Core) error {
 	return nil
 }
 
-var errHandoffPredatesArchive = errors.New("handoff predates the work's archival")
-
-func applyHandoff(c *core.Core, claim handoff.Claim) (string, error) {
-	w, err := c.Store.Work.Get(claim.Event.Work)
-	if err != nil {
-		return "", err
-	}
-	if w.State == "archived" {
-		history, err := c.Store.Work.History(w.ID, 0)
-		if err != nil {
-			return "", err
-		}
-		var closed time.Time
-		for _, e := range history {
-			if e.Type == "close" {
-				closed = e.At
-			}
-		}
-		if claim.Event.At.Before(closed) {
-			return "", errHandoffPredatesArchive
-		}
-	}
+func applyHandoff(c *core.Core, b core.Board, claim handoff.Claim) (string, error) {
 	existing := claim.Existing
-	if strings.HasPrefix(existing, "claim:") {
-		prior, err := c.Store.Handoffs.Claims(w.ID, false)
+	if prior, ok := strings.CutPrefix(existing, "claim:"); ok {
+		claims, err := c.Store.Handoffs.Claims(claim.Event.Work, false)
 		if err != nil {
 			return "", err
 		}
 		found := false
-		for _, p := range prior {
-			if p.ID == strings.TrimPrefix(existing, "claim:") {
-				found = true
-				break
-			}
+		for _, p := range claims {
+			found = found || p.ID == prior
 		}
 		if !found {
 			return "", fmt.Errorf("unknown existing handoff %s", existing)
 		}
-		existing, err = c.Store.Handoffs.Target(strings.TrimPrefix(existing, "claim:"))
-		if err != nil {
+		if existing, err = c.Store.Handoffs.Target(prior); err != nil {
 			return "", err
 		}
 	}
-	if strings.HasPrefix(existing, "item:") {
+	if ref, ok := strings.CutPrefix(existing, "item:"); ok {
 		if claim.Kind == "review" {
 			return "", fmt.Errorf("review request cannot be satisfied by an authorization or design decision")
 		}
-		it, err := c.Store.Item(strings.TrimPrefix(existing, "item:"))
+		it, err := c.Store.Item(ref)
 		if err != nil {
 			return "", err
 		}
-		if it.Scope != w.Repo {
-			return "", fmt.Errorf("matched item belongs to another project")
-		}
-		if err = deliverHandoffAnswer(c, w, claim, it); err != nil {
-			return "", err
+		if it.Session != claim.Event.Session {
+			return "", fmt.Errorf("matched item belongs to another session")
 		}
 		return "item:" + it.Key(), nil
-	}
-	if strings.HasPrefix(existing, "review:") {
-		r, ok := w.Reviews[strings.TrimPrefix(existing, "review:")]
-		if !ok {
-			return "", fmt.Errorf("unknown existing review %s", existing)
-		}
-		if r.Action == "merge" {
-			return "", fmt.Errorf("merge and review are different owner obligations")
-		}
-		if claim.Target == "" {
-			claim.Target = r.URL
-		}
-		resolved, err := resolveHandoffTarget(claim, handoffRepo(w.Repo))
-		if err != nil {
-			return "", err
-		}
-		if resolved != r.URL {
-			return "", fmt.Errorf("matched review and requested artifact differ")
-		}
-	}
-	if claim.Kind == "chat" {
-		claim.Target = ""
-	}
-	target, err := resolveHandoffTarget(claim, handoffRepo(w.Repo))
-	if err != nil {
-		return "", err
-	}
-	if claim.Kind == "review" || claim.Kind == "proposal" && target != "" {
-		return captureHandoffReview(c, w, claim, target)
 	}
 	if existing != "" {
 		return "", fmt.Errorf("unsupported existing obligation %s", existing)
 	}
-	kind := core.KindDecision
-	action := ""
 	if claim.Kind == "chat" {
-		kind = core.KindChore
-		action = "chat"
+		claim.Target = ""
 	}
-	if claim.Kind == "authorization" {
-		kind = core.KindGo
-	}
-	key := handoff.Key(w.ID, claim.Kind, strings.ToLower(strings.Join(strings.Fields(claim.Topic), " ")))
-	it, err := c.Store.AddHandoffItem(key, core.Item{Scope: w.Repo, Session: claim.Event.Session, Harness: claim.Event.Harness, Kind: kind, Action: action, Question: claim.Question, Rec: claim.Recommendation, Assumption: fmt.Sprintf("Recovered request from agent %s%s. Source %s at byte %d, event %s.\n%s", claim.Event.Agent, onBehalfOf(claim), claim.Event.Path, claim.Event.Offset, claim.Event.ID, claim.Quote)})
+	target, err := resolveHandoffTarget(claim, handoffRepo(claim.Event.Dir))
 	if err != nil {
 		return "", err
 	}
-	if err = deliverHandoffAnswer(c, w, claim, it); err != nil {
+	it := core.Item{Session: claim.Event.Session, Harness: claim.Event.Harness, Kind: core.KindDecision, Question: claim.Question, Rec: claim.Recommendation,
+		Assumption: fmt.Sprintf("Recovered request from agent %s%s. Source %s at byte %d, event %s.\n%s", claim.Event.Agent, onBehalfOf(claim), claim.Event.Path, claim.Event.Offset, claim.Event.ID, claim.Quote)}
+	switch {
+	case claim.Kind == "chat":
+		it.Kind, it.Action = core.KindChore, "chat"
+	case claim.Kind == "authorization":
+		it.Kind = core.KindGo
+	case claim.Kind == "review" || claim.Kind == "proposal" && target != "":
+		it.Kind = core.KindChore
+		if !strings.Contains(it.Question, target) {
+			it.Question = strings.TrimSpace(it.Question + " " + target)
+		}
+	}
+	if it.Scope = c.ScopeOf(b, it.Session); it.Scope == "" {
+		it.Scope = claim.Event.Dir
+	}
+	key := handoff.Key(claim.Event.Work, claim.Kind, strings.ToLower(strings.Join(strings.Fields(claim.Topic), " ")))
+	if it, err = c.AddHandoffItem(key, it); err != nil {
 		return "", err
 	}
 	return "item:" + it.Key(), nil
@@ -264,125 +195,4 @@ func onBehalfOf(claim handoff.Claim) string {
 		return ""
 	}
 	return " on behalf of " + claim.Requester
-}
-
-func handoffRequester(claim handoff.Claim) string {
-	if claim.Requester != "" {
-		return claim.Requester
-	}
-	return "Agent " + claim.Event.Agent
-}
-
-func deliverHandoffAnswer(c *core.Core, w work.Scope, claim handoff.Claim, it core.Item) error {
-	if it.State != core.ItemAnswered && it.State != core.ItemDismissed {
-		return nil
-	}
-	eventID := "handoff-answer/" + handoff.Key(it.Key(), claim.Event.Session, it.Answer, it.Reason)
-	if c.Store.Work.HasEvent(eventID) {
-		return nil
-	}
-	current, err := c.Store.Work.Get(w.ID)
-	if err != nil {
-		return err
-	}
-	text := fmt.Sprintf("Recorded owner response, not an agent recommendation: %s (%s), %s.\nQuestion: %s\nOwner answer: %s\nDismissal reason: %s\nRecorded at: %s\nUse this existing ledger response; do not ask the owner to repeat it.", it.Qualified(), it.Key(), it.State, it.Question, it.Answer, it.Reason, it.AnsweredAt.String())
-	_, err = c.Store.Work.Commit(work.Event{ID: eventID, Work: w.ID, Expected: current.Revision, Type: "message", Actor: "Yamnaya ledger", Target: claim.Event.Session, Text: text})
-	return err
-}
-
-func captureHandoffReview(c *core.Core, w work.Scope, claim handoff.Claim, target string) (string, error) {
-	if target == "" {
-		return "", fmt.Errorf("review request has no resolvable artifact target")
-	}
-	all, err := c.Store.Work.List()
-	if err != nil {
-		return "", err
-	}
-	var source work.Source
-	registered := false
-	for _, scope := range all {
-		for _, s := range scope.Sources {
-			if s.URL == target {
-				w, source, registered = scope, s, true
-				break
-			}
-		}
-	}
-	if !registered {
-		source = work.Source{Kind: "github", URL: target, Origin: "agent-handoff", Requester: handoffRequester(claim), Question: claim.Question, Coverage: "explicit agent handoff; source and readiness independently checked"}
-		if prs := core.PRsIn(target); len(prs) == 1 && prs[0].URL == target {
-			source.Kind = "github"
-		} else if strings.HasPrefix(target, "https://www.notion.so/") {
-			source.Kind = "notion"
-		} else if strings.HasPrefix(target, "https://") {
-			source.Kind = "artifact"
-		} else if filepath.IsAbs(target) || strings.HasPrefix(target, "file://") {
-			source.Kind = "file"
-		} else {
-			return "", fmt.Errorf("artifact target is ambiguous: %s", target)
-		}
-	}
-	var status *core.PRStatus
-	if source.Kind == "github" {
-		requireOwnership := !registered || source.Requester == "" || source.Origin == "agent-handoff"
-		if c.PRs == nil && requireOwnership {
-			return "", fmt.Errorf("GitHub authorship verification is unavailable")
-		}
-		if c.PRs != nil {
-			st, err := c.PRs.PRStatus(target)
-			if err != nil {
-				return "", err
-			}
-			if requireOwnership && !st.OwnedPR() {
-				return "", fmt.Errorf("PR authorship is not verified as your GitHub account: %s", target)
-			}
-			status = &st
-			source.AgentPR = source.AgentPR || st.OwnedPR()
-		}
-	}
-	if source.Requester == "" {
-		source.Requester = handoffRequester(claim)
-		source.Question = claim.Question
-	}
-	var review work.Review
-	if source.Kind == "artifact" {
-		review = work.Review{ID: target, URL: target, Kind: "proposal", Title: claim.Question, Version: handoff.Key("unverified-artifact", target), StatusError: "Artifact content is not independently verified; this is an agent request", Requester: source.Requester, Question: source.Question, Evidence: claim.Quote}
-	} else {
-		if c.CheckReview == nil {
-			return "", fmt.Errorf("source verification is unavailable for %s", target)
-		}
-		review, err = c.CheckReview(source)
-		if err != nil {
-			return "", err
-		}
-	}
-	if status != nil {
-		if head, _, _ := strings.Cut(review.Version, ":"); head != status.Merge.OID {
-			status.Merge.Error = "PR head changed between readiness and review observations"
-			status.Fetched = time.Time{}
-		}
-		if err = c.Store.SavePRStatus(target, *status); err != nil {
-			return "", err
-		}
-	}
-	review.Handoff = &work.Handoff{Event: claim.Event.ID, Agent: claim.Event.Agent, Session: claim.Event.Session, Path: claim.Event.Path, Offset: claim.Event.Offset, At: claim.Event.At, Quote: claim.Quote, Version: review.Version}
-	eventID := "handoff/" + claim.ID
-	if c.Store.Work.HasEvent(eventID) {
-		return "review:" + review.ID, nil
-	}
-	current, err := c.Store.Work.Get(w.ID)
-	if err != nil {
-		return "", err
-	}
-	if old, exists := current.Reviews[review.ID]; exists && old.Version != review.Version && review.Order >= old.Order {
-		sourceID := "handoff-source/" + claim.ID
-		if !c.Store.Work.HasEvent(sourceID) {
-			current, err = c.Store.Work.Commit(work.Event{ID: sourceID, Work: w.ID, Expected: current.Revision, Type: "observe", Actor: "source", Review: review, PreviousVersion: old.Version})
-			if err != nil {
-				return "", err
-			}
-		}
-	}
-	_, err = c.Store.Work.Commit(work.Event{ID: eventID, Work: w.ID, Expected: current.Revision, Type: "handoff", Actor: "Agent " + claim.Event.Agent, Source: source, Review: review})
-	return "review:" + review.ID, err
 }

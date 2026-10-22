@@ -91,9 +91,8 @@ func TestTeammateAttributionAndUnreadableCoverage(t *testing.T) {
 	if err = s.Handoffs.Ingest(path, "inode", off, events); err != nil {
 		t.Fatal(err)
 	}
-	issues, _ := s.Handoffs.Issues("work")
-	if len(issues) != 1 {
-		t.Fatalf("missing unreadable coverage %+v", issues)
+	if status, _ := s.Handoffs.Status(); status["events/error"] != 1 {
+		t.Fatalf("missing unreadable coverage %+v", status)
 	}
 	batch, _ := s.Handoffs.Batch()
 	if len(batch) != 1 || batch[0].Agent != "reviewer" {

@@ -3,7 +3,6 @@ package handoff
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 )
 
 type Store struct{ db *sql.DB }
@@ -155,11 +154,6 @@ func (s *Store) Issue(id string, cause error) error {
 	return err
 }
 
-func (s *Store) Skip(id string) error {
-	_, err := s.db.Exec(`UPDATE ym_handoff_claims SET state='archived',error='' WHERE id=?`, id)
-	return err
-}
-
 func (s *Store) Resume() error {
 	_, err := s.db.Exec(`UPDATE ym_handoff_events SET state='pending',error='' WHERE state='error' AND json_extract(CAST(event AS TEXT),'$.Error')=''; UPDATE ym_handoff_claims SET state='pending',error='' WHERE state='blocked'`)
 	return err
@@ -179,23 +173,6 @@ func (s *Store) Status() (map[string]int, error) {
 			return nil, err
 		}
 		out[key] = n
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) Issues(workID string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT error FROM ym_handoff_events WHERE work=? AND error<>'' UNION SELECT DISTINCT error FROM ym_handoff_claims WHERE work=? AND error<>''`, workID, workID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var issue string
-		if err = rows.Scan(&issue); err != nil {
-			return nil, err
-		}
-		out = append(out, fmt.Sprintf("Handoff capture: %s", issue))
 	}
 	return out, rows.Err()
 }

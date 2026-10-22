@@ -2,16 +2,6 @@ package tui
 
 // Commands maps each ym command the owner runs to the board key that does the same.
 var Commands = map[string]string{
-	"ym agent broadcast": "M", "ym agent batches": "M", "ym agent retry-batch": "M",
-	"ym handoff scan": ":", "ym handoff status": ":", "ym handoff resume": ":",
-	"ym agent capacity": ":", "ym agent spawn": "M", "ym agent list": "M", "ym agent snapshot": ":", "ym agent attach": "M", "ym agent detach": "c", "ym agent assign": ":", "ym agent default": "M", "ym agent pause": "M", "ym agent kill": "M", "ym agent resume": "M", "ym agent replace": ":", "ym agent message": "M",
-	"ym work follow-through": ":", "ym work delegate": ":", "ym work plan": ":", "ym work result": ":", "ym work verify": ":", "ym work reopen": ":", "ym work priority": ":",
-
-	"ym service status": ":", "ym service restart": ":", "ym work relate": ":", "ym work unrelate": ":",
-	"ym work create":   ":",
-	"ym work reviewed": "x", "ym work unreview": "u",
-	"ym work close": ":", "ym work resume": ":",
-	"ym work list": ":", "ym work show": ":", "ym work history": ":", "ym work context": ":", "ym work purpose": ":", "ym work authority": ":", "ym work manager": ":", "ym work bind": ":", "ym work message": ":", "ym work watch": ":", "ym work feedback": ":", "ym work decide": ":", "ym work trigger": ":", "ym work host": ":",
 	"ym item answer":    "a",
 	"ym item go":        "g",
 	"ym item dismiss":   "x",

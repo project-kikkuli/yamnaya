@@ -19,20 +19,11 @@ type alpineLayout struct {
 }
 
 func (m Model) sceneFocus() string {
-	if m.listMode() == modeWork || m.listMode() == modeReview {
-		for _, p := range m.board.Projects {
-			if p.Work != nil && p.Work.ID == m.workID {
-				return "m:" + p.Key
-			}
-		}
-	}
 	if m.listMode() == modeAgent {
 		return "a:" + m.sess + "/" + m.agent
 	}
 	if r, ok := m.selected(); ok {
 		switch {
-		case r.review != nil && r.project != nil:
-			return "m:" + r.project.Key
 		case r.need != nil:
 			return "m:" + r.need.Project
 		case r.member != nil:

@@ -123,39 +123,15 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 	if c.workWidth() > 0 {
 		cells = append(cells, workCell(p, c.work))
 	}
-	chief := ""
-	if p.Work != nil {
-		if names := m.chiefsOn(p.Work.ID); names != "" {
-			chief = "chief " + names
-		}
-	}
-	if ansi.StringWidth(chief) > c.doing {
-		chief = ""
-	}
-	if doing := c.doing - ansi.StringWidth(chief) - min(1, len(chief)); doing > 0 {
+	if c.doing > 0 {
 		switch {
 		case p.Duplicated():
-			cells = append(cells, pal.red.Render(pad(copiesWhere(p), doing)))
+			cells = append(cells, pal.red.Render(pad(copiesWhere(p), c.doing)))
 		case len(p.Sessions) > 0:
-			cells = append(cells, doingCell(m.board.At, p.Sessions[0], doing))
+			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
 		}
 	}
-	if chief != "" {
-		cells = append(cells, pal.dim.Render(chief))
-	}
-	line := strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
-	if p.Work != nil && i == m.cursor {
-		w := p.Work
-		assessment := w.Brief.Assessment
-		if assessment == "" {
-			assessment = "brief not published"
-		} else if !w.BriefCurrent() {
-			assessment = "assessment needs refresh · " + assessment
-		}
-		line += pal.dim.Render("     "+pad(assessment, max(10, m.width-6))) + "\n"
-		line += pal.dim.Render(fmt.Sprintf("     %d decisions ready · B brief · C context", w.Ready())) + "\n"
-	}
-	return line
+	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
 }
 
 // hue is the project's color on this board, apart from every other project's while there are colors to spare.

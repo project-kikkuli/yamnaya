@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/project-kikkuli/yamnaya/internal/work"
 	_ "modernc.org/sqlite"
 )
 
@@ -80,7 +79,6 @@ type Event struct {
 // Store keeps items, phases, vibes, lineage links, project names and merges.
 type Store struct {
 	db       *sql.DB
-	Work     *work.Store
 	Handoffs *handoff.Store
 }
 
@@ -222,17 +220,16 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	w, err := work.New(db)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
 	h, err := handoff.New(db)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, Work: w, Handoffs: h}, nil
+	if err := retireWork(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("retire work layer: %w", err)
+	}
+	return &Store{db: db, Handoffs: h}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

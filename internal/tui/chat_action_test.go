@@ -9,7 +9,7 @@ import (
 
 func TestCapturedChatActionShowsWhereToActAndOpensItsSession(t *testing.T) {
 	m, c, h := setup(t)
-	it, err := c.Store.AddHandoffItem("login", core.Item{Scope: "repo", Session: "lead", Harness: "claude", Kind: core.KindChore, Action: "chat", Question: "Enter the native login code", Assumption: "Agent helper requested this action in its parent conversation."})
+	it, err := c.AddHandoffItem("login", core.Item{Scope: "repo", Session: "lead", Harness: "claude", Kind: core.KindChore, Action: "chat", Question: "Enter the native login code", Assumption: "Agent helper requested this action in its parent conversation."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,7 +18,7 @@ func TestCapturedChatActionShowsWhereToActAndOpensItsSession(t *testing.T) {
 	if !strings.Contains(m.View(), "action in chat") || !strings.Contains(strings.Join(m.footer(), "\n"), "o open chat") {
 		t.Fatalf("native destination unclear: %s", m.View())
 	}
-	m = press(t, m, "o")
+	press(t, m, "o")
 	if len(h.focused) != 1 || h.focused[0] != "/dev/a" {
 		t.Fatalf("wrong chat opened: %+v", h.focused)
 	}

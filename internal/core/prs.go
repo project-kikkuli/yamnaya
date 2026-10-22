@@ -92,22 +92,6 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			}
 		}
 	}
-	work, err := c.Store.Work.List()
-	if err != nil {
-		return 0, err
-	}
-	for _, w := range work {
-		for _, source := range w.Sources {
-			if source.Kind != "github" || seen[source.URL] {
-				continue
-			}
-			seen[source.URL] = true
-			st, ok := known[source.URL]
-			if !ok || (!st.Closed() && now.Sub(st.Fetched) >= PRStale) {
-				due = append(due, source.URL)
-			}
-		}
-	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error

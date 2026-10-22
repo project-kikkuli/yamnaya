@@ -82,7 +82,7 @@ func TestGitHubMergeFactsAreReadWithTheHeadAndThreadEvidence(t *testing.T) {
 		return []byte(`{"data":{"resource":{"state":"OPEN","title":"Caller migration","headRefOid":"head1","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","reviewThreads":{"totalCount":0,"nodes":[]},"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"checkRunCountsByState":[{"state":"SUCCESS","count":8}]}}}}]}}}}`), nil
 	}}
 	st, err := s.PRStatus(url)
-	if err != nil || st.Merge.OID != "head1" || !st.ReadyToMerge() {
+	if err != nil || st.Merge != (core.PRMergeFacts{OID: "head1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}) || st.Passed != 8 {
 		t.Fatalf("merge facts were lost: %+v %v", st, err)
 	}
 }

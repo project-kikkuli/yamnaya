@@ -162,23 +162,17 @@ func (p *Prices) Cost(name string, t core.Tokens, c class) (float64, bool) {
 		}
 	}
 	in := m.rate("input_cost_per_token", tier)
-	read, ok := m.rates["cache_read_input_token_cost"]
-	if ok {
+	read := in
+	if _, ok := m.rates["cache_read_input_token_cost"]; ok {
 		read = m.rate("cache_read_input_token_cost", tier)
-	} else {
-		read = in
 	}
-	write5, ok := m.rates["cache_creation_input_token_cost"]
-	if ok {
+	write5 := in
+	if _, ok := m.rates["cache_creation_input_token_cost"]; ok {
 		write5 = m.rate("cache_creation_input_token_cost", tier)
-	} else {
-		write5 = in
 	}
-	write1, ok := m.rates["cache_creation_input_token_cost_above_1hr"]
-	if ok {
+	write1 := 2 * in
+	if _, ok := m.rates["cache_creation_input_token_cost_above_1hr"]; ok {
 		write1 = m.rate("cache_creation_input_token_cost_above_1hr", tier)
-	} else {
-		write1 = 2 * in
 	}
 	usd := float64(t.Input)*in + float64(t.Output)*m.rate("output_cost_per_token", tier) +
 		float64(t.CacheRead)*read + float64(t.CacheWrite5m)*write5 + float64(t.CacheWrite1h)*write1

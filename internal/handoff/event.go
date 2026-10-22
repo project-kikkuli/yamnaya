@@ -7,16 +7,17 @@ import (
 	"time"
 )
 
+// File is a transcript to watch; Work is the key of the live session it belongs to and Dir that session's directory.
 type File struct {
-	Work, Harness, Session, Agent, Path string
+	Work, Harness, Session, Agent, Path, Dir string
 }
 
 type Event struct {
-	ID, Work, Harness, Session, Agent, Path string
-	Offset                                  int64
-	At                                      time.Time
-	Text                                    string
-	Error                                   string
+	ID, Work, Harness, Session, Agent, Path, Dir string
+	Offset                                       int64
+	At                                           time.Time
+	Text                                         string
+	Error                                        string
 }
 
 type Claim struct {

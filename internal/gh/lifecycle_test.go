@@ -36,7 +36,7 @@ func TestLifecycleAndAuthorshipRemainKnownWithoutGraphQL(t *testing.T) {
 			}}
 			for range 2 {
 				st, err := s.PRStatus(url)
-				if err != nil || st.State != tc.want || st.Merge.Author != tc.author || st.Merge.Viewer != "mira" || st.OwnedPR() != (tc.author == "mira") {
+				if err != nil || st.State != tc.want || st.Merge.Author != tc.author || st.Merge.Viewer != "mira" {
 					t.Fatalf("status %+v err %v", st, err)
 				}
 				if tc.wantDetails > 0 && !strings.Contains(st.Merge.Error, "quota") {
@@ -62,7 +62,7 @@ func TestReadinessIsBoundToTheRESTHeadAndAccount(t *testing.T) {
 				return []byte(`{"data":{"resource":{"state":"OPEN","headRefOid":"` + head + `","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"APPROVED"}}}`), nil
 			}}
 			st, err := s.PRStatus(url)
-			if err != nil || !st.OwnedPR() || st.ReadyToMerge() != (head == "head1") {
+			if err != nil || !strings.EqualFold(st.Merge.Author, st.Merge.Viewer) || (st.Merge.Error == "") != (head == "head1") {
 				t.Fatalf("status %+v err %v", st, err)
 			}
 		})
@@ -85,7 +85,7 @@ func TestAccountLookupFailureDoesNotPoisonFutureStatusRefreshes(t *testing.T) {
 		t.Fatal("account failure hidden")
 	}
 	st, err := s.PRStatus(url)
-	if err != nil || !st.OwnedPR() || st.State != "MERGED" {
+	if err != nil || st.Merge.Viewer != "mira" || st.State != "MERGED" {
 		t.Fatalf("status did not recover: %+v %v", st, err)
 	}
 }

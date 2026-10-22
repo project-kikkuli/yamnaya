@@ -1,6 +1,6 @@
 # yamnaya
 
-`ym` is an alpine terminal board for continuing software work: current assessments, active Claude Code and Codex sessions, and prepared decisions that need you. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
+`ym` is an alpine terminal board for every active Claude Code and Codex session and the decisions that need you. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
 
 ## Install
 
@@ -13,13 +13,13 @@
 
 ## The screen
 
-- **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result. Continuing mission rows show the manager assessment, live sessions, pending judgments and changes. Native detail retains branch-gate progress.
+- **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result.
 - **Progress**: `(crew finished + gates passed) / (crew dispatched + 6 × open branches)`. A branch passes six gates: branch, commits, pull request open, CI green, review threads resolved, merged. A subagent killed or failed mid-turn counts in neither part, so it neither inflates the bar nor holds it below 100%; one that ends by handing back its report counts as finished. Agent-set phases are a label and never move the bar. A mission's detail shows the raw counts and each branch's gate strip.
 - **Needs you**: permission prompts with the tool and command, then open items with the agent's recommendation, how much they block and which session filed them. Answer (`a`), later (`l`), why (`w`) or dismiss (`x`) inline. Last come idle sessions whose last reply asks you (the same block of questions `h` counts) while no open item of theirs, permission prompt or earlier dismissal of that reply covers it, shown as `waiting:` with the first question of that block: `w` or `enter` shows the whole reply, `a` sends your answer the way `ym send` does and clears the row, and `x` hides it until the session asks again.
 - **Fleet line**: each Claude and Codex limit window with its use and reset, and today's and the last seven days' spend at API prices. Every repo, mission, session and agent shows its own spend, subagents and child threads included.
 - `enter` drills down and `esc` climbs back: repo, then its missions, then a mission's sessions and crew, then a session (task, latest ask, what it is doing now, pull requests and CI, items, crew), then one agent (its full brief, result, files written and tool trail). Rename (`r`), merge (`m`) or split (`S`) missions, advance (`p`) or set (`P`) their phases, and set their vibe (`v`).
 - `h` shows health by week: median and p90 time from item filed to answered, the share of items dismissed or open past a day, assistant messages per day that print a block of questions in chat, and agent-hours per day spent waiting on you (from a turn that ended asking you, or a permission prompt you answered, to your next typed message). It reads transcripts incrementally into per-day rows in the ym database.
-- Anything the CLI does for the owner has a key; `?` lists them. `n` starts a new session in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `N` picks the repository first, from recent repos then every repo under the roots, then asks for the prompt. `K` kills a live session's agent with SIGTERM after confirmation and removes the stopped session from the active board. On an exited session or mission, `K` archives it without workspace cleanup. Terminals, worktrees, transcripts, briefs and owner queue obligations stay; `E` retains launch history and `ym revive` can resume a launched session. Stop intent survives stale discovery snapshots and restarts; a fresh live observation establishes a resume. `L` lands a registered launch, removing its worktree only when clean and merged or pushed; without a launch record, `L` offers to archive an exited mission. Exited launches can also land automatically once they have nothing to lose, with a day of retention after an owner kill or signal. `G` runs `ym gc`, `T` ends an idle session and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
+- Anything the CLI does for the owner has a key; `?` lists them. `n` starts a new session in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `N` picks the repository first, from recent repos then every repo under the roots, then asks for the prompt. `K` kills a live session's agent with SIGTERM after confirmation and removes the stopped session from the active board. On an exited session or mission, `K` archives it without workspace cleanup. Terminals, worktrees, transcripts and items stay; `E` retains launch history and `ym revive` can resume a launched session. Stop intent survives stale discovery snapshots and restarts; a fresh live observation establishes a resume. `L` lands a registered launch, removing its worktree only when clean and merged or pushed. Exited launches can also land automatically once they have nothing to lose, with a day of retention after an owner kill or signal. `G` runs `ym gc`, `T` ends an idle session and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
 - `o` goes to a session. When ym runs inside tmux and the session is in a tmux pane, ym jumps there with `switch-client` and `select-pane`. Otherwise it says where the session runs (for example `iTerm ttys012`) and never opens windows or tabs. It never starts a second copy, and flags a session that runs in two processes.
 - `O` opens a tmux session beside the board instead: ym splits its own pane and attaches the new pane to a grouped copy of the session's tmux session, so the board stays in view and no other client's window moves. The pane closes when you detach from it. It needs ym running inside tmux.
 
@@ -33,86 +33,19 @@ Claude Code reports its limits only to the statusline, so pipe the statusline in
 
 Spend covers the transcripts on the host ym runs on, and the board names that host; limits are account-wide.
 
-## Continuing work
+## Background service
 
-The repo view stays the entry point, including mission spend, idle/busy/waiting state, phases, and PR activity. Work retains its purpose, accountable agent, context, briefs, review obligations, and history after execution ends. Session discovery records execution facts; it does not assign management responsibility.
+`ym serve` redelivers answers, refreshes pull request status and captures handoffs independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
 
-- `M` opens chiefs and managers. `n` creates a chief through name, remit, and authority prompts. Open `M` from a project to attach it with `a`; `d` toggles the repository default and `D` the global default for new sessions. Removing a default preserves existing attachments. `p` pauses or resumes scheduling.
-
-In `M`, Space selects managers, `*` selects the visible managers, and Ctrl+U clears the selection. Selection follows persistent agent identities across refreshes and filters. `s` composes one message to the selection, or to the current manager when nothing is selected. The composer shows a frozen recipient list; Up/Down scrolls it, Enter sends, and Escape cancels without creating a message. New managers and filter changes cannot add recipients to an open composer.
-
-`v` opens durable message receipts. **Accepted** means the message is in that manager's work ledger; **delivered** means it was handed to native execution; **incorporated** requires a checkpoint covering its input revision. A failed or unavailable recipient stays recorded. After correcting the failure, `r` retries failed recipients while successful recipients keep their receipts. Brackets move through message history. The CLI equivalents are `ym agent broadcast --to AGENT --to AGENT --text TEXT --id ID`, `ym agent batches [ID]`, and `ym agent retry-batch ID`. Reusing an ID with the same message and recipients is idempotent; different content or recipients are rejected.
-- `B` reads the full brief. Its workstreams tab includes owned delegations and attached projects. `s` sends direction to the responsible agent; `C` reads shared context and `e` edits it. `V` opens the stable browser brief.
-- `R` opens review obligations, including unassigned incoming requests. Prepared judgments also appear on the home screen. `a` records a judgment and `f` returns feedback. These actions preserve a management obligation to follow through; they do not post to GitHub or Notion.
-- Results remain awaiting verification until their delegator or the owner records independent evidence. Open the work brief and press `a` to record owner verification. Reading a brief or receiving an event completes nothing.
-
-`ym serve` runs reconciliation and the brief server independently of the terminal. Opening the board starts it detached; closing the board leaves it and native executions running. It reloads after a binary update. `ym service status` shows its address and errors; `ym service restart` adopts the current shell environment. Briefs are served at `http://127.0.0.1:7763/brief/WORK` by default.
-
-Create a chief without opening the terminal:
-
-```sh
-ym agent spawn General --remit "Carry priorities across attached engineering work" --authority "Investigate and coordinate; prepare owner judgments; reserve publication" --directory /src/query
-ym agent attach General EXISTING_SESSION
-ym agent default General /src/query
-ym agent default General
-ym agent message General "Preserve callers before cleanup"
-```
-
-An agent has a persistent identity and working brief; its native Claude or Codex session is replaceable. `ym agent snapshot AGENT` includes the remit, context, attachments, owned work, recent events, and pending input revisions. `ym agent replace AGENT` starts a fresh execution from that state; `--session-id` links an existing native conversation. `pause` stops future scheduling, while `resume` schedules a new management pass. Already running native sessions retain their independent lifecycle. Agent spend includes previous execution sessions after replacement.
-
-The background service coalesces changes into bounded management batches. A native agent investigates, acts within its remit, and publishes a checkpoint containing its assessment, incorporated input revisions, and a next action or concrete wait condition. Reading the inbox or exiting successfully does not discharge that obligation. Independent next actions schedule another pass; source changes, child results, owner direction, and registered wake times schedule reassessment. Execution failures remain visible and wake the delegator for investigation. A failed input is not blindly executed again without changed direction or an explicit replacement.
-
-`ym agent capacity N` configures concurrent background executions; the default is four. Independently running agents are unrestricted. Workstations and browser access keep their own lifecycle. `ym work host SSH_ALIAS` registers a remote host, and a local chief can follow its work with `ym agent attach CHIEF SSH_ALIAS/WORK_ID`.
-
-A manager delegates a bounded commitment with `ym work delegate PARENT NAME --agent AGENT --purpose TEXT --authority TEXT --next TEXT`. Each commitment has one accountable agent. `ym work result WORK EVIDENCE` submits a result against current context; `ym work verify WORK EVIDENCE` records independent verification by its delegator or the owner. Changed context invalidates obsolete completion evidence. Parent cycles and verification with unfinished children are rejected.
-
-After carrying out an owner decision, `ym work follow-through WORK REVIEW EVIDENCE` records the resulting evidence. Until then, the decision retains its accountable next owner.
-
-Explicit owner direction and agent inference retain their actor identities in history and context. `ym work priority WORK N` records both the priority and who set it. Chiefs can follow the same work without sharing execution ownership.
-
-Managers publish `ym work brief WORK` from JSON on stdin:
-
-```json
-{"Assessment":"v2 callers remain compatible","Rationale":"Keep one resolver","Changed":"Nested case verified","Uncertainty":"First-cohort traffic","Next":"Check the SDK","Context":2,"Evidence":{"REVIEW":"SOURCE_VERSION"}}
-```
-
-Use the actual context revision and exact observed source versions from `ym work show WORK --json`. `Artifact` is an optional browser artifact URL. `ym --session SESSION work adopt WORK --revision 2` records incorporation of changed direction. `ym work trigger WORK RFC3339 "reassess after CI"` persists the next wake request; registered source changes also wake managers.
-
-## Review intake
-
-GitHub review requests addressed directly to the authenticated `gh` account are discovered automatically. Team requests stay outside personal intake. Withdrawn automatic assignments leave the active queue while their review history remains available; explicit registrations and work with owner feedback or decisions stay tracked. A uniquely matching repository chief takes responsibility, falling back to a uniquely configured general chief. Ambiguous or unassigned requests appear in Incoming requests. Existing synthetic review projects migrate there with their evidence, feedback, and original history preserved. PRs linked by native sessions are watched provisionally, without treating every linked PR as a request for the owner's judgment. Register human requests and other sources explicitly:
-
-```
-ym work watch WORK https://github.com/owner/repo/pull/42 --requester Mira --question "Accept the migration?"
-ym work watch WORK https://www.notion.so/PAGE_ID --kind notion --requester Mira --question "Accept the resolver design?"
-ym work watch WORK /src/design.html --kind file --requester Mira --question "Approve the proposal?"
-```
-
-Notion requires `NOTION_TOKEN` and pages shared with that integration, including read-comment access. Optional `NOTION_REVIEWER_ID` enables explicit mention detection on watched pages. Page blocks and comments are paginated. Coverage is limited to registered pages; Notion has no workspace-wide review-request inbox API. Missing credentials, incomplete GitHub search results and unavailable sources are surfaced as coverage gaps.
-
-The background service also captures explicit owner handoffs from Claude and Codex transcripts, including delegated-agent messages and sessions that have exited. A bounded native semantic pass identifies review requests, proposals, choices, authorization requests and actions that require the originating chat. Requests retain the agent, quoted request, transcript location and observed source version. Repeated summaries share the existing obligation; a previously answered authorization sends the recorded answer back to the session. Agent prose never records owner approval or establishes merge readiness.
+The background service also captures explicit owner handoffs from the transcripts of live Claude and Codex sessions, including their subagents and child threads. A bounded native semantic pass identifies review requests, proposals, choices, authorization requests and actions that require the originating chat, and files each as one item for that session: choices as decisions, authorization requests as go items, chat actions as chores marked `action in chat`, and review requests and proposals as chores naming the artifact. Items retain the agent, quoted request and transcript location. Repeated summaries match the existing item instead of filing another. Agent prose never records owner approval.
 
 Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents can file this directly with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action. Structured submissions remain the direct path; background capture recovers omissions without requiring special headings.
 
-Capture uses durable file cursors and source-event identities. Partial writes, restarts and later replies retain outstanding requests. Pending capture and failures appear in coverage status and project briefs. `: handoff status` reports the backlog; after correcting a reported provider or source failure, `: handoff resume` reconsiders unresolved records. `: handoff scan WORK` captures known transcripts and reconciles extracted requests. Native classifiers share the configured execution capacity; their model calls run outside the reconciliation loop with tools and hooks disabled. Notion and file reviews use their existing source adapters; opaque artifact links carry an explicit content-verification warning.
-
-Tracked agent PRs authored by your authenticated GitHub account gain a separate **merge** queue item when GitHub reports an open, non-draft PR with a known head, a clean merge state, satisfied reviews and checks, and no unresolved review threads. Those PRs remain watched after their native agent exits. Merge items open on GitHub with `o`/`V`; they clear from the queue when GitHub reports merged or closed, or return to agent work when prerequisites regress. A status failure keeps a previously ready item visible with a verification warning. Reviewing a PR does not complete its merge item. `x` dismisses a merge item until you restore it with `u` in the dismissed queue (`Tab`). Dismissal survives status changes and restarts. REST tracks authorship and merged/closed outcomes independently of GraphQL readiness checks.
-
-Open the incoming stack with Enter to work through its pending checklist. `o` or `V` opens the selected source; `x` (or Space in the list) records it as reviewed and advances. In a review, `n`/`p` moves between requests. Tab switches queues, including reviewed items where `u` returns a request to the checklist. These are local owner receipts tied to the source and context revisions. Changed evidence or direction brings the request back. GitHub approval and manager-prepared judgments are separate actions. The CLI equivalents are `ym work reviewed WORK REVIEW` and `ym work unreview WORK REVIEW`.
-
-Preparation uses `ym work prepare WORK REVIEW` with JSON on stdin:
-
-```json
-{"Version":"SOURCE_VERSION","PreparedContext":2,"Question":"Accept the migration?","Recommendation":"Accept","Evidence":"Compatibility and rollback results","Changed":"Nested case added"}
-```
-
-A source or context revision removes stale preparation from the ready queue. Feedback remains attached when a revision returns. Judgments recheck registered sources before committing; unavailable or changed evidence must be reconciled first. `ym work history WORK` retains decision rationale and follow-through events. `ym work close WORK "reason"` archives work while keeping outstanding reviews visible; `resume` reactivates it.
-
-`ym work host SSH_ALIAS` brings captured work from an independent host into the same board. Run a compatible `ym serve` there. Messages and judgments queue to their origin and remain visibly pending until applied; an unavailable host retains its last captured state. `ym work list` includes captured hosts, while `work export` exports local work only. Remote history in the local reader is the most recent 20 events; full history remains on its origin.
+Capture uses durable file cursors and source-event identities, so partial writes, restarts and later replies keep outstanding requests. `ym handoff status` reports the backlog; after correcting a reported provider or source failure, `ym handoff resume` reconsiders unresolved records. `ym handoff scan` captures live sessions' transcripts and reconciles extracted requests. One native classifier runs at a time, outside the reconciliation loop, with tools and hooks disabled.
 
 ## Validation
 
-Run `agent-slot -- go test ./...` and `agent-slot -- go vet ./...`. Lifecycle tests replay generated histories against SQLite and an independent obligation ledger, including restarts, duplicate events, stale decisions and context adoption. Process tests run the service, a fixture manager and the HTTP brief server with the terminal absent. `agent-slot -- python3 scripts/check-work-mutants.py` checks that behavioral tests reject deliberately broken implementations. The 1,000-workstream test simulates records and terminal aggregation; it does not run 1,000 autonomous agents or provide formal Go proofs.
+Run `agent-slot -- go test ./...`, `agent-slot -- go vet ./...` and `staticcheck ./...`.
 
 ## Remote hosts
 

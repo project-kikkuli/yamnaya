@@ -203,16 +203,11 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			updates, err := e.core.Store.Work.Inbox(c.Session)
-			if err != nil {
-				return err
-			}
 			if asJSON {
 				out := struct {
 					Items []itemJSON `json:"items"`
 					Vibe  string     `json:"vibe,omitempty"`
-					Work  []string   `json:"work,omitempty"`
-				}{Items: []itemJSON{}, Vibe: nudge, Work: updates}
+				}{Items: []itemJSON{}, Vibe: nudge}
 				for _, it := range items {
 					out.Items = append(out.Items, toJSON(it))
 				}
@@ -224,9 +219,6 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				} else {
 					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
-			}
-			for _, update := range updates {
-				fmt.Fprintln(cmd.OutOrStdout(), "work: "+update)
 			}
 			msgs, err := e.core.TakeMessages(c.Session)
 			for _, m := range msgs {

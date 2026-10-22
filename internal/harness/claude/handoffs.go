@@ -11,7 +11,7 @@ import (
 func (a *Adapter) HandoffFiles(session, cwd string) ([]handoff.File, error) {
 	path := a.transcript(cwd, session)
 	if path == "" {
-		return nil, fmt.Errorf("Claude transcript for %s is unavailable", session)
+		return nil, fmt.Errorf("claude transcript for %s is unavailable", session)
 	}
 	out := []handoff.File{{Harness: Name, Session: session, Agent: session, Path: path}}
 	base := strings.TrimSuffix(path, ".jsonl")

@@ -25,9 +25,8 @@ func TestSemanticCheckpointAndFailuresRemainDurableWithoutDuplicatingClaims(t *t
 	if batch, _ := s.Handoffs.Batch(); len(batch) != 0 {
 		t.Fatal("failed extraction spun unchanged work")
 	}
-	issues, _ := s.Handoffs.Issues("work")
-	if len(issues) != 1 {
-		t.Fatalf("coverage failure missing: %+v", issues)
+	if status, _ := s.Handoffs.Status(); status["events/error"] != len(events) {
+		t.Fatalf("coverage failure missing: %+v", status)
 	}
 	if err = s.Handoffs.Resume(); err != nil {
 		t.Fatal(err)

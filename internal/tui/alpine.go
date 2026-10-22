@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/project-kikkuli/yamnaya/internal/core"
-	"github.com/project-kikkuli/yamnaya/internal/work"
 )
 
 const alpineInterval = 100 * time.Millisecond
@@ -79,9 +78,6 @@ func (a *alpine) observe(b core.Board) {
 		}
 		m := &a.mountains[i]
 		m.name, m.region, m.active = p.Name, p.Repo, true
-		if p.Work != nil {
-			m.needs += p.Work.Ready()
-		}
 	}
 	for _, n := range b.Needs {
 		if i, ok := a.index[n.Project]; ok {
@@ -129,13 +125,6 @@ func (a *alpine) observe(b core.Board) {
 		if g := a.groups["m:"+p.Key]; g != nil {
 			g.name = p.Name
 			g.projects = 1
-			if p.Work != nil {
-				g.assessment = p.Work.Brief.Assessment
-				if g.assessment != "" && !p.Work.BriefCurrent() {
-					g.assessment = "Needs refresh · " + g.assessment
-				}
-			}
-
 		}
 		for _, s := range p.Sessions {
 			if g := a.groups["s:"+s.Key()]; g != nil {
@@ -146,27 +135,6 @@ func (a *alpine) observe(b core.Board) {
 					g.name = c.Name
 					if g.name == "" {
 						g.name = core.Short(c.ID)
-					}
-				}
-			}
-		}
-	}
-	seenWork := map[string]bool{}
-	for _, p := range b.Projects {
-		if p.Work == nil || seenWork[p.Work.ID] {
-			continue
-		}
-		seenWork[p.Work.ID] = true
-		for _, key := range []string{"*", "r:" + p.Repo, "m:" + p.Key} {
-			if g := a.groups[key]; g != nil {
-				for _, r := range p.Work.Reviews {
-					switch r.QueueState() {
-					case work.Ready:
-						g.reviews++
-					case work.Preparing:
-						g.preparing++
-					case work.WithAuthor:
-						g.withAuthor++
 					}
 				}
 			}

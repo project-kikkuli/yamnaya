@@ -55,7 +55,7 @@ func sameServiceBinary(a, b os.FileInfo) bool {
 
 func serviceCmd() *cobra.Command {
 	root := &cobra.Command{Use: "service", Short: "Inspect or restart background reconciliation"}
-	root.AddCommand(&cobra.Command{Use: "status", Short: "Show service heartbeat, address, and source errors", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "status", Short: "Show service heartbeat and its last error", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := stateDir()
 		if err != nil {
 			return err

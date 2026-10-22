@@ -43,29 +43,6 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 			}
 		}
 	}
-	if errors.Is(err, core.ErrNotFound) && c.Store != nil {
-		all, loadErr := c.Store.Work.List()
-		if loadErr != nil {
-			return loadErr
-		}
-		matches := map[string]core.Live{}
-		for _, w := range all {
-			for id, x := range w.Executions {
-				if strings.HasPrefix(id, ref) {
-					matches[id] = core.Live{Session: core.Session{ID: id, Harness: x.Harness, Title: w.Name}}
-				}
-			}
-		}
-		if exact, ok := matches[ref]; ok {
-			s, err = exact, nil
-		} else if len(matches) > 1 {
-			return fmt.Errorf("several ended sessions match %q; use the full session id", ref)
-		} else {
-			for _, match := range matches {
-				s, err = match, nil
-			}
-		}
-	}
 	if err != nil {
 		return err
 	}
