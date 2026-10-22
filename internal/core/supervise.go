@@ -138,8 +138,9 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 			evidence += "; last launch failed: " + m.LastError
 		}
 		if g.State != GoalStuck || g.Evidence != evidence {
+			was := g.State
 			g.State, g.Evidence, g.AckedAt = GoalStuck, evidence, timeZero
-			return c.Store.SaveGoal(g)
+			return c.saveStuck(g, was)
 		}
 		return nil
 	}
@@ -193,13 +194,23 @@ func (c *Core) watchQuiet(b Board, o Org, m Manager, g Goal) error {
 	if g.State == GoalStuck {
 		return nil
 	}
+	was := g.State
 	g.State, g.AckedAt = GoalStuck, timeZero
 	g.Evidence = fmt.Sprintf("%snothing moved since %s; nudged %d times, last at %s", quietEvidence,
 		g.LastMovedAt.Local().Format(time.DateTime), m.Nudges, m.NudgedAt.Local().Format(time.DateTime))
 	if s, ok := b.Session(m.Session); ok && s.Doing.Tool != "" {
 		g.Evidence += "; last doing " + s.Doing.String()
 	}
-	return c.Store.SaveGoal(g)
+	return c.saveStuck(g, was)
+}
+
+// saveStuck saves a goal that got stuck and, when it was not stuck before, records the stuck event the owner is notified of.
+func (c *Core) saveStuck(g Goal, was string) error {
+	if err := c.Store.SaveGoal(g); err != nil || was == GoalStuck {
+		return err
+	}
+	_, _, err := c.RecordGoalEvent(g.ID, EventStuck, g.Evidence, "")
+	return err
 }
 
 // lastMoved is the latest sign of life in m's goal: its session or its agents' turns, its brief, or now while any of them works or

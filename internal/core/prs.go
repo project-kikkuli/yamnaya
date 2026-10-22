@@ -92,6 +92,21 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			}
 		}
 	}
+	tracked, err := c.Store.GoalPRs()
+	if err != nil {
+		return 0, err
+	}
+	for goal, urls := range tracked {
+		if g, ok := b.Org.Goals[goal]; !ok || !b.Org.Active(b.Org.Managers[g.ManagerID]) {
+			continue
+		}
+		for _, url := range urls {
+			if st, ok := known[url]; !seen[url] && ok && !st.Closed() && now.Sub(st.Fetched) >= PRStale {
+				seen[url] = true
+				due = append(due, url)
+			}
+		}
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error

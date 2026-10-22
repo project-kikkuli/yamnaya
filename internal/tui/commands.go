@@ -30,6 +30,7 @@ var Commands = map[string]string{
 	"ym goal send":      "s",
 	"ym goal relaunch":  "R",
 	"ym goal drop":      "K",
+	"ym goal feed":      "enter",
 	"ym chief":          "C",
 	"ym chief attach":   "c",
 	"ym chief detach":   "c",

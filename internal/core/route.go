@@ -177,10 +177,33 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 		return it, err
 	}
 	added, err := c.Store.addItem(it)
-	if err != nil || added.Recipient == Owner {
+	if err != nil {
 		return added, err
 	}
+	if m, ok := o.Managed(c.Resolve(it.Session), c.parentsFor(b, berr)); ok {
+		if g, ok := o.Goals[m.GoalID]; ok {
+			to := "the owner"
+			if added.Recipient != Owner {
+				to = o.Managers[added.Recipient].ID
+			}
+			now := c.now()
+			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAsked, Created: now, Delivered: now,
+				Payload: fmt.Sprintf("%s asked %s (%s): %s", askerOf(o, it.Session), to, added.Key(), oneLine(added.Question))}); err != nil {
+				return added, err
+			}
+		}
+	}
+	if added.Recipient == Owner {
+		return added, nil
+	}
 	return added, c.tell(b, o.Managers[added.Recipient].Session, askText(b, o, added), false)
+}
+
+func askerOf(o Org, session string) string {
+	if m, ok := o.ManagerOf(session); ok {
+		return "manager " + m.ID
+	}
+	return "agent " + Short(session)
 }
 
 // askText is how an ask reaches the manager or chief it was routed to.

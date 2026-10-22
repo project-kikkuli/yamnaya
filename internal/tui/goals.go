@@ -153,6 +153,12 @@ func (m Model) nodeLines(i int, n core.Node) string {
 		what = pal.bold.Render(n.Manager.Name) + pal.dim.Render(fmt.Sprintf("  %d goals", n.Count()))
 	}
 	agents := pal.dim.Render(pad(plural(agentCount(n), "agent"), 9))
+	if u := n.Unread(); u > 0 {
+		agents += pal.yellow.Render(fmt.Sprintf("%d new ", u))
+	}
+	if n.Feed.Latest != nil {
+		what += pal.dim.Render("  " + n.Feed.Latest.Payload)
+	}
 	line := mark + head + " " + stand + " " + agents + " "
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {
@@ -258,6 +264,19 @@ func (m Model) goalView() viewPage {
 	}
 	if g.Summary != "" {
 		m.field(&b, "done", g.Summary)
+	}
+	b.WriteString("\n" + pal.bold.Render(" FEED") + pal.dim.Render("  newest first") + "\n")
+	if len(n.Feed.Recent) == 0 {
+		b.WriteString(pal.dim.Render("   nothing yet; ym records PRs, CI, merges, agent replies and the manager's updates here") + "\n")
+	}
+	for _, e := range n.Feed.Recent[:min(len(n.Feed.Recent), 12)] {
+		line := " " + pal.dim.Render(age(m.board.At, e.Created)) + " " + pad(e.Kind, 14) + " " + oneLine(e.Payload)
+		if !e.OwnerNews() {
+			line = pal.dim.Render(line)
+		} else if e.Seen.IsZero() || !e.Seen.Before(m.feedFrom) {
+			line = pal.yellow.Render("*") + line
+		}
+		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
 	}
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SESSIONS (%d)", len(m.rows()))) + "\n")
 	for i, r := range m.rows() {
@@ -411,6 +430,10 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
 			if err := m.core.Looked(m.board, n.Goal.ID); err != nil {
+				m.message = "error: " + err.Error()
+			}
+			m.feedFrom = m.board.At
+			if err := m.core.Store.MarkSeen(n.Goal.ID, m.board.At); err != nil {
 				m.message = "error: " + err.Error()
 			}
 		} else {

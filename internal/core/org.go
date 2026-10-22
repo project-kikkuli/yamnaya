@@ -250,7 +250,11 @@ func (s *Store) SaveManager(m Manager) error {
 		return err
 	}
 	if m.Session != "" {
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO ym_manager_sessions (session, manager, at) VALUES (?, ?, ?)`, m.Session, m.ID, now()); err != nil {
+		at := now()
+		if !m.LaunchedAt.IsZero() {
+			at = m.LaunchedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err = tx.Exec(`INSERT OR IGNORE INTO ym_manager_sessions (session, manager, at) VALUES (?, ?, ?)`, m.Session, m.ID, at); err != nil {
 			return err
 		}
 	}

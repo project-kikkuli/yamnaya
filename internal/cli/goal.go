@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -39,7 +40,7 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
 	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(with),
-		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with))
+		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(with))
 	return cmd
 }
 
@@ -417,5 +418,84 @@ func chiefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			return e.core.Attach(args[0], "")
 		}),
 	})
+	return cmd
+}
+
+func goalUpdateCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "update <line>",
+		Short: "Tell the owner and your chiefs, in one line, where the calling manager's goal stands",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			c, err := e.caller()
+			if err != nil {
+				return err
+			}
+			ev, err := e.core.UpdateGoal(c.Session, strings.Join(args, " "))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s updated\n", ev.Goal)
+			return nil
+		}),
+	}
+}
+
+func goalWakeCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "wake <when> <why>",
+		Short: "Have ym wake the calling manager or chief at a time: 30m, 2h, 15:04 or RFC 3339",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			c, err := e.caller()
+			if err != nil {
+				return err
+			}
+			due, err := core.ParseWhen(args[0], time.Now())
+			if err != nil {
+				return err
+			}
+			t, err := e.core.SetWake(c.Session, due, strings.Join(args[1:], " "))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "ym wakes %s at %s\n", t.Manager, t.Due.Local().Format(time.DateTime))
+			return nil
+		}),
+	}
+}
+
+func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var keep bool
+	cmd := &cobra.Command{
+		Use:   "feed <goal|manager>",
+		Short: "Print everything that happened on a goal, oldest first, and mark it read",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			g, err := e.core.GoalByRef(args[0])
+			if err != nil {
+				return err
+			}
+			events, err := e.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				return err
+			}
+			if len(events) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), g.ID+": nothing yet")
+			}
+			for _, ev := range events {
+				mark := " "
+				if ev.OwnerNews() && ev.Seen.IsZero() {
+					mark = "*"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s  %-14s %s\n", mark, ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
+			}
+			if keep {
+				return nil
+			}
+			return e.core.Store.MarkSeen(g.ID, time.Now())
+		}),
+	}
+	cmd.Flags().BoolVar(&keep, "keep-unread", false, "leave the news unread")
 	return cmd
 }

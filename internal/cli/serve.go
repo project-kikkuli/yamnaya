@@ -119,16 +119,10 @@ func serveCycle(c *core.Core) error {
 	if err = c.Brief(b); err != nil {
 		failures = append(failures, err)
 	}
-	if err = c.ForwardIdle(b); err != nil {
-		failures = append(failures, err)
-	}
-	if err = c.Supervise(b); err != nil {
-		failures = append(failures, err)
-	}
 	if err = c.RouteDocs(b); err != nil {
 		failures = append(failures, err)
 	}
-	return errors.Join(failures...)
+	return errors.Join(append(failures, c.Loop(b))...)
 }
 
 // reviewPoll asks GitHub for the owner's personal review requests at most once per every.

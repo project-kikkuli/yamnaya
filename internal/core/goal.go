@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -259,7 +260,11 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager {
 	}
 	session := uuid.NewString()
 	waiting := c.waitingFor(o, m)
+	events, heard := c.missed(o, m)
 	prompt := c.prompt(m, o, waiting)
+	if len(events) > 0 && m.Session != "" {
+		prompt += "\n\nWhile you were down, " + wakeOrChief(o, m, events)
+	}
 	_, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name), Session: session})
 	if err != nil {
 		m.LastError = err.Error()
@@ -269,6 +274,7 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager {
 	for _, msg := range waiting {
 		c.Store.Claim(msg.Seq, MsgInbox)
 	}
+	heard(c.now())
 	m.Session, m.LastError = session, ""
 	c.Store.SaveManager(m)
 	return m
@@ -300,4 +306,38 @@ func writeBrief(path, text string) error {
 		return nil
 	}
 	return os.WriteFile(path, []byte(text), 0o644)
+}
+
+// missed lists the events m has not been handed: its goal's, or a chief's subtree's; heard marks them handed.
+func (c *Core) missed(o Org, m Manager) ([]GoalEvent, func(time.Time)) {
+	if g, ok := o.Goals[m.GoalID]; ok {
+		events, _ := c.Store.undelivered(g.ID)
+		return events, func(at time.Time) { c.Store.markDelivered(events, at) }
+	}
+	events, _ := c.chiefEvents(o, m)
+	return events, func(at time.Time) { c.Store.markHeard(m.ID, events, at) }
+}
+
+func wakeOrChief(o Org, m Manager, events []GoalEvent) string {
+	if g, ok := o.Goals[m.GoalID]; ok {
+		return wakeText(g, events)
+	}
+	return chiefText(o, events)
+}
+
+// GoalByRef is the goal a goal, manager or manager name ref names.
+func (c *Core) GoalByRef(ref string) (Goal, error) {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return Goal{}, err
+	}
+	m, err := o.lookup(ref)
+	if err != nil {
+		return Goal{}, err
+	}
+	g, ok := o.Goals[m.GoalID]
+	if !ok {
+		return g, fmt.Errorf("%s is a chief and owns no goal", m.ID)
+	}
+	return g, nil
 }

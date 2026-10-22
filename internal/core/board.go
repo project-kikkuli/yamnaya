@@ -41,7 +41,9 @@ type Core struct {
 	Signal         func(pid int, sig syscall.Signal) error
 	KillGrace      time.Duration
 	BackgroundSend func(Live, string) error
-	KeepAlive      func() error
+	// Notify raises a desktop notification for the owner; nil raises none.
+	Notify    func(title, body string) error
+	KeepAlive func() error
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
@@ -406,7 +408,11 @@ func (c *Core) Board() (Board, error) {
 	if b.Org, err = c.LoadOrg(); err != nil {
 		return b, err
 	}
-	c.tree(&b, b.Org)
+	feeds, err := c.Store.Feeds()
+	if err != nil {
+		return b, err
+	}
+	c.tree(&b, b.Org, feeds)
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)
 	wait, err := c.waiting(b, b.Needs)

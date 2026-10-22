@@ -23,6 +23,17 @@ type Node struct {
 	Agents   []Live
 	Children []Node
 	Standing string
+	// Feed is the goal's news for the owner.
+	Feed Feed
+}
+
+// Unread is how much news the owner has not read on the node's goal, or on every goal below a chief.
+func (n Node) Unread() int {
+	total := n.Feed.Unread
+	for _, c := range n.Children {
+		total += c.Unread()
+	}
+	return total
 }
 
 // Count is how many goals the node stands for, itself or its reports'.
@@ -62,7 +73,7 @@ func (b Board) Node(id string) (Node, bool) {
 
 // tree builds the goal tree: chiefs over managers, each manager with its goal, session and agents. A goal that ended and was
 // cleared from the owner's queue leaves the tree.
-func (c *Core) tree(b *Board, o Org) {
+func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
 	agents := map[string][]Live{}
 	for _, s := range b.Sessions {
 		if m, ok := o.Managed(s.Key(), b.parents); ok && m.Session != s.Key() {
@@ -90,6 +101,7 @@ func (c *Core) tree(b *Board, o Org) {
 		n := Node{Manager: m, Agents: agents[m.ID]}
 		if g, ok := o.Goals[m.GoalID]; ok {
 			n.Goal = &g
+			n.Feed = feeds[g.ID]
 		}
 		if s, ok := b.Session(m.Session); ok {
 			n.Live = &s

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS ym_forwarded (
 ) WITHOUT ROWID;
 `
 
-// ForwardIdle hands the last reply of every idle agent a manager runs to the manager or chief its asks go to, once per reply.
+// ForwardIdle records the last reply of every idle agent a manager runs, once per reply, as an event that wakes the manager; an agent
+// of a chief is handed to it directly.
 func (c *Core) ForwardIdle(b Board) error {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
@@ -20,14 +21,11 @@ func (c *Core) ForwardIdle(b Board) error {
 		if s.Status != Idle || s.Prompt != nil || s.Result == "" {
 			continue
 		}
-		if _, managed := b.Org.Managed(key, b.parents); !managed {
+		m, managed := b.Org.Managed(key, b.parents)
+		if !managed {
 			continue
 		}
 		if _, isManager := b.Org.ManagerOf(key); isManager {
-			continue
-		}
-		to := b.Org.Recipient(key, b.parents)
-		if to == Owner {
 			continue
 		}
 		id := key + "\x00" + s.ResultAt.UTC().Format(time.RFC3339Nano) + "\x00" + replyKey(s.Result)
@@ -38,8 +36,14 @@ func (c *Core) ForwardIdle(b Board) error {
 		if seen > 0 {
 			continue
 		}
-		if err := c.tell(b, b.Org.Managers[to].Session, idleText(*s), false); err != nil {
-			return err
+		if g, ok := b.Org.Goals[m.GoalID]; ok {
+			if _, _, err := c.RecordGoalEvent(g.ID, EventFinished, strings.TrimPrefix(idleText(*s), "ym: "), ""); err != nil {
+				return err
+			}
+		} else if to := b.Org.Recipient(key, b.parents); to != Owner {
+			if err := c.tell(b, b.Org.Managers[to].Session, idleText(*s), false); err != nil {
+				return err
+			}
 		}
 		if _, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, id, now()); err != nil {
 			return err

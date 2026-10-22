@@ -198,3 +198,37 @@ func TestADocAskShowsItsThreadOpensItsDiscussionAndDismisses(t *testing.T) {
 		t.Fatal("a dismissed doc ask still shows")
 	}
 }
+
+func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
+	m, c, ms := goalSetup(t, "make the importer handle CSV")
+	g := ms[0].GoalID
+	for _, e := range []core.GoalEvent{
+		{Goal: g, Kind: core.EventFinished, Payload: "agent abc is idle"},
+		{Goal: g, Kind: core.EventPROpened, Payload: "agent abc opened #7"},
+		{Goal: g, Kind: core.EventUpdate, Payload: "parser merged; TSV next"},
+	} {
+		if _, _, err := c.Store.AddGoalEvent(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = refresh(t, m)
+	if v := m.View(); !strings.Contains(v, "2 new") || !strings.Contains(v, "parser merged; TSV next") {
+		t.Fatalf("the goal row should show 2 unread and the newest line:\n%s", v)
+	}
+	m = press(t, to(t, m, isNode(ms[0].ID)), "enter")
+	v := m.View()
+	if m.mode != modeGoal || !strings.Contains(v, "FEED") || !strings.Contains(v, "agent abc opened #7") || !strings.Contains(v, "agent abc is idle") {
+		t.Fatalf("enter should open the goal with its feed:\n%s", v)
+	}
+	feeds, err := c.Store.Feeds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feeds[g].Unread != 0 {
+		t.Fatalf("opening the feed left %d unread", feeds[g].Unread)
+	}
+	m = refresh(t, press(t, m, "esc"))
+	if strings.Contains(m.View(), "2 new") {
+		t.Fatalf("the row still shows unread news after reading it:\n%s", m.View())
+	}
+}

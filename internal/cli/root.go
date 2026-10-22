@@ -42,6 +42,7 @@ func Wire(path string) (*core.Core, error) {
 		Roots:     core.RepoRoots,
 		Ask:       health.Addressed,
 		StateDir:  filepath.Dir(path),
+		Notify:    desktopNotify,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core, l.srv = c, srv

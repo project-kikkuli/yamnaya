@@ -29,14 +29,14 @@ func TestAnIdleAgentsLastMessageReachesItsManagerOnceAcrossARestart(t *testing.T
 		t.Helper()
 		w.claude.handed = nil
 		for range 3 {
-			if err := w.core.ForwardIdle(w.board(t)); err != nil {
+			if err := w.core.Loop(w.board(t)); err != nil {
 				t.Fatal(err)
 			}
 		}
 		return w.handedTo(m.Session)
 	}
 	got := forward()
-	if len(got) != 1 || !strings.Contains(got[0], "agent agent") || !strings.HasSuffix(got[0], reply) {
+	if len(got) != 1 || !strings.Contains(got[0], "agent agent") || !strings.Contains(got[0], reply) {
 		t.Fatalf("manager got %q, want the agent's whole last message once", got)
 	}
 	if len(w.claude.handed) != 1 {

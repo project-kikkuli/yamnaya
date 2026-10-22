@@ -87,6 +87,8 @@ type Model struct {
 	peaks mountains
 	// goal and chief are the manager ids the goal and chief views show.
 	goal, chief string
+	// feedFrom is when the open goal view was entered: news read from then on stays marked new while it shows.
+	feedFrom time.Time
 	// picked are the managers and chiefs space selected; s sends to all of them.
 	picked map[string]bool
 	// unfolded are the queue rows of sessions whose folded asks are listed.

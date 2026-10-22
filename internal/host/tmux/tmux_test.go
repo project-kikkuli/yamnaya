@@ -210,7 +210,7 @@ func TestSplitOpensTheTargetBesideYmWithoutMovingAnySessionAndClosesOnDetach(t *
 				out, _ := h.run("list-clients", "-F", "#{pane_id} #{client_name}")
 				pane, name, _ := strings.Cut(out, " ")
 				client = name
-				return pane == target
+				return pane == target && name != ""
 			})
 			if w := h.must(t, "display-message", "-p", "-t", "="+tc.session+":", "#{window_index}"); w != "0" {
 				t.Errorf("session %s moved to window %s", tc.session, w)
