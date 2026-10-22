@@ -126,7 +126,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal wake <when> <why>` | wake me at `30m`, `2h`, `15:04` |
 | | `ym goal done --summary "<line>" [--evidence "<line>"]...` | hand the goal to verification |
 | | `ym goal artifact <url>` | register a richer brief |
-| | `ym goal verdict <goal> --pass\|--fail [--finding "<line>"]...` | (verifier) record the verdict |
+| | `ym goal verdict <goal> --pass\|--fail [--finding "<line>"]...` | (verifier) record the verdict, only from inside the verifier session; `--session` is refused |
 | Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]...` | ask your manager, or the owner when you have none |
 | | `ym item list [--all] [--everywhere] [--to-me]` | open items; `--to-me` is what is routed to the calling manager |
 | | `ym item show\|answer\|dismiss\|snooze\|reopen\|go <id>` | act on one item |

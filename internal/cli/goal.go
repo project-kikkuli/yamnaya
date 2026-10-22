@@ -235,7 +235,10 @@ func goalVerdictCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if pass == fail {
 				return errors.New("pass exactly one of --pass or --fail")
 			}
-			c, err := e.caller()
+			if e.session != "" {
+				return errors.New("a verdict comes only from the verifier session itself; run ym goal verdict inside it, without --session")
+			}
+			c, err := e.core.Calling(os.Getpid(), os.Getenv)
 			if err != nil {
 				return err
 			}
