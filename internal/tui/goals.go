@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -339,7 +339,7 @@ func (m Model) steerTargets(r row) []core.Manager {
 }
 
 // goalKey handles the goal tree's keys and the owner queue's goal, merge and review rows; handled is false for every other key.
-func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
+func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	key := k.String()
 	r, _ := m.selected()
 	switch key {
@@ -441,7 +441,7 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 			m.chief = n.Manager.ID
 		}
 		return m, nil, true
-	case " ":
+	case "space":
 		if r.node == nil {
 			return m, nil, false
 		}

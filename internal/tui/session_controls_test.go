@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
@@ -58,7 +58,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 40})
 				m = next.(Model)
 				footer := ansi.Strip(strings.Join(m.footer(), "\n"))
-				rendered := ansi.Strip(m.View())
+				rendered := ansi.Strip(m.View().Content)
 				for _, check := range []struct {
 					hint string
 					want bool
@@ -76,7 +76,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 					}
 					next := press(t, m, action.key)
 					if next.mode != modeConfirm || !strings.Contains(next.ask, action.label) {
-						t.Fatalf("advertised %s did not open %s confirmation: %s", action.key, action.label, next.View())
+						t.Fatalf("advertised %s did not open %s confirmation: %s", action.key, action.label, next.View().Content)
 					}
 				}
 			})

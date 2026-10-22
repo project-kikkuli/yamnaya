@@ -2,8 +2,8 @@ package tui
 
 import (
 	"fmt"
-	"io"
 	"maps"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -11,19 +11,27 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
+// TestMain draws the board unstyled, the way it reads on a terminal with no colors or attributes.
+func TestMain(m *testing.M) {
+	p := palette{plain: lipgloss.NewStyle(), bold: lipgloss.NewStyle(), dim: lipgloss.NewStyle(), red: lipgloss.NewStyle(),
+		yellow: lipgloss.NewStyle(), green: lipgloss.NewStyle(), color: true}
+	for range hueColors {
+		p.hues = append(p.hues, lipgloss.NewStyle())
+	}
+	pal = p
+	os.Exit(m.Run())
+}
+
 func usePalette(t *testing.T, color bool) {
 	t.Helper()
-	r := lipgloss.NewRenderer(io.Discard)
-	r.SetColorProfile(termenv.ANSI)
 	old := pal
-	pal = newPalette(r, color)
+	pal = newPalette(color)
 	t.Cleanup(func() { pal = old })
 }
 
@@ -135,7 +143,7 @@ func TestNoColorKeepsBoldAndFaintButDrawsNoColor(t *testing.T) {
 			usePalette(t, color)
 			m, _, _ := setup(t)
 			m = refresh(t, m)
-			v := m.View()
+			v := m.View().Content
 			if colored(v) != color {
 				t.Fatalf("color %v but board colored = %v:\n%q", color, colored(v), v)
 			}

@@ -70,7 +70,7 @@ func TestShortHostsKeepTheShortestTailNoOtherHostShares(t *testing.T) {
 func TestRowsFromAnotherHostCarryItsShortNameAndLocalRowsNone(t *testing.T) {
 	m, c, _ := setup(t)
 	m, _ = withBox(t, m, c)
-	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	line := func(has string) string {
 		for _, l := range lines {
 			if strings.Contains(l, has) {
@@ -100,7 +100,7 @@ func TestTheDetailViewNamesWhereARemoteSessionRuns(t *testing.T) {
 	m, c, _ := setup(t)
 	m, _ = withBox(t, m, c)
 	m = press(t, to(t, m, mission("far-lead-0001")), "enter")
-	if v := ansi.Strip(m.View()); !strings.Contains(v, "@boxmachine ym %3") {
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "@boxmachine ym %3") {
 		t.Fatalf("detail view lacks the session's host and pane:\n%s", v)
 	}
 }

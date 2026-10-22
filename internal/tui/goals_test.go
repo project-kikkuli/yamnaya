@@ -67,12 +67,12 @@ func TestAChiefCollapsesToOneRowAndDrillsIntoItsGoals(t *testing.T) {
 		t.Fatalf("goal rows %v, want the chief alone standing for both goals", nodes)
 	}
 	m = press(t, to(t, m, isNode(chief.ID)), "enter")
-	if m.mode != modeChief || len(m.rows()) != 2 || !strings.Contains(m.View(), "REPORTS (2)") {
-		t.Fatalf("enter on the chief should list its two goals, mode %v:\n%s", m.mode, m.View())
+	if m.mode != modeChief || len(m.rows()) != 2 || !strings.Contains(m.View().Content, "REPORTS (2)") {
+		t.Fatalf("enter on the chief should list its two goals, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, to(t, m, isNode(ms[1].ID)), "enter")
-	if m.mode != modeGoal || !strings.Contains(m.View(), "rotate the signing keys") || !strings.Contains(m.View(), ms[1].ID) {
-		t.Fatalf("enter on a report should open its goal, mode %v:\n%s", m.mode, m.View())
+	if m.mode != modeGoal || !strings.Contains(m.View().Content, "rotate the signing keys") || !strings.Contains(m.View().Content, ms[1].ID) {
+		t.Fatalf("enter on a report should open its goal, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, m, "esc")
 	if m.mode != modeChief {
@@ -136,8 +136,8 @@ func TestBShowsTheBriefAndVOpensTheArtifact(t *testing.T) {
 	m.openURL = func(url string) error { opened = append(opened, url); return nil }
 	m = to(t, refresh(t, m), isNode(ms[0].ID))
 	shown := press(t, m, "B")
-	if shown.mode != modeScreen || !strings.Contains(shown.View(), "CSV parser merged; TSV next.") {
-		t.Fatalf("B should show the brief, mode %v:\n%s", shown.mode, shown.View())
+	if shown.mode != modeScreen || !strings.Contains(shown.View().Content, "CSV parser merged; TSV next.") {
+		t.Fatalf("B should show the brief, mode %v:\n%s", shown.mode, shown.View().Content)
 	}
 	press(t, m, "V")
 	if !slices.Equal(opened, []string{"https://claude.ai/artifact/importer"}) {
@@ -160,7 +160,7 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 		t.Fatalf("message %q", m.message)
 	}
 	if m = refresh(t, m); !slices.ContainsFunc(m.rows(), func(r row) bool { return r.node != nil && r.node.Goal.Ask == "make login faster" }) {
-		t.Fatalf("the new goal is not on the board:\n%s", m.View())
+		t.Fatalf("the new goal is not on the board:\n%s", m.View().Content)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestADocAskShowsItsThreadOpensItsDiscussionAndDismisses(t *testing.T) {
 		m = press(t, m, "up")
 	}
 	m = to(t, m, isDoc)
-	if v := m.View(); !strings.Contains(v, "Alice: @Rajat is PR 7 the final cut?") || !strings.Contains(v, url) {
+	if v := m.View().Content; !strings.Contains(v, "Alice: @Rajat is PR 7 the final cut?") || !strings.Contains(v, url) {
 		t.Fatalf("the doc row hides its ask or link:\n%s", v)
 	}
 	press(t, m, "enter")
@@ -212,11 +212,11 @@ func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
 		}
 	}
 	m = refresh(t, m)
-	if v := m.View(); !strings.Contains(v, "2 new") || !strings.Contains(v, "parser merged; TSV next") {
+	if v := m.View().Content; !strings.Contains(v, "2 new") || !strings.Contains(v, "parser merged; TSV next") {
 		t.Fatalf("the goal row should show 2 unread and the newest line:\n%s", v)
 	}
 	m = press(t, to(t, m, isNode(ms[0].ID)), "enter")
-	v := m.View()
+	v := m.View().Content
 	if m.mode != modeGoal || !strings.Contains(v, "FEED") || !strings.Contains(v, "agent abc opened #7") || !strings.Contains(v, "agent abc is idle") {
 		t.Fatalf("enter should open the goal with its feed:\n%s", v)
 	}
@@ -228,7 +228,7 @@ func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
 		t.Fatalf("opening the feed left %d unread", feeds[g].Unread)
 	}
 	m = refresh(t, press(t, m, "esc"))
-	if strings.Contains(m.View(), "2 new") {
-		t.Fatalf("the row still shows unread news after reading it:\n%s", m.View())
+	if strings.Contains(m.View().Content, "2 new") {
+		t.Fatalf("the row still shows unread news after reading it:\n%s", m.View().Content)
 	}
 }

@@ -33,7 +33,7 @@ func isWaiting(r row) bool { return r.need != nil && r.need.Waiting() }
 
 func TestWaitingRowShowsTheRepliesFirstQuestionAndOnlyForTheAskingSession(t *testing.T) {
 	m, _, _ := waitingBoard(t)
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "NEEDS YOU (1)") || !strings.Contains(view, "Parser work") || !strings.Contains(view, "waiting: 1. Ship it now?") {
 		t.Fatalf("board:\n%s", view)
 	}
@@ -65,8 +65,8 @@ func TestWaitingRowKeysAnswerOrDismissIt(t *testing.T) {
 				t.Fatalf("sent %v, want %q", l.sent, tc.sent)
 			}
 			m = refresh(t, m)
-			if strings.Contains(m.View(), "waiting:") {
-				t.Fatalf("row still shows:\n%s", m.View())
+			if strings.Contains(m.View().Content, "waiting:") {
+				t.Fatalf("row still shows:\n%s", m.View().Content)
 			}
 		})
 	}
@@ -77,7 +77,7 @@ func TestEscCancelsAnAnswerToAWaitingSession(t *testing.T) {
 	m = to(t, m, isWaiting)
 	m = press(t, m, "a", "n", "o", "esc")
 	m = refresh(t, m)
-	if len(l.sent) != 0 || !strings.Contains(m.View(), "waiting:") {
-		t.Fatalf("sent %v; board:\n%s", l.sent, m.View())
+	if len(l.sent) != 0 || !strings.Contains(m.View().Content, "waiting:") {
+		t.Fatalf("sent %v; board:\n%s", l.sent, m.View().Content)
 	}
 }

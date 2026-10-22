@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/scene"
@@ -155,6 +155,7 @@ type Model struct {
 	// self watches ym's own executable; restart is set when the board quits to run the new one.
 	self    *binaryWatch
 	restart bool
+	out     *output
 }
 
 func New(c *core.Core) Model {
@@ -171,7 +172,10 @@ func New(c *core.Core) Model {
 var ErrRestart = errors.New("ym executable changed")
 
 func Run(c *core.Core) error {
-	final, err := tea.NewProgram(New(c), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
+	m := New(c)
+	m.out = newOutput(os.Stdout)
+	final, err := tea.NewProgram(m, tea.WithOutput(m.out)).Run()
+	m.out.drain()
 	if m, ok := final.(Model); ok && err == nil && m.restart {
 		return ErrRestart
 	}
@@ -240,6 +244,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if wait := time.Until(m.peaks.quiet); wait > 0 {
 			return m, tea.Tick(wait, func(time.Time) tea.Msg { return mountainFrame{} })
 		}
+		if m.out.behind() {
+			return m, tea.Tick(scene.Step, func(time.Time) tea.Msg { return mountainFrame{} })
+		}
 		m.peaks.ticking = false
 		m.peaks.frame = int(time.Since(m.peaks.start) / scene.Step)
 		return m, m.animate()
@@ -250,7 +257,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	}
-	if _, ok := msg.(tea.KeyMsg); ok {
+	if _, ok := msg.(tea.KeyPressMsg); ok {
 		m.peaks.quiet = time.Now().Add(keyQuiet)
 	}
 	m.page = nil
@@ -322,18 +329,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = "error: " + msg.err.Error()
 		}
 		return m, nil
-	case tea.MouseMsg:
-		switch {
-		case msg.Action != tea.MouseActionPress:
-		case msg.Button == tea.MouseButtonWheelUp:
-			return m.key(tea.KeyMsg{Type: tea.KeyUp})
-		case msg.Button == tea.MouseButtonWheelDown:
-			return m.key(tea.KeyMsg{Type: tea.KeyDown})
-		case msg.Button == tea.MouseButtonLeft && m.shown() && m.mode == m.listMode():
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.key(tea.KeyPressMsg{Code: tea.KeyUp})
+		case tea.MouseWheelDown:
+			return m.key(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft && m.shown() && m.mode == m.listMode() {
 			m.pick(msg.X, msg.Y)
 		}
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
 	return m, nil
@@ -561,15 +570,15 @@ func (m Model) selected() (row, bool) {
 	return rs[m.cursor], true
 }
 
-func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if k.Type == tea.KeyCtrlC {
+func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if k.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
 	switch m.mode {
 	case modeInput:
 		return m.inputKey(k)
 	case modeHelp:
-		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == "?" {
+		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == "?" {
 			m.mode = m.back
 		}
 		return m, nil
@@ -581,14 +590,14 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.scrollY++
 			return m, nil
-		case "pgdown", " ":
+		case "pgdown", "space":
 			m.scrollY += m.height / 2
 			return m, nil
 		case "pgup":
 			m.scrollY = max(0, m.scrollY-m.height/2)
 			return m, nil
 		}
-		if k.Type == tea.KeyEsc || k.String() == "q" || k.Type == tea.KeyEnter || k.String() == m.screenKey {
+		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == m.screenKey {
 			m.mode = m.back
 		}
 		return m, nil
@@ -670,7 +679,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scrollY = max(0, m.scrollY-m.height/2)
 		}
 		return m, nil
-	case "pgdown", " ", "f":
+	case "pgdown", "space", "f":
 		if m.mode == modeAgent {
 			m.scrollBy(m.height / 2)
 		}
@@ -721,7 +730,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.mode == modeMerge {
-		if k.Type == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
+		if k.Code == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
 			src, dst := m.mergeSrc, r.project.Key
 			m.mode = m.back
 			return m, m.do(func() (string, error) {
@@ -909,7 +918,7 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // waitingKey acts on a session waiting on the owner: enter or w shows its last reply, a answers it, x dismisses it.
-func (m Model) waitingKey(k tea.KeyMsg, n core.Need) (tea.Model, tea.Cmd) {
+func (m Model) waitingKey(k tea.KeyPressMsg, n core.Need) (tea.Model, tea.Cmd) {
 	s := n.Session
 	switch k.String() {
 	case "enter", "w":
@@ -1079,12 +1088,12 @@ func (m *Model) startInput(kind inputKind, item, project, initial string, fresh 
 	m.fresh = fresh && initial != ""
 }
 
-func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.Type {
-	case tea.KeyEsc:
+func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc":
 		m.mode = m.back
 		return m, nil
-	case tea.KeyBackspace:
+	case "backspace":
 		if m.fresh {
 			m.input, m.fresh = nil, false
 		}
@@ -1097,24 +1106,24 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.repoCur, m.pickErr = 0, ""
 		return m, nil
-	case tea.KeyCtrlU:
+	case "ctrl+u":
 		m.input, m.fresh, m.repoCur, m.pickErr = nil, false, 0, ""
 		return m, nil
-	case tea.KeyUp, tea.KeyDown:
+	case "up", "down":
 		if m.inKind == inNewRepo {
-			if k.Type == tea.KeyUp {
+			if k.Code == tea.KeyUp {
 				m.repoCur = max(0, m.repoCur-1)
 			} else {
 				m.repoCur = max(0, min(len(m.repoMatches())-1, m.repoCur+1))
 			}
 		}
 		return m, nil
-	case tea.KeyCtrlT:
+	case "ctrl+t":
 		if m.launching() {
 			m.nextTarget()
 		}
 		return m, nil
-	case tea.KeyTab:
+	case "tab":
 		if (m.inKind == inNew || m.inKind == inNewRepo) && !m.forGoal {
 			m.newL.Harness = core.Other(m.newL.Harness)
 		}
@@ -1122,7 +1131,7 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.subtree = !m.subtree
 		}
 		return m, nil
-	case tea.KeyEnter:
+	case "enter":
 		text := strings.TrimSpace(string(m.input))
 		m.mode = m.back
 		switch m.inKind {
@@ -1238,17 +1247,17 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return m, nil
-	case tea.KeyRunes, tea.KeySpace:
+	default:
+		if k.Text == "" || k.Mod.Contains(tea.ModCtrl) || k.Mod.Contains(tea.ModAlt) {
+			return m, nil
+		}
 		if m.inKind == inAdopt {
 			return m, nil
 		}
 		if m.fresh {
 			m.input, m.fresh = nil, false
 		}
-		m.input = append(m.input, k.Runes...)
-		if k.Type == tea.KeySpace && len(k.Runes) == 0 {
-			m.input = append(m.input, ' ')
-		}
+		m.input = append(m.input, []rune(k.Text)...)
 		if m.inKind == inFilter {
 			m.filter = string(m.input)
 			m.cursor = 0
@@ -1327,7 +1336,7 @@ func (m Model) focus(t core.Target) tea.Cmd {
 		})
 	}
 	if cmd := m.core.AttachCmd(t); cmd != nil {
-		return tea.ExecProcess(cmd, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
+		return tea.Exec(attached{cmd, m.out}, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
 	}
 	return m.do(func() (string, error) {
 		err := m.core.Focus(t)
@@ -1338,7 +1347,7 @@ func (m Model) focus(t core.Target) tea.Cmd {
 	})
 }
 
-func (m Model) pickKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) pickKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc", "q":
 		m.mode = m.back

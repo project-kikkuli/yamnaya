@@ -7,19 +7,22 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/progress"
 )
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	page := m.page
 	if page == nil {
 		prepared := m.prepareView()
 		page = &prepared
 	}
-	return m.paint(*page)
+	v := tea.NewView(m.paint(*page))
+	v.AltScreen, v.ReportFocus, v.MouseMode = true, true, tea.MouseModeCellMotion
+	return v
 }
 
 func (m Model) prepareView() viewPage {

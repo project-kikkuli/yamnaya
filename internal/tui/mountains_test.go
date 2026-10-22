@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -100,7 +100,7 @@ func TestTheSelectedRowLightsItsPeakAndAClickOnAPeakSelectsItsRow(t *testing.T) 
 		}
 	}
 	m.cursor, m.page = -1, nil
-	frame := strings.Split(ansi.Strip(m.View()), "\n")
+	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
 	for y, line := range frame {
 		if x := strings.Index(line, "hchb-readback"); x >= 0 {
 			m.pick(ansi.StringWidth(line[:x]), y)
@@ -120,7 +120,7 @@ func TestKeysComeBeforeTheMountainsMove(t *testing.T) {
 	m.board, m.loaded = b, true
 	m.width, m.height = 174, 72
 	m.peaks.start = time.Now().Add(-time.Hour)
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	next, cmd := next.(Model).Update(mountainFrame{})
 	if f := next.(Model).peaks.frame; f != 0 || cmd == nil {
 		t.Fatalf("a frame right after a key advanced the mountains to %d (next tick %v)", f, cmd != nil)

@@ -72,7 +72,7 @@ func TestBigNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
 			}
 			m = to(t, place(t, m, k), mission("lead"))
 			m = press(t, m, "N")
-			view := m.View()
+			view := m.View().Content
 			for _, want := range []string{"PICK A REPOSITORY", "api", "solo", "web"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("picker lacks %q:\n%s", want, view)
@@ -86,8 +86,8 @@ func TestBigNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
 				m = press(t, m, key)
 			}
 			if c.err != "" {
-				if len(l.started) != 0 || !strings.Contains(m.View(), c.err) || !strings.Contains(m.View(), "PICK A REPOSITORY") {
-					t.Fatalf("started %s; picker should stay open saying %q:\n%s", fmtLaunches(l.started), c.err, m.View())
+				if len(l.started) != 0 || !strings.Contains(m.View().Content, c.err) || !strings.Contains(m.View().Content, "PICK A REPOSITORY") {
+					t.Fatalf("started %s; picker should stay open saying %q:\n%s", fmtLaunches(l.started), c.err, m.View().Content)
 				}
 				return
 			}
@@ -152,7 +152,7 @@ func TestBigNPicksTheGoalsRepositoryFirst(t *testing.T) {
 			}
 			m = to(t, place(t, m, k), mission("lead"))
 			m = press(t, m, "N")
-			view := m.View()
+			view := m.View().Content
 			if !strings.Contains(view, "PICK A REPOSITORY") || m.newL.Repo != "" || len(m.picks) == 0 || m.picks[0] != filepath.Join(root, "api") {
 				t.Fatalf("N should open the picker with recents first and nothing preselected (repo %q, picks %v):\n%s", m.newL.Repo, m.picks, view)
 			}

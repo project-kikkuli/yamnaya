@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -115,29 +115,35 @@ func refresh(t *testing.T, m Model) Model {
 	return next.(Model)
 }
 
+// keyOf is the key press a terminal sends for a key name like "enter", "ctrl+u" or "j".
+func keyOf(k string) tea.KeyPressMsg {
+	switch k {
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "up":
+		return tea.KeyPressMsg{Code: tea.KeyUp}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "backspace":
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case " ", "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	}
+	if c, ok := strings.CutPrefix(k, "ctrl+"); ok {
+		return tea.KeyPressMsg{Code: []rune(c)[0], Mod: tea.ModCtrl}
+	}
+	return tea.KeyPressMsg{Code: []rune(k)[0], Text: k}
+}
+
 // press sends keys and runs any command they return, feeding results back like the Bubble Tea loop.
 func press(t *testing.T, m Model, keys ...string) Model {
 	t.Helper()
 	for _, k := range keys {
-		var msg tea.KeyMsg
-		switch k {
-		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
-		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
-		case "down":
-			msg = tea.KeyMsg{Type: tea.KeyDown}
-		case "up":
-			msg = tea.KeyMsg{Type: tea.KeyUp}
-		case "ctrl+u":
-			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
-		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
-		case "ctrl+t":
-			msg = tea.KeyMsg{Type: tea.KeyCtrlT}
-		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
-		}
+		msg := keyOf(k)
 		next, cmd := m.Update(msg)
 		m = next.(Model)
 		for cmd != nil {
@@ -159,7 +165,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 
 func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	m, c, h := setup(t)
-	if v := m.View(); !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
+	if v := m.View().Content; !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
 		t.Fatalf("view:\n%s", v)
 	}
 	m = press(t, m, "a", "ctrl+u", "ship", " ", "it", "enter")
@@ -170,8 +176,8 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	if len(h.typed) != 1 || h.typed[0] != "/dev/a re D1: ship it" {
 		t.Fatalf("typed %q", h.typed)
 	}
-	if !strings.Contains(m.message, "typed into the agent's terminal") || strings.Contains(m.View(), "NEEDS YOU (2)") {
-		t.Fatalf("message %q\n%s", m.message, m.View())
+	if !strings.Contains(m.message, "typed into the agent's terminal") || strings.Contains(m.View().Content, "NEEDS YOU (2)") {
+		t.Fatalf("message %q\n%s", m.message, m.View().Content)
 	}
 }
 
@@ -194,7 +200,7 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 			}
 			m = refresh(t, m)
 			m.cursor = 0
-			if v := m.View(); !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
+			if v := m.View().Content; !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
 				t.Fatalf("view:\n%s", v)
 			}
 			press(t, m, c.keys...)
@@ -221,8 +227,8 @@ func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 	m, c, h := setup(t)
 	m = press(t, m, "down", "enter")
-	if m.mode != modeWhy || m.why.ID != "D2" || !strings.Contains(m.View(), "Rename the flag?") {
-		t.Fatalf("enter did not expand D2: mode %v\n%s", m.mode, m.View())
+	if m.mode != modeWhy || m.why.ID != "D2" || !strings.Contains(m.View().Content, "Rename the flag?") {
+		t.Fatalf("enter did not expand D2: mode %v\n%s", m.mode, m.View().Content)
 	}
 	if len(h.focused) != 0 {
 		t.Fatalf("enter on an item jumped to %v", h.focused)
@@ -259,8 +265,8 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	if it, _ := c.Store.Item("D2"); it.State != core.ItemDismissed || it.Reason != "not needed" {
 		t.Fatalf("D2 = %+v", it)
 	}
-	if !strings.Contains(m.View(), "NEEDS YOU (0)") {
-		t.Fatal(m.View())
+	if !strings.Contains(m.View().Content, "NEEDS YOU (0)") {
+		t.Fatal(m.View().Content)
 	}
 }
 
@@ -277,8 +283,8 @@ func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 		t.Fatalf("name = %q", p.Name)
 	}
 	m = press(t, m, "down")
-	if !strings.Contains(m.View(), "2 COPIES") {
-		t.Fatalf("duplicate not flagged:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "2 COPIES") {
+		t.Fatalf("duplicate not flagged:\n%s", m.View().Content)
 	}
 	m = press(t, m, "o")
 	if m.mode != modePick || len(m.targets) != 2 {
@@ -289,14 +295,14 @@ func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 		t.Fatalf("focused %v", h.focused)
 	}
 	m = press(t, m, "enter")
-	if m.mode != modeDetail || !strings.Contains(m.View(), "SESSIONS") {
-		t.Fatalf("enter on a mission should open its detail:\n%s", m.View())
+	if m.mode != modeDetail || !strings.Contains(m.View().Content, "SESSIONS") {
+		t.Fatalf("enter on a mission should open its detail:\n%s", m.View().Content)
 	}
 	m = press(t, m, "esc")
 	if m.mode != modeList {
 		t.Fatalf("esc left mode %v", m.mode)
 	}
-	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}); cmd == nil {
+	if _, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"}); cmd == nil {
 		t.Fatal("q did not quit")
 	}
 }
@@ -315,11 +321,11 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 	m = press(t, m, "down", "down")
 	for _, st := range steps {
 		m = press(t, m, "enter")
-		if m.mode != st.mode || !strings.Contains(m.View(), st.want) {
-			t.Fatalf("after enter: mode %v, want %v showing %q:\n%s", m.mode, st.mode, st.want, m.View())
+		if m.mode != st.mode || !strings.Contains(m.View().Content, st.want) {
+			t.Fatalf("after enter: mode %v, want %v showing %q:\n%s", m.mode, st.mode, st.want, m.View().Content)
 		}
 	}
-	if v := m.View(); !strings.Contains(v, "All 42 tests pass.") || !strings.Contains(v, "Bash: go test ./...") {
+	if v := m.View().Content; !strings.Contains(v, "All 42 tests pass.") || !strings.Contains(v, "Bash: go test ./...") {
 		t.Fatalf("agent view lacks result or trail:\n%s", v)
 	}
 	for _, want := range []mode{modeSession, modeDetail, modeRepo, modeList} {
@@ -412,12 +418,12 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	}}
 	c.Launches = l
 	m = refresh(t, m)
-	if v := m.View(); !strings.Contains(v, "Docs pass") || !strings.Contains(v, "2 exited") {
+	if v := m.View().Content; !strings.Contains(v, "Docs pass") || !strings.Contains(v, "2 exited") {
 		t.Fatalf("a mission with only an exited launch is missing from the board:\n%s", v)
 	}
 	m = press(t, m, "down", "down", "down", "enter")
-	if !strings.Contains(m.View(), "exited 1") {
-		t.Fatalf("lead mission lacks its exited launch:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "exited 1") {
+		t.Fatalf("lead mission lacks its exited launch:\n%s", m.View().Content)
 	}
 	for range 10 {
 		if r, _ := m.selected(); r.dormant != nil {
@@ -445,8 +451,8 @@ func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
 				return r.project != nil && r.session == nil && r.dormant == nil && len(r.project.Sessions) == 0 && len(r.project.Dormant) == 1
 			})
 			m = press(t, m, c.key)
-			if m.mode != modeConfirm || !strings.Contains(m.View(), c.verb+" ") {
-				t.Fatalf("%s should ask first:\n%s", c.key, m.View())
+			if m.mode != modeConfirm || !strings.Contains(m.View().Content, c.verb+" ") {
+				t.Fatalf("%s should ask first:\n%s", c.key, m.View().Content)
 			}
 			m = press(t, m, "y")
 			done := l.landed
@@ -468,13 +474,13 @@ func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
 		}
 	}
 	m = refresh(t, m)
-	v := m.View()
+	v := m.View().Content
 	if !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "stale (2)") || strings.Contains(v, "Old question?") {
 		t.Fatalf("stale items should sit collapsed below the live ones:\n%s", v)
 	}
 	m = press(t, m, "down", "down", "enter")
-	if !strings.Contains(m.View(), "Older question?") {
-		t.Fatalf("enter on the stale line did not expand it:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "Older question?") {
+		t.Fatalf("enter on the stale line did not expand it:\n%s", m.View().Content)
 	}
 	press(t, m, "x", "enter")
 	for _, id := range []string{"D3", "D4"} {
@@ -501,7 +507,7 @@ func TestSpendShowsAtEveryLevel(t *testing.T) {
 		Agents: map[string]core.Spend{"lead/a1": {USD: 1.25}},
 	}}
 	m = refresh(t, m)
-	board := m.View()
+	board := m.View().Content
 	for _, want := range []string{"$3.00", "$40.00"} {
 		if !strings.Contains(board, want) {
 			t.Fatalf("board lacks %s (each mission):\n%s", want, board)
@@ -517,8 +523,8 @@ func TestSpendShowsAtEveryLevel(t *testing.T) {
 	}
 	for _, l := range levels {
 		m = press(t, m, l.keys...)
-		if !strings.Contains(m.View(), l.want) {
-			t.Fatalf("mode %v lacks %s:\n%s", m.mode, l.want, m.View())
+		if !strings.Contains(m.View().Content, l.want) {
+			t.Fatalf("mode %v lacks %s:\n%s", m.mode, l.want, m.View().Content)
 		}
 	}
 }
@@ -527,8 +533,8 @@ func TestHealthOpensOnHAndEscReturns(t *testing.T) {
 	m, c, _ := setup(t)
 	c.Health = func() (string, error) { return "week of  answered\n2026-10-12  6", nil }
 	m = press(t, m, "h")
-	if m.mode != modeScreen || !strings.Contains(m.View(), "2026-10-12  6") {
-		t.Fatalf("h did not show health: mode %v\n%s", m.mode, m.View())
+	if m.mode != modeScreen || !strings.Contains(m.View().Content, "2026-10-12  6") {
+		t.Fatalf("h did not show health: mode %v\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, m, "esc")
 	if m.mode != modeList {
@@ -546,12 +552,12 @@ func TestALongCrewKeepsTheHeaderAndSessionTitleOnScreen(t *testing.T) {
 	m.height = 30
 	m = refresh(t, m)
 	m = press(t, m, "down", "down", "enter", "enter", "enter")
-	v := m.View()
+	v := m.View().Content
 	if m.mode != modeSession || !strings.Contains(v, " ym ") || !strings.Contains(v, "Lead work") || !strings.Contains(v, "worker 0") {
 		t.Fatalf("session view with 61 crew lost its header, title or first worker:\n%s", v)
 	}
 	m = press(t, m, strings.Split(strings.Repeat("j", 50), "")...)
-	if v := m.View(); !strings.Contains(v, " ym ") || !strings.Contains(v, "worker 49") || strings.Count(v, "\n") >= m.height {
+	if v := m.View().Content; !strings.Contains(v, " ym ") || !strings.Contains(v, "worker 49") || strings.Count(v, "\n") >= m.height {
 		t.Fatalf("scrolled to worker 49, want it on screen under the header in %d lines:\n%s", m.height, v)
 	}
 }
@@ -562,7 +568,7 @@ func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = press(t, refresh(t, m), "down", "down", "enter", "enter")
-	v := m.View()
+	v := m.View().Content
 	if m.mode != modeDetail || !strings.Contains(v, "other:D1") || strings.Count(v, " D1 ") != 1 {
 		t.Fatalf("mission items from two projects should name the project where IDs repeat:\n%s", v)
 	}
@@ -579,8 +585,8 @@ func TestHeaderSaysSpendIsStillLoading(t *testing.T) {
 func TestOGoesToASessionWithNoCrewOrItems(t *testing.T) {
 	m, _, _ := setup(t)
 	m = press(t, m, "down", "down", "down", "down", "enter", "enter")
-	if m.mode != modeSession || !strings.Contains(m.View(), "Twin work") {
-		t.Fatalf("want the twin session view, mode %v:\n%s", m.mode, m.View())
+	if m.mode != modeSession || !strings.Contains(m.View().Content, "Twin work") {
+		t.Fatalf("want the twin session view, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, m, "o")
 	if m.mode != modePick || len(m.targets) != 2 {
@@ -595,8 +601,8 @@ func TestGoingToASessionInAnotherTerminalAdoptsItOnceConfirmed(t *testing.T) {
 	h.away = map[string]bool{"/dev/a": true}
 	m = refresh(t, m)
 	m = press(t, m, "down", "down", "down", "enter")
-	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View(), "o adopt") {
-		t.Fatalf("lead session row should offer adopt:\n%s", m.View())
+	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View().Content, "o adopt") {
+		t.Fatalf("lead session row should offer adopt:\n%s", m.View().Content)
 	}
 	for _, c := range []struct {
 		keys    []string
@@ -647,7 +653,7 @@ func TestMissionShowsItsVibeAndDrillInShowsWhoSaidIt(t *testing.T) {
 	}
 	m = refresh(t, m)
 	var row string
-	for _, l := range strings.Split(m.View(), "\n") {
+	for _, l := range strings.Split(m.View().Content, "\n") {
 		if strings.Contains(l, "Lead work") {
 			row = l
 		}
@@ -656,7 +662,7 @@ func TestMissionShowsItsVibeAndDrillInShowsWhoSaidIt(t *testing.T) {
 		t.Fatalf("mission row = %q", row)
 	}
 	m = press(t, m, "down", "down", "down", "enter")
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"says: Wisconsin", "tests green", "claude lead", "North Dakota"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("detail lacks %q:\n%s", want, view)
@@ -678,9 +684,9 @@ func TestLongVibePlaceNeverWidensRows(t *testing.T) {
 			}
 		}
 	}
-	check(m.View())
+	check(m.View().Content)
 	m = press(t, m, "down", "down", "down", "enter")
-	check(m.View())
+	check(m.View().Content)
 }
 
 func TestCapitalOOpensTheSessionBesideTheBoard(t *testing.T) {
@@ -722,13 +728,13 @@ func TestAnAsksEvidenceShowsOnItsRowAndInFullWhenExpanded(t *testing.T) {
 	}
 	m = refresh(t, m)
 	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Question == "Rotate the HSM key?" })
-	if v := m.View(); !strings.Contains(v, "evidence: 1 cited | tried: the API, which needs a human token") {
+	if v := m.View().Content; !strings.Contains(v, "evidence: 1 cited | tried: the API, which needs a human token") {
 		t.Fatalf("selected row lacks its evidence line:\n%s", v)
 	}
 	m = press(t, m, "enter")
 	m = to(t, m, func(r row) bool { return r.need == nil && r.item != nil && r.item.Question == "Rotate the HSM key?" })
 	m = press(t, m, "enter")
-	v := m.View()
+	v := m.View().Content
 	for _, want := range []string{"tried  the API, which needs a human token", "evidence  https://ci.example/run/42", "CONTEXT", "in a session you started"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("expanded view lacks %q:\n%s", want, v)

@@ -5,8 +5,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
 )
 
 // palette keeps board colors in the terminal theme.
@@ -26,26 +25,18 @@ var pal = defaultPalette()
 
 // defaultPalette draws on the screen; NO_COLOR drops color and keeps bold and faint.
 func defaultPalette() palette {
-	return newPalette(screenRenderer(), os.Getenv("NO_COLOR") == "")
+	return newPalette(os.Getenv("NO_COLOR") == "")
 }
 
-func screenRenderer() *lipgloss.Renderer {
-	r := lipgloss.NewRenderer(os.Stdout)
-	if os.Getenv("NO_COLOR") != "" && termenv.NewOutput(os.Stdout).ColorProfile() != termenv.Ascii {
-		r.SetColorProfile(termenv.ANSI)
-	}
-	return r
-}
-
-func newPalette(r *lipgloss.Renderer, color bool) palette {
+func newPalette(color bool) palette {
 	fg := func(c string) lipgloss.Style {
-		s := r.NewStyle()
+		s := lipgloss.NewStyle()
 		if color {
 			s = s.Foreground(lipgloss.Color(c))
 		}
 		return s
 	}
-	p := palette{plain: r.NewStyle(), bold: r.NewStyle().Bold(true), dim: r.NewStyle().Faint(true), red: fg("1"), yellow: fg("3"), green: fg("2"), color: color}
+	p := palette{plain: lipgloss.NewStyle(), bold: lipgloss.NewStyle().Bold(true), dim: lipgloss.NewStyle().Faint(true), red: fg("1"), yellow: fg("3"), green: fg("2"), color: color}
 	for _, c := range hueColors {
 		p.hues = append(p.hues, fg(c))
 	}

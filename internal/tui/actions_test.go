@@ -23,7 +23,7 @@ func to(t *testing.T, m Model, want func(row) bool) Model {
 		}
 		m = press(t, m, "down")
 	}
-	t.Fatalf("no such row on:\n%s", m.View())
+	t.Fatalf("no such row on:\n%s", m.View().Content)
 	return m
 }
 
@@ -91,8 +91,8 @@ func TestKillAsksFirstAndSignalsOnlyOnYes(t *testing.T) {
 				m = to(t, m, at)
 			}
 			m = press(t, m, c.keys[0])
-			if m.mode != modeConfirm || !strings.Contains(m.View(), "kill claude ") || !strings.Contains(m.View(), "? y/n") {
-				t.Fatalf("K should ask y/n first:\n%s", m.View())
+			if m.mode != modeConfirm || !strings.Contains(m.View().Content, "kill claude ") || !strings.Contains(m.View().Content, "? y/n") {
+				t.Fatalf("K should ask y/n first:\n%s", m.View().Content)
 			}
 			m = press(t, m, c.keys[1:]...)
 			if !slices.Equal(*sent, c.sent) {
@@ -178,19 +178,19 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			return ""
 		}},
 		{"I lists answered items too", nil, []string{"a", "enter", "I"}, func(t *testing.T, f fixture) string {
-			if v := f.m.View(); f.m.mode != modeItems || !strings.Contains(v, "answered") || !strings.Contains(v, "Rename the flag?") {
+			if v := f.m.View().Content; f.m.mode != modeItems || !strings.Contains(v, "answered") || !strings.Contains(v, "Rename the flag?") {
 				return "items view:\n" + v
 			}
 			return ""
 		}},
 		{"U shows spend and limits", nil, []string{"U"}, func(t *testing.T, f fixture) string {
-			if v := f.m.View(); f.m.mode != modeScreen || !strings.Contains(v, "spend on") || !strings.Contains(v, "limit: claude") {
+			if v := f.m.View().Content; f.m.mode != modeScreen || !strings.Contains(v, "spend on") || !strings.Contains(v, "limit: claude") {
 				return "usage view:\n" + v
 			}
 			return ""
 		}},
 		{"E lists launched sessions", nil, []string{"E"}, func(t *testing.T, f fixture) string {
-			if v := f.m.View(); f.m.mode != modeScreen || !strings.Contains(v, "fix-login") || !strings.Contains(v, "exited 1") {
+			if v := f.m.View().Content; f.m.mode != modeScreen || !strings.Contains(v, "fix-login") || !strings.Contains(v, "exited 1") {
 				return "launched view:\n" + v
 			}
 			return ""
@@ -284,7 +284,7 @@ func TestKillWorksOnAPermissionPromptButNotOnAnItem(t *testing.T) {
 			sent := signals(k, false)
 			m = press(t, to(t, m, c.at), "K")
 			if asks := m.mode == modeConfirm; asks != (c.sent != nil) {
-				t.Fatalf("K asked %v:\n%s", asks, m.View())
+				t.Fatalf("K asked %v:\n%s", asks, m.View().Content)
 			}
 			m = press(t, m, "y")
 			if !slices.Equal(*sent, c.sent) {
@@ -402,7 +402,7 @@ func TestTEndsTheSessionPortsItAndRelaunchesItInTheOtherHarness(t *testing.T) {
 			m = press(t, m, "enter")
 			m = to(t, m, isSession("lead"))
 			m = press(t, m, "T")
-			if v := m.View(); m.mode != modeConfirm || !strings.Contains(v, "end claude lead (Lead work) and relaunch it in codex? y/n") {
+			if v := m.View().Content; m.mode != modeConfirm || !strings.Contains(v, "end claude lead (Lead work) and relaunch it in codex? y/n") {
 				t.Fatalf("T should ask y/n first:\n%s", v)
 			}
 			m = press(t, m, c.keys...)
