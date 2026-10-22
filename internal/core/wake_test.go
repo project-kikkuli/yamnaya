@@ -138,6 +138,12 @@ func TestPullRequestStatesBecomeOneEventEach(t *testing.T) {
 			{State: "OPEN", Threads: 3, Unresolved: 2, Merge: PRMergeFacts{OID: "h1"}},
 			{State: "OPEN", Threads: 3, Review: "APPROVED", Merge: PRMergeFacts{OID: "h1"}},
 		}, []string{EventPROpened, EventReview, EventReview, EventReview}},
+		{"a conflict with its base, once per head", []PRStatus{
+			{State: "OPEN", Merge: PRMergeFacts{OID: "h1", Mergeable: "CONFLICTING"}},
+			{State: "OPEN", Merge: PRMergeFacts{OID: "h1", Mergeable: "CONFLICTING"}},
+			{State: "OPEN", Pending: 1, Merge: PRMergeFacts{OID: "h2", Mergeable: "MERGEABLE"}},
+			{State: "OPEN", Merge: PRMergeFacts{OID: "h3", Mergeable: "CONFLICTING"}},
+		}, []string{EventPROpened, EventConflict, EventConflict}},
 		{"merged", []PRStatus{{State: "OPEN", Pending: 1}, {State: "MERGED", Passed: 2}}, []string{EventPROpened, EventMerged}},
 		{"closed", []PRStatus{{State: "CLOSED"}}, []string{EventPROpened, EventClosed}},
 	} {
@@ -191,6 +197,10 @@ func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
 			w.spawn("agent", m.Session)
 			w.pr(t, "agent", "https://github.com/acme/august/pull/3", PRStatus{State: "OPEN", Pending: 3})
 		}, false},
+		{"its pull request conflicts with its base and runs no CI", func(t *testing.T, w *orgWorld, m Manager) {
+			w.spawn("agent", m.Session)
+			w.pr(t, "agent", "https://github.com/acme/august/pull/3", PRStatus{State: "OPEN", Merge: PRMergeFacts{OID: "h1", Mergeable: "CONFLICTING"}})
+		}, true},
 		{"a wake is set", func(t *testing.T, w *orgWorld, m Manager) {
 			if _, err := w.core.SetWake(m.Session, w.clock.Add(time.Hour), "check the deploy"); err != nil {
 				t.Fatal(err)

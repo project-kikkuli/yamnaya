@@ -17,6 +17,7 @@ const (
 	EventReview       = "review"
 	EventMerged       = "merged"
 	EventClosed       = "closed"
+	EventConflict     = "conflict"
 	EventStuck        = "stuck"
 	EventDone         = "done"
 	EventVerifying    = "verifying"
@@ -38,7 +39,7 @@ var ownerKinds = map[string]bool{
 
 // chiefKinds are the state changes a chief hears from every goal below it.
 var chiefKinds = map[string]bool{
-	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true,
+	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true,
 	EventSteered: true, EventAdopted: true,

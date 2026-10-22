@@ -111,6 +111,10 @@ func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
 			out = append(out, GoalEvent{Kind: EventCIGreen, Key: "green:" + url + "@" + head, Payload: fmt.Sprintf("CI passed on %s (%d checks)", title, st.Passed)})
 		}
 	}
+	if st.State == "OPEN" && st.Merge.Mergeable == "CONFLICTING" {
+		out = append(out, GoalEvent{Kind: EventConflict, Key: "conflict:" + url + "@" + head,
+			Payload: title + " conflicts with its base branch; GitHub runs no CI on it until it is rebased"})
+	}
 	if st.Threads > 0 {
 		out = append(out, GoalEvent{Kind: EventReview, Key: "threads:" + url + "#" + strconv.Itoa(st.Threads),
 			Payload: fmt.Sprintf("%s has %d review threads, %d unresolved", title, st.Threads, st.Unresolved)})

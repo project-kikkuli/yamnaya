@@ -170,8 +170,9 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 			}
 		}
 	}
-	// A head with no checks yet, on a base branch that runs them, is waiting for its checks to register.
-	if st.Passed+st.Failed+st.Pending == 0 && pr.State == "OPEN" && pr.BaseRef != nil && pr.BaseRef.Target.Rollup != nil {
+	// A head with no checks yet, on a base branch that runs them, is waiting for its checks to register, unless it conflicts with
+	// its base: GitHub runs no pull request checks on it until it is rebased.
+	if st.Passed+st.Failed+st.Pending == 0 && pr.State == "OPEN" && pr.Mergeable != "CONFLICTING" && pr.BaseRef != nil && pr.BaseRef.Target.Rollup != nil {
 		st.Pending = 1
 	}
 	return st, nil
