@@ -24,9 +24,14 @@ type Host struct {
 	// Kind names the host on handles; "" is Name.
 	Kind string
 
-	mu    sync.Mutex
-	panes map[string]pane
-	at    time.Time
+	mu       sync.Mutex
+	panes    map[string]pane
+	sessions map[string]Pane
+	at       time.Time
+	// stamp is the latest terminal fingerprint, listed the one the table was read at, moved when stamp last changed.
+	stamp, listed uint64
+	stamped       bool
+	moved         time.Time
 }
 
 func New() *Host {
@@ -78,23 +83,64 @@ func (h *Host) run(args ...string) (string, error) {
 
 // list caches the pane table for a moment so one board refresh runs tmux once.
 func (h *Host) list() map[string]pane {
+	panes, _ := h.table()
+	return panes
+}
+
+// table reads every pane once: live panes by terminal, and the first pane of each session by session name.
+func (h *Host) table() (map[string]pane, map[string]Pane) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.panes != nil && time.Since(h.at) < 500*time.Millisecond {
-		return h.panes
+	if h.panes != nil && (time.Since(h.at) < 500*time.Millisecond || h.quiet()) {
+		return h.panes, h.sessions
 	}
-	h.panes, h.at = map[string]pane{}, time.Now()
-	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t#{pane_dead}")
+	h.panes, h.sessions, h.at, h.listed = map[string]pane{}, map[string]Pane{}, time.Now(), h.stamp
+	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t"+paneFormat)
 	if err != nil {
-		return h.panes
+		return h.panes, h.sessions
 	}
 	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(line, "\t")
-		if _, seen := h.panes[f[0]]; len(f) == 5 && f[4] != "1" && !seen {
-			h.panes[f[0]] = pane{id: f[1], target: f[2], session: f[3]}
+		f := strings.SplitN(line, "\t", 5)
+		if len(f) != 5 {
+			continue
+		}
+		if p, err := parsePane(f[3], f[4]); err == nil {
+			if _, seen := h.sessions[f[3]]; !seen {
+				h.sessions[f[3]] = p
+			}
+			if _, seen := h.panes[f[0]]; !p.Dead && !seen {
+				h.panes[f[0]] = pane{id: f[1], target: f[2], session: f[3]}
+			}
 		}
 	}
-	return h.panes
+	return h.panes, h.sessions
+}
+
+// settle is how long after a terminal process changes the pane table is still reread, while tmux catches up with it.
+const settle = 2 * time.Second
+
+// recheck bounds how long a table read while terminals stayed the same is kept, for renames and moves that change no process.
+const recheck = 10 * time.Second
+
+// quiet reports whether no terminal process changed since the table was read; h.mu is held.
+func (h *Host) quiet() bool {
+	return h.stamped && h.listed == h.stamp && time.Since(h.moved) >= settle && time.Since(h.at) < recheck
+}
+
+// Terminals records the fingerprint of the processes on terminals; the pane table is reread only after it changes.
+func (h *Host) Terminals(stamp uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.stamped || stamp != h.stamp {
+		h.stamp, h.stamped, h.moved = stamp, true, time.Now()
+	}
+}
+
+// forget drops the cached pane table after ym changes the server's panes.
+func (h *Host) forget() {
+	h.mu.Lock()
+	h.panes, h.sessions = nil, nil
+	h.mu.Unlock()
 }
 
 func (h *Host) Locate(tty string) (core.Handle, bool) {

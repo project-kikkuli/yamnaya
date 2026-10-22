@@ -33,6 +33,9 @@ type Adapter struct {
 
 	mu    sync.Mutex
 	scans map[string]*scan
+	// state stays open on the newest state database, dbPath, so each board reads it without reopening it.
+	state  *sql.DB
+	dbPath string
 }
 
 func New() *Adapter {
@@ -97,8 +100,21 @@ func (a *Adapter) db() (*sql.DB, bool) {
 		return nil, false
 	}
 	sort.Strings(matches)
-	db, err := sql.Open("sqlite", "file:"+matches[len(matches)-1]+"?mode=ro&"+url.Values{"_pragma": {"busy_timeout(2000)"}}.Encode())
-	return db, err == nil
+	path := matches[len(matches)-1]
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.dbPath == path {
+		return a.state, true
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&"+url.Values{"_pragma": {"busy_timeout(2000)"}}.Encode())
+	if err != nil {
+		return nil, false
+	}
+	if a.state != nil {
+		a.state.Close()
+	}
+	a.dbPath, a.state = path, db
+	return db, true
 }
 
 const threadCols = `id, rollout_path, COALESCE(NULLIF(name, ''), NULLIF(title, ''), first_user_message), cwd, updated_at,
@@ -225,7 +241,6 @@ func (a *Adapter) SessionID(p proc.Proc) string {
 	if !ok {
 		return a.heldThread(nil, p.PID)
 	}
-	defer db.Close()
 	if id := a.heldThread(db, p.PID); id != "" {
 		return id
 	}
@@ -254,10 +269,7 @@ func (a *Adapter) newestSince(db *sql.DB, p proc.Proc, now time.Time, claimed ma
 // Discover resolves every thread named by arguments or open files before guessing the rest from their directories.
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	now := a.Now()
-	db, ok := a.db()
-	if ok {
-		defer db.Close()
-	}
+	db, _ := a.db()
 	ids := make([]string, len(procs))
 	var wg sync.WaitGroup
 	for i, p := range procs {
@@ -379,7 +391,6 @@ func (a *Adapter) SessionCwd(session string) string {
 	if !ok {
 		return ""
 	}
-	defer db.Close()
 	t, _ := threadByID(db, session)
 	return t.cwd
 }

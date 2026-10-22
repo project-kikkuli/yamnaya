@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -68,17 +69,44 @@ func (r Records) All() ([]Record, error) {
 	}
 	var out []Record
 	for _, f := range files {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			continue
-		}
-		var rec Record
-		if json.Unmarshal(data, &rec) == nil && rec.Key != "" {
+		if rec, ok := read(f); ok {
 			out = append(out, rec)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Started.Before(out[j].Started) })
 	return out, nil
+}
+
+type cached struct {
+	size     int64
+	modified time.Time
+	rec      Record
+	ok       bool
+}
+
+var (
+	cacheMu sync.Mutex
+	cache   = map[string]cached{}
+)
+
+// read parses a record file, again only after its size or modification time changes.
+func read(path string) (Record, bool) {
+	info, err := os.Stat(path)
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if err != nil {
+		delete(cache, path)
+		return Record{}, false
+	}
+	if c, ok := cache[path]; ok && c.size == info.Size() && c.modified.Equal(info.ModTime()) {
+		return c.rec, c.ok
+	}
+	c := cached{size: info.Size(), modified: info.ModTime()}
+	if data, err := os.ReadFile(path); err == nil {
+		c.ok = json.Unmarshal(data, &c.rec) == nil && c.rec.Key != ""
+	}
+	cache[path] = c
+	return c.rec, c.ok
 }
 
 // Find matches ref against keys, branch slugs and session ids; a session id may be given by a prefix of six or more.

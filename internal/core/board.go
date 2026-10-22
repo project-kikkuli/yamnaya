@@ -1,6 +1,8 @@
 package core
 
 import (
+	"fmt"
+	"hash/fnv"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -238,6 +240,20 @@ func (c *Core) owned(procs []proc.Proc) [][]proc.Proc {
 	return byHarness
 }
 
+// terminals fingerprints the processes that run on a terminal; it changes when one starts, exits or moves.
+func terminals(procs []proc.Proc) uint64 {
+	var sum uint64
+	for _, p := range procs {
+		if p.TTY == "" {
+			continue
+		}
+		h := fnv.New64a()
+		fmt.Fprintf(h, "%d\x00%d\x00%s", p.PID, p.PPID, p.TTY)
+		sum += h.Sum64()
+	}
+	return sum
+}
+
 // Board reads every session, groups sessions into projects and lists what needs the owner.
 func (c *Core) Board() (Board, error) {
 	b := Board{At: c.now()}
@@ -248,6 +264,12 @@ func (c *Core) Board() (Board, error) {
 	procs, err := c.Procs()
 	if err != nil {
 		return b, err
+	}
+	stamp := terminals(procs)
+	for _, h := range c.Hosts {
+		if w, ok := h.(Watching); ok {
+			w.Terminals(stamp)
+		}
 	}
 	byHarness := c.owned(procs)
 	discovered := make([][]Session, len(c.Harnesses))

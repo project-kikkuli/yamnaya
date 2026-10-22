@@ -204,6 +204,11 @@ type Host interface {
 	Screen(h Handle) (string, error)
 }
 
+// Watching is a host whose panes change only with the processes on terminals, so it rereads them after stamp changes.
+type Watching interface {
+	Terminals(stamp uint64)
+}
+
 // ScanCache keeps what an adapter learned from a file and how far it read, across ym runs.
 type ScanCache interface {
 	LoadScan(path string) (offset int64, data []byte, ok bool)

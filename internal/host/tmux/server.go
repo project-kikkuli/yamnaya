@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"strconv"
@@ -81,14 +82,13 @@ func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
 	if err != nil {
 		return Pane{}, fmt.Errorf("tmux -L %s new-session %s: %w: %s", h.socketName(), name, err, strings.TrimSpace(string(out)))
 	}
-	h.mu.Lock()
-	h.panes = nil
-	h.mu.Unlock()
+	h.forget()
 	return parsePane(name, strings.TrimRight(string(out), "\n"))
 }
 
 // Respawn restarts a session's pane with argv in cwd, killing whatever still runs there.
 func (h *Host) Respawn(name, cwd string, argv []string) error {
+	defer h.forget()
 	out, err := h.command(append([]string{"respawn-pane", "-k", "-t", "=" + name + ":", "-c", cwd}, argv...)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux respawn-pane %s: %w: %s", name, err, strings.TrimSpace(string(out)))
@@ -105,23 +105,10 @@ func (h *Host) Pane(name string) (Pane, error) {
 	return parsePane(name, out)
 }
 
-// Panes reads the first pane of every session on the server in one call, by session name; none when the server is down.
+// Panes is the first pane of every session on the server, by session name; none when the server is down.
 func (h *Host) Panes() map[string]Pane {
-	panes := map[string]Pane{}
-	out, err := h.run("list-panes", "-a", "-F", "#{session_name}\t"+paneFormat)
-	if err != nil {
-		return panes
-	}
-	for _, line := range strings.Split(out, "\n") {
-		name, rest, ok := strings.Cut(line, "\t")
-		if _, seen := panes[name]; !ok || seen {
-			continue
-		}
-		if p, err := parsePane(name, rest); err == nil {
-			panes[name] = p
-		}
-	}
-	return panes
+	_, sessions := h.table()
+	return maps.Clone(sessions)
 }
 
 func parsePane(name, out string) (Pane, error) {
@@ -136,6 +123,7 @@ func parsePane(name, out string) (Pane, error) {
 
 // Kill ends session name; a session that is already gone is not an error.
 func (h *Host) Kill(name string) error {
+	defer h.forget()
 	out, err := h.command("kill-session", "-t", "="+name).CombinedOutput()
 	if err == nil {
 		return nil

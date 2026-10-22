@@ -151,6 +151,8 @@ type scan struct {
 	Mode string
 
 	modified time.Time
+	// file is the transcript last read, so a file replaced under the same path is read again from the start.
+	file os.FileInfo
 }
 
 func (t scan) title() string {
@@ -324,22 +326,22 @@ func (a *Adapter) advance(path string) *scan {
 		}
 		a.scans[path] = t
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return t
+	}
+	if info.Size() < t.Offset || t.file != nil && !os.SameFile(t.file, info) {
+		*t = scan{V: scanFormat}
+	}
+	t.file, t.modified = info, info.ModTime()
+	if info.Size() == t.Offset {
+		return t
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return t
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return t
-	}
-	if info.Size() < t.Offset {
-		*t = scan{V: scanFormat}
-	}
-	t.modified = info.ModTime()
-	if info.Size() == t.Offset {
-		return t
-	}
 	if _, err := f.Seek(t.Offset, io.SeekStart); err != nil {
 		return t
 	}
@@ -375,17 +377,14 @@ type agentMeta struct {
 // crew reads <session>/subagents/agent-<id>.meta.json and workflows/<run>/agent-<id>.meta.json, and each agent's transcript.
 // Claude marks a session idle only when no delegated work runs, so a session not busy has no busy crew.
 func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Member {
-	metas, _ := filepath.Glob(filepath.Join(dir, "agent-*.meta.json"))
-	flows, _ := filepath.Glob(filepath.Join(dir, "workflows", "*", "agent-*.meta.json"))
-	metas = append(metas, flows...)
+	metas := a.glob(dir, "agent-*.meta.json")
+	for _, run := range a.glob(filepath.Join(dir, "workflows"), "*") {
+		metas = append(metas, a.glob(run, "agent-*.meta.json")...)
+	}
 	var crew []core.Member
 	for _, mp := range metas {
-		b, err := os.ReadFile(mp)
-		if err != nil {
-			continue
-		}
-		var meta agentMeta
-		if json.Unmarshal(b, &meta) != nil {
+		meta, ok := a.meta(mp)
+		if !ok {
 			continue
 		}
 		base := strings.TrimSuffix(mp, ".meta.json")

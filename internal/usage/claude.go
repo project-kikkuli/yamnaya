@@ -31,14 +31,12 @@ type source struct {
 // claudeSources lists projects/<p>/<session>.jsonl and every agent-*.jsonl under projects/<p>/<session>/subagents.
 func claudeSources(dir string) []source {
 	var out []source
-	projects, _ := os.ReadDir(filepath.Join(dir, "projects"))
-	for _, p := range projects {
+	for _, p := range readDir(filepath.Join(dir, "projects")) {
 		if !p.IsDir() {
 			continue
 		}
 		pdir := filepath.Join(dir, "projects", p.Name())
-		entries, _ := os.ReadDir(pdir)
-		for _, e := range entries {
+		for _, e := range readDir(pdir) {
 			name := e.Name()
 			if !e.IsDir() {
 				if strings.HasSuffix(name, ".jsonl") {
@@ -49,17 +47,13 @@ func claudeSources(dir string) []source {
 				continue
 			}
 			sub := filepath.Join(pdir, name, "subagents")
-			filepath.WalkDir(sub, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return nil
-				}
+			walk(sub, func(path string, d fs.DirEntry) {
 				base := d.Name()
 				if strings.HasPrefix(base, "agent-") && strings.HasSuffix(base, ".jsonl") {
 					if s, ok := stat(path, name, false); ok {
 						out = append(out, s)
 					}
 				}
-				return nil
 			})
 		}
 	}

@@ -19,18 +19,39 @@ func List() ([]Proc, error) {
 	}
 	ttys := ttyNames()
 	now := time.Now()
+	argsMu.Lock()
+	defer argsMu.Unlock()
+	seen := make(map[int]argsEntry, len(ks))
 	procs := make([]Proc, 0, len(ks))
 	for _, k := range ks {
 		pid := int(k.Proc.P_pid)
-		args := procArgs(pid)
-		if len(args) == 0 {
-			args = []string{unix.ByteSliceToString(k.Proc.P_comm[:])}
-		}
 		started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*1000)
-		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys[k.Eproc.Tdev], Elapsed: now.Sub(started), Args: args})
+		e, ok := argsCache[pid]
+		if !ok || !e.started.Equal(started) || now.Sub(started) < argsSettle {
+			e = argsEntry{started: started, args: procArgs(pid)}
+			if len(e.args) == 0 {
+				e.args = []string{unix.ByteSliceToString(k.Proc.P_comm[:])}
+			}
+		}
+		seen[pid] = e
+		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys[k.Eproc.Tdev], Elapsed: now.Sub(started), Args: e.args})
 	}
+	argsCache = seen
 	return procs, nil
 }
+
+// argsSettle is how long a new process may still retitle itself; its arguments are read again until it is that old.
+const argsSettle = time.Minute
+
+type argsEntry struct {
+	started time.Time
+	args    []string
+}
+
+var (
+	argsMu    sync.Mutex
+	argsCache map[int]argsEntry
+)
 
 // procArgs reads kern.procargs2: argc, the executable path, padding, then argc NUL-terminated arguments.
 func procArgs(pid int) []string {

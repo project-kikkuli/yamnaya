@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,8 +69,8 @@ func TestLocateTypeAndScreenByPaneTTY(t *testing.T) {
 }
 
 func TestLocateSkipsADeadPaneOnTheLiveSessionsReusedTTY(t *testing.T) {
-	dead := "/dev/ttys006\t%9\tbuddy:0.0\tbuddy\t1"
-	live := "/dev/ttys006\t%11\tcost:0.0\tcost\t0"
+	dead := "/dev/ttys006\t%9\tbuddy:0.0\tbuddy\t%9\t/dev/ttys006\t1\t0\t0\t"
+	live := "/dev/ttys006\t%11\tcost:0.0\tcost\t%11\t/dev/ttys006\t0\t0\t412\t"
 	for name, rows := range map[string][]string{"dead first": {dead, live}, "live first": {live, dead}} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -83,6 +84,39 @@ func TestLocateSkipsADeadPaneOnTheLiveSessionsReusedTTY(t *testing.T) {
 				t.Fatalf("Locate = %+v, %v, want the live pane %%11", hd, ok)
 			}
 		})
+	}
+}
+
+func TestPanesAreReadAgainOnlyAfterTerminalProcessesChange(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	script := "#!/bin/sh\necho >> " + calls + "\nprintf '%s\\n' '/dev/ttys006\t%11\tcost:0.0\tcost\t%11\t/dev/ttys006\t0\t0\t412\t'\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	read := func() int {
+		b, _ := os.ReadFile(calls)
+		return strings.Count(string(b), "\n")
+	}
+	h := &Host{Socket: "fake"}
+	h.Terminals(1)
+	if _, ok := h.Locate("/dev/ttys006"); !ok || read() != 1 {
+		t.Fatalf("first board: located %v after %d tmux calls", ok, read())
+	}
+	time.Sleep(600 * time.Millisecond)
+	h.Terminals(1)
+	if h.Locate("/dev/ttys006"); read() != 2 {
+		t.Fatalf("%d tmux calls, want a second while tmux catches up with the change", read())
+	}
+	time.Sleep(settle)
+	h.Terminals(1)
+	if h.Panes(); read() != 2 {
+		t.Fatalf("%d tmux calls, want none once the terminals stayed the same", read())
+	}
+	h.Terminals(2)
+	if _, ok := h.Panes()["cost"]; !ok || read() != 3 {
+		t.Fatalf("a terminal process change read tmux %d times, want 3", read())
 	}
 }
 

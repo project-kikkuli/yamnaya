@@ -37,6 +37,10 @@ type Adapter struct {
 	mu    sync.Mutex
 	scans map[string]*scan
 	dirs  map[string]string
+
+	files    sync.Mutex
+	listings map[string]listing
+	metas    map[string]metaFile
 }
 
 func New() *Adapter {

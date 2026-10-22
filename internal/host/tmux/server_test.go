@@ -68,12 +68,11 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if _, err := h.run("send-keys", "-t", p.ID, "Enter"); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the agent to exit", func() bool {
-		p, err = h.Pane("repo-wt-x")
-		return err == nil && p.Dead
+	waitFor(t, "the board's pane table to show the agent exited", func() bool {
+		return h.Panes()["repo-wt-x"].Dead
 	})
-	if p.Status != 3 {
-		t.Errorf("exit status %d, want 3", p.Status)
+	if p, err = h.Pane("repo-wt-x"); err != nil || !p.Dead || p.Status != 3 {
+		t.Errorf("exited pane %+v, %v, want dead with status 3", p, err)
 	}
 	if all := h.Panes(); all["repo-wt-x"] != p {
 		t.Errorf("Panes()[repo-wt-x] = %+v, want the exited pane %+v", all["repo-wt-x"], p)

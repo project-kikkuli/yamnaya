@@ -18,22 +18,18 @@ import (
 // codexSources lists every rollout under sessions/, keyed to the thread id that ends its name.
 func codexSources(home string) []source {
 	var out []source
-	filepath.WalkDir(filepath.Join(home, "sessions"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
+	walk(filepath.Join(home, "sessions"), func(path string, d fs.DirEntry) {
 		name := d.Name()
 		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, ".jsonl") {
-			return nil
+			return
 		}
 		id := strings.TrimSuffix(name, ".jsonl")
 		if len(id) < 36 {
-			return nil
+			return
 		}
 		if s, ok := stat(path, id[len(id)-36:], true); ok {
 			out = append(out, s)
 		}
-		return nil
 	})
 	return out
 }

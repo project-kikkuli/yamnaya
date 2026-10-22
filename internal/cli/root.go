@@ -29,10 +29,11 @@ func Wire(path string) (*core.Core, error) {
 	}
 	cl, cx := claude.New(), codex.New()
 	cl.Cache, cx.Cache = st, st
+	srv := tmux.NewServer()
 	c := &core.Core{
 		Store:     st,
 		Harnesses: []core.Harness{cl, cx},
-		Hosts:     []core.Host{tmux.New(), tmux.NewServer()},
+		Hosts:     []core.Host{tmux.New(), srv},
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
@@ -42,7 +43,7 @@ func Wire(path string) (*core.Core, error) {
 		StateDir:  filepath.Dir(path),
 	}
 	if l, err := newLauncher(); err == nil {
-		l.core = c
+		l.core, l.srv = c, srv
 		c.Launches = l
 		c.BackgroundSend = func(s core.Live, text string) error { _, err := l.sendFrom(s, text, false); return err }
 	}

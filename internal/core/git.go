@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,9 +51,66 @@ func ReadGit(dir string) GitInfo {
 		g = revParse(dir)
 	}
 	if g.Branch != "" && g.Branch != "HEAD" && !g.IsDefault(g.Branch) {
-		g.Ahead = ahead(dir, g.Default)
+		g.Ahead = aheadOnce(dir, g)
 	}
 	return g
+}
+
+type aheadEntry struct {
+	stamp string
+	n     int
+}
+
+var (
+	aheadMu    sync.Mutex
+	aheadCache = map[string]aheadEntry{}
+)
+
+// aheadOnce counts dir's commits ahead, asking git again only after HEAD or a ref it counts against moves.
+func aheadOnce(dir string, g GitInfo) int {
+	stamp := refsStamp(g)
+	aheadMu.Lock()
+	e, ok := aheadCache[dir]
+	aheadMu.Unlock()
+	if ok && stamp != "" && e.stamp == stamp {
+		return e.n
+	}
+	n := ahead(dir, g.Default)
+	aheadMu.Lock()
+	aheadCache[dir] = aheadEntry{stamp, n}
+	aheadMu.Unlock()
+	return n
+}
+
+// refsStamp is the size and time of every file holding HEAD or a ref ahead counts against, "" when the checkout's git dir is unusual.
+func refsStamp(g GitInfo) string {
+	gitDir := filepath.Join(g.Top, ".git")
+	if b, err := os.ReadFile(gitDir); err == nil {
+		line, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: ")
+		if !ok {
+			return ""
+		}
+		gitDir = line
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(g.Top, gitDir)
+		}
+	}
+	files := []string{filepath.Join(gitDir, "HEAD"), filepath.Join(g.Common, "packed-refs"), filepath.Join(g.Common, "refs", "heads", g.Branch)}
+	for _, b := range []string{"main", "master", g.Default} {
+		if b != "" {
+			files = append(files, filepath.Join(g.Common, "refs", "heads", b), filepath.Join(g.Common, "refs", "remotes", "origin", b))
+		}
+	}
+	files = append(files, filepath.Join(g.Common, "refs", "remotes", "origin", "HEAD"))
+	var sb strings.Builder
+	for _, f := range files {
+		if info, err := os.Stat(f); err == nil {
+			fmt.Fprintf(&sb, "%s %d %d;", f, info.Size(), info.ModTime().UnixNano())
+		} else {
+			fmt.Fprintf(&sb, "%s -;", f)
+		}
+	}
+	return sb.String()
 }
 
 func revParse(dir string) GitInfo {

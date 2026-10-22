@@ -14,7 +14,6 @@ func (a *Adapter) LatestIn(cwd string, since time.Time) string {
 	if !ok {
 		return ""
 	}
-	defer db.Close()
 	for _, t := range threadsIn(db, cwd) {
 		if !t.updated.Before(since.Truncate(time.Second)) {
 			return t.id
