@@ -53,7 +53,7 @@ The **Needs you** queue holds only:
 - permission prompts
 - one row per session you started yourself that asks you something
 
-It stays quiet because ym refuses a decision or default bound for you without a recommendation, and a decision without two options with their effects. Every ask arrives with the goal, its pull requests and CI, recent agent activity and what changed since you last looked. Done and stuck also raise a desktop notification; nothing else does.
+It stays quiet because ym refuses a decision or default bound for you without a recommendation, and a decision without two options with their effects. Every ask arrives with the goal, its pull requests and CI, recent agent activity and the goal's feed events you have not read; answering or dismissing one of its asks, or opening the goal, marks them read. An ask that climbed to you past a stuck or retired manager without those shows as unprepared, and that manager is told to prepare it. Done and stuck also raise a desktop notification; nothing else does.
 
 Each goal row shows its unread feed count and newest line. `enter` opens the goal with its feed and marks it read.
 

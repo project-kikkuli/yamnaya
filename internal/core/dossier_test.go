@@ -59,6 +59,9 @@ func TestAnEscalationArrivesWithItsGoalPullRequestsAndActivity(t *testing.T) {
 	w.set("other", func(s *Session) {
 		s.PRs = []PR{{URL: "https://github.com/acme/elsewhere/pull/1"}}
 	})
+	if err := w.core.Notice(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
 	it, err := w.core.AddItem(Item{Session: m.Session, Harness: "claude", Kind: KindDecision, Question: "rotate in prod tonight?", Rec: "yes",
 		Options: picks, Tried: "staging rotation", Evidence: []string{"https://ci.example/run/42"}})
 	if err != nil {
@@ -81,21 +84,29 @@ func TestAnEscalationArrivesWithItsGoalPullRequestsAndActivity(t *testing.T) {
 	if got.Tried != "staging rotation" || !slices.Equal(got.Evidence, []string{"https://ci.example/run/42"}) {
 		t.Fatalf("tried %q evidence %q; want what the manager cited", got.Tried, got.Evidence)
 	}
-	if !d.Since.IsZero() || !slices.Contains(d.Changes, "opened "+url+" (ci failing)") {
+	if !d.Since.IsZero() || !has(d.Changes, "opened \"Rotate keys\" "+url) || !has(d.Changes, "CI failed on \"Rotate keys\" "+url+": 1 failing, 3 passing") {
 		t.Fatalf("since %v changes %q; want the PR as new since the goal began", d.Since, d.Changes)
 	}
 }
 
-func TestAsksReportOnlyWhatChangedSinceTheOwnerLastLooked(t *testing.T) {
+func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 	w := newOrgWorld(t)
 	_, m := w.goal(t, "rotate the signing keys", "/repo/auth-plane")
 	first := "https://github.com/acme/auth-plane/pull/1"
 	second := "https://github.com/acme/auth-plane/pull/2"
 	w.spawn("agent", m.Session)
 	w.set("agent", func(s *Session) { s.PRs = []PR{{URL: first}} })
-	if err := w.core.Store.SavePRStatus(first, PRStatus{State: "OPEN", Pending: 2, Fetched: w.clock}); err != nil {
-		t.Fatal(err)
+	status := func(url string, st PRStatus) {
+		t.Helper()
+		st.Fetched = w.clock
+		if err := w.core.Store.SavePRStatus(url, st); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.core.Notice(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
 	}
+	status(first, PRStatus{State: "OPEN", Title: "signer", Failed: 1})
 	one, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, Question: "rotate the HSM key by hand", Rec: "do it before noon"})
 	if err != nil {
 		t.Fatal(err)
@@ -105,32 +116,35 @@ func TestAsksReportOnlyWhatChangedSinceTheOwnerLastLooked(t *testing.T) {
 	}
 
 	w.set("agent", func(s *Session) { s.PRs = []PR{{URL: first}, {URL: second}} })
-	for url, st := range map[string]PRStatus{first: {State: "MERGED", Passed: 2}, second: {State: "OPEN", Failed: 1}} {
-		st.Fetched = w.clock
-		if err := w.core.Store.SavePRStatus(url, st); err != nil {
-			t.Fatal(err)
-		}
-	}
+	status(first, PRStatus{State: "MERGED", Title: "signer", Passed: 2})
+	status(second, PRStatus{State: "OPEN", Title: "verifier", Failed: 1})
 	two, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, Question: "approve the prod window", Rec: "approve"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, _ := w.core.Store.Item(two.Key())
-	want := []string{"merged " + first, "opened " + second + " (ci failing)"}
-	if got.Dossier.Since.IsZero() || !slices.Equal(got.Dossier.Changes, want) {
-		t.Fatalf("since %v changes %q; want %q", got.Dossier.Since, got.Dossier.Changes, want)
+	if c := got.Dossier.Changes; got.Dossier.Since.IsZero() || has(c, "CI failed on \"signer\"") || has(c, one.Key()) || has(c, two.Key()) ||
+		!has(c, "merged \"signer\"") || !has(c, "opened "+second) || !has(c, "CI failed on \"verifier\"") {
+		t.Fatalf("since %v changes %q; want only the merge and the new PR's red CI, after the owner's answer", got.Dossier.Since, got.Dossier.Changes)
 	}
 
-	if err := w.core.Store.SavePRStatus(second, PRStatus{State: "OPEN", Passed: 3, Fetched: w.clock}); err != nil {
+	status(second, PRStatus{State: "OPEN", Title: "verifier", Passed: 3, Merge: PRMergeFacts{OID: "b"}})
+	if err := w.core.Brief(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = w.core.Store.Item(two.Key())
+	if !has(got.Dossier.Changes, "CI passed on \"verifier\"") ||
+		!slices.ContainsFunc(got.Dossier.PRs, func(p PRNote) bool { return p.URL == second && p.CI == "passing" }) {
+		t.Fatalf("after ym serve refreshed, dossier = %+v; want the PR's CI now passing", got.Dossier)
+	}
+	if err := w.core.Looked(got.Dossier.Goal); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.core.Brief(w.board(t)); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = w.core.Store.Item(two.Key())
-	if !slices.Contains(got.Dossier.Changes, "opened "+second+" (ci passing)") ||
-		!slices.ContainsFunc(got.Dossier.PRs, func(p PRNote) bool { return p.URL == second && p.CI == "passing" }) {
-		t.Fatalf("after ym serve refreshed, dossier = %+v; want the PR's CI now passing", got.Dossier)
+	if got, _ = w.core.Store.Item(two.Key()); len(got.Dossier.Changes) != 0 {
+		t.Fatalf("after the owner read the goal, changes = %q; want none", got.Dossier.Changes)
 	}
 }
 
@@ -141,7 +155,8 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 		wantMissing []string
 	}{
 		{name: "thin decision", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}},
-		{name: "chore without rec", it: Item{Kind: KindChore, Question: "approve CHG-77"}, wantMissing: []string{"a recommendation"}},
+		{name: "default without rec", it: Item{Kind: KindDefault, Question: "v2 key ids by default?"}, wantMissing: []string{"a recommendation"}},
+		{name: "chore needs no rec", it: Item{Kind: KindChore, Question: "approve CHG-77"}},
 		{name: "ready decision", it: Item{Kind: KindDecision, Question: "v2 key ids?", Rec: "v2", Options: picks}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -195,4 +210,8 @@ func texts(ms []Message) []string {
 		out = append(out, m.Text)
 	}
 	return out
+}
+
+func has(lines []string, part string) bool {
+	return slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, part) })
 }

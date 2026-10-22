@@ -169,11 +169,7 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 			return it, err
 		}
 	}
-	items, err := c.Store.Items(ItemFilter{})
-	if err != nil {
-		return it, err
-	}
-	if it.Dossier, err = c.dossier(b, o, it, items); err != nil {
+	if it.Dossier, err = c.dossier(b, o, it); err != nil {
 		return it, err
 	}
 	added, err := c.Store.addItem(it)

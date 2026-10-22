@@ -119,7 +119,7 @@ func ready(it Item) error {
 		ErrNotReady, strings.Join(flags, " and "))
 }
 
-// itemDossiers adds the columns for an item's evidence, what was tried and ym's dossier, and the owner's last look at each goal.
+// itemDossiers adds the columns for an item's evidence, what was tried, ym's dossier and who was told to prepare it.
 func itemDossiers(db *sql.DB) error {
 	for col, def := range map[string]string{
 		"evidence": `TEXT NOT NULL DEFAULT '[]'`,
@@ -137,8 +137,7 @@ func itemDossiers(db *sql.DB) error {
 			}
 		}
 	}
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ym_goal_seen (goal TEXT PRIMARY KEY, at TEXT NOT NULL, snapshot TEXT NOT NULL)`)
-	return err
+	return nil
 }
 
 // SaveDossier replaces the dossier of item seq.
@@ -151,59 +150,12 @@ func (s *Store) SaveDossier(seq int64, d Dossier) error {
 	return err
 }
 
-// goalSnapshot is what the owner saw of a goal: each pull request's state, each agent's status and result, each item's state.
-type goalSnapshot struct {
-	State  string            `json:"state"`
-	PRs    map[string]string `json:"prs"`
-	Agents map[string]string `json:"agents"`
-	Items  map[string]string `json:"items"`
-}
-
-func (s *Store) seen(goal string) (time.Time, goalSnapshot, error) {
-	var at, raw string
-	snap := goalSnapshot{}
-	err := s.db.QueryRow(`SELECT at, snapshot FROM ym_goal_seen WHERE goal = ?`, goal).Scan(&at, &raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, snap, nil
-	}
-	if err != nil {
-		return time.Time{}, snap, err
-	}
-	t, _ := time.Parse(time.RFC3339Nano, at)
-	return t, snap, json.Unmarshal([]byte(raw), &snap)
-}
-
-func (s *Store) markSeen(goal string, at time.Time, snap goalSnapshot) error {
-	raw, err := json.Marshal(snap)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO ym_goal_seen (goal, at, snapshot) VALUES (?, ?, ?)
-		ON CONFLICT(goal) DO UPDATE SET at = excluded.at, snapshot = excluded.snapshot`, goal, at.UTC().Format(time.RFC3339Nano), string(raw))
-	return err
-}
-
-// Looked records that the owner has seen goal as it stands on b, so later asks report only what changed after now.
-func (c *Core) Looked(b Board, goal string) error {
+// Looked records that the owner has read goal's news, so later asks report only what happens after now.
+func (c *Core) Looked(goal string) error {
 	if goal == "" {
 		return nil
 	}
-	o := b.Org
-	if o.Managers == nil {
-		var err error
-		if o, err = c.LoadOrg(); err != nil {
-			return err
-		}
-	}
-	m, ok := o.Managers[o.Goals[goal].ManagerID]
-	if !ok {
-		return nil
-	}
-	items, err := c.Store.Items(ItemFilter{})
-	if err != nil {
-		return err
-	}
-	return c.Store.markSeen(goal, c.now(), c.snapshot(b, o, m, items))
+	return c.Store.MarkSeen(goal, c.now())
 }
 
 // work is the agent sessions whose work an item stands on: its manager's tree, every tree below a chief, else the filer's mission.
@@ -235,34 +187,6 @@ func (c *Core) work(b Board, o Org, session string) (Manager, bool, []Live) {
 	return m, true, out
 }
 
-func (c *Core) snapshot(b Board, o Org, m Manager, items []Item) goalSnapshot {
-	snap := goalSnapshot{State: o.Goals[m.GoalID].State, PRs: map[string]string{}, Agents: map[string]string{}, Items: map[string]string{}}
-	_, _, sessions := c.work(b, o, m.Session)
-	for _, s := range sessions {
-		snap.Agents[s.Key()] = s.Status.String() + "\t" + titleFor(s) + "\t" + oneLine(s.Result)
-		for _, pr := range s.AllPRs() {
-			snap.PRs[pr.URL] = prLine(pr)
-		}
-	}
-	keys := map[string]bool{}
-	for _, s := range sessions {
-		keys[s.Key()] = true
-	}
-	for _, it := range items {
-		if keys[it.Session] || o.Sessions[it.Session] == m.ID {
-			snap.Items[it.Key()] = it.State + "\t" + it.ID + "\t" + oneLine(it.Question) + "\t" + oneLine(it.Answer+it.Reason)
-		}
-	}
-	return snap
-}
-
-func prLine(pr PR) string {
-	if pr.Status == nil {
-		return ""
-	}
-	return pr.Status.State + "\t" + pr.Status.CI()
-}
-
 func titleFor(s Live) string {
 	if s.Title != "" {
 		return clip(oneLine(s.Title), 60)
@@ -270,91 +194,42 @@ func titleFor(s Live) string {
 	return Short(s.Key())
 }
 
-// changes lists what differs between the owner's last look and now, leaving out the item being asked.
-func changes(was, now goalSnapshot, skip string) []string {
+// quietKinds are a manager's own wakes, never news for the owner deciding an ask.
+var quietKinds = map[string]bool{EventTimer: true, EventNudge: true}
+
+// changes lists the goal's events the owner has not read, oldest first, leaving out the asked item's own; since is the owner's
+// last read, zero when the owner never read the goal.
+func (c *Core) changes(goal, skip string) (time.Time, []string, error) {
+	events, err := c.Store.GoalEvents(goal)
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	var since time.Time
 	var out []string
-	if was.State != "" && was.State != now.State {
-		out = append(out, "goal went "+was.State+" -> "+now.State)
-	}
-	for _, url := range sortedKeys(now.PRs) {
-		st, ci, _ := strings.Cut(now.PRs[url], "\t")
-		prev, had := was.PRs[url]
-		pst, pci, _ := strings.Cut(prev, "\t")
-		switch {
-		case !had:
-			out = append(out, "opened "+url+withCI(st, ci))
-		case pst != st && st != "":
-			out = append(out, strings.ToLower(st)+" "+url)
-		case pci != ci && ci != "":
-			out = append(out, "ci "+orNone(pci)+" -> "+ci+" on "+url)
-		}
-	}
-	for _, key := range sortedKeys(now.Agents) {
-		st, rest, _ := strings.Cut(now.Agents[key], "\t")
-		title, result, _ := strings.Cut(rest, "\t")
-		prev, had := was.Agents[key]
-		_, prest, _ := strings.Cut(prev, "\t")
-		_, presult, _ := strings.Cut(prest, "\t")
-		switch {
-		case !had:
-			out = append(out, "agent "+title+" started ("+st+")")
-		case result != "" && result != presult:
-			out = append(out, "agent "+title+" finished: "+clip(result, 100))
-		}
-	}
-	for _, key := range sortedKeys(was.Agents) {
-		if _, ok := now.Agents[key]; !ok {
-			_, rest, _ := strings.Cut(was.Agents[key], "\t")
-			title, _, _ := strings.Cut(rest, "\t")
-			out = append(out, "agent "+title+" ended")
-		}
-	}
-	for _, key := range sortedKeys(now.Items) {
-		if key == skip {
+	for _, e := range events {
+		if !e.Seen.IsZero() {
+			if e.Seen.After(since) {
+				since = e.Seen
+			}
 			continue
 		}
-		parts := strings.SplitN(now.Items[key], "\t", 4)
-		for len(parts) < 4 {
-			parts = append(parts, "")
+		if quietKinds[e.Kind] || (e.Kind == EventAsked && strings.Contains(e.Payload, "("+skip+")")) {
+			continue
 		}
-		prev, had := was.Items[key]
-		pstate, _, _ := strings.Cut(prev, "\t")
-		switch {
-		case !had:
-			out = append(out, parts[1]+" asked: "+clip(parts[2], 100))
-			if parts[0] != ItemOpen {
-				out = append(out, parts[1]+" "+parts[0]+": "+clip(parts[3], 100))
-			}
-		case pstate != parts[0]:
-			out = append(out, parts[1]+" "+parts[0]+": "+clip(parts[3], 100))
+		line := oneLine(e.Payload)
+		if e.Kind == EventUpdate {
+			line = "manager: " + line
 		}
+		if line == "" {
+			line = e.Kind
+		}
+		out = append(out, clip(line, 160))
 	}
 	if len(out) > dossierChanges {
 		more := len(out) - dossierChanges + 1
 		out = append(out[:dossierChanges-1], fmt.Sprintf("and %d more", more))
 	}
-	return out
-}
-
-func withCI(state, ci string) string {
-	var st []string
-	if state != "" && state != "OPEN" {
-		st = append(st, strings.ToLower(state))
-	}
-	if ci != "" {
-		st = append(st, "ci "+ci)
-	}
-	if len(st) == 0 {
-		return ""
-	}
-	return " (" + strings.Join(st, ", ") + ")"
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "none"
-	}
-	return s
+	return since, out, nil
 }
 
 func clip(s string, n int) string {
@@ -376,7 +251,7 @@ func sortedKeys(m map[string]string) []string {
 
 // dossier gathers, without any model, the evidence an ask from it.Session carries: its goal and manager, the work's pull requests
 // with their CI, its agents' latest activity, and the goal's changes since the owner last looked.
-func (c *Core) dossier(b Board, o Org, it Item, items []Item) (Dossier, error) {
+func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 	d := Dossier{At: c.now()}
 	m, managed, sessions := c.work(b, o, c.Resolve(it.Session))
 	switch {
@@ -416,13 +291,10 @@ func (c *Core) dossier(b Board, o Org, it Item, items []Item) (Dossier, error) {
 		d.Activity = append(d.Activity, ActivityNote{Who: titleFor(s), Status: s.Status.String(), What: clip(oneLine(what), 140), At: s.Since})
 	}
 	if d.Goal != "" {
-		since, was, err := c.Store.seen(d.Goal)
-		if err != nil {
+		var err error
+		if d.Since, d.Changes, err = c.changes(d.Goal, it.Key()); err != nil {
 			return d, err
 		}
-		d.Since = since
-		gm := o.Managers[o.Goals[d.Goal].ManagerID]
-		d.Changes = changes(was, c.snapshot(b, o, gm, items), it.Key())
 	}
 	return d, nil
 }
@@ -452,7 +324,7 @@ func (c *Core) Brief(b Board) error {
 		if it.State != ItemOpen || it.Recipient != Owner {
 			continue
 		}
-		d, err := c.dossier(b, o, it, items)
+		d, err := c.dossier(b, o, it)
 		if err != nil {
 			return err
 		}
@@ -552,15 +424,11 @@ func (c *Core) Prepare(b Board, ref string, p Prepared) (Item, error) {
 	if err := c.Store.prepare(it); err != nil {
 		return it, err
 	}
-	items, err := c.Store.Items(ItemFilter{})
-	if err != nil {
-		return it, err
-	}
 	o, err := c.LoadOrg()
 	if err != nil {
 		return it, err
 	}
-	d, err := c.dossier(b, o, it, items)
+	d, err := c.dossier(b, o, it)
 	if err != nil {
 		return it, err
 	}
