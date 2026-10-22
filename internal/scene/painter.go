@@ -51,17 +51,14 @@ type rect struct{ x0, y0, x1, y1 int }
 
 func (r rect) has(x, y int) bool { return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1 }
 
-func newPainter(s Scene, width, height, frame int, table rect) *painter {
+func newPainter(s Scene, width, height, frame int) *painter {
 	th := themeAt(s.Now, s.Dark)
-	p := &painter{th: th, w: width, p: height * 2, frame: frame, t: float64(frame), table: table}
+	p := &painter{th: th, w: width, p: height * 2, frame: frame, t: float64(frame)}
 	p.px = make([]rgb, p.w*p.p)
 	p.solid = make([]bool, p.w*p.p)
 	p.front = make([]bool, p.w*p.p)
 	p.cells = make([]glyph, p.w*height)
-	p.hz = p.p * 72 / 100
-	if table.y1 > table.y0 {
-		p.hz = int(clamp(float64(table.y0*2+2), float64(p.p)*.5, float64(p.p)*.8))
-	}
+	p.hz = p.p * 64 / 100
 	p.top = float64(p.hz) * .07
 	p.l = plan(s, width)
 	return p
@@ -121,7 +118,7 @@ func (p *painter) blend(x, y int, c rgb, a float64) {
 }
 
 func (p *painter) free(x, y int) bool {
-	return x >= 0 && x < p.w && y >= 0 && y < p.p/2 && !p.table.has(x, y) && !p.front[2*y*p.w+x] && !p.front[(2*y+1)*p.w+x]
+	return x >= 0 && x < p.w && y >= 0 && y < p.p/2 && !p.front[2*y*p.w+x] && !p.front[(2*y+1)*p.w+x]
 }
 
 // clear empties a cell, and the other half of any wide glyph it held.

@@ -256,7 +256,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if model, ok := next.(Model); ok {
 		prepared := model.prepareView()
 		model.page = &prepared
-		model.peaks.keep(prepared.String(), model.width, model.height)
 		return model, tea.Batch(cmd, model.animate())
 	}
 	return next, cmd

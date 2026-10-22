@@ -132,16 +132,3 @@ func TestKeysComeBeforeTheMountainsMove(t *testing.T) {
 		t.Fatal("the mountains stayed still after the keys stopped")
 	}
 }
-
-func TestTheBoardKeepsItsTopEdgeWhenItShrinks(t *testing.T) {
-	var p mountains
-	p.keep(strings.Repeat("row\n", 29)+"row", 174, 72)
-	p.keep("row\nrow", 174, 72)
-	if p.reserve != 30 {
-		t.Fatalf("reserve %d after shrinking, want the 30 rows it reached", p.reserve)
-	}
-	p.keep("row\nrow", 120, 40)
-	if p.reserve != 2 {
-		t.Fatalf("reserve %d after a resize, want it to start over", p.reserve)
-	}
-}

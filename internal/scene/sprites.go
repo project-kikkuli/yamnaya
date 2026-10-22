@@ -59,13 +59,7 @@ func (p *painter) sprites() {
 func cellAbove(y float64) int { return int(math.Ceil(y)-1) / 2 }
 
 // floor is the lowest row of the mountains left in view: the valley, or just above the board.
-func (p *painter) floor() int {
-	row := p.hz/2 - 1
-	if p.table.y1 > p.table.y0 {
-		row = min(row, p.table.y0-1)
-	}
-	return row
-}
+func (p *painter) floor() int { return p.hz/2 - 1 }
 
 // rowAt is the cell row just above the surface of mount i's layer at column x.
 func (p *painter) rowAt(i, x int) int {

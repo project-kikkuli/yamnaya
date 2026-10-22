@@ -104,7 +104,7 @@ func region(t *testing.T, w Weather, dark bool) (rgb, string) {
 	s := Scene{Dark: dark, Peaks: []Peak{{ID: "a", Weather: Clear}, {ID: "b", Weather: w, Team: team(2), Progress: .5}, {ID: "c", Weather: Clear}}}
 	const width, height = 120, 40
 	grid := cells(t, Frame(s, width, height, 5, ""))
-	p := newPainter(s, width, height, 5, rect{})
+	p := newPainter(s, width, height, 5)
 	p.terrain()
 	g := p.geo[1]
 	var sum rgb
@@ -229,16 +229,29 @@ func TestLaterFramesReuseTheBackdrop(t *testing.T) {
 	}
 }
 
-func TestATableGrowingWithinItsReserveRedrawsOnlyItsOwnRows(t *testing.T) {
+func TestATableGrowsUpFromAFixedBottomAndRedrawsOnlyTheRowsItCovers(t *testing.T) {
 	s := work()
-	s.Board = 30
-	short, tall := board(10, 0), board(14, 0)
-	a := strings.Split(Frame(s, 174, 72, 0, short), "\n")
-	b := strings.Split(Frame(s, 174, 72, 0, tall), "\n")
-	_, _, box := place(tall, 174, 72, s.Board)
-	for y := range a {
-		if a[y] != b[y] && (y < box.y0 || y >= box.y1) {
-			t.Fatalf("row %d outside the table changed when it grew", y)
+	heights := []int{4, 12, 30, 9, 4}
+	frames := make([][]string, len(heights))
+	boxes := make([]rect, len(heights))
+	Frame(s, 174, 72, 0, board(heights[0], 0))
+	hits := backdrops.hits
+	for k, n := range heights {
+		frames[k] = strings.Split(Frame(s, 174, 72, 0, board(n, 0)), "\n")
+		_, _, boxes[k] = place(board(n, 0), 174, 72)
+		if boxes[k].y1 != boxes[0].y1 {
+			t.Fatalf("a table of %d rows ends at row %d, one of %d at %d", n+1, boxes[k].y1, heights[0]+1, boxes[0].y1)
+		}
+	}
+	if got := backdrops.hits - hits; got != len(heights) {
+		t.Fatalf("%d of %d frames reused the backdrop across table heights", got, len(heights))
+	}
+	for k := 1; k < len(heights); k++ {
+		top := min(boxes[k].y0, boxes[k-1].y0)
+		for y := range frames[k] {
+			if frames[k][y] != frames[k-1][y] && (y < top || y >= boxes[k].y1) {
+				t.Fatalf("going from %d to %d rows changed row %d, outside the rows the table covers", heights[k-1], heights[k], y)
+			}
 		}
 	}
 }
@@ -376,7 +389,7 @@ func TestHitFindsThePeakUnderACell(t *testing.T) {
 	if !found["allergies"] {
 		t.Fatalf("clicking a climber's name hit %v, want its peak", found)
 	}
-	_, _, box := place(table, 174, 72, 0)
+	_, _, box := place(table, 174, 72)
 	if got := Hit(s, 174, 72, table, box.x0+2, box.y0+1); got != "" {
 		t.Fatalf("a click on the board hit %q", got)
 	}

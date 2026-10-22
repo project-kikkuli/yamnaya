@@ -28,16 +28,6 @@ type mountains struct {
 	ticking      bool
 	// quiet is when animation may resume after the last key.
 	quiet time.Time
-	// reserve is the most rows the board has taken at this size; its top edge stays there so the horizon holds.
-	reserve, w, h int
-}
-
-// keep raises the board's reserve to the page's height, starting over when the terminal is resized.
-func (p *mountains) keep(page string, width, height int) {
-	if p.w != width || p.h != height {
-		p.reserve, p.w, p.h = 0, width, height
-	}
-	p.reserve = max(p.reserve, strings.Count(page, "\n")+1)
 }
 
 type mountainFrame struct{}
@@ -99,7 +89,7 @@ func weather(standing string) scene.Weather {
 // session the owner started stands in the range of its repository.
 func (m Model) sceneOf() scene.Scene {
 	b := m.board
-	s := scene.Scene{Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute), Board: m.peaks.reserve}
+	s := scene.Scene{Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute)}
 	waiting := needs(b)
 	repos := map[string]*scene.Range{}
 	var order []string
