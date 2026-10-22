@@ -153,6 +153,15 @@ prs() {
 		--jq ".[] | select(.createdAt >= \"$started\") | select([.commits[].oid] - (. as \$x | $heads) != [.commits[].oid]) | $jq" 2>/dev/null || true
 }
 
+# owner_board is what the owner's own ym shows of this run: its sessions as rows, waiting rows and items from them.
+owner_board() {
+	env -u YAMNAYA_STATE_DIR -u YAMNAYA_YM_SOCKET YAMNAYA_NO_SERVE=1 "${YM_OWNER_BIN:-$HOME/go/bin/ym}" board 2>/dev/null | jq -r --arg run "$run" '
+		([.sessions[]? | select((.cwd // "") | startswith($run)) | .id]) as $ids
+		| (.sessions[]? | select((.cwd // "") | startswith($run)) | "owner-row \(.id[0:8]) \(.status) \((.title // "")[0:50])"),
+		  (.waiting[]? | select(.session as $s | $ids | index($s)) | "owner-waiting \(.session[0:8]) \((.line // "")[0:120])"),
+		  (.items[]? | select(.session as $s | $ids | index($s)) | "owner-item \(.id // .seq) \(.state // "") \((.question // "")[0:120])")' 2>/dev/null || true
+}
+
 # snapshot prints one line per fact the timeline tracks; only changed lines are logged.
 snapshot() {
 	q "SELECT 'goal ' || g.num || ' ' || g.state || ' ev=' || substr(g.evidence,1,120) || ' sum=' || substr(g.summary,1,120) FROM ym_goals g"
@@ -169,6 +178,10 @@ snapshot() {
 		'"pr #\(.number) \(.state) \(.headRefName) checks=\([.statusCheckRollup[]? | (.conclusion // .status)] | join(",")) comments=\(.comments | length) reviews=\(.reviews | length)"' >"$run/snap/prs"
 	fi
 	cat "$run/snap/prs"
+	if [ $((ticks % 4)) -eq 0 ] || [ ! -f "$run/snap/owner" ]; then
+		owner_board >"$run/snap/owner"
+	fi
+	cat "$run/snap/owner"
 	for b in "$run"/state/goals/*/brief.md; do [ -f "$b" ] && echo "brief $(basename "$(dirname "$b")") $(md5 -q "$b") $(sed -n '1,3p' "$b" | short 100)"; done
 	[ -f "$run/state/work-service.json" ] && jq -r '"serve pid=\(.pid) error=" + (.error[0:160])' "$run/state/work-service.json" 2>/dev/null || true
 }
