@@ -2,7 +2,6 @@ package core
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ func (c *Core) prompt(m Manager, o Org, waiting []Message) string {
 
 func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 	g := o.Goals[m.GoalID]
-	repo := filepath.Base(m.Repo)
+	repo := RepoName(m.Repo)
 	fmt.Fprintf(sb, "You are %s, a manager in yamnaya (ym). You own one goal outright and drive it to done.\n\n", m.ID)
 	fmt.Fprintf(sb, "Goal %s, in the owner's own words:\n%s\n\nRepository: %s (%s)\n\n", g.ID, g.Ask, repo, m.Repo)
 	sb.WriteString("Your authority:\n")

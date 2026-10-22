@@ -113,6 +113,17 @@ func refsStamp(g GitInfo) string {
 	return sb.String()
 }
 
+// RepoName is the name of the repository dir is a checkout of, as its pull request links and ym_repo_authority name it: origin's
+// repository name, or the directory's own name without an origin.
+func RepoName(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url").Output()
+	url := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(string(out)), "/"), ".git")
+	if i := strings.LastIndexAny(url, "/:"); err == nil && i >= 0 && i < len(url)-1 {
+		return strings.ToLower(url[i+1:])
+	}
+	return strings.ToLower(filepath.Base(dir))
+}
+
 func revParse(dir string) GitInfo {
 	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
