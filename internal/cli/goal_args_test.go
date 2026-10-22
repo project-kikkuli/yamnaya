@@ -15,8 +15,8 @@ func TestGoalStartsOnlyFromOneQuotedAsk(t *testing.T) {
 		err     string
 	}{
 		{"quoted ask", []string{"Add a -min flag to tally"}, true, ""},
-		{"a subcommand this ym lacks", []string{"update", "Bigrams implementer dispatched; PR next"}, false, `no subcommand "update"`},
-		{"another one", []string{"wake", "20m", "check the implementer"}, false, `no subcommand "wake"`},
+		{"a subcommand this ym lacks", []string{"status", "Bigrams implementer dispatched; PR next"}, false, `no subcommand "status"`},
+		{"another one", []string{"snooze", "20m", "check the implementer"}, false, `no subcommand "snooze"`},
 		{"no ask", nil, false, "needs the ask"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

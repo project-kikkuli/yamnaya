@@ -134,8 +134,8 @@ snapshot() {
 	q "SELECT 'manager ' || num || ' ' || role || ' session=' || substr(session,1,8) || ' failures=' || failures || ' nudges=' || nudges || ' err=' || substr(last_error,1,100) FROM ym_managers"
 	q "SELECT 'item ' || seq || ' ' || kind || ' ' || state || ' to=' || recipient || ' from=' || substr(session,1,8) || ' q=' || replace(substr(question,1,140),char(10),' ') || ' a=' || replace(substr(answer,1,80),char(10),' ') FROM ym_items"
 	q "SELECT 'msg ' || seq || ' ' || state || ' to=' || substr(session,1,8) || ' ' || replace(substr(text,1,170),char(10),' ') FROM ym_messages"
-	has_table ym_goal_events && q "SELECT 'event ' || rowid || ' ' || replace(substr(kind || ' ' || payload,1,170),char(10),' ') FROM ym_goal_events"
-	has_table ym_goal_timers && q "SELECT 'timer ' || rowid || ' ' || replace(substr(quote(due) || ' ' || quote(why),1,140),char(10),' ') FROM ym_goal_timers"
+	has_table ym_goal_events && q "SELECT 'event ' || seq || ' goal=' || goal || ' ' || kind || ' delivered=' || (delivered_to_manager IS NOT NULL) || ' ' || replace(substr(payload,1,160),char(10),' ') FROM ym_goal_events"
+	has_table ym_goal_timers && q "SELECT 'timer ' || seq || ' ' || manager || ' due=' || due || ' fired=' || (fired IS NOT NULL) || ' ' || replace(substr(why,1,120),char(10),' ') FROM ym_goal_timers"
 	has_table ym_goal_verifications && q "SELECT 'verify ' || num || ' attempt=' || attempt || ' verdict=' || verdict || ' verifier=' || substr(verifier_session,1,8) || ' failures=' || failures || ' facts=' || replace(substr(fact_checks,1,100),char(10),' ') || ' findings=' || replace(substr(findings,1,140),char(10),' ') FROM ym_goal_verifications"
 	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" '.[] | select((.cwd // "") | startswith($run)) | "session \(.id[0:8]) \(.status) pid=\(.pid) crew=\(.crew) \((.title // "")[0:60])"' 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" list-panes -a -F 'pane #{session_name} dead=#{pane_dead} status=#{pane_dead_status} pid=#{pane_pid}' 2>/dev/null || true
