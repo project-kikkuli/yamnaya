@@ -25,6 +25,8 @@ const (
 	EventUpdate       = "update"
 	EventTimer        = "timer"
 	EventNudge        = "nudge"
+	EventAgentStopped = "agent-stopped"
+	EventAgentHung    = "agent-hung"
 )
 
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
@@ -37,6 +39,7 @@ var ownerKinds = map[string]bool{
 var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
+	EventAgentStopped: true, EventAgentHung: true,
 }
 
 // notifyKinds are the only events that also raise a desktop notification.

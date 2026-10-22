@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// noticeExits tells the manager or chief over each agent whose launched process stopped, once per agent and way it stopped: an
-// agent that dies takes no idle turn, so nothing else would reach them.
+// noticeExits records, once per agent and way it stopped, each agent whose launched process stopped: an agent that dies takes no
+// idle turn, so nothing else would reach its manager.
 func (c *Core) noticeExits(b Board, o Org) error {
 	kills, err := c.Store.Kills(timeZero)
 	if err != nil {
@@ -22,27 +22,9 @@ func (c *Core) noticeExits(b Board, o Org) error {
 		if _, isManager := o.ManagerOf(l.Session); isManager {
 			continue
 		}
-		if _, managed := o.Managed(l.Session, b.parents); !managed {
-			continue
-		}
-		to := o.Recipient(l.Session, b.parents)
-		if to == Owner {
-			continue
-		}
-		id := "exit\x00" + l.Session + "\x00" + l.State
-		var seen int
-		if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_forwarded WHERE id = ?`, id).Scan(&seen); err != nil {
-			return err
-		}
-		if seen > 0 {
-			continue
-		}
-		text := fmt.Sprintf("ym: agent %s (%s) stopped running: its process %s. Its worktree %s keeps what it wrote. Resume it with ym revive %s, or start a fresh agent with ym new.",
+		text := fmt.Sprintf("agent %s (%s) stopped running: its process %s. Its worktree %s keeps what it wrote. Resume it with ym revive %s, or start a fresh agent with ym new.",
 			Short(l.Session), l.Key, exitText(l.State), l.Path, l.Key)
-		if err := c.tell(b, o.Managers[to].Session, text, false); err != nil {
-			return err
-		}
-		if _, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, id, now()); err != nil {
+		if err := c.noticeAgent(b, o, l.Session, EventAgentStopped, text, "exit\x00"+l.Session+"\x00"+l.State); err != nil {
 			return err
 		}
 	}

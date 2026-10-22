@@ -32,9 +32,7 @@ func TestAManagerHearsOnceThatItsAgentStopped(t *testing.T) {
 				{Key: "august-wt-csv", Harness: "claude", Session: "agent", State: c.state, Path: "/repo/august-wt-csv"},
 				{Key: m.ID, Harness: "claude", Session: m.Session, State: c.state, Path: "/repo/august-wt-mgr"},
 			}
-			for range 3 {
-				w.supervise(t)
-			}
+			w.loop(t, 3)
 			var got []string
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, "stopped running") {
@@ -51,5 +49,22 @@ func TestAManagerHearsOnceThatItsAgentStopped(t *testing.T) {
 				t.Fatalf("manager heard %q, want one notice that says %q", got, c.want)
 			}
 		})
+	}
+}
+
+func TestAStoppedAgentReachesItsChiefAndTheFeedButNotTheOwnersUnread(t *testing.T) {
+	w := newOrgWorld(t)
+	_, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+	chief := w.chief(t, "platform", m.ID)
+	w.spawn("agent", m.Session)
+	w.stop("agent")
+	w.launches.launched = []Launched{{Key: "august-wt-csv", Harness: "claude", Session: "agent", State: "sig9", Path: "/repo/august-wt-csv"}}
+	w.loop(t, 3)
+	if got := wakes(w.handedTo(chief.Session)); len(got) != 1 || !strings.Contains(got[0], "agent-stopped: agent agent") {
+		t.Fatalf("chief heard %q, want one batch with the stopped agent", got)
+	}
+	n, _ := w.board(t).Node(m.ID)
+	if len(n.Feed.Recent) == 0 || n.Feed.Recent[0].Kind != EventAgentStopped || n.Feed.Unread != 0 {
+		t.Fatalf("feed %v unread %d, want the stop shown and not counted as news for the owner", kinds(n.Feed.Recent), n.Feed.Unread)
 	}
 }

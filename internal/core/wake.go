@@ -127,6 +127,32 @@ func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
 	return out
 }
 
+// noticeAgent records what happened to an agent, once per key, as an event on the goal of the manager over it, which wakes the
+// manager and reaches its chiefs and the owner's feed; an agent of a chief is told to the chief directly.
+func (c *Core) noticeAgent(b Board, o Org, session, kind, text, key string) error {
+	m, managed := o.Managed(session, b.parents)
+	if !managed {
+		return nil
+	}
+	if g, ok := o.Goals[m.GoalID]; ok {
+		_, _, err := c.RecordGoalEvent(g.ID, kind, text, key)
+		return err
+	}
+	to := o.Recipient(session, b.parents)
+	if to == Owner {
+		return nil
+	}
+	var seen int
+	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_forwarded WHERE id = ?`, key).Scan(&seen); err != nil || seen > 0 {
+		return err
+	}
+	if err := c.tell(b, o.Managers[to].Session, "ym: "+text, false); err != nil {
+		return err
+	}
+	_, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, key, now())
+	return err
+}
+
 // Wake fires due timers, nudges a manager that ended its turn with nothing in flight, then hands every running manager its goal's
 // new events and every running chief its subtree's, each as one message per cycle. Events wait for a manager that is down; its
 // relaunch prompt carries them.
@@ -351,7 +377,7 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	return err
 }
 
-// inFlight reports whether anything of m's is still moving on its own: an agent or a subagent of one working or just launched, a pull request with CI
+// inFlight reports whether anything of m's is still moving on its own: an agent that is not hung, or a subagent of one, working or just launched, a pull request with CI
 // still running, a wake set, or an open ask one of its sessions filed.
 func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 	statuses, _ := c.Store.PRStatuses()
@@ -360,7 +386,7 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 		if !mine(s.Key()) {
 			continue
 		}
-		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting) {
+		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting) && !s.Hung(c.now()) {
 			return true
 		}
 		for _, member := range s.Crew {

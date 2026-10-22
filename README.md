@@ -34,12 +34,12 @@ Press `o` on the goal to open the manager and talk to it like any session.
 
 The loop is code in `ym serve`, not instructions in a prompt:
 
-1. **Notice.** ym records goal events without a model: agent finished, agent asked, PR opened, CI red or green, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
+1. **Notice.** ym records goal events without a model: agent finished, asked, stopped or hung, PR opened, CI red or green, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
 2. **Act.** Once per cycle the manager gets everything new in one message. A manager that ends a turn with nothing in flight (no busy agent, no PR awaiting CI, no wake set, no ask waiting) is nudged at once. Managers set their own timers with `ym goal wake 30m "<why>"`.
 3. **Verify.** `ym goal done` moves the goal to verifying. ym checks the facts first: every PR the manager claims or the goal's agents opened, exited agents' included, is merged, with CI green on the merge commit, no unresolved review threads. Then a fresh Claude session, not the worker, gets your original ask and the evidence and records a verdict. A fail puts the goal back to active, and the findings reach the manager in its next wake as a failed-verify event. A verifier that dies or hangs is replaced; after 3 without a verdict the goal shows stuck.
 4. **Report.** Only a pass reaches you as done. Managers post progress lines with `ym goal update "<line>"`; they show in the goal's feed.
 
-Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply counts as hung: a hung manager is relaunched, and a hung or exited agent's manager hears it once with the `ym revive` that resumes it.
+Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply counts as hung: a hung manager is relaunched, and a hung or exited agent is an event: its manager hears it once in its next wake with the `ym revive` that resumes it, and its chiefs and the goal's feed see it too.
 
 ## What reaches you
 

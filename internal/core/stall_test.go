@@ -30,9 +30,7 @@ func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T)
 					s.Crew = []Member{{ID: "sub", Status: Busy, Last: w.clock.Add(c.crew)}}
 				}
 			})
-			for range 3 {
-				w.supervise(t)
-			}
+			w.loop(t, 3)
 			var got []string
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, "looks hung") {
