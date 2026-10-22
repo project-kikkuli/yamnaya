@@ -29,6 +29,15 @@ func trustKeys(dir string) []string {
 	return keys
 }
 
+// claudeTrustKeys adds the main checkout of a linked worktree, where Claude Code records trust and checks it for a repository with project settings.
+func claudeTrustKeys(dir string) []string {
+	keys := trustKeys(dir)
+	if root, err := MainRoot(dir); err == nil {
+		keys = append(keys, trustKeys(root)...)
+	}
+	return keys
+}
+
 // TrustClaudeDir records dir as trusted the way accepting Claude Code's trust dialog does, so a new window does not stall on it.
 func TrustClaudeDir(dir string) error {
 	path, err := claudeConfigPath()
@@ -61,7 +70,7 @@ func TrustClaudeDir(dir string) error {
 		}
 	}
 	changed := false
-	for _, key := range trustKeys(dir) {
+	for _, key := range claudeTrustKeys(dir) {
 		entry := projects[key]
 		if string(entry["hasTrustDialogAccepted"]) == "true" {
 			continue
