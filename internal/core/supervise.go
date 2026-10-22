@@ -90,6 +90,9 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.noticeExits(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.noticeHung(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -97,7 +100,23 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 	now := c.now()
 	alive := b.Alive(m)
 	starting := !m.LaunchedAt.IsZero() && now.Sub(m.LaunchedAt) < StartGrace && m.LastError == ""
+	s, _ := b.Session(m.Session)
+	hung := alive && !starting && s.Hung(now)
 	switch {
+	case hung:
+		if now.Before(m.NextAttempt) {
+			break
+		}
+		m.Failures++
+		m.NextAttempt = now.Add(backoff(m.Failures))
+		if _, err := c.Kill(s); err != nil {
+			m.LastError = "hung since " + s.lastActive().Local().Format(time.DateTime) + "; " + err.Error()
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+			break
+		}
+		m = c.launch(b, o, m)
 	case alive && !starting:
 		if m.Failures > 0 || !m.NextAttempt.IsZero() {
 			m.Failures, m.NextAttempt = 0, timeZero
@@ -130,7 +149,7 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 			return err
 		}
 	}
-	if !alive || g.State == GoalVerifying {
+	if !alive || hung || g.State == GoalVerifying {
 		return nil
 	}
 	return c.watchQuiet(b, o, m, g)
@@ -197,11 +216,10 @@ func (c *Core) lastMoved(b Board, o Org, m Manager, g Goal) time.Time {
 		if owner, ok := o.Managed(s.Key(), b.parents); !ok || owner.ID != m.ID {
 			continue
 		}
-		if s.Status == Busy || s.Status == Waiting {
+		if (s.Status == Busy && !s.Hung(now)) || s.Status == Waiting {
 			return now
 		}
-		seen(s.Since)
-		seen(s.Doing.At)
+		seen(s.lastActive())
 	}
 	if info, err := os.Stat(m.BriefPath); err == nil {
 		seen(info.ModTime())
