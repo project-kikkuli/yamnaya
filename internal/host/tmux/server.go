@@ -96,6 +96,11 @@ func (h *Host) Respawn(name, cwd string, argv []string) error {
 	return nil
 }
 
+// Capture is the visible text of session name's pane.
+func (h *Host) Capture(name string) (string, error) {
+	return h.run("capture-pane", "-p", "-t", "="+name+":")
+}
+
 // Pane reads the pane of session name; ErrNotFound when the session is gone.
 func (h *Host) Pane(name string) (Pane, error) {
 	out, err := h.run("list-panes", "-t", "="+name+":", "-F", paneFormat)

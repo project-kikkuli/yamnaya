@@ -109,7 +109,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 ## Background service
 
-`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update. Once a state directory has had a serve, any `ym` command run against it starts one again if none runs, so a serve that died comes back the next time an agent or you run `ym`.
+`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update. Once a state directory has had a serve, any `ym` command run against it starts one again if none runs, so a serve that died comes back the next time an agent or you run `ym`; `YAMNAYA_NO_SERVE=1` keeps one command from starting it. A Claude session ym launched that sits at the folder trust dialog in its first ten minutes (another Claude session's save of its config can drop the trust ym records before the launch) is trusted again and restarted.
 
     ym service status     heartbeat and last error
     ym service restart    restart it with this shell's environment

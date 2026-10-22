@@ -139,6 +139,9 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 	if err = c.RouteDocs(b); err != nil {
 		failures = append(failures, err)
 	}
+	if l, ok := c.Launches.(launcher); ok {
+		failures = append(failures, l.unstall(time.Now()))
+	}
 	failures = append(failures, c.Loop(b))
 	return errors.Join(append(failures, c.Brief(b))...)
 }
@@ -172,6 +175,9 @@ var ensureService = ensureWorkService
 // keepServing restarts ym serve from any ym command once a state dir has had one, so a serve that died comes back the next time
 // an agent or the owner runs ym, board or not.
 func keepServing(w io.Writer) {
+	if os.Getenv("YAMNAYA_NO_SERVE") == "1" {
+		return
+	}
 	dir, err := stateDir()
 	if err != nil {
 		return
