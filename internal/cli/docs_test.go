@@ -292,3 +292,52 @@ func TestANewCommentOnAnUneditedPageTheOwnerIsInReachesTheQueueAtTheNextRecheck(
 		}
 	}
 }
+
+func TestTheRecheckSkipsOwnerPagesNotEditedWithinTheWindow(t *testing.T) {
+	const (
+		owner, carol = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000004"
+		signed       = "a0000000-0000-4000-8000-00000000000e"
+		thread       = "d0000000-0000-4000-8000-0000000000e1"
+	)
+	dir := t.TempDir()
+	t.Setenv("NOTION_TOKEN", "secret_test")
+	t.Setenv("NOTION_OWNER_ID", owner)
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	page := `{"object":"page","id":"` + signed + `","created_time":"2026-09-01T00:00:00.000Z","last_edited_time":"2026-09-15T00:00:00.000Z",` +
+		`"created_by":{"object":"user","id":"aaaaaaaa-0000-4000-8000-000000000003"},"parent":{"type":"workspace","workspace":true},` +
+		`"archived":false,"in_trash":false,"properties":{"Name":{"id":"title","type":"title","title":[{"plain_text":"Old spec"}]}},` +
+		`"url":"https://www.notion.so/Old-spec-a000000000004000800000000000000e"}`
+	comments := `{"object":"list","results":[` +
+		notionComment("c0000000-0000-4000-8000-0000000000e1", thread, carol, "Is this final?", "2026-09-15T00:00:00.000Z", "") + "," +
+		notionComment("c0000000-0000-4000-8000-0000000000e2", thread, owner, "Yes", "2026-09-15T01:00:00.000Z", "") + `],"has_more":false,"next_cursor":null}`
+	edits := map[string]string{
+		"POST /search":                           `{"object":"list","results":[` + page + `],"has_more":false,"next_cursor":null}`,
+		"GET /comments " + signed:                comments,
+		"GET /pages/" + intake.NotionKey(signed): page,
+	}
+	d := &docSweeper{dir: dir, recheck: time.Hour}
+	for _, step := range []struct {
+		name    string
+		now     time.Time
+		checked bool
+	}{
+		{"the page is read while edited within the window", time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC), true},
+		{"the recheck reads its comments while it is within the window", time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), true},
+		{"the recheck leaves it once its last edit falls outside the window", time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC), false},
+	} {
+		var calls []string
+		srv := recordedNotion(t, edits, &calls)
+		now := step.now
+		d.api, d.notion, d.now, d.checked = srv.URL, nil, func() time.Time { return now }, time.Time{}
+		if err := d.sweep(context.Background(), st); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if got := slices.Contains(calls, "GET /comments "+signed); got != step.checked {
+			t.Fatalf("%s: comments read %v, want %v: %q", step.name, got, step.checked, calls)
+		}
+	}
+}

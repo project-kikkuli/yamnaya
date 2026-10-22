@@ -121,7 +121,7 @@ func docPageWatch(db *sql.DB) error {
 
 // DocPageWatch is a page the owner created or discusses, with the blocks and comment signature its last deep read saw.
 type DocPageWatch struct {
-	Page, Comments string
+	Page, Edited, Comments string
 	Blocks         []string
 }
 
@@ -137,7 +137,7 @@ func (s *Store) NoteDocPage(source, page string, blocks []string, comments strin
 
 // WatchedDocPages lists source's pages that involve the owner, so their comments are rechecked even when the page is not edited.
 func (s *Store) WatchedDocPages(source string) ([]DocPageWatch, error) {
-	rows, err := s.db.Query(`SELECT page, comments, blocks FROM ym_doc_pages WHERE source = ? AND watch = 1 ORDER BY page`, source)
+	rows, err := s.db.Query(`SELECT page, edited, comments, blocks FROM ym_doc_pages WHERE source = ? AND watch = 1 ORDER BY page`, source)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (s *Store) WatchedDocPages(source string) ([]DocPageWatch, error) {
 	for rows.Next() {
 		var w DocPageWatch
 		var blocks string
-		if err := rows.Scan(&w.Page, &w.Comments, &blocks); err != nil {
+		if err := rows.Scan(&w.Page, &w.Edited, &w.Comments, &blocks); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(blocks), &w.Blocks); err != nil {

@@ -292,7 +292,7 @@ func (n *Notion) Pages(ctx context.Context, keep []string) ([]DocPage, error) {
 }
 
 // PageRead is what reading a page found: its asks, the blocks discussions can sit on, a signature of every open comment on them, and
-// whether the owner created the page or takes part in a discussion on it.
+// whether the page is tied to the owner: created by, discussed by, mentioning, or listing the owner as reviewer.
 type PageRead struct {
 	Asks     []DocAsk
 	Blocks   []string
@@ -462,6 +462,11 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 	}
 	sort.Strings(order)
 	watch := n.owner(p.CreatedBy.ID)
+	for name, prop := range p.Properties {
+		for _, who := range prop.People {
+			watch = watch || (reviewProp.MatchString(name) && !reviewedBy.MatchString(name) && n.owner(who.ID))
+		}
+	}
 	for _, thread := range threads {
 		for _, c := range thread {
 			watch = watch || n.owner(c.CreatedBy.ID)

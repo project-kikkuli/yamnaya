@@ -74,8 +74,8 @@ func connectNotion(ctx context.Context, n *intake.Notion, email, dir string) (no
 }
 
 // docSweeper sweeps Notion for asks waiting on the owner, one full sweep at a time, starting a sweep at most once per every. At most
-// once per recheck it also rereads the comments of every page that involves the owner, edited or not, so a new comment is found
-// whether or not it moves the page's edit time.
+// once per recheck it also rereads the comments of every page tied to the owner and edited within the window, so a new comment is
+// found whether or not it moves the page's edit time; the page's blocks are refetched only when its edit time moves.
 type docSweeper struct {
 	dir     string
 	every   time.Duration
@@ -143,7 +143,7 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 			return err
 		}
 		for _, w := range watched {
-			if fresh[w.Page] {
+			if at, err := time.Parse(time.RFC3339, w.Edited); fresh[w.Page] || err != nil || at.Before(d.notion.Now().Add(-d.notion.Window)) {
 				continue
 			}
 			sig, err := d.notion.Comments(ctx, w.Blocks)

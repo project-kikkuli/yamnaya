@@ -206,3 +206,32 @@ func TestPeopleFindsTheOwnerByEmail(t *testing.T) {
 		t.Fatalf("a bad token was accepted: %v", err)
 	}
 }
+
+func TestAPageIsWatchedWhenItIsTiedToTheOwner(t *testing.T) {
+	n, _ := workspace(t, nil)
+	pages, err := n.Pages(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watched := map[string]bool{}
+	for _, p := range pages {
+		r, err := n.ReadPage(context.Background(), p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		watched[p.Key] = r.Watch
+		if !slices.Contains(r.Blocks, "a0000000-0000-4000-8000-0000000000"+p.Key[len(p.Key)-2:]) {
+			t.Fatalf("page %s read without its own block: %q", p.Key, r.Blocks)
+		}
+	}
+	for key, why := range map[string]string{
+		"a000000000004000800000000000000a": "the owner created it",
+		"a000000000004000800000000000000b": "the owner writes in its threads",
+		"a000000000004000800000000000000c": "it lists the owner as reviewer",
+		"a000000000004000800000000000000e": "it lists the owner as approver",
+	} {
+		if !watched[key] {
+			t.Errorf("page %s is not watched though %s", key, why)
+		}
+	}
+}
