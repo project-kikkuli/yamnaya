@@ -37,6 +37,7 @@ type Adapter struct {
 	mu    sync.Mutex
 	scans map[string]*scan
 	dirs  map[string]string
+	paths map[string]string
 
 	files    sync.Mutex
 	listings map[string]listing
@@ -178,11 +179,23 @@ func (a *Adapter) transcript(cwd, id string) string {
 			return p
 		}
 	}
-	matches, _ := filepath.Glob(filepath.Join(a.Dir, "projects", "*", id+".jsonl"))
-	if len(matches) > 0 {
-		return matches[0]
+	a.mu.Lock()
+	p, ok := a.paths[id]
+	a.mu.Unlock()
+	if ok {
+		return p
 	}
-	return ""
+	matches, _ := filepath.Glob(filepath.Join(a.Dir, "projects", "*", id+".jsonl"))
+	if len(matches) == 0 {
+		return ""
+	}
+	a.mu.Lock()
+	if a.paths == nil {
+		a.paths = map[string]string{}
+	}
+	a.paths[id] = matches[0]
+	a.mu.Unlock()
+	return matches[0]
 }
 
 func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {

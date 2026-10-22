@@ -80,10 +80,10 @@ const (
 // ErrNotReady rejects an ask that would reach the owner without what the owner needs to decide it.
 var ErrNotReady = errors.New("not ready for the owner")
 
-// ready checks that an ask bound for the owner carries a recommendation, and a decision at least two options with their effects.
+// ready checks that a decision or default bound for the owner carries a recommendation, and a decision at least two options with their effects.
 func ready(it Item) error {
 	var missing []string
-	if it.Kind != KindGo && strings.TrimSpace(it.Rec) == "" {
+	if (it.Kind == KindDecision || it.Kind == KindDefault) && strings.TrimSpace(it.Rec) == "" {
 		missing = append(missing, "--rec \"<what you recommend and why>\"")
 	}
 	if it.Kind == KindDecision {

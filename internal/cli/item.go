@@ -124,7 +124,7 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	var options []string
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "File an item against the calling session and print its id; ym attaches the goal, its pull requests and recent activity, and refuses an ask bound for the owner that lacks --rec (and, for a decision, two --option)",
+		Short: "File an item against the calling session and print its id; ym attaches the goal, its pull requests and recent activity, and refuses a decision or default bound for the owner that lacks --rec (and a decision without two --option)",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()

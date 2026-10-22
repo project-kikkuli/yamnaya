@@ -66,7 +66,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	sb.WriteString("The owner can open this session and talk to you directly; what they say there changes your direction.")
 }
 
-const escalate = "- Make every escalation ready to decide: --rec with what you recommend and why, two or more --option \"<label>=<what happens>\" for a decision, one --evidence per pull request, CI run, commit or file it rests on, and --tried with what you already tried. ym attaches the goal, its pull requests with CI and your agents' latest activity itself. An ask bound for the owner without a recommendation is refused; refile it, or decide it yourself.\n"
+const escalate = "- Make every escalation ready to decide: --rec with what you recommend and why, two or more --option \"<label>=<what happens>\" for a decision, one --evidence per pull request, CI run, commit or file it rests on, and --tried with what you already tried. ym attaches the goal, its pull requests with CI and your agents' latest activity itself. A decision or default bound for the owner without a recommendation is refused; refile it, or decide it yourself.\n"
 
 // boss names who m's own escalations reach.
 func (c *Core) boss(o Org, m Manager) string {
