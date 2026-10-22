@@ -22,6 +22,8 @@ type Node struct {
 	Live     *Live
 	Agents   []Live
 	Children []Node
+	// Repo is the goal's repository's identity, as a mission's Project.Repo names it.
+	Repo     string
 	Standing string
 	// Feed is the goal's news for the owner.
 	Feed Feed
@@ -102,6 +104,9 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
 		if g, ok := o.Goals[m.GoalID]; ok {
 			n.Goal = &g
 			n.Feed = feeds[g.ID]
+			if n.Repo = c.gitFor(g.Repo, b.At).ID(); n.Repo == "" {
+				n.Repo = g.Repo
+			}
 		}
 		if s, ok := b.Session(m.Session); ok {
 			n.Live = &s

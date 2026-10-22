@@ -24,6 +24,7 @@ type sessionJSON struct {
 	Cwd        string   `json:"cwd"`
 	Repo       string   `json:"repo"`
 	RepoKey    string   `json:"repo_key,omitempty"`
+	RepoID     string   `json:"repo_id,omitempty"`
 	Worktree   string   `json:"worktree,omitempty"`
 	Branch     string   `json:"branch"`
 	Title      string   `json:"title"`
@@ -90,7 +91,7 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 	out := []sessionJSON{}
 	for _, s := range b.Sessions {
-		j := sessionJSON{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, Worktree: s.Worktree,
+		j := sessionJSON{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, RepoID: s.RepoID, Worktree: s.Worktree,
 			Branch: s.Branch, Title: s.Title, Status: s.Status.String(), WaitingFor: s.WaitingFor, Since: ts(s.Since), Background: s.Background,
 			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies)}
 		if s.Prompt != nil {

@@ -118,10 +118,20 @@ func OrderRepos(recent, scanned []string) []string {
 	return out
 }
 
-// repoScore ranks how well query names repo: 0 is its exact name, then a name prefix, a name substring,
-// a path substring and the query's letters in order in the name; -1 does not match.
+// repoScore ranks how well query names repo, by its directory or its origin's name: 0 is an exact name, then a name
+// prefix, a name substring, a path substring and the query's letters in order in the name; -1 does not match.
 func repoScore(repo, query string) int {
-	q, name, path := strings.ToLower(query), strings.ToLower(filepath.Base(repo)), strings.ToLower(repo)
+	best := nameScore(filepath.Base(repo), repo, query)
+	if id := RepoIDOf(repo); id != "" && !filepath.IsAbs(id) {
+		if s := nameScore(RepoLabel(id), id, query); s >= 0 && (best < 0 || s < best) {
+			best = s
+		}
+	}
+	return best
+}
+
+func nameScore(name, path, query string) int {
+	q, name, path := strings.ToLower(query), strings.ToLower(name), strings.ToLower(path)
 	switch {
 	case name == q:
 		return 0
@@ -183,7 +193,8 @@ func (c *Core) Repos() ([]string, error) {
 	return OrderRepos(recent, scanned), nil
 }
 
-// ResolveRepo turns a repository name, or any part of it, into its main checkout; a path is taken as it is.
+// ResolveRepo turns a repository name, or any part of it, into its main checkout; a path is taken as it is. Clones of
+// one repository count as one, the most recently picked first.
 func (c *Core) ResolveRepo(ref string) (string, error) {
 	if IsRepoPath(ref) {
 		return ExpandHome(ref), nil
@@ -196,15 +207,28 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 	if len(matches) == 0 {
 		return "", fmt.Errorf("no repository matches %q", ref)
 	}
+	idOf := func(r string) string {
+		if id := RepoIDOf(r); id != "" {
+			return id
+		}
+		return r
+	}
 	best := repoScore(matches[0], ref)
 	var tied []string
+	ids := map[string]bool{}
 	for _, m := range matches {
 		if repoScore(m, ref) == best {
 			tied = append(tied, m)
+			ids[idOf(m)] = true
 		}
 	}
-	if len(tied) > 1 {
+	if len(ids) > 1 {
 		return "", fmt.Errorf("%q matches several repositories; name one by path:\n  %s", ref, strings.Join(tied, "\n  "))
+	}
+	for _, r := range repos {
+		if ids[idOf(r)] {
+			return r, nil
+		}
 	}
 	return tied[0], nil
 }

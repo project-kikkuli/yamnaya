@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,7 @@ type dormantJSON struct {
 	Parent  string `json:"parent,omitempty"`
 	Cwd     string `json:"cwd"`
 	RepoKey string `json:"repo_key,omitempty"`
+	RepoID  string `json:"repo_id,omitempty"`
 	Branch  string `json:"branch,omitempty"`
 	Title   string `json:"title"`
 	State   string `json:"state"`
@@ -64,7 +66,7 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			for _, p := range b.Projects {
 				for _, d := range p.Dormant {
 					out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
-						RepoKey: d.RepoKey, Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
+						RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
 				}
 			}
 			return writeJSON(cmd.OutOrStdout(), out)
@@ -80,9 +82,18 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		}
 		return core.RemoteKey(host, key)
 	}
+	repoID := func(id, key string) string {
+		if id == "" {
+			id = key
+		}
+		if filepath.IsAbs(id) {
+			return qualify(id)
+		}
+		return id
+	}
 	r := core.RemoteBoard{Host: host}
 	for _, s := range j.Sessions {
-		l := core.Live{Session: core.Session{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey),
+		l := core.Live{Session: core.Session{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
 		if s.Prompt != "" {
@@ -101,7 +112,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 	}
 	for _, d := range j.Dormant {
 		r.Dormant = append(r.Dormant, core.Dormant{Key: qualify(d.Key), Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
-			RepoKey: qualify(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
+			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
 	}
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})

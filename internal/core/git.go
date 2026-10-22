@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 type GitInfo struct {
 	Top    string
 	Common string
+	// Origin is the repository's origin remote as host/owner/name, the same for every clone on every host; "" without one.
+	Origin string
 	Branch string
 	// Default is the repository's default branch, "" when it cannot be told.
 	Default string
@@ -33,15 +36,115 @@ func (g GitInfo) IsDefault(b string) bool {
 	return DefaultBranch(b)
 }
 
-// Name is the repository's name: its main checkout's directory, or the bare repo's.
+// Name is the repository's name: origin's, else its main checkout's directory, or the bare repo's.
 func (g GitInfo) Name() string {
-	if g.Common == "" {
+	if g.Origin != "" {
+		return path.Base(g.Origin)
+	}
+	return RepoLabel(g.Common)
+}
+
+// ID is the repository's identity: its origin, else its git common dir.
+func (g GitInfo) ID() string {
+	if g.Origin != "" {
+		return g.Origin
+	}
+	return g.Common
+}
+
+// RepoLabel names the repository a RepoID or git common dir stands for.
+func RepoLabel(id string) string {
+	if id == "" {
 		return ""
 	}
-	if filepath.Base(g.Common) == ".git" {
-		return filepath.Base(filepath.Dir(g.Common))
+	if path.Base(id) == ".git" {
+		return path.Base(path.Dir(id))
 	}
-	return strings.TrimSuffix(filepath.Base(g.Common), ".git")
+	return strings.TrimSuffix(path.Base(id), ".git")
+}
+
+// OriginKey normalizes a remote URL to host/owner/name in lower case, so ssh and https forms of one repository agree;
+// "" for a local path.
+func OriginKey(url string) string {
+	u := strings.TrimSpace(url)
+	var host, rest string
+	if scheme, after, ok := strings.Cut(u, "://"); ok {
+		if scheme == "file" {
+			return ""
+		}
+		host, rest, _ = strings.Cut(after, "/")
+		if i := strings.LastIndex(host, "@"); i >= 0 {
+			host = host[i+1:]
+		}
+		if h, _, ok := strings.Cut(host, ":"); ok {
+			host = h
+		}
+	} else if h, r, ok := strings.Cut(u, ":"); ok && !strings.Contains(h, "/") {
+		host, rest = h, r
+		if i := strings.LastIndex(host, "@"); i >= 0 {
+			host = host[i+1:]
+		}
+	} else {
+		return ""
+	}
+	rest = strings.TrimSuffix(strings.Trim(rest, "/"), ".git")
+	if host == "" || rest == "" {
+		return ""
+	}
+	return strings.ToLower(host + "/" + rest)
+}
+
+// originOf reads origin's URL from the repository's config file.
+func originOf(common string) string {
+	b, err := os.ReadFile(filepath.Join(common, "config"))
+	if err != nil {
+		return ""
+	}
+	inOrigin := false
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "[") {
+			inOrigin = l == `[remote "origin"]`
+			continue
+		}
+		if k, v, ok := strings.Cut(l, "="); inOrigin && ok && strings.TrimSpace(k) == "url" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+var repoIDs sync.Map
+
+// RepoID is the identity of the repository with git common dir common: its origin, else common itself.
+func RepoID(common string) string {
+	if common == "" {
+		return ""
+	}
+	if id, ok := repoIDs.Load(common); ok {
+		return id.(string)
+	}
+	id := OriginKey(originOf(common))
+	if id == "" {
+		id = common
+	}
+	repoIDs.Store(common, id)
+	return id
+}
+
+var dirIDs sync.Map
+
+// RepoIDOf is the identity of the repository dir lies in, "" outside one.
+func RepoIDOf(dir string) string {
+	if id, ok := dirIDs.Load(dir); ok {
+		return id.(string)
+	}
+	g, ok := readGitFiles(dir)
+	if !ok {
+		g = revParse(dir)
+	}
+	dirIDs.Store(dir, g.ID())
+	return g.ID()
 }
 
 // ReadGit finds where dir sits from the checkout's .git files, asking git only when they are unusual.
@@ -116,10 +219,12 @@ func refsStamp(g GitInfo) string {
 // RepoName is the name of the repository dir is a checkout of, as its pull request links and ym_repo_authority name it: origin's
 // repository name, or the directory's own name without an origin.
 func RepoName(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "config", "--get", "remote.origin.url").Output()
-	url := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(string(out)), "/"), ".git")
-	if i := strings.LastIndexAny(url, "/:"); err == nil && i >= 0 && i < len(url)-1 {
-		return strings.ToLower(url[i+1:])
+	g, ok := readGitFiles(dir)
+	if !ok {
+		g = revParse(dir)
+	}
+	if g.Origin != "" {
+		return g.Name()
 	}
 	return strings.ToLower(filepath.Base(dir))
 }
@@ -134,6 +239,7 @@ func revParse(dir string) GitInfo {
 		return GitInfo{}
 	}
 	g := GitInfo{Top: lines[0], Common: filepath.Clean(lines[1]), Branch: lines[2]}
+	g.Origin = OriginKey(originOf(g.Common))
 	if out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").Output(); err == nil {
 		g.Default = strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/")
 	}
@@ -188,7 +294,7 @@ func readGitFiles(dir string) (GitInfo, bool) {
 				branch = ref
 			}
 			common = filepath.Clean(common)
-			return GitInfo{Top: d, Common: common, Branch: branch, Default: originHead(common)}, true
+			return GitInfo{Top: d, Common: common, Origin: OriginKey(originOf(common)), Branch: branch, Default: originHead(common)}, true
 		}
 		if p := filepath.Dir(d); p == d {
 			return GitInfo{}, true

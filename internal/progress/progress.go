@@ -136,7 +136,7 @@ func Units(sessions []core.Live) []Unit {
 			}
 			seen[pr.URL] = true
 			u := PRUnit(pr)
-			heads[head{path.Base(pr.Repo), u.Branch}] = true
+			heads[head{strings.ToLower(path.Base(pr.Repo)), u.Branch}] = true
 			headed[u.Branch] = true
 			out = append(out, u)
 		}
@@ -147,11 +147,12 @@ func Units(sessions []core.Live) []Unit {
 		if name == "" || name == "HEAD" || g.IsDefault(name) {
 			return
 		}
-		repo := g.Name()
-		if listed[head{repoKey, name}] || heads[head{repo, name}] || (repo == "" && headed[name]) {
+		id := core.RepoID(repoKey)
+		repo := strings.ToLower(core.RepoLabel(id))
+		if listed[head{id, name}] || heads[head{repo, name}] || (repo == "" && headed[name]) {
 			return
 		}
-		listed[head{repoKey, name}] = true
+		listed[head{id, name}] = true
 		out = append(out, BranchUnit(name, ahead))
 	}
 	for _, s := range sessions {

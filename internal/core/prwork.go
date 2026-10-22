@@ -1,8 +1,6 @@
 package core
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -67,22 +65,8 @@ func GitHubRepo(dir string) string {
 	if g.Common == "" {
 		return ""
 	}
-	b, err := os.ReadFile(filepath.Join(g.Common, "config"))
-	if err != nil {
-		return ""
-	}
-	inOrigin := false
-	for _, l := range strings.Split(string(b), "\n") {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "[") {
-			inOrigin = l == `[remote "origin"]`
-			continue
-		}
-		if k, v, ok := strings.Cut(l, "="); inOrigin && ok && strings.TrimSpace(k) == "url" {
-			if m := ghRemote.FindStringSubmatch(strings.TrimSpace(v)); m != nil {
-				return m[1]
-			}
-		}
+	if m := ghRemote.FindStringSubmatch(originOf(g.Common)); m != nil {
+		return m[1]
 	}
 	return ""
 }

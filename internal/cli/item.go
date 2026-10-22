@@ -428,12 +428,12 @@ func (e *env) itemScope(b core.Board) string {
 	if e.project != "" {
 		for _, r := range b.Repos {
 			if r.Key == e.project || strings.EqualFold(r.Name, e.project) {
-				return r.Key
+				return r.Dir
 			}
 		}
 		if key, err := b.ProjectKey(e.project); err == nil {
-			if p, ok := b.Project(key); ok && p.Repo != "" {
-				return p.Repo
+			if p, ok := b.Project(key); ok && p.RepoDir != "" {
+				return p.RepoDir
 			}
 			return e.core.ScopeOf(b, key)
 		}

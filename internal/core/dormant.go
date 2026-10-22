@@ -14,8 +14,10 @@ type Dormant struct {
 	Cwd     string
 	// RepoKey is the git common dir of the repository its worktree belongs to.
 	RepoKey string
-	Branch  string
-	Title   string
+	// RepoID is the repository's identity across clones and hosts, derived from RepoKey when empty.
+	RepoID string
+	Branch string
+	Title  string
 	// State is how its pane stands, such as "exited 1" or "gone", or why landing it after a clean exit failed.
 	State   string
 	Started time.Time

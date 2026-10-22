@@ -35,12 +35,12 @@ func workBoard() core.Board {
 			pr(14, core.PRStatus{State: "CLOSED"}),
 		}}}}
 	agent := core.Live{Session: core.Session{Harness: "claude", ID: "importer-agent", Title: "write the CSV reader", Status: core.Busy}}
-	goal := core.Node{Manager: core.Manager{ID: "mgr", Name: "importer"}, Goal: &core.Goal{ID: "g", Ask: "make the importer handle CSV", Repo: "/src/august", ManagerID: "mgr"}, Agents: []core.Live{agent}}
+	goal := core.Node{Manager: core.Manager{ID: "mgr", Name: "importer"}, Goal: &core.Goal{ID: "g", Ask: "make the importer handle CSV", Repo: "/src/august", ManagerID: "mgr"}, Repo: "github.com/o/august", Agents: []core.Live{agent}}
 	return core.Board{
 		Tree: []core.Node{goal},
 		Projects: []core.Project{
-			{Key: "lead", Name: "Arbiter rollout", RepoName: "august", Sessions: []core.Live{lead}},
-			{Key: "importer-agent", Name: "write the CSV reader", RepoName: "august", Sessions: []core.Live{agent}, Manager: "mgr"},
+			{Key: "lead", Name: "Arbiter rollout", Repo: "github.com/o/august", RepoName: "august", Sessions: []core.Live{lead}},
+			{Key: "importer-agent", Name: "write the CSV reader", Repo: "github.com/o/august", RepoName: "august", Sessions: []core.Live{agent}, Manager: "mgr"},
 		},
 		Needs: []core.Need{{Project: "lead", Session: &lead, Reply: "keep or switch?", Line: "keep or switch?"}},
 	}

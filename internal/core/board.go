@@ -94,10 +94,13 @@ func (l Live) Location() string {
 
 // Project is a mission: a root session and the sessions it spawned.
 type Project struct {
-	Key      string
-	Name     string
+	Key  string
+	Name string
+	// Repo is the repository's identity, the same for every clone on every host; RepoDir is the git common dir of the clone
+	// its root session works in.
 	Repo     string
 	RepoName string
+	RepoDir  string
 	Sessions []Live
 	Items    []Item
 	Phases   Phases
@@ -148,8 +151,10 @@ type Need struct {
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
 type Repo struct {
-	Key      string
-	Name     string
+	Key  string
+	Name string
+	// Dir is the git common dir of one of its clones, a clone on this host when it has one.
+	Dir      string
 	Missions []Project
 }
 
@@ -395,7 +400,7 @@ func (c *Core) Board() (Board, error) {
 	}
 	for i := range b.Projects {
 		if b.Projects[i].Repo == "" {
-			b.Projects[i].Repo, b.Projects[i].RepoName = c.crewRepo(b.Projects[i], b.At)
+			b.Projects[i].Repo, b.Projects[i].RepoName, b.Projects[i].RepoDir = c.crewRepo(b.Projects[i], b.At)
 		}
 	}
 	if c.Meter != nil {
@@ -459,7 +464,7 @@ func (c *Core) place(found []Session, now time.Time) {
 	for i := range found {
 		s := &found[i]
 		if g := dirs[s.Cwd]; g.Common != "" {
-			s.Repo, s.RepoKey, s.Worktree = g.Name(), g.Common, g.Top
+			s.Repo, s.RepoKey, s.RepoID, s.Worktree = g.Name(), g.Common, g.ID(), g.Top
 			if g.Branch != "" && g.Branch != "HEAD" {
 				s.Branch, s.Ahead, s.Default = g.Branch, g.Ahead, g.Default
 			}
@@ -502,9 +507,9 @@ func (c *Core) attachPRs(sessions []Live) {
 }
 
 // crewRepo is the repository most of a mission's crew wrote files in, for a mission whose lead works outside any repo.
-func (c *Core) crewRepo(p Project, now time.Time) (string, string) {
+func (c *Core) crewRepo(p Project, now time.Time) (string, string, string) {
 	count := map[string]int{}
-	names := map[string]string{}
+	names := map[string][]string{}
 	best := ""
 	for _, s := range p.Sessions {
 		for _, m := range s.Crew {
@@ -515,14 +520,20 @@ func (c *Core) crewRepo(p Project, now time.Time) (string, string) {
 			if g.Common == "" {
 				continue
 			}
-			count[g.Common]++
-			names[g.Common] = g.Name()
-			if count[g.Common] > count[best] {
-				best = g.Common
+			id := g.ID()
+			count[id]++
+			if names[id] == nil {
+				names[id] = []string{g.Name(), g.Common}
+			}
+			if count[id] > count[best] {
+				best = id
 			}
 		}
 	}
-	return best, names[best]
+	if best == "" {
+		return "", "", ""
+	}
+	return best, names[best][0], names[best][1]
 }
 
 // repos groups missions by their root session's repository, busiest repos first.
@@ -535,12 +546,15 @@ func repos(projects []Project) []Repo {
 		}
 		r := byKey[p.Repo]
 		if r == nil {
-			r = &Repo{Key: p.Repo, Name: p.RepoName}
+			r = &Repo{Key: p.Repo, Name: p.RepoName, Dir: p.RepoDir}
 			if r.Name == "" {
 				r.Name = "(no repo)"
 			}
 			byKey[p.Repo] = r
 			order = append(order, p.Repo)
+		}
+		if filepath.IsAbs(p.RepoDir) && !filepath.IsAbs(r.Dir) {
+			r.Dir = p.RepoDir
 		}
 		r.Missions = append(r.Missions, p)
 	}
@@ -725,13 +739,20 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 		p.Status = projectStatus(*p)
 		for _, s := range p.Sessions {
 			if s.RepoKey != "" {
-				p.Repo, p.RepoName = s.RepoKey, s.Repo
+				p.Repo, p.RepoName, p.RepoDir = s.RepoID, s.Repo, s.RepoKey
+				if p.Repo == "" {
+					p.Repo = s.RepoKey
+				}
 				break
 			}
 		}
 		for _, d := range p.Dormant {
 			if p.Repo == "" && d.RepoKey != "" {
-				p.Repo, p.RepoName = d.RepoKey, GitInfo{Common: d.RepoKey}.Name()
+				p.Repo, p.RepoDir = d.RepoID, d.RepoKey
+				if p.Repo == "" {
+					p.Repo = RepoID(d.RepoKey)
+				}
+				p.RepoName = RepoLabel(p.Repo)
 			}
 		}
 		out = append(out, *p)

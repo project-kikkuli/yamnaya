@@ -991,16 +991,18 @@ func (m Model) repoOf(r row) string {
 	case r.session != nil:
 		key = r.session.RepoKey
 	case r.project != nil:
-		key = r.project.Repo
+		key = r.project.RepoDir
 	case r.repo != nil:
-		key = r.repo.Key
+		key = r.repo.Dir
 	}
 	if key == "" && m.mode == modeRepo {
-		key = m.repo
+		if rp, ok := m.board.Repo(m.repo); ok {
+			key = rp.Dir
+		}
 	}
 	if key == "" {
 		if p, ok := m.board.Project(m.detail); ok && m.mode != modeList {
-			key = p.Repo
+			key = p.RepoDir
 		}
 	}
 	if key != "" {

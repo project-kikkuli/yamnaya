@@ -115,9 +115,11 @@ type Session struct {
 	PID    int
 	TTY    string
 	Cwd    string
-	// Repo names the repository; RepoKey is its git common dir, shared by all its worktrees.
+	// Repo names the repository; RepoKey is its git common dir, shared by all its worktrees; RepoID is its identity across
+	// clones and hosts, origin's host/owner/name or else RepoKey.
 	Repo     string
 	RepoKey  string
+	RepoID   string
 	Worktree string
 	Branch   string
 	// Default is the repository's default branch, "" when unknown.

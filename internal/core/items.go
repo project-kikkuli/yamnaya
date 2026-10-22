@@ -469,8 +469,8 @@ func (c *Core) ScopeOf(b Board, session string) string {
 		if s.RepoKey != "" {
 			return s.RepoKey
 		}
-		if p, ok := b.Project(b.ProjectOf(session)); ok && p.Repo != "" {
-			return p.Repo
+		if p, ok := b.Project(b.ProjectOf(session)); ok && p.RepoDir != "" {
+			return p.RepoDir
 		}
 		if s.Cwd != "" {
 			return s.Cwd

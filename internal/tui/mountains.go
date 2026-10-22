@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -94,19 +93,20 @@ func (m Model) sceneOf() scene.Scene {
 	waiting := needs(b)
 	repos := map[string]*scene.Range{}
 	var order []string
-	repo := func(name string) *scene.Range {
-		if name == "" {
-			name = "elsewhere"
+	repo := func(id string) *scene.Range {
+		name := core.RepoLabel(id)
+		if id == "" {
+			id, name = "elsewhere", "elsewhere"
 		}
-		if repos[name] == nil {
-			repos[name] = &scene.Range{ID: "repo:" + name, Name: name}
-			order = append(order, name)
+		if repos[id] == nil {
+			repos[id] = &scene.Range{ID: "repo:" + id, Name: name}
+			order = append(order, id)
 		}
-		return repos[name]
+		return repos[id]
 	}
 	for _, n := range b.Tree {
 		if n.Goal != nil {
-			r := repo(path.Base(n.Goal.Repo))
+			r := repo(n.Repo)
 			r.Peaks = append(r.Peaks, goalPeak(n, waiting))
 		} else {
 			s.Ranges = append(s.Ranges, chiefRange(n, waiting))
@@ -116,7 +116,7 @@ func (m Model) sceneOf() scene.Scene {
 		if p.Manager != "" || !p.Shown() {
 			continue
 		}
-		r := repo(p.RepoName)
+		r := repo(p.Repo)
 		r.Peaks = append(r.Peaks, missionPeak(p, waiting))
 	}
 	for _, name := range order {
@@ -296,7 +296,10 @@ func (m Model) peakOfRow(r row) string {
 	case r.item != nil:
 		return b.ProjectOf(r.item.Session)
 	case r.repo != nil:
-		return "repo:" + r.repo.Name
+		if r.repo.Key == "" {
+			return "repo:elsewhere"
+		}
+		return "repo:" + r.repo.Key
 	}
 	return ""
 }
