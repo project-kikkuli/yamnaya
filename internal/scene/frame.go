@@ -47,8 +47,8 @@ const light = 10 * time.Minute
 
 var backdrops struct {
 	sync.Mutex
-	key  string
-	p    *painter
+	key    string
+	p      *painter
 	builds int
 	// lit holds, per mountain, the pixels its selection light changes on the backdrop.
 	lit map[int][]pixel
