@@ -133,5 +133,6 @@ func (m Model) paint(page viewPage) string {
 	if !m.shown() {
 		return text
 	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", ""), "\t", "    ")
 	return scene.Frame(m.sceneOf(), m.width, m.height, m.peaks.frame, text)
 }

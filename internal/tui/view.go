@@ -555,8 +555,11 @@ func (m Model) needLines(i int, n core.Need) string {
 		head := m.mark(i) + m.hue(n.Project).Render(pad("wait", m.idWidth())) + " " + name + " " + pad(titleOf(*s), 20) + " waiting: "
 		b.WriteString(head + pad(n.Line, max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
 		if sel {
+			for _, line := range askBlock(n.Reply) {
+				b.WriteString("         " + ansi.Truncate(line, max(10, m.width-10), "…") + "\n")
+			}
 			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
-			b.WriteString(pal.dim.Render("         enter last reply   a answer   x dismiss   o go to session   O beside") + "\n")
+			b.WriteString(pal.dim.Render("         enter whole reply   a answer   x dismiss   o go to session   O beside") + "\n")
 		}
 		return b.String()
 	}

@@ -202,6 +202,9 @@ func askText(b Board, o Org, it Item) string {
 	for _, opt := range it.Options {
 		fmt.Fprintf(&sb, " Option %s: %s.", opt.Label, oneLine(opt.Effect))
 	}
+	if it.Assumption != "" {
+		fmt.Fprintf(&sb, " Context: %s", it.Assumption)
+	}
 	fmt.Fprintf(&sb, " You own this: answer with ym item answer '%s' <answer> (ym item go '%s' to say go ahead, ym item dismiss '%s' <reason>)."+
 		" Escalate with your own ym item add only if it is beyond your authority.", it.Key(), it.Key(), it.Key())
 	return sb.String()

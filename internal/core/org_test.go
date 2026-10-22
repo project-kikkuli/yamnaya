@@ -511,3 +511,90 @@ func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
 		t.Fatalf("the moved manager could not finish its goal: %v", err)
 	}
 }
+
+const floodMessage = `The worker reports it is done and the validator is checking it.
+
+Open for you
+1. Keep the old client shim for one release?
+4. Keep the retry wrapper or switch to the new client's built-in retries?
+
+Next: answer item 4 with "keep" or "switch" while the validator runs.`
+
+func waitingRows(b Board, session string) []Need {
+	var out []Need
+	for _, n := range b.Needs {
+		if (n.Session != nil && n.Session.Key() == session) || (n.Item != nil && n.Item.Session == session) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func TestHandoffsFromAnOwnerStartedSessionShowOneRowWithTheAgentsWholeMessage(t *testing.T) {
+	w := newOrgWorld(t)
+	w.goal(t, "unrelated goal", "/repo/august")
+	w.spawn("mine", "")
+	for i := range 10 {
+		target, err := w.core.FileHandoff(w.board(t), fmt.Sprintf("k%d", i), Item{Session: "mine", Kind: KindDecision, Question: `Answer open item 4 with either "keep" or "switch".`}, floodMessage)
+		if err != nil || target != "waiting:mine" {
+			t.Fatalf("handoff %d became %q (%v)", i, target, err)
+		}
+	}
+	rows := waitingRows(w.board(t), "mine")
+	if len(rows) != 1 || rows[0].Reply != floodMessage || !rows[0].Waiting() {
+		t.Fatalf("rows %+v, want one waiting row carrying the whole message", rows)
+	}
+	if items, _ := w.core.Store.Items(ItemFilter{}); len(items) != 0 {
+		t.Fatalf("filed %d items for an owner-started session", len(items))
+	}
+	if err := w.core.Store.DismissWaiting("mine", rows[0].Reply); err != nil {
+		t.Fatal(err)
+	}
+	if rows := waitingRows(w.board(t), "mine"); len(rows) != 0 {
+		t.Fatalf("dismissed row still shows: %+v", rows)
+	}
+}
+
+func TestOpenHandoffItemsOfOwnerSessionsBecomeTheirWaitingRowsOnce(t *testing.T) {
+	path := t.TempDir() + "/ym.db"
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, _, err := st.addItem(Item{Scope: "repo", Session: "mine", Kind: KindDecision, Question: "Answer item 4"}, "flood-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answered, _, err := st.addItem(Item{Scope: "repo", Session: "mine", Kind: KindDecision, Question: "Old one"}, "old-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.Transition(answered.Key(), ItemAnswered, "keep"); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO ym_handoff_claims (id, work, claim) VALUES ('c1', 'mine', json_object('Event', json_object('Text', ?)))`, []any{floodMessage}},
+		{`INSERT INTO ym_handoff_targets (id, target) VALUES ('c1', ?)`, []any{"item:" + it.Key()}},
+		{`DROP TABLE ym_session_asks`, nil},
+	} {
+		if _, err = st.db.Exec(q.sql, q.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	for range 2 {
+		if st, err = OpenStore(path); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := st.Item(it.Key())
+		old, _ := st.Item(answered.Key())
+		asks, _ := st.asking()
+		if got.State != ItemDismissed || got.Delivered.IsZero() || old.State != ItemAnswered || old.Answer != "keep" || asks["mine"] != floodMessage {
+			t.Fatalf("open %s delivered %v, answered %s %q, waiting %q", got.State, got.Delivered, old.State, old.Answer, asks["mine"])
+		}
+		st.Close()
+	}
+}

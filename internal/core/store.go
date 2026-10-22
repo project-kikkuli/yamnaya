@@ -235,6 +235,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("retire work layer: %w", err)
 	}
+	if err := sessionAsks(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate session asks: %w", err)
+	}
 	return &Store{db: db, Handoffs: h}, nil
 }
 

@@ -62,3 +62,18 @@ func (c *Core) captureFile(file handoff.File) error {
 	}
 	return c.Store.Handoffs.Ingest(file.Path, identity, next, events)
 }
+
+// FileHandoff records what a captured handoff asks and names what it became. An agent a manager runs gets one item, routed like
+// AddItem, with its message attached verbatim; a session the owner started gets no item, only its one waiting row showing that message.
+func (c *Core) FileHandoff(b Board, key string, it Item, message string) (string, error) {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return "", err
+	}
+	if _, managed := o.Managed(c.Resolve(it.Session), c.parentsFor(b, nil)); !managed {
+		return "waiting:" + it.Session, c.Store.MarkAsking(it.Session, message)
+	}
+	it.Assumption = strings.TrimSpace(it.Assumption + "\n\nThe agent's message, verbatim:\n" + message)
+	it, err = c.file(b, nil, it, key)
+	return "item:" + it.Key(), err
+}

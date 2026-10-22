@@ -563,3 +563,20 @@ func (m Model) pickLabel() string {
 	}
 	return "new " + m.newL.Harness + " session, repository"
 }
+
+// askBlock is the end of a waiting reply as the agent wrote it: its last block of non-empty lines, at most a dozen.
+func askBlock(reply string) []string {
+	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(reply, "\t", "    "), "\n "), "\n")
+	start := len(lines)
+	for start > 0 && len(lines)-start < 12 {
+		if strings.TrimSpace(lines[start-1]) == "" && len(lines)-start >= 3 {
+			break
+		}
+		start--
+	}
+	var out []string
+	for _, l := range lines[start:] {
+		out = append(out, strings.TrimRight(strings.ReplaceAll(l, "\r", ""), " "))
+	}
+	return out
+}
