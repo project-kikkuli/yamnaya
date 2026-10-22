@@ -98,19 +98,48 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 	if err != nil {
 		return err
 	}
-	found, pages, err := d.notion.Asks(ctx, keep)
+	pages, err := d.notion.Pages(ctx, keep)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
 		}
-		return st.FailDocSweep("notion", err)
+		return st.FinishDocSweep("notion", -1, err)
 	}
-	asks := make([]core.DocAsk, len(found))
-	for i, a := range found {
-		asks[i] = core.DocAsk{Key: a.Key, Kind: a.Kind, URL: a.URL, Page: a.Page, Title: a.Title, Asker: a.Asker, Text: a.Text,
-			Evidence: a.Evidence, Version: a.Version, Refs: a.Refs}
+	read, err := st.DocPagesRead("notion")
+	if err != nil {
+		return err
 	}
-	return st.SyncDocAsks("notion", asks, pages)
+	open := map[string]bool{}
+	for _, p := range keep {
+		open[p] = true
+	}
+	var failures []error
+	for _, p := range pages {
+		if !p.Gone && read[p.Key] == p.Edited && !open[p.Key] {
+			continue
+		}
+		found, err := d.notion.PageAsks(ctx, p)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		asks := make([]core.DocAsk, len(found))
+		for i, a := range found {
+			asks[i] = core.DocAsk{Key: a.Key, Kind: a.Kind, URL: a.URL, Page: a.Page, Title: a.Title, Asker: a.Asker, Text: a.Text,
+				Evidence: a.Evidence, Version: a.Version, Refs: a.Refs}
+		}
+		if err = st.SyncDocPage("notion", p.Key, p.Edited, asks); err != nil {
+			return err
+		}
+	}
+	var failed error
+	if len(failures) > 0 {
+		failed = fmt.Errorf("%d of %d pages unreadable, retried next sweep; first: %w", len(failures), len(pages), failures[0])
+	}
+	return st.FinishDocSweep("notion", len(pages), failed)
 }
 
 func (d *docSweeper) run(ctx context.Context, st *core.Store, log io.Writer) {

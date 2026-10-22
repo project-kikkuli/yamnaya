@@ -49,6 +49,12 @@ CREATE TABLE IF NOT EXISTS ym_doc_asks (
 	told TEXT NOT NULL DEFAULT '',
 	seen_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_doc_pages (
+	source TEXT NOT NULL,
+	page TEXT NOT NULL,
+	edited TEXT NOT NULL,
+	PRIMARY KEY (source, page)
+);
 CREATE TABLE IF NOT EXISTS ym_doc_sweeps (
 	source TEXT PRIMARY KEY,
 	at TEXT NOT NULL,
@@ -57,15 +63,15 @@ CREATE TABLE IF NOT EXISTS ym_doc_sweeps (
 );
 `
 
-// SyncDocAsks makes source's open asks exactly asks: new ones open, changed ones take the new version, and ones the source no
-// longer shows close, as a discussion resolved or answered in the document does.
-func (s *Store) SyncDocAsks(source string, asks []DocAsk, pages int) error {
+// SyncDocPage makes the open asks on one of source's pages exactly asks, as of the page's edit: new ones open, changed ones take
+// the new version, and ones the page no longer shows close, as a discussion resolved or answered in the document does.
+func (s *Store) SyncDocPage(source, page, edited string, asks []DocAsk) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE ym_doc_asks SET state = 'gone' WHERE state = 'open' AND source = ?`, source); err != nil {
+	if _, err = tx.Exec(`UPDATE ym_doc_asks SET state = 'gone' WHERE state = 'open' AND source = ? AND page = ?`, source, page); err != nil {
 		return err
 	}
 	for _, a := range asks {
@@ -78,21 +84,45 @@ func (s *Store) SyncDocAsks(source string, asks []DocAsk, pages int) error {
 			ON CONFLICT(key) DO UPDATE SET source = excluded.source, kind = excluded.kind, url = excluded.url, page = excluded.page,
 			title = excluded.title, asker = excluded.asker, text = excluded.text, evidence = excluded.evidence, version = excluded.version,
 			refs = excluded.refs, state = 'open', seen_at = CASE ym_doc_asks.state WHEN 'open' THEN ym_doc_asks.seen_at ELSE excluded.seen_at END`,
-			a.Key, source, a.Kind, a.URL, a.Page, a.Title, a.Asker, a.Text, a.Evidence, a.Version, string(refs), now()); err != nil {
+			a.Key, source, a.Kind, a.URL, page, a.Title, a.Asker, a.Text, a.Evidence, a.Version, string(refs), now()); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec(`INSERT INTO ym_doc_sweeps (source, at, pages, error) VALUES (?, ?, ?, '')
-		ON CONFLICT(source) DO UPDATE SET at = excluded.at, pages = excluded.pages, error = ''`, source, now(), pages); err != nil {
+	if _, err = tx.Exec(`INSERT INTO ym_doc_pages (source, page, edited) VALUES (?, ?, ?)
+		ON CONFLICT(source, page) DO UPDATE SET edited = excluded.edited`, source, page, edited); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-// FailDocSweep records why source's sweep failed and leaves its asks as the last full sweep found them.
-func (s *Store) FailDocSweep(source string, failure error) error {
-	_, err := s.db.Exec(`INSERT INTO ym_doc_sweeps (source, at, error) VALUES (?, ?, ?)
-		ON CONFLICT(source) DO UPDATE SET at = excluded.at, error = excluded.error`, source, now(), failure.Error())
+// DocPagesRead maps each of source's pages to the edit its asks were last read at.
+func (s *Store) DocPagesRead(source string) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT page, edited FROM ym_doc_pages WHERE source = ?`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var page, edited string
+		if err := rows.Scan(&page, &edited); err != nil {
+			return nil, err
+		}
+		out[page] = edited
+	}
+	return out, rows.Err()
+}
+
+// FinishDocSweep records how source's sweep went: the pages it listed and why any of them could not be read, or why it could not
+// list them at all, when pages is negative.
+func (s *Store) FinishDocSweep(source string, pages int, failure error) error {
+	msg := ""
+	if failure != nil {
+		msg = failure.Error()
+	}
+	_, err := s.db.Exec(`INSERT INTO ym_doc_sweeps (source, at, pages, error) VALUES (?, ?, ?, ?)
+		ON CONFLICT(source) DO UPDATE SET at = excluded.at, pages = CASE WHEN excluded.pages >= 0 THEN excluded.pages ELSE ym_doc_sweeps.pages END,
+		error = excluded.error`, source, now(), pages, msg)
 	return err
 }
 

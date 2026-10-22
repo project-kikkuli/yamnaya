@@ -167,8 +167,8 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 func TestADocAskShowsItsThreadOpensItsDiscussionAndDismisses(t *testing.T) {
 	m, c, _ := goalSetup(t)
 	url := "https://www.notion.so/Launch-plan-a0?d=d1"
-	if err := c.Store.SyncDocAsks("notion", []core.DocAsk{{Key: "notion:d1", Kind: "mention", URL: url, Page: "a0", Title: "Launch plan",
-		Asker: "Alice", Text: "@Rajat is PR 7 the final cut?", Evidence: "Alice: @Rajat is PR 7 the final cut?", Version: "c1"}}, 1); err != nil {
+	if err := c.Store.SyncDocPage("notion", "a0", "e1", []core.DocAsk{{Key: "notion:d1", Kind: "mention", URL: url, Page: "a0", Title: "Launch plan",
+		Asker: "Alice", Text: "@Rajat is PR 7 the final cut?", Evidence: "Alice: @Rajat is PR 7 the final cut?", Version: "c1"}}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := c.Board()

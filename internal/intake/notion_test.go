@@ -80,6 +80,23 @@ func summary(asks []DocAsk) []string {
 	return out
 }
 
+// sweep reads every page the integration lists, as one sweep does on first connecting.
+func sweep(n *Notion, keep []string) ([]DocAsk, int, error) {
+	pages, err := n.Pages(context.Background(), keep)
+	if err != nil {
+		return nil, 0, err
+	}
+	var asks []DocAsk
+	for _, p := range pages {
+		got, err := n.PageAsks(context.Background(), p)
+		if err != nil {
+			return asks, len(pages), err
+		}
+		asks = append(asks, got...)
+	}
+	return asks, len(pages), nil
+}
+
 func TestNotionSweepFindsOnlyAsksAddressedToTheOwner(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -99,11 +116,11 @@ func TestNotionSweepFindsOnlyAsksAddressedToTheOwner(t *testing.T) {
 			"notion:d0000000000040008000000000000002 mention Alice",
 			"notion:d0000000000040008000000000000006 reply Bob",
 			"notion:d0000000000040008000000000000008 mention Carol",
-		}, 6},
+		}, 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			n, _ := workspace(t, nil)
-			asks, pages, err := n.Asks(context.Background(), tc.keep)
+			asks, pages, err := sweep(n, tc.keep)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +133,7 @@ func TestNotionSweepFindsOnlyAsksAddressedToTheOwner(t *testing.T) {
 
 func TestNotionAsksCarryTheirThreadLinkAndWhatTheyMention(t *testing.T) {
 	n, _ := workspace(t, nil)
-	asks, _, err := n.Asks(context.Background(), nil)
+	asks, _, err := sweep(n, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,18 +160,33 @@ func TestNotionAsksCarryTheirThreadLinkAndWhatTheyMention(t *testing.T) {
 	}
 }
 
-func TestANotionSweepThatCannotReadEveryPageReturnsNothing(t *testing.T) {
-	for _, key := range []string{
-		"GET /comments b0000000-0000-4000-8000-0000000000b3",
-		"POST /search cursor-2",
-		"GET /comments a0000000-0000-4000-8000-00000000000a cc-2",
-		"GET /databases/db000000-0000-4000-8000-0000000000db",
+func TestAPageNotionCannotReadFailsAloneAndAListingThatCannotFinishFailsWhole(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		pages []string
+	}{
+		{"GET /comments b0000000-0000-4000-8000-0000000000b3", []string{"a000000000004000800000000000000a"}},
+		{"GET /comments a0000000-0000-4000-8000-00000000000a cc-2", []string{"a000000000004000800000000000000a"}},
+		{"GET /databases/db000000-0000-4000-8000-0000000000db", []string{"a000000000004000800000000000000c", "a000000000004000800000000000000d"}},
+		{"POST /search cursor-2", nil},
 	} {
-		t.Run(key, func(t *testing.T) {
-			n, _ := workspace(t, map[string]int{key: http.StatusInternalServerError})
-			asks, _, err := n.Asks(context.Background(), nil)
-			if err == nil || asks != nil {
-				t.Fatalf("partial sweep returned %d asks, err %v", len(asks), err)
+		t.Run(tc.key, func(t *testing.T) {
+			n, _ := workspace(t, map[string]int{tc.key: http.StatusInternalServerError})
+			pages, err := n.Pages(context.Background(), nil)
+			if tc.pages == nil {
+				if err == nil || pages != nil {
+					t.Fatalf("a listing that failed part way returned %d pages, err %v", len(pages), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range pages {
+				asks, err := n.PageAsks(context.Background(), p)
+				if broken := slices.Contains(tc.pages, p.Key); broken != (err != nil) || broken && asks != nil {
+					t.Fatalf("page %s: %d asks, err %v", p.Key, len(asks), err)
+				}
 			}
 		})
 	}

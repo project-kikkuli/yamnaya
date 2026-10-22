@@ -71,7 +71,7 @@ func TestDocAsksAboutAGoalsWorkReachItsManagerAndTheRestReachTheOwner(t *testing
 			w.set("agent", func(s *Session) { s.PRs = []PR{{URL: pr, Repo: "acme/app", Number: 7}} })
 			a := tc.ask(w, brief)
 			a.Key, a.Kind, a.URL, a.Title, a.Asker, a.Text, a.Evidence, a.Version = "notion:d1", "mention", "https://www.notion.so/x?d=d1", "Launch", "Alice", "Can you sign off?", "Alice: Can you sign off?", "c1"
-			if err := w.core.Store.SyncDocAsks("notion", []DocAsk{a}, 1); err != nil {
+			if err := w.core.Store.SyncDocPage("notion", a.Page, "e1", []DocAsk{a}); err != nil {
 				t.Fatal(err)
 			}
 			if rows := docRows(w.board(t)); len(rows) != 0 {
@@ -89,7 +89,7 @@ func TestDocAsksAboutAGoalsWorkReachItsManagerAndTheRestReachTheOwner(t *testing
 				t.Fatalf("unrelated ask: owner rows %q, manager told %d; want the owner row and no notice", rows, told)
 			}
 			a.Version, a.Text = "c2", "Still need your sign-off"
-			if err := w.core.Store.SyncDocAsks("notion", []DocAsk{a}, 1); err != nil {
+			if err := w.core.Store.SyncDocPage("notion", a.Page, "e1", []DocAsk{a}); err != nil {
 				t.Fatal(err)
 			}
 			b = w.route(t)
@@ -99,7 +99,7 @@ func TestDocAsksAboutAGoalsWorkReachItsManagerAndTheRestReachTheOwner(t *testing
 			if !tc.mgr && !slices.Equal(docRows(b), []string{"notion:d1@c2"}) {
 				t.Fatalf("owner rows after a new comment %q", docRows(b))
 			}
-			if err := w.core.Store.SyncDocAsks("notion", nil, 1); err != nil {
+			if err := w.core.Store.SyncDocPage("notion", a.Page, "e2", nil); err != nil {
 				t.Fatal(err)
 			}
 			if rows := docRows(w.route(t)); len(rows) != 0 {
@@ -113,7 +113,7 @@ func TestADismissedDocAskReturnsOnlyWhenSomeoneWritesAgain(t *testing.T) {
 	w := newOrgWorld(t)
 	ask := func(version string) {
 		a := DocAsk{Key: "notion:d1", Kind: "comment", URL: "https://www.notion.so/p?d=d1", Page: "p", Asker: "Bo", Text: "thoughts?", Version: version}
-		if err := w.core.Store.SyncDocAsks("notion", []DocAsk{a}, 1); err != nil {
+		if err := w.core.Store.SyncDocPage("notion", a.Page, "e1", []DocAsk{a}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,7 +143,7 @@ func TestADocAskWhoseGoalEndsClimbsToTheOwner(t *testing.T) {
 			w := newOrgWorld(t)
 			g, m := w.goal(t, "draft https://www.notion.so/44444444444444444444444444444444", "/repo/app")
 			a := DocAsk{Key: "notion:d9", Kind: "mention", Page: "44444444444444444444444444444444", Asker: "Cy", Text: "ok?", Version: "c1"}
-			if err := w.core.Store.SyncDocAsks("notion", []DocAsk{a}, 1); err != nil {
+			if err := w.core.Store.SyncDocPage("notion", a.Page, "e1", []DocAsk{a}); err != nil {
 				t.Fatal(err)
 			}
 			if rows := docRows(w.route(t)); len(rows) != 0 || w.told(m.Session, "ok?") != 1 {

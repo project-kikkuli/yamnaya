@@ -35,8 +35,16 @@ type Notion struct {
 	Window time.Duration
 	Now    func() time.Time
 
-	users map[string]notionUser
-	last  time.Time
+	users    map[string]notionUser
+	statuses map[string]map[string]bool
+	last     time.Time
+}
+
+// DocPage is a page a sweep may read: its canonical id and last edit, or Gone when it is no longer shared or is in the trash.
+type DocPage struct {
+	Key, Edited string
+	Gone        bool
+	page        notionPage
 }
 
 type notionUser struct {
@@ -47,6 +55,7 @@ var (
 	NotionID    = regexp.MustCompile(`[a-fA-F0-9]{8}-?[a-fA-F0-9]{4}-?[a-fA-F0-9]{4}-?[a-fA-F0-9]{4}-?[a-fA-F0-9]{12}`)
 	pullURL     = regexp.MustCompile(`https://github\.com/[\w.-]+/[\w.-]+/pull/\d+`)
 	reviewProp  = regexp.MustCompile(`(?i)review|approv|sign.?off`)
+	reviewedBy  = regexp.MustCompile(`(?i)reviewed|approved|signed`)
 	approvedBox = regexp.MustCompile(`(?i)approved|signed.?off|done|complete`)
 )
 
@@ -209,14 +218,12 @@ func (n *Notion) People(ctx context.Context) (map[string]string, error) {
 	}
 }
 
-// Asks sweeps every page edited within the window plus the pages in keep, and returns every ask waiting on the owner, failing
-// rather than returning a partial list. Pages counts the pages swept.
-func (n *Notion) Asks(ctx context.Context, keep []string) (asks []DocAsk, pages int, err error) {
-	if n.users == nil {
-		n.users = map[string]notionUser{}
-	}
+// Pages lists every page edited within the window, newest edit first, then the pages in keep the window left out, failing
+// rather than returning a partial list.
+func (n *Notion) Pages(ctx context.Context, keep []string) ([]DocPage, error) {
+	n.statuses = map[string]map[string]bool{}
 	since := n.Now().Add(-n.Window)
-	var found []notionPage
+	var found []DocPage
 	seen := map[string]bool{}
 	cursor := ""
 	for done := false; !done; {
@@ -227,7 +234,7 @@ func (n *Notion) Asks(ctx context.Context, keep []string) (asks []DocAsk, pages 
 		}
 		raw, err := n.call(ctx, http.MethodPost, "/search", body)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		var list struct {
 			Results []notionPage
@@ -235,12 +242,12 @@ func (n *Notion) Asks(ctx context.Context, keep []string) (asks []DocAsk, pages 
 			Next    string `json:"next_cursor"`
 		}
 		if err = json.Unmarshal(raw, &list); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		for _, p := range list.Results {
 			at, err := time.Parse(time.RFC3339, p.LastEditedTime)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			if at.Before(since) {
 				done = true
@@ -248,14 +255,14 @@ func (n *Notion) Asks(ctx context.Context, keep []string) (asks []DocAsk, pages 
 			}
 			if !seen[NotionKey(p.ID)] && !p.Archived && !p.InTrash {
 				seen[NotionKey(p.ID)] = true
-				found = append(found, p)
+				found = append(found, DocPage{Key: NotionKey(p.ID), Edited: p.LastEditedTime, page: p})
 			}
 		}
 		if !list.HasMore {
 			break
 		}
 		if list.Next == "" || list.Next == cursor {
-			return nil, 0, fmt.Errorf("Notion search pagination did not advance")
+			return nil, fmt.Errorf("Notion search pagination did not advance")
 		}
 		cursor = list.Next
 	}
@@ -266,33 +273,38 @@ func (n *Notion) Asks(ctx context.Context, keep []string) (asks []DocAsk, pages 
 		seen[NotionKey(id)] = true
 		raw, err := n.call(ctx, http.MethodGet, "/pages/"+id, nil)
 		if missing(err) {
+			found = append(found, DocPage{Key: NotionKey(id), Gone: true})
 			continue
 		}
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		var p notionPage
 		if err = json.Unmarshal(raw, &p); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
-		if !p.Archived && !p.InTrash {
-			found = append(found, p)
-		}
+		found = append(found, DocPage{Key: NotionKey(id), Edited: p.LastEditedTime, Gone: p.Archived || p.InTrash, page: p})
 	}
-	statuses := map[string]map[string]bool{}
-	for _, p := range found {
-		got, err := n.page(ctx, p, statuses)
-		if err != nil {
-			return nil, 0, err
-		}
-		asks = append(asks, got...)
+	return found, nil
+}
+
+// PageAsks reads one page, its blocks and every discussion on them, and returns each ask on it waiting on the owner.
+func (n *Notion) PageAsks(ctx context.Context, p DocPage) ([]DocAsk, error) {
+	if n.users == nil {
+		n.users = map[string]notionUser{}
 	}
-	return asks, len(found), nil
+	if n.statuses == nil {
+		n.statuses = map[string]map[string]bool{}
+	}
+	if p.Gone {
+		return nil, nil
+	}
+	return n.page(ctx, p.page, n.statuses)
 }
 
 func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map[string]bool) ([]DocAsk, error) {
 	var text strings.Builder
-	blockText := map[string]string{}
+	blockText, blockLine := map[string]string{}, map[string]string{}
 	blocks := []string{p.ID}
 	for queue := []string{p.ID}; len(queue) > 0; {
 		parent := queue[0]
@@ -306,6 +318,9 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 			raw, err := n.call(ctx, http.MethodGet, path, nil)
 			if missing(err) && parent == p.ID {
 				return nil, nil
+			}
+			if missing(err) {
+				break
 			}
 			if err != nil {
 				return nil, err
@@ -338,7 +353,7 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 					}
 					line += " " + t.Href
 				}
-				blockText[NotionKey(id)] = plain(content.RichText)
+				blockText[NotionKey(id)], blockLine[NotionKey(id)] = plain(content.RichText), line
 				text.WriteString(line + "\n")
 				blocks = append(blocks, id)
 				if children {
@@ -364,6 +379,9 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 				path += "&start_cursor=" + url.QueryEscape(cursor)
 			}
 			raw, err := n.call(ctx, http.MethodGet, path, nil)
+			if missing(err) {
+				break
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -394,7 +412,7 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 	title := p.title()
 	var out []DocAsk
 	for _, d := range order {
-		ask, ok, err := n.discussion(ctx, p, threads[d], blockText, text.String())
+		ask, ok, err := n.discussion(ctx, p, threads[d], blockText, blockLine, text.String())
 		if err != nil {
 			return nil, err
 		}
@@ -434,9 +452,10 @@ func (n *Notion) user(ctx context.Context, id string) (notionUser, error) {
 	return u, nil
 }
 
-// discussion is an ask when its last comment is a person's other than the owner's and it is addressed to the owner: it mentions
-// the owner since the owner last wrote, the owner wrote in it, or it sits on a page the owner created.
-func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment, blockText map[string]string, pageText string) (DocAsk, bool, error) {
+// discussion is an ask when its last comment is a person's other than the owner's, the comment asking was written within the
+// window, and it is addressed to the owner: it mentions the owner since the owner last wrote, or the owner wrote in it or created
+// the page and nobody since the owner's last comment mentions someone else instead.
+func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment, blockText, blockLine map[string]string, pageText string) (DocAsk, bool, error) {
 	sort.SliceStable(thread, func(i, j int) bool { return thread[i].CreatedTime < thread[j].CreatedTime })
 	people := make([]notionUser, len(thread))
 	for i, c := range thread {
@@ -450,21 +469,25 @@ func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment,
 	if last < 0 || n.owner(thread[last].CreatedBy.ID) || people[last].Type != "person" {
 		return DocAsk{}, false, nil
 	}
-	ownerAt, asking := -1, -1
+	ownerAt, asking, elsewhere := -1, -1, false
 	for i, c := range thread {
 		if n.owner(c.CreatedBy.ID) {
-			ownerAt, asking = i, -1
+			ownerAt, asking, elsewhere = i, -1, false
 			continue
 		}
 		for _, t := range c.RichText {
 			if n.owner(t.Mention.User.ID) && people[i].Type == "person" {
 				asking = i
+			} else if t.Mention.User.ID != "" && !n.owner(t.Mention.User.ID) {
+				elsewhere = true
 			}
 		}
 	}
 	kind := "mention"
 	switch {
 	case asking >= 0:
+	case elsewhere:
+		return DocAsk{}, false, nil
 	case ownerAt >= 0:
 		kind, asking = "reply", last
 	case n.owner(p.CreatedBy.ID):
@@ -472,11 +495,18 @@ func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment,
 	default:
 		return DocAsk{}, false, nil
 	}
+	if at, err := time.Parse(time.RFC3339, thread[asking].CreatedTime); err != nil || at.Before(n.Now().Add(-n.Window)) {
+		return DocAsk{}, false, err
+	}
 	var ev strings.Builder
-	if on := blockText[NotionKey(thread[0].Parent.BlockID)]; on != "" {
+	anchor := NotionKey(thread[0].Parent.BlockID)
+	if on := blockText[anchor]; on != "" {
 		fmt.Fprintf(&ev, "on %q\n", truncate(on, 160))
 	}
-	all := pageText
+	all := blockLine[anchor]
+	if anchor == "" {
+		all = pageText
+	}
 	for i, c := range thread {
 		name := people[i].Name
 		if n.owner(c.CreatedBy.ID) {
@@ -496,7 +526,7 @@ func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment,
 func (n *Notion) review(ctx context.Context, p notionPage, statuses map[string]map[string]bool) (DocAsk, bool, error) {
 	var named string
 	for name, prop := range p.Properties {
-		if prop.Type != "people" || !reviewProp.MatchString(name) {
+		if prop.Type != "people" || !reviewProp.MatchString(name) || reviewedBy.MatchString(name) {
 			continue
 		}
 		for _, who := range prop.People {
@@ -508,7 +538,7 @@ func (n *Notion) review(ctx context.Context, p notionPage, statuses map[string]m
 	if named == "" {
 		return DocAsk{}, false, nil
 	}
-	state := ""
+	state, version := "", "listed"
 	for name, prop := range p.Properties {
 		if prop.Type == "checkbox" && prop.Checkbox && approvedBox.MatchString(name) {
 			return DocAsk{}, false, nil
@@ -521,14 +551,14 @@ func (n *Notion) review(ctx context.Context, p notionPage, statuses map[string]m
 			if complete[prop.Status.ID] {
 				return DocAsk{}, false, nil
 			}
-			state = prop.Status.Name
+			state, version = prop.Status.Name, prop.Status.ID
 		}
 	}
 	text := named + " lists you"
 	if state != "" {
 		text += "; status " + state
 	}
-	return DocAsk{Key: "notion-review:" + NotionKey(p.ID), Kind: "review", Asker: "Notion", Text: text, Evidence: text, Version: p.LastEditedTime}, true, nil
+	return DocAsk{Key: "notion-review:" + NotionKey(p.ID), Kind: "review", Asker: "Notion", Text: text, Evidence: text, Version: named + ":" + version}, true, nil
 }
 
 // complete is the status options in a database's Complete group.
