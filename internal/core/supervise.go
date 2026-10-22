@@ -57,6 +57,16 @@ func (c *Core) Supervise(b Board) error {
 	}
 	var errs []error
 	for _, m := range o.Ordered() {
+		if s, ok := b.Session(c.Resolve(m.Session)); ok && s.Key() != m.Session {
+			m.Session = s.Key()
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+			o.Managers[m.ID] = m
+			o.Sessions[m.Session] = m.ID
+		}
+	}
+	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
 		if hasGoal && (g.State == GoalDone || g.State == GoalDropped) {
 			continue
@@ -64,6 +74,12 @@ func (c *Core) Supervise(b Board) error {
 		if err := c.supervise(b, o, m, g, hasGoal); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
 		}
+	}
+	if o, err = c.LoadOrg(); err != nil {
+		return errors.Join(append(errs, err)...)
+	}
+	if err := c.reroute(b, o); err != nil {
+		errs = append(errs, err)
 	}
 	if err := c.noticeMerges(b, o); err != nil {
 		errs = append(errs, err)
@@ -117,7 +133,7 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 // watchQuiet moves the goal's clock on anything that moved and nudges, then flags, a manager whose goal stopped moving.
 func (c *Core) watchQuiet(b Board, o Org, m Manager, g Goal) error {
 	now := c.now()
-	if moved := c.lastMoved(b, o, m, g); moved.After(g.LastMovedAt) {
+	if moved := c.lastMoved(b, o, m, g); moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) {
 		g.LastMovedAt = moved
 		if g.State == GoalStuck {
 			g.State, g.Evidence = GoalActive, ""

@@ -280,9 +280,9 @@ func (s *Store) Manager(id string) (Manager, error) {
 	return m, err
 }
 
-// Managers lists every manager and chief that is not retired, oldest first.
+// Managers lists every manager and chief, retired ones too, oldest first.
 func (s *Store) Managers() ([]Manager, error) {
-	rows, err := s.db.Query(`SELECT ` + managerCols + ` FROM ym_managers WHERE retired = 0 ORDER BY num`)
+	rows, err := s.db.Query(`SELECT ` + managerCols + ` FROM ym_managers ORDER BY num`)
 	if err != nil {
 		return nil, err
 	}

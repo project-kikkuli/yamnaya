@@ -167,7 +167,7 @@ func (c *Core) queue(b *Board, o Org) error {
 				continue
 			}
 			pr.Status = &st
-			n := Need{PR: &pr, Session: s, Project: s.Project}
+			n := Need{PR: &pr, Project: s.Project}
 			if managed {
 				n.Manager = m.ID
 			}
@@ -203,6 +203,8 @@ func (n Need) Key() string {
 		return "merge:" + n.PR.URL + "@" + head
 	case n.Review != nil:
 		return "review:" + n.Review.URL + "@" + n.Review.Updated
+	case len(n.Asks) > 0:
+		return "asks:" + n.Item.Session
 	case n.Item != nil:
 		return "item:" + n.Item.Key()
 	case n.Session != nil:

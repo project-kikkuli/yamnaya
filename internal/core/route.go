@@ -31,7 +31,9 @@ func (c *Core) LoadOrg() (Org, error) {
 	}
 	for _, m := range ms {
 		o.Managers[m.ID] = m
-		o.order = append(o.order, m.ID)
+		if !m.Retired {
+			o.order = append(o.order, m.ID)
+		}
 	}
 	gs, err := c.Store.Goals()
 	if err != nil {
@@ -44,7 +46,7 @@ func (c *Core) LoadOrg() (Org, error) {
 	return o, err
 }
 
-// Ordered lists the managers and chiefs oldest first.
+// Ordered lists the managers and chiefs that are not retired, oldest first.
 func (o Org) Ordered() []Manager {
 	out := make([]Manager, 0, len(o.order))
 	for _, id := range o.order {
@@ -59,8 +61,14 @@ func (o Org) ManagerOf(session string) (Manager, bool) {
 	return m, ok
 }
 
-// Above is the first working manager or chief at or above id: one that is retired, stuck, or whose goal ended is passed over,
-// so work never waits on it. Owner when the climb runs out.
+// Active reports whether m still runs its goal or oversees its reports: not retired, and its goal, if any, not ended.
+func (o Org) Active(m Manager) bool {
+	g, hasGoal := o.Goals[m.GoalID]
+	return !m.Retired && !(hasGoal && (g.State == GoalDone || g.State == GoalDropped))
+}
+
+// Above is the first working manager or chief at or above id: one that is retired, stuck, never launched, or whose goal ended
+// is passed over, so work never waits on it. Owner when the climb runs out.
 func (o Org) Above(id string) string {
 	seen := map[string]bool{}
 	for id != "" && !seen[id] {
@@ -69,9 +77,7 @@ func (o Org) Above(id string) string {
 		if !ok {
 			return Owner
 		}
-		g, hasGoal := o.Goals[m.GoalID]
-		ended := hasGoal && (g.State == GoalDone || g.State == GoalDropped)
-		if !m.Retired && !m.Stuck() && !ended {
+		if o.Active(m) && !m.Stuck() && m.Session != "" {
 			return id
 		}
 		id = m.ParentID
@@ -95,13 +101,13 @@ func (o Org) Recipient(session string, parents map[string]string) string {
 	return Owner
 }
 
-// Managed is the manager whose tree session belongs to, the manager itself for its own session.
+// Managed is the active manager whose tree session belongs to, the manager itself for its own session.
 func (o Org) Managed(session string, parents map[string]string) (Manager, bool) {
 	seen := map[string]bool{}
 	for at := session; at != "" && !seen[at]; at = parents[at] {
 		seen[at] = true
 		if m, ok := o.ManagerOf(at); ok {
-			return m, true
+			return m, o.Active(m)
 		}
 	}
 	return Manager{}, false
@@ -117,7 +123,7 @@ func (o Org) Subtree(id string) []Manager {
 		}
 		seen[id] = true
 		m, ok := o.Managers[id]
-		if !ok {
+		if !ok || m.Retired {
 			return
 		}
 		out = append(out, m)
@@ -173,8 +179,7 @@ func (c *Core) file(b Board, berr error, it Item, key string) (Item, error) {
 	if err != nil || !fresh || added.Recipient == Owner {
 		return added, err
 	}
-	m := o.Managers[added.Recipient]
-	return added, c.tell(b, m.Session, askText(b, o, added), false)
+	return added, c.tell(b, o.Managers[added.Recipient].Session, askText(b, o, added), false)
 }
 
 // askText is how an ask reaches the manager or chief it was routed to.
@@ -206,19 +211,50 @@ func askText(b Board, o Org, it Item) string {
 // owner marks text as the owner's own words.
 func (c *Core) tell(b Board, session, text string, owner bool) error {
 	if s, ok := b.Session(session); ok {
+		var err error
 		switch {
 		case owner && c.Launches != nil:
-			_, err := c.Launches.Send(s, text)
-			return err
+			_, err = c.Launches.Send(s, text)
 		case !owner && c.BackgroundSend != nil:
-			return c.BackgroundSend(s, text)
+			err = c.BackgroundSend(s, text)
 		case c.message(s.Session, "msg: "+text, owner) == nil:
-			_, err := c.Store.AddMessage(session, text, MsgSent)
-			return err
+			_, err = c.Store.AddMessage(session, text, MsgSent)
+		default:
+			err = errNoMessenger
+		}
+		if err == nil {
+			return nil
 		}
 	}
 	_, err := c.Store.AddMessage(session, text, MsgPending)
 	return err
+}
+
+// reroute hands every open item waiting on a manager or chief that can no longer answer to the next one up, or to the owner.
+func (c *Core) reroute(b Board, o Org) error {
+	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen}})
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if it.Recipient == Owner {
+			continue
+		}
+		up := o.Above(it.Recipient)
+		if up == it.Recipient {
+			continue
+		}
+		if err := c.Store.SetRecipient(it.Seq, up); err != nil {
+			return err
+		}
+		it.Recipient = up
+		if up != Owner {
+			if err := c.tell(b, o.Managers[up].Session, askText(b, o, it), false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // carrier is the session that carries id's conversation now: its continuation, or the current session of the manager it ran as.

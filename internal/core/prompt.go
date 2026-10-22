@@ -6,20 +6,20 @@ import (
 	"strings"
 )
 
-// prompt is the launch prompt of m's session; prev is the session it replaces, empty on its first launch.
-func (c *Core) prompt(o Org, m Manager, prev string) string {
+// prompt is the launch prompt of m's session; a relaunch also carries the messages that waited for it.
+func (c *Core) prompt(m Manager, o Org, waiting []Message) string {
 	var sb strings.Builder
 	if m.Role == RoleChief {
 		c.chiefPrompt(&sb, o, m)
 	} else {
 		c.managerPrompt(&sb, o, m)
 	}
-	if prev != "" {
-		fmt.Fprintf(&sb, "\n\nYou are being relaunched: your previous session %s stopped. Read your brief at %s first and pick up where it leaves off.", prev, m.BriefPath)
-		if waiting := c.waitingFor(o, m); len(waiting) > 0 {
+	if m.Session != "" {
+		fmt.Fprintf(&sb, "\n\nYou are being relaunched: your previous session %s stopped. Read your brief at %s first and pick up where it leaves off.", m.Session, m.BriefPath)
+		if len(waiting) > 0 {
 			sb.WriteString(" Messages that arrived while you were down, oldest first:")
-			for _, text := range waiting {
-				sb.WriteString("\n- " + text)
+			for _, msg := range waiting {
+				sb.WriteString("\n- " + oneLine(msg.Text))
 			}
 		}
 	}
@@ -70,19 +70,16 @@ func (c *Core) boss(o Org, m Manager) string {
 	return "the owner"
 }
 
-// waitingFor claims the messages queued for any session m ran as, so a relaunched session reads them in its prompt.
-func (c *Core) waitingFor(o Org, m Manager) []string {
+// waitingFor lists the messages queued for any session m ran as; a relaunch that starts claims them into its prompt.
+func (c *Core) waitingFor(o Org, m Manager) []Message {
 	pending, err := c.Store.PendingMessages()
 	if err != nil {
 		return nil
 	}
-	var out []string
+	var out []Message
 	for _, msg := range pending {
-		if o.Sessions[msg.Session] != m.ID && msg.Session != m.Session {
-			continue
-		}
-		if ok, err := c.Store.Claim(msg.Seq, MsgInbox); err == nil && ok {
-			out = append(out, oneLine(msg.Text))
+		if o.Sessions[msg.Session] == m.ID || (m.Session != "" && msg.Session == m.Session) {
+			out = append(out, msg)
 		}
 	}
 	return out

@@ -316,7 +316,11 @@ func (c *Core) deliver(b Board, session string, items []Item) Delivery {
 		return Queued
 	}
 	text := strings.Join(notices, "; ")
-	err := c.message(s.Session, text, true)
+	owner := true
+	for _, it := range claimed {
+		owner = owner && it.Recipient == Owner
+	}
+	err := c.message(s.Session, text, owner)
 	switch {
 	case err == nil:
 		return Sent

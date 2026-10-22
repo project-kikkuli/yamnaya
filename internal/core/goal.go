@@ -211,7 +211,11 @@ func (c *Core) DropGoal(ref string) (Goal, error) {
 		return Goal{}, c.Store.SaveManager(m)
 	}
 	g.State, g.AckedAt = GoalDropped, c.now()
-	return g, c.Store.SaveGoal(g)
+	if err := c.Store.SaveGoal(g); err != nil {
+		return g, err
+	}
+	m.Retired = true
+	return g, c.Store.SaveManager(m)
 }
 
 // ReplaceManager ends the session of the manager or chief ref names, if it runs, and starts a fresh one with its prompt and brief.
@@ -268,13 +272,16 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager {
 		return m
 	}
 	session := uuid.NewString()
-	prev := m.Session
-	prompt := c.prompt(o, m, prev)
+	waiting := c.waitingFor(o, m)
+	prompt := c.prompt(m, o, waiting)
 	_, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name), Session: session})
 	if err != nil {
 		m.LastError = err.Error()
 		c.Store.SaveManager(m)
 		return m
+	}
+	for _, msg := range waiting {
+		c.Store.Claim(msg.Seq, MsgInbox)
 	}
 	m.Session, m.LastError = session, ""
 	c.Store.SaveManager(m)

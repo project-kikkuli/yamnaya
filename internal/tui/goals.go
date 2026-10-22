@@ -105,7 +105,7 @@ func (m Model) goalRows() []row {
 	}
 	var out []row
 	if n.Live != nil {
-		out = append(out, row{session: n.Live, node: &n})
+		out = append(out, row{session: n.Live})
 	}
 	for i := range n.Agents {
 		out = append(out, row{session: &n.Agents[i]})
@@ -253,7 +253,7 @@ func (m Model) goalView() viewPage {
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SESSIONS (%d)", len(m.rows()))) + "\n")
 	for i, r := range m.rows() {
 		label := ""
-		if r.node != nil {
+		if r.session.Key() == n.Manager.Session {
 			label = pal.dim.Render("manager  ")
 		}
 		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pad(r.session.Status.String(), 8) + " " + doingText(m.board.At, r.session.Session) + "\n")
@@ -370,7 +370,7 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 			id := r.need.Key()
 			return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(id) }), true
 		}
-		return m, nil, key != "?" && key != "q" && key != "esc" && key != "up" && key != "down" && key != "j" && key != "k"
+		return m, nil, false
 	}
 	if r.need != nil && r.need.Goal != nil && key == "x" {
 		id := r.need.Goal.ID

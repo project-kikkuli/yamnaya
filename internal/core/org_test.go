@@ -428,3 +428,86 @@ func TestSteeringAChiefReachesItAloneOrItsWholeSubtree(t *testing.T) {
 		})
 	}
 }
+
+func TestAsksWaitingOnAManagerThatCanNoLongerAnswerClimbToTheNextOneUp(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		strand  func(w *orgWorld, m Manager, g Goal)
+		toChief bool
+	}{
+		{name: "goal dropped", strand: func(w *orgWorld, m Manager, g Goal) { w.core.DropGoal(g.ID) }, toChief: true},
+		{name: "manager stuck", strand: func(w *orgWorld, m Manager, g Goal) {
+			m, _ = w.core.Store.Manager(m.ID)
+			m.Failures = stuckFailures
+			w.core.Store.SaveManager(m)
+		}, toChief: true},
+		{name: "chief retired too", strand: func(w *orgWorld, m Manager, g Goal) {
+			w.core.DropGoal(g.ID)
+			chief, _ := w.core.Store.Manager(m.ParentID)
+			w.core.DropGoal(chief.ID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			chief := w.chief(t, "lead", m.ID)
+			top := w.chief(t, "platform", chief.ID)
+			m, _ = w.core.Store.Manager(m.ID)
+			w.spawn("agent", m.Session)
+			it := w.ask(t, "agent", "CSV or TSV?")
+			tc.strand(w, m, g)
+			w.supervise(t)
+			got, _ := w.core.Store.Item(it.Key())
+			want := chief.ID
+			if !tc.toChief {
+				want = top.ID
+			}
+			if got.Recipient != want {
+				t.Fatalf("stranded ask went to %q, want %s", got.Recipient, want)
+			}
+			if handed := w.handedTo(map[string]string{chief.ID: chief.Session, top.ID: top.Session}[want]); !slices.ContainsFunc(handed, func(s string) bool { return strings.Contains(s, "CSV or TSV?") }) {
+				t.Fatalf("%s was not told the ask: %q", want, handed)
+			}
+		})
+	}
+}
+
+func TestMessagesQueuedForADownManagerSurviveFailedRelaunches(t *testing.T) {
+	w := newOrgWorld(t)
+	_, m := w.goal(t, "ship the importer", "/repo/august")
+	w.clock = w.clock.Add(StartGrace + time.Minute)
+	w.supervise(t)
+	w.stop(m.Session)
+	if _, err := w.core.Steer(w.board(t), []string{m.ID}, false, true, "prefer TSV"); err != nil {
+		t.Fatal(err)
+	}
+	w.launches.fail = errors.New("tmux server gone")
+	for range 3 {
+		w.clock = w.clock.Add(maxBackoff)
+		w.supervise(t)
+	}
+	w.launches.fail = nil
+	w.clock = w.clock.Add(maxBackoff)
+	w.supervise(t)
+	last := w.launches.starts[len(w.launches.starts)-1]
+	if !strings.Contains(last.Prompt, "prefer TSV") {
+		t.Fatalf("the relaunch that finally started lost the queued message:\n%s", last.Prompt)
+	}
+}
+
+func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
+	w := newOrgWorld(t)
+	_, m := w.goal(t, "ship the importer", "/repo/august")
+	w.claude.next = map[string]string{m.Session: "moved-session"}
+	w.set(m.Session, func(s *Session) { s.ID = "moved-session" })
+	w.claude.inbox["moved-session"] = nil
+	w.supervise(t)
+	w.spawn("late-agent", "moved-session")
+	w.ask(t, "late-agent", "which parser?")
+	if got := w.handedTo("moved-session"); len(got) != 1 {
+		t.Fatalf("manager under its new session id got %q, want the late agent's ask", got)
+	}
+	if _, err := w.core.FinishGoal("moved-session", "shipped"); err != nil {
+		t.Fatalf("the moved manager could not finish its goal: %v", err)
+	}
+}

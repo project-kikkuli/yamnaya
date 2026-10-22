@@ -487,6 +487,14 @@ func (m Model) matches(texts ...string) bool {
 }
 
 func needText(n core.Need) string {
+	switch {
+	case n.Goal != nil:
+		return n.Goal.ID + " " + n.Goal.State + " " + n.Goal.Ask
+	case n.PR != nil:
+		return "merge " + n.PR.URL
+	case n.Review != nil:
+		return "review " + n.Review.URL
+	}
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question
 	}
