@@ -1,6 +1,18 @@
 # yamnaya
 
-`ym` is an alpine terminal board for every active Claude Code and Codex session and the decisions that need you. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
+`ym` runs your agent work like a company. You type a goal in one line; ym starts a manager session that owns it until it is done and runs its own agents. The agents report to the manager, managers report to chiefs when you group them, and only what truly needs you reaches your queue. The board shows the goals as mountains with your queue floating over them, plus every Claude Code and Codex session you started yourself. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
+
+## Goals, managers and chiefs
+
+- **Goal**: `ym goal "<ask>"` from any shell (the repository is the current directory's, or `--repo`), or `n` on the board (the selected row's repository; `N` picks one). ym records the ask in your words and starts its manager.
+- **Manager**: an ordinary interactive Claude session on ym's tmux server with a persistent identity: when its session is replaced, the manager, its goal and its agents stay. Its launch prompt carries the goal, its authority, how to start agents (`ym new`, which links them under it), the markdown brief it keeps (`B` shows it) and how to register a richer artifact (`V` opens it). Open it with `o` and talk to it like any session; that is how you change direction.
+- **Authority**: a manager owns its goal outright, go-aheads, decisions and fixes included. It may merge its own pull requests only in repositories `ym goal authority` clears (seeded: auth-plane may merge, august may not); elsewhere a green pull request comes to your merge queue. It writes to other humans only with a model-name prefix.
+- **Chief**: `ym chief "<name>" --over <id>,<id>` (or `C` over the selected rows) oversees managers and other chiefs, to any depth. It reads their briefs, steers them, relaunches stuck ones and keeps a rolled-up brief. A manager needs no chief, and work never waits on one: a stuck or retired chief is passed over.
+- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you. The handoff catcher routes what it recovers from transcripts the same way.
+- **Supervision**: `ym serve` watches every active goal. A dead manager is relaunched with its prompt and brief, with backoff so a launch that keeps failing never spins. When nothing moves (no turns, brief edits or agent activity) for 30 minutes, the manager is nudged; still nothing after two nudges, and the goal shows one stuck row in your queue with the evidence.
+- **Steering**: `s` sends your message to the selected goal or chief, or to every row picked with `space`; on a chief, `tab` widens it to its whole subtree. `ym goal send <id>[,<id>] [--subtree] <text>` does the same from a shell.
+
+Sessions you start yourself (`+` on the board, or `ym new` from your own shell) get no manager. Each shows as one row in your queue when it asks you anything, however many asks it filed.
 
 ## Install
 
@@ -13,13 +25,16 @@
 
 ## The screen
 
-- **Repos and missions**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result.
+- **Needs you**: your queue. Finished and stuck goals, escalations no manager or chief settled, pull requests ready to merge in repositories no manager may merge in, review requests GitHub addresses to you personally (not to your teams), permission prompts, and one row per session you started that asks you something (`enter` lists its asks). `x` clears a goal, merge or review row.
+- **Goals**: the goal tree. A chief is one row with its reports' worst state; `enter` drills in. A goal stands moving, quiet, down (its manager died and is being relaunched), stuck, or done. `t` switches to goals by repository.
+- **Mountains**: a chief is a range, a goal a peak, its agents the climbers. Clear skies while it moves, clouds when it goes quiet, a storm when it is stuck, an eruption when its manager dies, a summit when it is done. `A` hides them; `NO_COLOR` leaves them out.
+- **Sessions you started**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result.
 - **Progress**: `(crew finished + gates passed) / (crew dispatched + 6 × open branches)`. A branch passes six gates: branch, commits, pull request open, CI green, review threads resolved, merged. A subagent killed or failed mid-turn counts in neither part, so it neither inflates the bar nor holds it below 100%; one that ends by handing back its report counts as finished. Agent-set phases are a label and never move the bar. A mission's detail shows the raw counts and each branch's gate strip.
-- **Needs you**: permission prompts with the tool and command, then open items with the agent's recommendation, how much they block and which session filed them. Answer (`a`), later (`l`), why (`w`) or dismiss (`x`) inline. Last come idle sessions whose last reply asks you (the same block of questions `h` counts) while no open item of theirs, permission prompt or earlier dismissal of that reply covers it, shown as `waiting:` with the first question of that block: `w` or `enter` shows the whole reply, `a` sends your answer the way `ym send` does and clears the row, and `x` hides it until the session asks again.
+- **Asks**: permission prompts with the tool and command, then items with the agent's recommendation, how much they block and which session filed them. Answer (`a`), later (`l`), why (`w`) or dismiss (`x`) inline. Last come idle sessions you started whose last reply asks you while no open item, permission prompt or earlier dismissal covers it, shown as `waiting:` with the first question: `w` or `enter` shows the whole reply, `a` sends your answer the way `ym send` does and clears the row, and `x` hides it until the session asks again.
 - **Fleet line**: each Claude and Codex limit window with its use and reset, and today's and the last seven days' spend at API prices. Every repo, mission, session and agent shows its own spend, subagents and child threads included.
 - `enter` drills down and `esc` climbs back: repo, then its missions, then a mission's sessions and crew, then a session (task, latest ask, what it is doing now, pull requests and CI, items, crew), then one agent (its full brief, result, files written and tool trail). Rename (`r`), merge (`m`) or split (`S`) missions, advance (`p`) or set (`P`) their phases, and set their vibe (`v`).
 - `h` shows health by week: median and p90 time from item filed to answered, the share of items dismissed or open past a day, assistant messages per day that print a block of questions in chat, and agent-hours per day spent waiting on you (from a turn that ended asking you, or a permission prompt you answered, to your next typed message). It reads transcripts incrementally into per-day rows in the ym database.
-- Anything the CLI does for the owner has a key; `?` lists them. `n` starts a new session in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `N` picks the repository first, from recent repos then every repo under the roots, then asks for the prompt. `K` kills a live session's agent with SIGTERM after confirmation and removes the stopped session from the active board. On an exited session or mission, `K` archives it without workspace cleanup. Terminals, worktrees, transcripts and items stay; `E` retains launch history and `ym revive` can resume a launched session. Stop intent survives stale discovery snapshots and restarts; a fresh live observation establishes a resume. `L` lands a registered launch, removing its worktree only when clean and merged or pushed. Exited launches can also land automatically once they have nothing to lose, with a day of retention after an owner kill or signal. `G` runs `ym gc`, `T` ends an idle session and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
+- Anything the CLI does for the owner has a key; `?` lists them. `n` hands a new goal to a manager in the selected row's repository; `N` picks the repository first, from recent repos then every repo under the roots. `+` starts a session of your own in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `K` kills a live session's agent with SIGTERM after confirmation and removes the stopped session from the active board. On an exited session or mission, `K` archives it without workspace cleanup. Terminals, worktrees, transcripts and items stay; `E` retains launch history and `ym revive` can resume a launched session. Stop intent survives stale discovery snapshots and restarts; a fresh live observation establishes a resume. `L` lands a registered launch, removing its worktree only when clean and merged or pushed. Exited launches can also land automatically once they have nothing to lose, with a day of retention after an owner kill or signal. `G` runs `ym gc`, `T` ends an idle session and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
 - `o` goes to a session. When ym runs inside tmux and the session is in a tmux pane, ym jumps there with `switch-client` and `select-pane`. Otherwise it says where the session runs (for example `iTerm ttys012`) and never opens windows or tabs. It never starts a second copy, and flags a session that runs in two processes.
 - `O` opens a tmux session beside the board instead: ym splits its own pane and attaches the new pane to a grouped copy of the session's tmux session, so the board stays in view and no other client's window moves. The pane closes when you detach from it. It needs ym running inside tmux.
 
@@ -35,9 +50,9 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 ## Background service
 
-`ym serve` redelivers answers, refreshes pull request status and captures handoffs independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
+`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes and captures handoffs, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
 
-The background service also captures explicit owner handoffs from the transcripts of live Claude and Codex sessions, including their subagents and child threads. A bounded native semantic pass identifies review requests, proposals, choices, authorization requests and actions that require the originating chat, and files each as one item for that session: choices as decisions, authorization requests as go items, chat actions as chores marked `action in chat`, and review requests and proposals as chores naming the artifact. Items retain the agent, quoted request and transcript location. Repeated summaries match the existing item instead of filing another. Agent prose never records owner approval.
+The background service also captures explicit owner handoffs from the transcripts of live Claude and Codex sessions, including their subagents and child threads. A bounded native semantic pass identifies review requests, proposals, choices, authorization requests and actions that require the originating chat, and files each as one item for that session, routed the way `ym item add` routes: choices as decisions, authorization requests as go items, chat actions as chores marked `action in chat`, and review requests and proposals as chores naming the artifact. Items retain the agent, quoted request and transcript location. Repeated summaries match the existing item instead of filing another. Agent prose never records owner approval.
 
 Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents can file this directly with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action. Structured submissions remain the direct path; background capture recovers omissions without requiring special headings.
 
@@ -58,6 +73,17 @@ An answer goes to the session carrying the conversation now, following Claude's 
 ## Commands
 
     ym                                  the board
+    ym goal [--repo P] "<ask>"          hand a goal to a new manager that owns it until it is done
+    ym goal list [--under CHIEF] [--json]   goals, managers and chiefs as a tree, with state and brief
+    ym goal show <id>                   one goal or chief, and its brief
+    ym goal send [--subtree] <id>[,<id>] <text>   message managers or chiefs
+    ym goal relaunch <id>               end a manager's or chief's session and start a fresh one from its prompt and brief
+    ym goal drop <id>                   drop a goal or retire a chief; ym stops supervising it
+    ym goal done --summary "<line>"     (manager) mark its goal done
+    ym goal artifact <url>              (manager or chief) register a richer brief
+    ym goal authority [<repo> --merge|--no-merge]   repositories whose managers may merge their own pull requests
+    ym chief [--repo P] [--remit T] [--over ID,ID] "<name>"   start a chief over managers and chiefs
+    ym chief attach <child> <chief> | detach <child>
     ym sessions [--json]                every live session with host and project
     ym new [--codex] [--repo P] [--slug S] "<prompt>"
                                         start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
@@ -77,7 +103,7 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal. A
                                         launched session it kills waits a day before landing by itself
     ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
-    ym item list [--all] [--everywhere] [--json]
+    ym item list [--all] [--everywhere] [--to-me] [--json]   --to-me: what is routed to the calling manager
     ym item show|answer|dismiss|snooze|reopen <id> ...
     ym item go <id>                     answer a go item with PLEASE GO IMPLEMENT THIS
     ym item inbox                       answers the calling session has not received
@@ -97,4 +123,4 @@ Commands that act for an agent find its session by walking up the process tree t
 
 ## Layout
 
-`internal/core` holds sessions, projects, items and phases and imports no adapter. Harness adapters (`internal/harness/claude`, `internal/harness/codex`) read each CLI's files; the host adapter (`internal/host/tmux`) finds, focuses and types into panes and runs ym's own server; `internal/launch` creates and trusts worktrees for `ym new` and decides when one can be landed. An adapter that cannot read something reports it as unknown instead of failing.
+`internal/core` holds sessions, projects, items, phases and the goal tree (goals, managers, chiefs, routing and supervision) and imports no adapter. `internal/scene` draws the mountains. Harness adapters (`internal/harness/claude`, `internal/harness/codex`) read each CLI's files; the host adapter (`internal/host/tmux`) finds, focuses and types into panes and runs ym's own server; `internal/launch` creates and trusts worktrees for `ym new` and decides when one can be landed. An adapter that cannot read something reports it as unknown instead of failing.
