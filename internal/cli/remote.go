@@ -33,11 +33,7 @@ func remoteCmd() *cobra.Command {
 			if args[0] == "-h" || args[0] == "--help" {
 				return cmd.Help()
 			}
-			remote := remoteBin
-			for _, a := range args[1:] {
-				remote += " " + shellQuote(a)
-			}
-			flags := []string{args[0], remote}
+			flags := []string{args[0], remoteCommand(args[1:])}
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
 				flags = append([]string{"-t"}, flags...)
 			}
@@ -54,6 +50,15 @@ func remoteCmd() *cobra.Command {
 	}
 	cmd.AddCommand(remoteInstallCmd())
 	return cmd
+}
+
+// remoteCommand runs ym on a host with its own directory on PATH, so what it starts finds ym and the user's tools without a login shell.
+func remoteCommand(args []string) string {
+	remote := `PATH="$HOME/.local/bin:$PATH" ` + remoteBin
+	for _, a := range args {
+		remote += " " + shellQuote(a)
+	}
+	return remote
 }
 
 func remoteInstallCmd() *cobra.Command {
