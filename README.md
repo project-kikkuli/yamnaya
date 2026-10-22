@@ -74,7 +74,7 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `n` / `N` | new goal in the selected row's repository / pick the repository first |
 | `+` | new session of your own, no manager; `tab` switches claude and codex |
 | `enter` / `esc` | open or drill in / go back |
-| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board |
+| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
 | `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
 | `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item |
 | `B` / `W` / `V` | show the manager's brief / open its served brief page / open its registered artifact |
@@ -113,7 +113,12 @@ Hosts talk through relays. Each host keeps every ask, message and command bound 
 
 ## Background service
 
-`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update. Once a state directory has had a serve, any `ym` command run against it starts one again if none runs, so a serve that died comes back the next time an agent or you run `ym`; `YAMNAYA_NO_SERVE=1` keeps one command from starting it. `YAMNAYA_SCOPE=<dir>` limits a ym to the sessions working under that directory, and so to their pull requests. A Claude session ym launched that sits at the folder trust dialog in its first ten minutes (another Claude session's save of its config can drop the trust ym records before the launch) is trusted again and restarted.
+`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers.
+
+- The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
+- Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
+- `YAMNAYA_SCOPE=<dir>` limits a ym to sessions working under that directory and their pull requests; rehearsals use it.
+- A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
 
     ym service status     heartbeat and last error
     ym service restart    restart it with this shell's environment
