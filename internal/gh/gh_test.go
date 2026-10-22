@@ -35,6 +35,7 @@ func TestStatusFoldsChecksAndCountsUnresolvedThreads(t *testing.T) {
 			{"state":"COMMENTED","body":"Addressed in h2?","author":{"login":"cy"},"commit":{"oid":"h1"}},
 			{"state":"COMMENTED","body":"Claude: fixed in h2.","author":{"login":"me"},"commit":{"oid":"h2"}},
 			{"state":"COMMENTED","body":"","author":{"login":"dee"},"commit":{"oid":"h2"}},
+			{"state":"COMMENTED","body":"## Devin Review: No Issues Found","author":{"__typename":"Bot","login":"devin-ai-integration"},"commit":{"oid":"h2"}},
 			{"state":"APPROVED","body":"lgtm","author":{"login":"eve"},"commit":{"oid":"h2"}}]},
 			"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}`,
 			0, 0, 0, 1, 2, "r"},

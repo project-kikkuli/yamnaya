@@ -41,7 +41,7 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   author { login }
-  latestReviews(first: 50) { nodes { state body author { login } commit { oid } } }
+  latestReviews(first: 50) { nodes { state body author { __typename login } commit { oid } } }
   last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
   baseRef { target { ... on Commit { statusCheckRollup { state } } } }
@@ -81,6 +81,7 @@ type prJSON struct {
 			State  string `json:"state"`
 			Body   string `json:"body"`
 			Author struct {
+				Type  string `json:"__typename"`
 				Login string `json:"login"`
 			} `json:"author"`
 			Commit struct {
@@ -146,9 +147,10 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 	}
 	// Threads past the first page are counted unresolved until they can be read.
 	st.Unresolved += st.Threads - len(pr.ReviewThreads.Nodes)
-	// A reviewer's standing change request, or their top-level comment on the current head, is open feedback like a thread.
+	// A reviewer's standing change request, or a person's top-level comment on the current head, is open feedback like a thread;
+	// a bot's top-level review is a summary of the threads it opened.
 	for _, r := range pr.LatestReviews.Nodes {
-		if r.State == "CHANGES_REQUESTED" || (r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" && r.Commit.OID == pr.HeadRefOID && !strings.EqualFold(r.Author.Login, pr.Author.Login)) {
+		if r.State == "CHANGES_REQUESTED" || (r.State == "COMMENTED" && r.Author.Type != "Bot" && strings.TrimSpace(r.Body) != "" && r.Commit.OID == pr.HeadRefOID && !strings.EqualFold(r.Author.Login, pr.Author.Login)) {
 			st.Unresolved++
 		}
 	}
