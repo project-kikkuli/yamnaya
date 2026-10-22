@@ -37,3 +37,22 @@ func TestHostsAreRememberedOnFirstUseAndForgotten(t *testing.T) {
 		}
 	}
 }
+
+func TestTheLaunchTargetIsThisHostUntilOneIsChosen(t *testing.T) {
+	st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if got, err := st.LaunchTarget(); err != nil || got != "" {
+		t.Fatalf("fresh launch target = %q, %v; want this host", got, err)
+	}
+	for _, want := range []string{"box", "other", ""} {
+		if err := st.SetLaunchTarget(want); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := st.LaunchTarget(); err != nil || got != want {
+			t.Fatalf("launch target = %q, %v; want %q", got, err, want)
+		}
+	}
+}

@@ -321,6 +321,7 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.newL = core.NewLaunch{Harness: "claude"}
+		m.loadTarget()
 		if key == "N" {
 			m.forGoal = true
 			m.openRepoPicker()
@@ -336,6 +337,7 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 		}
 		m.forGoal = false
 		m.newL = core.NewLaunch{Harness: "claude", Repo: core.MainCheckout(m.repoOf(r))}
+		m.loadTarget()
 		m.startInput(inNew, "", "", "", false)
 		return m, nil, true
 	case "t":
@@ -351,6 +353,7 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 		sort.Strings(over)
 		m.inPicks = over
 		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
+		m.loadTarget()
 		m.startInput(inChief, "", "", "", false)
 		m.inLabel = fmt.Sprintf("new chief over %d", len(over))
 		return m, nil, true
@@ -494,6 +497,9 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 
 // goalInput runs what a goal, chief, steer or attach input line asked for.
 func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
+	if (m.inKind == inGoal || m.inKind == inChief) && text != "" && m.launchOn != "" {
+		return m.launchRemote(text)
+	}
 	switch m.inKind {
 	case inGoal:
 		if text == "" {
@@ -502,6 +508,9 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		repo := m.newL.Repo
 		return m, m.do(func() (string, error) {
 			g, mg, err := m.core.NewGoal(text, repo, "")
+			if err == nil {
+				err = m.core.Store.SetLaunchTarget("")
+			}
 			if err == nil && mg.LastError != "" {
 				return g.ID + " recorded; its manager did not start: " + mg.LastError, nil
 			}
@@ -515,6 +524,9 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		m.picked = nil
 		return m, m.do(func() (string, error) {
 			c, err := m.core.NewChief(text, "", repo, over)
+			if err == nil {
+				err = m.core.Store.SetLaunchTarget("")
+			}
 			return "chief " + c.ID + " over " + plural(len(over), "report"), err
 		})
 	case inAttach:

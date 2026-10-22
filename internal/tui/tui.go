@@ -134,6 +134,8 @@ type Model struct {
 	ask       string
 	yes       tea.Cmd
 	newL      core.NewLaunch
+	// launchOn is the remembered host the launch input starts on, "" for this one.
+	launchOn string
 	// repoScan streams repositories found under the roots; scanned holds them for the whole TUI session.
 	repoScan <-chan string
 	scanned  []string
@@ -1104,6 +1106,11 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case tea.KeyCtrlT:
+		if m.launching() {
+			m.nextTarget()
+		}
+		return m, nil
 	case tea.KeyTab:
 		if (m.inKind == inNew || m.inKind == inNewRepo) && !m.forGoal {
 			m.newL.Harness = core.Other(m.newL.Harness)
@@ -1184,6 +1191,9 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Prompt = text
+			if m.launchOn != "" {
+				return m.launchRemote(text)
+			}
 			return m.startNew()
 		case inNewRepo:
 			repo, err := m.pickedRepo(text)
@@ -1250,6 +1260,9 @@ func (m Model) startNew() (tea.Model, tea.Cmd) {
 	m.message = "starting " + n.Harness + "…"
 	return m, m.do(func() (string, error) {
 		msg, err := c.StartNew(n)
+		if err == nil {
+			err = c.Store.SetLaunchTarget("")
+		}
 		first, _, _ := strings.Cut(msg, "\n")
 		return "started " + first, err
 	})

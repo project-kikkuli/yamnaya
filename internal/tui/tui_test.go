@@ -133,6 +133,8 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 		case "tab":
 			msg = tea.KeyMsg{Type: tea.KeyTab}
+		case "ctrl+t":
+			msg = tea.KeyMsg{Type: tea.KeyCtrlT}
 		default:
 			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		}

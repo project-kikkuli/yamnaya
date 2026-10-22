@@ -135,7 +135,7 @@ func (m Model) header() string {
 	if len(m.board.Remotes) > 0 {
 		var hosts []string
 		for _, r := range m.board.Remotes {
-			line := r.Host + " " + r.State()
+			line := m.hostTag(r.Host) + " " + r.Host + " " + r.State()
 			if r.Err != nil {
 				line = pal.red.Render(line)
 			}
@@ -178,12 +178,22 @@ func (m Model) footer() []string {
 		if m.inKind == inNew || (m.inKind == inNewRepo && !m.forGoal) {
 			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
 		}
+		if m.launchOn != "" && m.launching() {
+			label += " on " + m.hostTag(m.launchOn)
+		}
+		on := m.targetLine()
 		if m.fresh {
 			lines = append(lines, " "+pal.bold.Render(label+":")+" "+pal.dim.Render(string(m.input))+"█")
+			if on != "" {
+				lines = append(lines, on)
+			}
 			lines = append(lines, pal.dim.Render(" enter accepts the default   type to replace it   esc cancel"))
 			return lines
 		}
 		lines = append(lines, " "+pal.bold.Render(label+":")+" "+string(m.input)+"█")
+		if on != "" {
+			lines = append(lines, on)
+		}
 		if m.inKind == inNewRepo {
 			lines = append(lines, pal.dim.Render(" type to filter   ↑↓ choose   enter pick   esc cancel   ctrl+u clear"))
 			return lines
@@ -558,7 +568,7 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 }
 
 func (m Model) needLines(i int, n core.Need) string {
-	name := pad(m.projectName(n.Project), min(32, max(16, m.width/4)))
+	name := pad(m.tagged(m.needHost(n), m.projectName(n.Project)), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
 	if n.Waiting() {
@@ -737,13 +747,13 @@ func (m Model) detailView() viewPage {
 	b.WriteString(units(pg.Units))
 	b.WriteString(m.vibeLines(p))
 	b.WriteString("\n" + pal.bold.Render(" SESSIONS AND CREW") + "\n")
-	i := 0
+	i, wide := 0, m.whereWidth(p.Sessions)
 	for _, s := range p.Sessions {
 		title := s.Title
 		if title == "" {
 			title = core.Short(s.Key())
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(s.Status.String()).Render(pad(s.Status.String(), 9)) + pad(s.Location(), 18)
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(s.Status.String()).Render(pad(s.Status.String(), 9)) + pad(m.where(s), wide)
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}
@@ -777,7 +787,8 @@ func (m Model) detailView() viewPage {
 		if title == "" {
 			title = d.Key
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + pal.dim.Render(pad(d.State, 9)) + pad(d.Key, 18) + " " + d.Branch
+		host, key := m.splitHost(d.Key)
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + pal.dim.Render(pad(d.State, 9)) + pad(m.tagged(host, key), wide) + " " + d.Branch
 		if i == m.cursor {
 			line += pal.dim.Render("   enter revive")
 			if ansi.StringWidth(d.State) > 9 {
@@ -841,7 +852,7 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " " + it.Question
+	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " " + m.tagged(it.Host, it.Question)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)
 	}
@@ -1172,6 +1183,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    N            new goal in any repository: pick it first, then the goal
    +            new session in the selected row's repository, run by you, no manager: type the prompt;
                 the worktree is named from it; tab switches claude and codex
+                n, N, + and C start on the host the last one used; ctrl+t picks this one or a remembered host
    space        select a goal or chief row; s and c then act on every selected one
    s            on a goal or chief: send it your message (every selected one); tab widens a chief's to its
                 whole subtree. On a session: send it a follow-up, typed in on ym's server even mid-turn

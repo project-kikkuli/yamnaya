@@ -12,9 +12,10 @@ import (
 )
 
 // cols are the widths of a mission row's columns, shared by every row so each column starts at one x.
-// A width of 0 drops the column: phase and bar when no mission has one, spend before usage is read, work when no mission has any, doing when the screen is too narrow.
+// A width of 0 drops the column: host when every mission runs here, phase and bar when no mission has one, spend before usage is read,
+// work when no mission has any, doing when the screen is too narrow.
 type cols struct {
-	indent, name, phase, state, bar, vibe, spend, doing int
+	indent, name, host, phase, state, bar, vibe, spend, doing int
 	// work is the running crew, open pull requests and failing ones, each its own fixed width.
 	work [3]int
 }
@@ -32,6 +33,7 @@ func (m Model) missionCols(indent int) cols {
 	dollars := 0
 	for _, p := range m.board.Projects {
 		c.name = max(c.name, ansi.StringWidth(p.Name))
+		c.host = max(c.host, ansi.StringWidth(m.hostTag(m.projectHost(p))))
 		if len(p.Phases.Names) > 0 {
 			c.phase = phaseName + 1 + phaseDots
 		}
@@ -72,7 +74,7 @@ func (m Model) missionCols(indent int) cols {
 // fixed is every cell but doing's own width: the cursor mark, indent, columns and the space after each.
 func (c cols) fixed() int {
 	w := 3 + c.indent + c.name
-	for _, n := range []int{c.phase, c.state, c.bar, c.vibe, c.spend, c.workWidth()} {
+	for _, n := range []int{c.host, c.phase, c.state, c.bar, c.vibe, c.spend, c.workWidth()} {
 		if n > 0 {
 			w += 1 + n
 		}
@@ -101,6 +103,9 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		name = pal.dim
 	}
 	cells := []string{name.Render(pad(p.Name, c.name))}
+	if c.host > 0 {
+		cells = append(cells, pad(m.hostTag(m.projectHost(p)), c.host))
+	}
 	if c.phase > 0 {
 		cells = append(cells, phaseCell(p.Phases))
 	}
@@ -247,7 +252,11 @@ func workCell(p core.Project, w [3]int) string {
 
 // repoLine is a repo's name and its counts.
 func (m Model) repoLine(i int, r core.Repo, c cols) string {
-	return m.mark(i) + pal.bold.Render(pad(r.Name, c.indent+c.name)) + " " + m.repoCounts(r) + "\n"
+	line := m.mark(i) + pal.bold.Render(pad(r.Name, c.indent+c.name)) + " "
+	if tag := m.hostTag(m.repoHost(r)); tag != "" {
+		line += tag + " "
+	}
+	return line + m.repoCounts(r) + "\n"
 }
 
 // repoCounts sums a repo's missions: open needs first so a narrow screen keeps them, then sessions by status, running crew and pull requests.

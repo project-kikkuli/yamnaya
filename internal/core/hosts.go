@@ -1,12 +1,20 @@
 package core
 
-import "time"
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
 
 const hostSchema = `
 CREATE TABLE IF NOT EXISTS ym_hosts (
 	name TEXT PRIMARY KEY,
 	first_used INTEGER NOT NULL,
 	last_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ym_launch_target (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	host TEXT NOT NULL
 );
 `
 
@@ -58,4 +66,20 @@ func (s *Store) KnownHosts() ([]KnownHost, error) {
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// LaunchTarget is the host the board last started a session on, "" for this one.
+func (s *Store) LaunchTarget() (string, error) {
+	var host string
+	err := s.db.QueryRow(`SELECT host FROM ym_launch_target WHERE id=1`).Scan(&host)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return host, err
+}
+
+// SetLaunchTarget remembers host, "" for this one, as where the board starts sessions by default.
+func (s *Store) SetLaunchTarget(host string) error {
+	_, err := s.db.Exec(`INSERT INTO ym_launch_target(id,host) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET host=excluded.host`, host)
+	return err
 }
