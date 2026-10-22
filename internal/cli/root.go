@@ -42,6 +42,7 @@ func Wire(path string) (*core.Core, error) {
 		Roots:     core.RepoRoots,
 		Ask:       health.Addressed,
 		StateDir:  filepath.Dir(path),
+		Scope:     os.Getenv("YAMNAYA_SCOPE"),
 		Notify:    desktopNotify,
 		RunSelf:   runSelf,
 	}
