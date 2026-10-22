@@ -28,6 +28,14 @@ func TestStatusFoldsChecksAndCountsUnresolvedThreads(t *testing.T) {
 		{"no checks, threads past the first page", `{"data":{"resource":{"state":"MERGED","headRefName":"x","commits":{"totalCount":1},
 			"reviewThreads":{"totalCount":102,"nodes":[` + resolved(100) + `]},"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}`,
 			0, 0, 0, 102, 2, "x"},
+		{"open, no checks yet, base branch runs checks", `{"data":{"resource":{"state":"OPEN","headRefName":"y","commits":{"totalCount":1},
+			"reviewThreads":{"totalCount":0,"nodes":[]},"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]},
+			"baseRef":{"target":{"statusCheckRollup":{"state":"SUCCESS"}}}}}}`,
+			0, 0, 1, 0, 0, "y"},
+		{"open, no checks, base branch runs none", `{"data":{"resource":{"state":"OPEN","headRefName":"z","commits":{"totalCount":1},
+			"reviewThreads":{"totalCount":0,"nodes":[]},"last":{"nodes":[{"commit":{"statusCheckRollup":null}}]},
+			"baseRef":{"target":{"statusCheckRollup":null}}}}}`,
+			0, 0, 0, 0, 0, "z"},
 	}
 	for _, c := range cases {
 		s := &Source{Now: time.Now, Run: func(string) ([]byte, error) { return []byte(c.body), nil }}

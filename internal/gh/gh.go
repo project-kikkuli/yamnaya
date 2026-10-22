@@ -40,6 +40,7 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
+  baseRef { target { ... on Commit { statusCheckRollup { state } } } }
 } } }`
 
 func query(url string) ([]byte, error) {
@@ -86,6 +87,13 @@ type prJSON struct {
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"last"`
+	BaseRef *struct {
+		Target struct {
+			Rollup *struct {
+				State string `json:"state"`
+			} `json:"statusCheckRollup"`
+		} `json:"target"`
+	} `json:"baseRef"`
 }
 
 func (s *Source) details(url string) (core.PRStatus, error) {
@@ -134,6 +142,10 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 				st.Pending += c.Count
 			}
 		}
+	}
+	// A head with no checks yet, on a base branch that runs them, is waiting for its checks to register.
+	if st.Passed+st.Failed+st.Pending == 0 && pr.State == "OPEN" && pr.BaseRef != nil && pr.BaseRef.Target.Rollup != nil {
+		st.Pending = 1
 	}
 	return st, nil
 }
