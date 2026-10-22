@@ -137,7 +137,7 @@ func TestItemsGoInTheFilingSessionsRepoWhateverWorktreeItRunsIn(t *testing.T) {
 	w.procs = append(w.procs, procOf(10, "claude"))
 	w.claude.sessions[10] = Session{ID: "live", Cwd: "/src/app-wt-x", Status: Busy}
 	for session, want := range map[string]string{"live": "/src/app/.git", "ended": "/src/app/.git", "elsewhere": "/home/notes"} {
-		it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: session})
+		it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: session})
 		if err != nil || it.Scope != want {
 			t.Errorf("%s filed into %q (%v), want %q", session, it.Scope, err, want)
 		}
@@ -161,7 +161,7 @@ func TestASessionPrefixFilesAsTheLiveSessionItNames(t *testing.T) {
 		}
 	}
 	c, _ := w.core.CallerOf("c5c2b21b")
-	it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: c.Session, Harness: c.Harness})
+	it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: c.Session, Harness: c.Harness})
 	if err != nil || it.Scope != "/src/app/.git" || it.Harness != "claude" {
 		t.Errorf("filed %+v (%v), want it scoped to the session's repo", it, err)
 	}
@@ -189,7 +189,7 @@ func TestASandboxedCodexFilesIntoItsRepoByItsThreadEnv(t *testing.T) {
 			t.Errorf("CallerFromEnv(%v) = %+v, %v; want %+v, %v", c.env, got, ok, c.want, c.inShell)
 		}
 	}
-	it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "thread-1", Harness: "codex"})
+	it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "thread-1", Harness: "codex"})
 	if err != nil || it.Scope != "/src/app/.git" {
 		t.Fatalf("filed %+v (%v) with no process table, want it in the thread's repo", it, err)
 	}
@@ -230,7 +230,7 @@ func TestAGoItemAnswersWithTheGoAheadOrDismissesAndRelaysEither(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t)
-			it, err := w.core.AddItem(Item{Kind: c.kind, Question: "Build it?", Session: "lead"})
+			it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: c.kind, Question: "Build it?", Session: "lead"})
 			if err != nil || it.ID != c.wantID {
 				t.Fatalf("filed %s (%v), want %s", it.ID, err, c.wantID)
 			}
@@ -249,3 +249,5 @@ func TestAGoItemAnswersWithTheGoAheadOrDismissesAndRelaysEither(t *testing.T) {
 		})
 	}
 }
+
+var picks = []Option{{Label: "a", Effect: "does a"}, {Label: "b", Effect: "does b"}}

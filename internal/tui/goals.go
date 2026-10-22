@@ -80,7 +80,7 @@ func nodeText(n core.Node) string {
 	return n.Manager.Name
 }
 
-// queueRows are the owner's queue, with a session's folded asks listed under it while it is open.
+// queueRows are the owner's queue, with every one of a session's folded asks listed under it while it is open.
 func (m Model) queueRows() []row {
 	var out []row
 	for i := range m.board.Needs {
@@ -90,8 +90,8 @@ func (m Model) queueRows() []row {
 		}
 		out = append(out, row{need: n, item: n.Item, session: n.Session})
 		if len(n.Asks) > 1 && m.unfolded[n.Key()] {
-			for j := range n.Asks[1:] {
-				out = append(out, row{item: &n.Asks[j+1]})
+			for j := range n.Asks {
+				out = append(out, row{item: &n.Asks[j]})
 			}
 		}
 	}
@@ -410,6 +410,9 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 		if n.Goal != nil {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
+			if err := m.core.Looked(m.board, n.Goal.ID); err != nil {
+				m.message = "error: " + err.Error()
+			}
 		} else {
 			m.push(modeChief)
 			m.chief = n.Manager.ID

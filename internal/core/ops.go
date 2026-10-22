@@ -240,7 +240,15 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	return it, c.deliver(b, it.Session, []Item{it}), nil
+	return it, c.deliver(b, it.Session, []Item{it}), c.ownerLooked(b, it)
+}
+
+// ownerLooked records the owner's look at the goal of an item the owner just settled.
+func (c *Core) ownerLooked(b Board, it Item) error {
+	if it.Recipient != Owner {
+		return nil
+	}
+	return c.Looked(b, it.Dossier.Goal)
 }
 
 // Go answers a go item with GoAhead.
@@ -267,7 +275,7 @@ func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
 	if err != nil {
 		return it, Queued, err
 	}
-	return it, c.deliver(b, it.Session, []Item{it}), nil
+	return it, c.deliver(b, it.Session, []Item{it}), c.ownerLooked(b, it)
 }
 
 // notice is how an answered or dismissed item reaches its agent.

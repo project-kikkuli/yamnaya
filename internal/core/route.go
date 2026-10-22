@@ -164,6 +164,18 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 		return it, err
 	}
 	it.Recipient = o.Recipient(c.Resolve(it.Session), c.parentsFor(b, berr))
+	if it.Recipient == Owner {
+		if err := ready(it); err != nil {
+			return it, err
+		}
+	}
+	items, err := c.Store.Items(ItemFilter{})
+	if err != nil {
+		return it, err
+	}
+	if it.Dossier, err = c.dossier(b, o, it, items); err != nil {
+		return it, err
+	}
 	added, err := c.Store.addItem(it)
 	if err != nil || added.Recipient == Owner {
 		return added, err
@@ -193,6 +205,15 @@ func askText(b Board, o Org, it Item) string {
 	}
 	if it.Assumption != "" {
 		fmt.Fprintf(&sb, " Context: %s", it.Assumption)
+	}
+	if it.Tried != "" {
+		fmt.Fprintf(&sb, " Tried: %s.", oneLine(it.Tried))
+	}
+	if len(it.Evidence) > 0 {
+		fmt.Fprintf(&sb, " Evidence: %s.", strings.Join(it.Evidence, ", "))
+	}
+	for _, pr := range it.Dossier.PRs {
+		fmt.Fprintf(&sb, " PR: %s.", pr)
 	}
 	fmt.Fprintf(&sb, " You own this: answer with ym item answer '%s' <answer> (ym item go '%s' to say go ahead, ym item dismiss '%s' <reason>)."+
 		" Escalate with your own ym item add only if it is beyond your authority.", it.Key(), it.Key(), it.Key())

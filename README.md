@@ -8,7 +8,7 @@
 - **Manager**: an ordinary interactive Claude session on ym's tmux server with a persistent identity: when its session is replaced, the manager, its goal and its agents stay. Its launch prompt carries the goal, its authority, how to start agents (`ym new`, which links them under it), the markdown brief it keeps (`B` shows it) and how to register a richer artifact (`V` opens it). Open it with `o` and talk to it like any session; that is how you change direction.
 - **Authority**: a manager owns its goal outright, go-aheads, decisions and fixes included. It may merge its own pull requests only in repositories `ym goal authority` clears (seeded: auth-plane may merge, august may not); elsewhere a green pull request comes to your merge queue. It writes to other humans only with a model-name prefix.
 - **Chief**: `ym chief "<name>" --over <id>,<id>` (or `C` over the selected rows) oversees managers and other chiefs, to any depth. It reads their briefs, steers them, relaunches stuck ones and keeps a rolled-up brief. A manager needs no chief, and work never waits on one: a stuck or retired chief is passed over.
-- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you. When an agent a manager runs goes idle, its last message reaches that manager verbatim, once per message, and the manager judges it.
+- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you, ready to decide: ym refuses an ask bound for you without a recommendation (and, for a decision, two options with their effects), and attaches on its own the goal, the manager, the work's pull requests with their CI, its agents' latest activity and what changed in the goal since you last looked (answering one of its asks or opening the goal counts as looking). `ym serve` keeps that evidence current while the ask waits; the selected row sums it up and `enter` shows it in full. When an agent a manager runs goes idle, its last message reaches that manager verbatim, once per message, and the manager judges it.
 - **Supervision**: `ym serve` watches every active goal. A dead manager is relaunched with its prompt and brief, with backoff so a launch that keeps failing never spins. When nothing moves (no turns, brief edits or agent activity) for 30 minutes, the manager is nudged; still nothing after two nudges, and the goal shows one stuck row in your queue with the evidence.
 - **Steering**: `s` sends your message to the selected goal or chief, or to every row picked with `space`; on a chief, `tab` widens it to its whole subtree. `ym goal send <id>[,<id>] [--subtree] <text>` does the same from a shell.
 
@@ -109,7 +109,11 @@ An answer goes to the session carrying the conversation now, following Claude's 
                                         The board runs it in the background at most hourly
     ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal. A
                                         launched session it kills waits a day before landing by itself
-    ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--assumption "..."] [--blocks N]
+    ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--evidence <link>]...
+                [--tried "..."] [--assumption "..."] [--blocks N]
+                                        ym attaches the goal, its pull requests with CI, recent agent activity and what changed
+                                        since you last looked; it refuses an ask bound for you without --rec, or a decision
+                                        without two options with effects
     ym item list [--all] [--everywhere] [--to-me] [--json]   --to-me: what is routed to the calling manager
     ym item show|answer|dismiss|snooze|reopen <id> ...
     ym item go <id>                     answer a go item with PLEASE GO IMPLEMENT THIS

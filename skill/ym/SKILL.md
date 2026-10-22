@@ -34,6 +34,7 @@ Never print an open-questions block in chat. File each question that clears the 
 ym item add --kind decision|default|chore|go --question "<one line>" \
   --rec "<what you recommend>" \
   --option "<label>=<effect>" --option "<label>=<effect>" \
+  --evidence "<PR, CI run, commit or file>" --tried "<what you tried>" \
   --assumption "<what you assume meanwhile>" --blocks <n>
 ```
 
@@ -43,14 +44,16 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
 - `go`: you wait on the owner's go-ahead to build; see above.
 - `--blocks`: how many pieces of your work wait on the answer.
 
-Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
+Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. Cite what the call rests on with one `--evidence` per pull request, CI run, commit or file, and say what you already tried with `--tried`.
+
+ym attaches the rest itself: the goal and manager the ask comes from, the pull requests of that work with their CI state, its agents' latest activity, and what changed in the goal since the owner last looked. An ask that would reach the owner without `--rec`, or a decision without two `--option`s that each state an effect, is refused with the reason; refile it ready to decide, or make the call yourself if it is within your authority. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
 
 ## Who your questions reach
 
 `ym item add` routes the question for you; you file it the same way either way:
 
 - You are an agent a manager started (with `ym new`, or under an agent it started): the item goes to that manager's session as a message, never to the owner. The manager answers it, and the answer reaches you as `re <id>: ...` like any answer.
-- You are a manager or chief: the item goes to your chief, or to the owner when you report to no chief. A chief that is stuck or retired is passed over.
+- You are a manager or chief: the item goes to your chief, or to the owner when you report to no chief. A chief that is stuck or retired is passed over. What reaches the owner must be ready to decide; see above.
 - No manager is above you: the item goes to the owner's queue, folded into one row for your session.
 
 `ym item add` prints the id on stdout and, when a manager or chief owns the answer, says so on stderr.

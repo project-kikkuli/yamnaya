@@ -152,18 +152,26 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
-	var opts string
+	var opts, evidence, dossier string
 	var created, answered, delivered, held sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
 		return it, err
+	}
+	if err := json.Unmarshal([]byte(evidence), &it.Evidence); err != nil {
+		return it, err
+	}
+	if dossier != "" {
+		if err := json.Unmarshal([]byte(dossier), &it.Dossier); err != nil {
+			return it, err
+		}
 	}
 	it.CreatedAt, it.AnsweredAt, it.Delivered, it.Held = parseTime(created), parseTime(answered), parseTime(delivered), parseTime(held)
 	return it, nil
@@ -194,6 +202,21 @@ func (s *Store) addItem(it Item) (Item, error) {
 	if err != nil {
 		return it, err
 	}
+	if it.Evidence == nil {
+		it.Evidence = []string{}
+	}
+	evidence, err := json.Marshal(it.Evidence)
+	if err != nil {
+		return it, err
+	}
+	dossier := ""
+	if !it.Dossier.Empty() {
+		raw, err := json.Marshal(it.Dossier)
+		if err != nil {
+			return it, err
+		}
+		dossier = string(raw)
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return it, err
@@ -204,10 +227,10 @@ func (s *Store) addItem(it Item) (Item, error) {
 		return it, err
 	}
 	it.ID, it.State, it.CreatedAt = idFor(it.Kind, num), ItemOpen, time.Now().UTC()
-	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient, evidence, tried, dossier)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
 		it.Scope, num, it.ID, it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.Blocks, it.Session, it.Harness,
-		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient).Scan(&it.Seq)
+		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient, string(evidence), it.Tried, dossier).Scan(&it.Seq)
 	if err != nil {
 		return it, err
 	}

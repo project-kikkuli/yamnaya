@@ -45,6 +45,7 @@ func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 	sb.WriteString("- See your agents with ym sessions; message one with ym send <session> <text>.\n")
 	fmt.Fprintf(sb, "- Keep your brief at %s: a short markdown page a cold reader can follow. Where the goal stands, what is in flight (agents, PRs), the decisions you made and why, what comes next. Update it whenever something moves. If you also publish a richer page, such as a Claude artifact, register its URL with ym goal artifact <url>.\n", m.BriefPath)
 	fmt.Fprintf(sb, "- Escalate only what is beyond your authority (a merge you may not do, a chore only a human can do, a change to the goal itself) with ym item add; it goes to %s. Keep working on everything else meanwhile.\n", c.boss(o, m))
+	sb.WriteString(escalate)
 	sb.WriteString("- ym watches you. If you go quiet it nudges you; if your session dies it relaunches you with this prompt and your brief.\n")
 	sb.WriteString("- When the goal is done, write the final brief, then run: ym goal done --summary \"<one line>\" --evidence \"<proof>\", one --evidence per pull request URL, commit or result to check. That starts verification, not done: ym checks your pull requests merged with green CI and no open threads, then a fresh verifier checks the work against the owner's ask. A pass makes the goal done for the owner; a fail reopens it and sends you the findings to fix before ym goal done again.\n\n")
 	sb.WriteString("The owner can open this session and talk to you directly; what they say there changes your direction.")
@@ -56,11 +57,14 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	sb.WriteString("How you work:\n")
 	sb.WriteString("- Read your reports' briefs often. Steer one with ym goal send <id> <text>; a stuck or dead one you can relaunch with ym goal relaunch <id>.\n")
 	sb.WriteString("- Escalations from your reports arrive here as messages. Answer each with ym item answer '<#key>' <answer>, or escalate it with your own ym item add, which goes to " + c.boss(o, m) + ".\n")
+	sb.WriteString(escalate)
 	fmt.Fprintf(sb, "- Keep a rolled-up brief at %s: the state of every report in a line or two, themes across them, and what needs attention.\n", m.BriefPath)
 	sb.WriteString("- Work never waits on you: your reports keep going without you. Spend your time where a nudge or a decision unblocks the most.\n")
 	sb.WriteString("- When you write to a human, prefix the message with your model name, like \"Claude: ...\". Never speak as the owner.\n\n")
 	sb.WriteString("The owner can open this session and talk to you directly; what they say there changes your direction.")
 }
+
+const escalate = "- Make every escalation ready to decide: --rec with what you recommend and why, two or more --option \"<label>=<what happens>\" for a decision, one --evidence per pull request, CI run, commit or file it rests on, and --tried with what you already tried. ym attaches the goal, its pull requests with CI and your agents' latest activity itself. An ask bound for the owner without a recommendation is refused; refile it, or decide it yourself.\n"
 
 // boss names who m's own escalations reach.
 func (c *Core) boss(o Org, m Manager) string {

@@ -124,7 +124,7 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	var options []string
 	cmd := &cobra.Command{
 		Use:   "add",
-		Short: "File an item against the calling session and print its id",
+		Short: "File an item against the calling session and print its id; ym attaches the goal, its pull requests and recent activity, and refuses an ask bound for the owner that lacks --rec (and, for a decision, two --option)",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()
@@ -155,6 +155,8 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	cmd.Flags().StringVar(&it.Rec, "rec", "", "what you recommend")
 	cmd.Flags().StringArrayVar(&options, "option", nil, "option as label=effect (repeatable)")
 	cmd.Flags().StringVar(&it.Assumption, "assumption", "", "what you are assuming meanwhile")
+	cmd.Flags().StringArrayVar(&it.Evidence, "evidence", nil, "a PR, CI run, commit, file or other link the call rests on (repeatable)")
+	cmd.Flags().StringVar(&it.Tried, "tried", "", "what you tried before asking")
 	cmd.Flags().IntVar(&it.Blocks, "blocks", 0, "how many pieces of work wait on this")
 	cmd.MarkFlagRequired("kind")
 	cmd.MarkFlagRequired("question")
@@ -298,6 +300,13 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				line("option", o.Label+" = "+o.Effect)
 			}
 			line("assumption", it.Assumption)
+			line("tried", it.Tried)
+			for _, ev := range it.Evidence {
+				line("evidence", ev)
+			}
+			for _, l := range core.DossierLines(it.Dossier) {
+				line(l[0], l[1])
+			}
 			line("blocks", fmt.Sprint(it.Blocks))
 			line("source", it.Harness+" "+it.Session)
 			line("answer", it.Answer)
@@ -329,6 +338,9 @@ type itemJSON struct {
 	Rec        string        `json:"rec"`
 	Options    []core.Option `json:"options"`
 	Assumption string        `json:"assumption"`
+	Evidence   []string      `json:"evidence"`
+	Tried      string        `json:"tried,omitempty"`
+	Dossier    *core.Dossier `json:"dossier,omitempty"`
 	Blocks     int           `json:"blocks"`
 	Session    string        `json:"session"`
 	Harness    string        `json:"harness"`
@@ -349,7 +361,15 @@ func ts(t time.Time) string {
 }
 
 func toJSON(it core.Item) itemJSON {
-	return itemJSON{Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	var d *core.Dossier
+	if !it.Dossier.Empty() {
+		d = &it.Dossier
+	}
+	ev := it.Evidence
+	if ev == nil {
+		ev = []string{}
+	}
+	return itemJSON{Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }

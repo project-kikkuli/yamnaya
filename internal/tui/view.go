@@ -568,7 +568,11 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 }
 
 func (m Model) needLines(i int, n core.Need) string {
-	name := pad(m.tagged(m.needHost(n), m.projectName(n.Project)), min(32, max(16, m.width/4)))
+	where := m.projectName(n.Project)
+	if n.Item != nil && n.Item.Dossier.Goal != "" {
+		where = n.Item.Dossier.Goal + " " + oneLine(n.Item.Dossier.GoalAsk)
+	}
+	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
 	if n.Waiting() {
@@ -578,6 +582,9 @@ func (m Model) needLines(i int, n core.Need) string {
 		if sel {
 			for _, line := range askBlock(n.Reply) {
 				b.WriteString("         " + ansi.Truncate(line, max(10, m.width-10), "…") + "\n")
+			}
+			for _, pr := range s.AllPRs() {
+				b.WriteString(pal.dim.Render("         pr "+ansi.Truncate(pr.Note().String(), max(10, m.width-13), "…")) + "\n")
 			}
 			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
 			b.WriteString(pal.dim.Render("         enter whole reply   a answer   x dismiss   o go to session   O beside") + "\n")
@@ -615,6 +622,9 @@ func (m Model) needLines(i int, n core.Need) string {
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
 		b.WriteString(pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n")
+		if line := evidenceLine(*it); line != "" {
+			b.WriteString(pal.dim.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
+		}
 		b.WriteString(pal.dim.Render("         "+keys) + "\n")
 	}
 	return b.String()
@@ -655,8 +665,11 @@ func (m Model) idWidth() int {
 }
 
 func (m Model) sourceName(it core.Item) string {
+	if mg, ok := m.board.Org.ManagerOf(it.Session); ok {
+		return mg.Label()
+	}
 	if s, ok := m.board.Session(it.Session); ok && s.Title != "" {
-		return s.Title
+		return ansi.Truncate(oneLine(s.Title), 60, "…")
 	}
 	return it.Harness + " " + core.Short(it.Session)
 }
@@ -857,6 +870,9 @@ func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
 		line = pal.dim.Render(line)
 	}
 	out := line + "\n"
+	if ev := evidenceLine(it); ev != "" && i == m.cursor {
+		out += pal.dim.Render("         "+ansi.Truncate(ev, max(10, m.width-10), "…")) + "\n"
+	}
 	if it.Answer != "" {
 		out += pal.dim.Render("         answer: "+it.Answer+delivered(it)) + "\n"
 	}
@@ -1106,6 +1122,44 @@ func toolCounts(tools map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
+// evidenceLine sums up an item's evidence in one line: its goal, pull requests with CI, and what changed since the owner looked.
+func evidenceLine(it core.Item) string {
+	var parts []string
+	d := it.Dossier
+	if d.Goal != "" {
+		parts = append(parts, d.Goal)
+	}
+	if len(it.Evidence) > 0 {
+		parts = append(parts, fmt.Sprintf("%d cited", len(it.Evidence)))
+	}
+	if n := len(d.PRs); n > 0 {
+		red := 0
+		for _, pr := range d.PRs {
+			if pr.CI == "failing" {
+				red++
+			}
+		}
+		pr := fmt.Sprintf("%d PR", n)
+		if n > 1 {
+			pr += "s"
+		}
+		if red > 0 {
+			pr += fmt.Sprintf(" (%d ci failing)", red)
+		}
+		parts = append(parts, pr)
+	}
+	if n := len(d.Changes); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d changes since you looked", n))
+	}
+	if it.Tried != "" {
+		parts = append(parts, "tried: "+it.Tried)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "evidence: " + strings.Join(parts, " | ") + "   enter shows it"
+}
+
 func delivered(it core.Item) string {
 	if !it.Held.IsZero() {
 		return "  (held in session)"
@@ -1133,11 +1187,27 @@ func (m Model) whyView() string {
 		field("option", o.Label+" = "+o.Effect)
 	}
 	field("assumption", it.Assumption)
+	field("tried", it.Tried)
+	for _, ev := range it.Evidence {
+		field("evidence", ev)
+	}
 	field("blocks", fmt.Sprint(it.Blocks))
 	field("source", m.sourceName(*it)+"  "+it.Session)
 	field("filed", it.CreatedAt.Local().Format("2006-01-02 15:04"))
 	field("answer", it.Answer)
 	field("dismissed", it.Reason)
+	if !it.Dossier.Empty() {
+		b.WriteString("\n" + pal.bold.Render(" CONTEXT") + pal.dim.Render("  attached by ym "+age(m.board.At, it.Dossier.At)) + "\n")
+		last := ""
+		for _, l := range core.DossierLines(it.Dossier) {
+			k := l[0]
+			if k == last {
+				k = ""
+			}
+			last = l[0]
+			b.WriteString(" " + pal.bold.Render(pad(k, 22)) + " " + l[1] + "\n")
+		}
+	}
 	if len(it.History) > 1 {
 		b.WriteString("\n" + pal.bold.Render(" history") + "\n")
 		for _, e := range it.History[1:] {

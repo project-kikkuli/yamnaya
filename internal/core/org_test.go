@@ -109,7 +109,7 @@ func (w *orgWorld) chief(t *testing.T, name string, over ...string) Manager {
 
 func (w *orgWorld) ask(t *testing.T, session, question string) Item {
 	t.Helper()
-	it, err := w.core.AddItem(Item{Session: session, Harness: "claude", Kind: KindDecision, Question: question})
+	it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Session: session, Harness: "claude", Kind: KindDecision, Question: question})
 	if err != nil {
 		t.Fatal(err)
 	}

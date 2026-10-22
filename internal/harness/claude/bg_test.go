@@ -57,7 +57,7 @@ func TestABackgroundJobIsTheLiveSessionItsPaneContinuedIn(t *testing.T) {
 				t.Errorf("targets = %+v; want the job with advice and no resume command", ts)
 			}
 
-			it, err := k.AddItem(core.Item{Kind: core.KindDecision, Question: "q", Session: oldID})
+			it, err := k.AddItem(core.Item{Kind: core.KindChore, Question: "q", Rec: "r", Session: oldID})
 			must(t, err)
 			if _, d, err := k.Answer(b, it.ID, "go"); err != nil || d != core.Sent {
 				t.Fatalf("answer = %v, %v; want sent to the job's inbox", d, err)

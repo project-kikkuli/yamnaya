@@ -101,7 +101,7 @@ func setup(t *testing.T) (Model, *core.Core, *host) {
 	c := &core.Core{Store: st, Harnesses: []core.Harness{harness{sessions}}, Hosts: []core.Host{h},
 		Procs: func() ([]proc.Proc, error) { return procs, nil }, StateDir: t.TempDir()}
 	for _, it := range []struct{ q, session string }{{"Ship it?", "lead"}, {"Rename the flag?", "twin"}} {
-		if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: it.q, Rec: "yes", Session: it.session}); err != nil {
+		if _, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: it.q, Rec: "yes", Session: it.session}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -189,7 +189,7 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, h := setup(t)
-			if _, err := k.AddItem(core.Item{Kind: core.KindGo, Question: "Build the importer?", Session: "lead", Blocks: 5}); err != nil {
+			if _, err := k.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindGo, Question: "Build the importer?", Session: "lead", Blocks: 5}); err != nil {
 				t.Fatal(err)
 			}
 			m = refresh(t, m)
@@ -240,7 +240,7 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 	m, c, _ := setup(t)
 	m = press(t, m, "down")
-	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
+	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
 		t.Fatal(err)
 	}
 	m = refresh(t, m)
@@ -463,7 +463,7 @@ func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
 func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
 	m, c, _ := setup(t)
 	for _, q := range []string{"Old question?", "Older question?"} {
-		if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: q, Session: "ended", Blocks: 9}); err != nil {
+		if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: q, Session: "ended", Blocks: 9}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -558,7 +558,7 @@ func TestALongCrewKeepsTheHeaderAndSessionTitleOnScreen(t *testing.T) {
 
 func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 	m, c, _ := setup(t)
-	if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
+	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
 		t.Fatal(err)
 	}
 	m = press(t, refresh(t, m), "down", "down", "enter", "enter")
@@ -709,5 +709,29 @@ func TestCapitalOOpensTheSessionBesideTheBoard(t *testing.T) {
 				t.Fatalf("message %q lacks %q", m.message, tc.message)
 			}
 		})
+	}
+}
+
+var picks = []core.Option{{Label: "a", Effect: "does a"}, {Label: "b", Effect: "does b"}}
+
+func TestAnAsksEvidenceShowsOnItsRowAndInFullWhenExpanded(t *testing.T) {
+	m, c, _ := setup(t)
+	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Rotate the HSM key?", Rec: "tonight", Session: "lead", Blocks: 9,
+		Tried: "the API, which needs a human token", Evidence: []string{"https://ci.example/run/42"}}); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Question == "Rotate the HSM key?" })
+	if v := m.View(); !strings.Contains(v, "evidence: 1 cited | tried: the API, which needs a human token") {
+		t.Fatalf("selected row lacks its evidence line:\n%s", v)
+	}
+	m = press(t, m, "enter")
+	m = to(t, m, func(r row) bool { return r.need == nil && r.item != nil && r.item.Question == "Rotate the HSM key?" })
+	m = press(t, m, "enter")
+	v := m.View()
+	for _, want := range []string{"tried  the API, which needs a human token", "evidence  https://ci.example/run/42", "CONTEXT", "in a session you started"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("expanded view lacks %q:\n%s", want, v)
+		}
 	}
 }

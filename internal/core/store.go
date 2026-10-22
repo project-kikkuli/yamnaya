@@ -53,6 +53,11 @@ type Item struct {
 	Rec        string
 	Options    []Option
 	Assumption string
+	// Evidence are the links, paths and commits the filer cites; Tried is what it tried before asking.
+	Evidence []string
+	Tried    string
+	// Dossier is the evidence ym attached on its own.
+	Dossier    Dossier
 	Blocks     int
 	Session    string
 	Harness    string
@@ -237,6 +242,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := retireHandoffs(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("retire handoff capture: %w", err)
+	}
+	if err := itemDossiers(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate item dossiers: %w", err)
 	}
 	return &Store{db: db}, nil
 }

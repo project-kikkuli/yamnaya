@@ -116,6 +116,9 @@ func serveCycle(c *core.Core) error {
 	if _, err = c.RefreshPRs(b); err != nil {
 		failures = append(failures, err)
 	}
+	if err = c.Brief(b); err != nil {
+		failures = append(failures, err)
+	}
 	if err = c.ForwardIdle(b); err != nil {
 		failures = append(failures, err)
 	}

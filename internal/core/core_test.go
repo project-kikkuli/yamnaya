@@ -240,6 +240,7 @@ func TestNeedsListPermissionPromptsThenItemsByBlocks(t *testing.T) {
 		{Kind: KindChore, Question: "high", Session: "c", Blocks: 3},
 		{Kind: KindDefault, Question: "gone session", Session: "ended", Blocks: 1},
 	} {
+		it.Rec, it.Options = "r", picks
 		if _, err := w.core.AddItem(it); err != nil {
 			t.Fatal(err)
 		}
@@ -292,7 +293,7 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 		{"opens", Queued},
 	}
 	for _, c := range cases {
-		it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q " + c.session, Session: c.session})
+		it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q " + c.session, Session: c.session})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +316,7 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 		t.Errorf("a typed answer stays in the inbox: %+v", idle)
 	}
 	w.tmux.typeErr = errors.New("pane gone")
-	it, _ := w.core.AddItem(Item{Kind: KindChore, Question: "q", Session: "idle"})
+	it, _ := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindChore, Question: "q", Session: "idle"})
 	if _, d, _ := w.core.Dismiss(w.board(t), it.ID, "not needed"); d != Queued {
 		t.Errorf("failed typing should queue, got %v", d)
 	}
@@ -370,7 +371,7 @@ func TestItemIDsAreNeverReusedAcrossKinds(t *testing.T) {
 	w := newWorld(t)
 	var ids []string
 	for _, k := range []string{KindDecision, KindDefault, KindChore, KindDecision} {
-		it, err := w.core.AddItem(Item{Kind: k, Question: "q", Session: "s"})
+		it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: k, Question: "q", Session: "s"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,10 +380,10 @@ func TestItemIDsAreNeverReusedAcrossKinds(t *testing.T) {
 	if strings.Join(ids, ",") != "D1,V2,C3,D4" {
 		t.Fatalf("ids = %v", ids)
 	}
-	if _, err := w.core.AddItem(Item{Kind: "other", Question: "q", Session: "s"}); err == nil {
+	if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: "other", Question: "q", Session: "s"}); err == nil {
 		t.Error("unknown kind accepted")
 	}
-	if _, err := w.core.AddItem(Item{Kind: KindChore, Question: "q"}); err == nil {
+	if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindChore, Question: "q"}); err == nil {
 		t.Error("item without a session accepted")
 	}
 	if _, err := w.core.Snooze("d1"); err != nil {

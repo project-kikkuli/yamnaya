@@ -31,7 +31,7 @@ func TestQueuedAnswersReachTheirSessionOnceItIsReachable(t *testing.T) {
 				w.run(20, 1, "/dev/t2", "claude", "new", Busy)
 			}
 			w.claude.inbox = c.at
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "old"})
+			it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "old"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +62,7 @@ func TestQueuedAnswersReachASessionAsOneNotice(t *testing.T) {
 	w := newWorld(t)
 	var ids []string
 	for _, q := range []string{"q1", "q2", "q3"} {
-		it, err := w.core.AddItem(Item{Kind: KindDecision, Question: q, Session: "s"})
+		it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: q, Session: "s"})
 		if err != nil {
 			t.Fatal(err)
 		}

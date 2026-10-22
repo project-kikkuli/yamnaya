@@ -38,7 +38,7 @@ func TestAnswerReachesTheSessionTheConversationContinuedIn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			w := continuedWorld(t, c.status)
 			w.claude.inbox = c.inbox
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "old"})
+			it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "old"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +87,7 @@ func TestContinuedSessionStandsForItsSuccessor(t *testing.T) {
 		t.Errorf("Find(old) = %q, %v; want the successor", l.Key(), err)
 	}
 	for _, filed := range []string{"old", "mid", "new"} {
-		it, _ := w.core.AddItem(Item{Kind: KindChore, Question: "q " + filed, Session: filed})
+		it, _ := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindChore, Question: "q " + filed, Session: filed})
 		if _, err := w.core.Store.Transition(it.ID, ItemAnswered, "a"); err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestContinuedSessionStandsForItsSuccessor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	it, _ := w.core.AddItem(Item{Kind: KindChore, Question: "elsewhere", Session: "other"})
+	it, _ := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindChore, Question: "elsewhere", Session: "other"})
 	w.core.Store.Transition(it.ID, ItemAnswered, "a")
 	w.core.Store.AddMessage("other", "m other", MsgPending)
 	items, err := w.core.Inbox("new")
@@ -125,7 +125,7 @@ func TestAnAnswerOnItsWayIsNotAlsoReadFromTheInbox(t *testing.T) {
 			w.claude.inbox = map[string]error{"new": c.send}
 			var meanwhile []Item
 			w.claude.during = func() { meanwhile, _ = w.core.Inbox("new") }
-			it, _ := w.core.AddItem(Item{Kind: KindDecision, Question: "q", Session: "new"})
+			it, _ := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "new"})
 			if _, _, err := w.core.Answer(w.board(t), it.ID, "go"); err != nil {
 				t.Fatal(err)
 			}

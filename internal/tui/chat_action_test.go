@@ -9,7 +9,7 @@ import (
 
 func TestChatActionShowsWhereToActAndOpensItsSession(t *testing.T) {
 	m, c, h := setup(t)
-	it, err := c.AddItem(core.Item{Scope: "repo", Session: "lead", Harness: "claude", Kind: core.KindChore, Action: "chat", Question: "Enter the native login code", Assumption: "Agent helper requested this action in its parent conversation."})
+	it, err := c.AddItem(core.Item{Rec: "r", Options: picks, Scope: "repo", Session: "lead", Harness: "claude", Kind: core.KindChore, Action: "chat", Question: "Enter the native login code", Assumption: "Agent helper requested this action in its parent conversation."})
 	if err != nil {
 		t.Fatal(err)
 	}
