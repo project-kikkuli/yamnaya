@@ -2,7 +2,7 @@ package core
 
 import "fmt"
 
-// meaningfulEvents lists, by manager id, the goal events a brief must not predate: today a verification's verdict.
+// meaningfulEvents lists, by manager id, the goal events a brief must not predate: today a verification that failed or could not finish.
 func (c *Core) meaningfulEvents() (map[string][]stamped, error) {
 	goals, err := c.Store.Goals()
 	if err != nil {
@@ -18,7 +18,7 @@ func (c *Core) meaningfulEvents() (map[string][]stamped, error) {
 	}
 	out := map[string][]stamped{}
 	for _, v := range all {
-		if v.DecidedAt.IsZero() || v.Verdict == VerdictSuperseded {
+		if v.DecidedAt.IsZero() || v.Verdict == VerdictSuperseded || v.Verdict == VerdictPass {
 			continue
 		}
 		m := managerOf[v.Goal]

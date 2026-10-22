@@ -316,7 +316,7 @@ func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTh
 	}
 }
 
-func TestAFailedVerificationMakesTheBriefStale(t *testing.T) {
+func TestAFailedVerificationMakesTheBriefStaleAndAPassDoesNot(t *testing.T) {
 	w := newVerifyWorld(t)
 	w.core.WriteBrief(w.manager.Session, brief("call it done"))
 	w.clock = w.clock.Add(time.Minute)
@@ -330,5 +330,15 @@ func TestAFailedVerificationMakesTheBriefStale(t *testing.T) {
 	}
 	if f := node(t, w.board(t), w.manager.ID).Fresh; !f.Stale() || f.BehindWhat != "verification 1: fail" {
 		t.Fatalf("a failed verification left the brief fresh: %+v", f)
+	}
+	w.core.WriteBrief(w.manager.Session, brief("headers tested, call it done again"))
+	w.clock = w.clock.Add(time.Minute)
+	w.done(t, "importer reads CSV, headers tested")
+	w.tick(t, time.Second)
+	if _, err := w.core.RecordVerdict(w.verifiers()[1], w.goal.ID, VerdictPass, []string{"headers tested"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := node(t, w.board(t), w.manager.ID).Fresh; f.Stale() {
+		t.Fatalf("a passing verification made the final brief stale: %+v", f)
 	}
 }
