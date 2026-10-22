@@ -44,7 +44,7 @@ func TestServingAnAskingSessionSpawnsNoModelAndFilesNoItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	c := &core.Core{Store: st, Ask: health.Ask, StateDir: dir, Harnesses: []core.Harness{&claude.Adapter{Dir: filepath.Join(dir, "claude"), Now: time.Now}},
+	c := &core.Core{Store: st, Ask: health.Addressed, StateDir: dir, Harnesses: []core.Harness{&claude.Adapter{Dir: filepath.Join(dir, "claude"), Now: time.Now}},
 		Procs: func() ([]proc.Proc, error) {
 			return []proc.Proc{{PID: 7, PPID: 1, TTY: "/dev/ttys007", Args: []string{"claude"}}}, nil
 		}}

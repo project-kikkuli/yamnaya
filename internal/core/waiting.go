@@ -107,10 +107,11 @@ func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
 		if s.Status != Idle || s.Prompt != nil || s.Result == "" {
 			continue
 		}
-		reply, line := s.Result, c.Ask(s.Result)
-		if line == "" && s.Asked != "" {
-			reply, line = s.Asked, c.Ask(s.Asked)
+		reply := s.Result
+		if s.Asked != "" {
+			reply = s.Asked
 		}
+		line := c.Ask(reply)
 		if line == "" || dismissed[key+"\x00"+replyKey(reply)] {
 			continue
 		}

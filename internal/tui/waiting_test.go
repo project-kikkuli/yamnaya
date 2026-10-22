@@ -25,7 +25,7 @@ func waitingBoard(t *testing.T) (Model, *core.Core, *launches) {
 	l := &launches{}
 	c := &core.Core{Store: st, Harnesses: []core.Harness{harness{sessions}}, Hosts: []core.Host{&host{}}, Launches: l,
 		Procs: func() ([]proc.Proc, error) { return procs, nil },
-		Ask:   health.Ask}
+		Ask:   health.Addressed}
 	return refresh(t, New(c)), c, l
 }
 

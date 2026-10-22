@@ -32,7 +32,7 @@ func newOwnerSession(t *testing.T) *ownerSession {
 	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
 	must(t, err)
 	t.Cleanup(func() { st.Close() })
-	o.core = &core.Core{Store: st, Ask: health.Ask, Harnesses: []core.Harness{&Adapter{Dir: dir, Now: time.Now}},
+	o.core = &core.Core{Store: st, Ask: health.Addressed, Harnesses: []core.Harness{&Adapter{Dir: dir, Now: time.Now}},
 		Procs: func() ([]proc.Proc, error) { return []proc.Proc{p(7, "claude")}, nil }}
 	return o
 }
@@ -108,5 +108,45 @@ func TestTenAskingTurnsInOneSessionShowOneRowWithTheLatestMessage(t *testing.T) 
 		if len(got) != 1 || got[0].Reply != msg {
 			t.Fatalf("after turn %d: rows %+v, want one showing %q", i, got, msg)
 		}
+	}
+}
+
+func TestALastMessageAddressedToTheOwnerRaisesARowAndAReportDoesNot(t *testing.T) {
+	for _, c := range []struct {
+		name, last, line string
+	}{
+		{"numbered open block", "Done with the parser.\n\nOpen for you:\n1. Merge #12 now?", "1. Merge #12 now?"},
+		{"numbered next block", "Drafted the service.\n\nNext:\n1. Pick a name for it\n2. Confirm the region", "1. Pick a name for it"},
+		{"next line naming an answer", "Validator recorded the box's state.\n\nNext: answer item 4 with \"keep\" or \"switch\".", "Next: answer item 4 with \"keep\" or \"switch\"."},
+		{"question in the final paragraph", "Pushed #42 to a branch.\n\nCan I merge it once CI is green?", "Can I merge it once CI is green?"},
+		{"choice as a question", "Two ways to fix it: retry the fetch, or cache the token. Which do you want?", "Two ways to fix it: retry the fetch, or cache the token. Which do you want?"},
+		{"authorization phrase", "Plan:\n1. Drop the classifier\n2. Forward idle replies\n\nSay PLEASE GO IMPLEMENT THIS to start.", "Say PLEASE GO IMPLEMENT THIS to start."},
+		{"review request", "PR #88 is green and ready for your review.\n\nIt touches only the scanner.", "PR #88 is green and ready for your review."},
+		{"approval request", "Migration drafted. It needs your approval before it runs on prod.", "Migration drafted. It needs your approval before it runs on prod."},
+		{"merge on your word", "Branch is rebased and green. I'll merge #51 once you say so.", "Branch is rebased and green. I'll merge #51 once you say so."},
+		{"decision request", "Both options cost the same. Please decide between Postgres and SQLite.", "Both options cost the same. Please decide between Postgres and SQLite."},
+		{"done report", "Done, pushed abc123.", ""},
+		{"report with its own next step", "All 214 tests pass; vet and staticcheck are clean.\n\nNext: watch CI on main.", ""},
+		{"merged and reviewed in the past tense", "Reviewed Devin's three threads and resolved them. Merged as def456.", ""},
+		{"question answered earlier", "Why did CI fail? A missing env var. Fixed it.\n\nPushed 9f1e2d3; CI is green.", ""},
+		{"empty open block", "Shipped v1.4.2.\n\nOpen for you: none.", ""},
+		{"query string in a link", "Dashboard is up: https://example.com/d?id=7", ""},
+		{"question inside code", "Added the guard:\n\n```go\nx := a ?: b\nif ok? {\n```", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			o := newOwnerSession(t)
+			o.add(t, "user", "go")
+			o.add(t, "assistant", c.last)
+			got := o.waiting(t)
+			if c.line == "" {
+				if len(got) != 0 {
+					t.Fatalf("raised %+v for a message that asks nothing", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Reply != c.last || got[0].Line != c.line {
+				t.Fatalf("rows %+v, want one showing the message with line %q", got, c.line)
+			}
+		})
 	}
 }

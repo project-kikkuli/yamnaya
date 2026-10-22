@@ -38,7 +38,7 @@ func Wire(path string) (*core.Core, error) {
 		PRs:       gh.New(),
 		Port:      port,
 		Roots:     core.RepoRoots,
-		Ask:       health.Ask,
+		Ask:       health.Addressed,
 		StateDir:  filepath.Dir(path),
 	}
 	if l, err := newLauncher(); err == nil {

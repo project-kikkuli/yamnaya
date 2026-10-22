@@ -27,7 +27,7 @@ type Core struct {
 	Launches Launches
 	// Roots are the directories new-session pickers look for repositories under; nil looks nowhere.
 	Roots func() []string
-	// Ask is the first question an agent's reply asks the owner, "" when none; nil lists no waiting sessions.
+	// Ask is the line of an agent's reply that asks the owner for something, "" when none; nil lists no waiting sessions.
 	Ask func(reply string) string
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
