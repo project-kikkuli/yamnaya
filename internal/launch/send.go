@@ -49,7 +49,7 @@ type Sender struct {
 
 // Send delivers text to session; pane is nil when the session does not run on ym's server.
 func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outcome, error) {
-	text = strings.Join(strings.Fields(text), " ")
+	text = strings.TrimSpace(text)
 	if pane == nil {
 		if s.Inbox != nil && s.Inbox(text) {
 			m, err := s.Box.AddMessage(session, text, core.MsgSent)

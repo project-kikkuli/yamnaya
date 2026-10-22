@@ -47,6 +47,7 @@ func store(t *testing.T) *core.Store {
 }
 
 func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
+	const message = "ym: agent a1 is idle. Its last message, verbatim: Parser done.\n\nOpen for you\n1. Keep the old dialect?\n2. Drop BOM handling?"
 	for _, c := range []struct {
 		name  string
 		pane  *pane
@@ -76,14 +77,14 @@ func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
 					return c.out == Sent
 				}
 			}
-			m, out, err := snd.Send("s1", p, "  also\n rebase  ")
-			if err != nil || out != c.out || m.State != c.state || m.Text != "also rebase" {
+			m, out, err := snd.Send("s1", p, "  "+message+"\n")
+			if err != nil || out != c.out || m.State != c.state || m.Text != message {
 				t.Fatalf("Send = %+v, %v, %v", m, out, err)
 			}
-			if snd.Inbox != nil && (len(handed) != 1 || handed[0] != "also rebase") {
+			if snd.Inbox != nil && (len(handed) != 1 || handed[0] != message) {
 				t.Fatalf("handed the session inbox %q", handed)
 			}
-			if c.pane != nil && len(c.pane.typed) != c.typed {
+			if c.pane != nil && (len(c.pane.typed) != c.typed || c.typed == 1 && c.pane.typed[0] != message) {
 				t.Fatalf("typed %q", c.pane.typed)
 			}
 			taken, _ := (&core.Core{Store: st}).TakeMessages("s1")
