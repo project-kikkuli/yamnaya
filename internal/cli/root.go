@@ -83,6 +83,9 @@ func NewRoot() *cobra.Command {
 			}
 			defer c.Store.Close()
 			e.core = c
+			if cmd.Name() != "serve" {
+				keepServing(cmd.ErrOrStderr())
+			}
 			return run(e, cmd, args)
 		}
 	}

@@ -96,7 +96,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 ## Background service
 
-`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
+`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update. Once a state directory has had a serve, any `ym` command run against it starts one again if none runs, so a serve that died comes back the next time an agent or you run `ym`.
 
     ym service status     heartbeat and last error
     ym service restart    restart it with this shell's environment
@@ -154,4 +154,4 @@ Commands that act for an agent find its session by walking up the process tree t
 
 `internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` draws the mountains.
 
-`tools/rehearse/rehearse.sh [--scenario S] [--ref REF] [--timeout MIN]` runs a real goal end to end against a private proving-ground repository (`$YM_REHEARSAL_REPO`) with its own state directory and tmux server, logging every change to `timeline.log`. Scenarios inject one fault: `clean`, `kill-manager`, `kill-worker`, `freeze-worker`, `break-ci`, `review-comment`.
+`tools/rehearse/rehearse.sh [--scenario S] [--ref REF] [--timeout MIN]` runs a real goal end to end against a private proving-ground repository (`$YM_REHEARSAL_REPO`) with its own state directory and tmux server, logging every change to `timeline.log`. Scenarios inject one fault: `clean`, `kill-manager`, `kill-worker`, `freeze-worker`, `break-ci`, `review-comment`, `kill-serve`. `--reset-ground` closes the proving ground's open pull requests and puts its main back at its first commit, so the asks are new work again.
