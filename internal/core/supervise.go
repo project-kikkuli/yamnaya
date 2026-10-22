@@ -87,6 +87,9 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.verify(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.noticeExits(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 

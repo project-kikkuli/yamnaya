@@ -14,10 +14,11 @@ import (
 // fakeLaunches starts fake Claude sessions in the world instead of tmux panes, or fails every start while fail is set.
 type fakeLaunches struct {
 	sends
-	w      *world
-	fail   error
-	starts []NewLaunch
-	forgot []string
+	w        *world
+	fail     error
+	starts   []NewLaunch
+	forgot   []string
+	launched []Launched
 }
 
 func (l *fakeLaunches) Forget(ref string) (string, error) {
@@ -25,6 +26,8 @@ func (l *fakeLaunches) Forget(ref string) (string, error) {
 	l.w.stop(ref)
 	return "forgot " + ref, nil
 }
+
+func (l *fakeLaunches) Launched() []Launched { return l.launched }
 
 func (l *fakeLaunches) Start(n NewLaunch) (string, error) {
 	l.starts = append(l.starts, n)
