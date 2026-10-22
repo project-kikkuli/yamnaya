@@ -281,7 +281,7 @@ func (c *Core) reroute(b Board, o Org) error {
 		}
 		was := it.Recipient
 		it.Recipient = up
-		if missing := Missing(it); up == Owner && len(missing) > 0 {
+		if missing := Missing(it); up == Owner && len(missing) > 0 && o.Active(o.Managers[was]) {
 			if err := c.Store.SetPreparer(it.Seq, was); err != nil {
 				return err
 			}

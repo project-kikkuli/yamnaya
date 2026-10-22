@@ -16,8 +16,8 @@ import (
 type DocAsk struct {
 	Key, Source, Kind, URL, Page, Title, Asker, Text, Evidence, Version string
 	// At is when the ask last moved: its thread's newest comment, or its page's edit for a review request.
-	At string
-	Refs                                                                []string
+	At   string
+	Refs []string
 	// Recipient is Owner or the manager the ask was routed to; Routed is the version that routing last placed.
 	Recipient, Routed string
 	// Told is the version last handed to Recipient when that is a manager.
@@ -122,7 +122,7 @@ func docPageWatch(db *sql.DB) error {
 // DocPageWatch is a page the owner created or discusses, with the blocks and comment signature its last deep read saw.
 type DocPageWatch struct {
 	Page, Edited, Comments string
-	Blocks         []string
+	Blocks                 []string
 }
 
 // NoteDocPage records a deep read's blocks, comment signature and whether the page involves the owner.

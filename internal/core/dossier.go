@@ -246,15 +246,6 @@ func clip(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // dossier gathers, without any model, the evidence an ask from it.Session carries: its goal and manager, the work's pull requests
 // with their CI, its agents' latest activity, and the goal's changes since the owner last looked.
 func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {

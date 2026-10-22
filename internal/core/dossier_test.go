@@ -153,8 +153,10 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 		name        string
 		it          Item
 		wantMissing []string
+		dropped     bool
 	}{
 		{name: "thin decision", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}},
+		{name: "thin decision of a dropped goal", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}, dropped: true},
 		{name: "default without rec", it: Item{Kind: KindDefault, Question: "v2 key ids by default?"}, wantMissing: []string{"a recommendation"}},
 		{name: "chore needs no rec", it: Item{Kind: KindChore, Question: "approve CHG-77"}},
 		{name: "ready decision", it: Item{Kind: KindDecision, Question: "v2 key ids?", Rec: "v2", Options: picks}},
@@ -173,6 +175,11 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 			if err := w.core.Store.SaveManager(m); err != nil {
 				t.Fatal(err)
 			}
+			if tc.dropped {
+				if _, err := w.core.DropGoal(m.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
 			w.stop(m.Session)
 			before := len(w.handedTo(m.Session))
 			w.supervise(t)
@@ -187,10 +194,11 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 			told := slices.ContainsFunc(append(w.handedTo(m.Session)[before:], texts(pending)...), func(s string) bool {
 				return strings.Contains(s, "ym item prepare '"+it.Key()+"'")
 			})
-			if told != (tc.wantMissing != nil) || (got.Preparer == m.ID) != told {
-				t.Fatalf("manager told to prepare %v, preparer %q; want told %v", told, got.Preparer, tc.wantMissing != nil)
+			wantTold := tc.wantMissing != nil && !tc.dropped
+			if told != wantTold || (got.Preparer == m.ID) != told || (len(Unprepared(got)) > 0) != told {
+				t.Fatalf("manager told to prepare %v, preparer %q, unprepared %q; want told %v", told, got.Preparer, Unprepared(got), wantTold)
 			}
-			if tc.wantMissing == nil {
+			if !wantTold {
 				return
 			}
 			if _, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Rec: "v2"}); tc.it.Kind == KindDecision && !errors.Is(err, ErrNotReady) {
