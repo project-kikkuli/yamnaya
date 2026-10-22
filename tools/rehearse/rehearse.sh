@@ -85,7 +85,14 @@ alpha|Add a -alpha flag to cmd/tally that sorts the printed words alphabetically
 bars|Add a -bars flag to cmd/tally that prints a bar of # characters scaled so the top word has 40, with table tests in tally.
 lines|Add a -lines flag to cmd/tally that counts whole lines instead of words, with table tests in tally.
 chars|Add a -chars flag to cmd/tally that counts letters instead of words, with table tests in tally.
-suffix|Add a -suffix S flag to cmd/tally that counts only words ending in S, with table tests in tally.'
+suffix|Add a -suffix S flag to cmd/tally that counts only words ending in S, with table tests in tally.
+max|Add a -max N flag to cmd/tally that hides words seen more than N times, with table tests in tally.
+rank|Add a -rank flag to cmd/tally that prefixes each line with its rank, ties sharing a rank, with table tests in tally.
+contains|Add a -contains S flag to cmd/tally that counts only words containing S, with table tests in tally.
+upper|Add a -upper flag to cmd/tally that prints the words in upper case, with a test.
+dedupe-lines|Add a -dedupe-lines flag to cmd/tally that counts each distinct input line once, with table tests in tally.
+first|Add a -first flag to cmd/tally that breaks count ties by first appearance instead of alphabetically, with table tests in tally.
+md|Add a -md flag to cmd/tally that prints a Markdown table of word and count, with a test.'
 if [ -z "$ask" ]; then
 	claims=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims
 	mkdir -p "$claims"
