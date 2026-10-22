@@ -174,26 +174,66 @@ func TestRecordsFindPrefersALiveRecordOverALandedOne(t *testing.T) {
 	}
 }
 
-func TestCreateWithoutWtUsesGitWorktree(t *testing.T) {
+func TestCreateBranchesFromFreshRemoteBaseNotTheCheckout(t *testing.T) {
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("no git")
 	}
-	base, _ := filepath.EvalSymlinks(t.TempDir())
-	run(t, base, "git", "init", "-q", "-b", "main", "repo")
-	repo := filepath.Join(base, "repo")
-	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
-	t.Setenv("YAMNAYA_WT_BIN", "")
-	t.Setenv("PATH", filepath.Dir(gitBin))
-	w, err := Create(repo, "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.Path != WorktreePath(repo, "task") || w.Branch != "task" {
-		t.Fatalf("worktree = %+v", w)
-	}
-	if got := Head(w.Path); got == "" || got != Head(repo) {
-		t.Errorf("worktree head %q, repo head %q", got, Head(repo))
+	for _, c := range []struct {
+		name, wt string
+		remote   bool
+	}{
+		{"git worktree", "", true},
+		{"wt", "#!/bin/sh\n[ \"$1\" = add ] && case \"$3\" in --from=*) ;; *) exit 1;; esac\n" +
+			"exec git worktree add -q -b \"$2\" \"../$(basename \"$PWD\")-wt-$2\" \"${3#--from=}\"\n", true},
+		{"no remote", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			run(t, base, "git", "init", "-q", "-b", "main", "repo")
+			repo := filepath.Join(base, "repo")
+			run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
+			run(t, repo, "git", "checkout", "-q", "-b", "stale")
+			run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "stale work")
+			var tip string
+			if c.remote {
+				run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
+				run(t, repo, "git", "remote", "add", "origin", filepath.Join(base, "origin.git"))
+				run(t, repo, "git", "push", "-q", "origin", "main")
+				run(t, repo, "git", "fetch", "-q", "origin")
+				run(t, base, "git", "clone", "-q", "origin.git", "other")
+				run(t, filepath.Join(base, "other"), "git", "commit", "-q", "--allow-empty", "-m", "ahead")
+				run(t, filepath.Join(base, "other"), "git", "push", "-q", "origin", "main")
+				tip = Head(filepath.Join(base, "other"))
+			}
+			bin := ""
+			if c.wt != "" {
+				bin = filepath.Join(base, "wt")
+				os.WriteFile(bin, []byte(c.wt), 0o755)
+			}
+			t.Setenv("YAMNAYA_WT_BIN", bin)
+			t.Setenv("PATH", filepath.Dir(gitBin)+":/bin:/usr/bin")
+			checkout := Head(repo)
+			w, err := Create(repo, "task")
+			if !c.remote {
+				if err == nil {
+					t.Fatalf("Create without a remote = %+v, want an error", w)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w.Path != WorktreePath(repo, "task") || w.Branch != "task" {
+				t.Fatalf("worktree = %+v", w)
+			}
+			if got := Head(w.Path); got != tip {
+				t.Errorf("worktree head %q, want remote tip %q", got, tip)
+			}
+			if got := Head(repo); got != checkout {
+				t.Errorf("main checkout moved to %q from %q", got, checkout)
+			}
+		})
 	}
 }
 

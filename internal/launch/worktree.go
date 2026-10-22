@@ -55,9 +55,26 @@ type Worktree struct {
 	GitDir string
 }
 
-// Create adds worktree slug to the repository dir belongs to with wt, on a new branch slug from the default branch.
+// Fresh fetches the remote default branch of the repository at root and returns it, such as origin/main.
+func Fresh(root string) (string, error) {
+	base := Base(root)
+	if base == "" {
+		return "", fmt.Errorf("%s has no origin default branch to start a worktree from", root)
+	}
+	if _, err := git(root, "fetch", "--quiet", "origin", strings.TrimPrefix(base, "origin/")); err != nil {
+		return "", fmt.Errorf("fetch %s to start a worktree from: %w", base, err)
+	}
+	return base, nil
+}
+
+// Create adds worktree slug to the repository dir belongs to with wt, on a new branch slug from the freshly fetched
+// remote default branch, whatever the main checkout has checked out.
 func Create(dir, slug string) (Worktree, error) {
 	root, err := MainRoot(dir)
+	if err != nil {
+		return Worktree{}, err
+	}
+	base, err := Fresh(root)
 	if err != nil {
 		return Worktree{}, err
 	}
@@ -74,12 +91,12 @@ func Create(dir, slug string) (Worktree, error) {
 		bin, _ = exec.LookPath("wt")
 	}
 	if bin == "" {
-		if _, err := git(root, "worktree", "add", "-b", slug, w.Path); err != nil {
+		if _, err := git(root, "worktree", "add", "-b", slug, w.Path, base); err != nil {
 			return Worktree{}, err
 		}
 		return w, nil
 	}
-	cmd := exec.Command(bin, "add", slug)
+	cmd := exec.Command(bin, "add", slug, "--from="+base)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return Worktree{}, fmt.Errorf("wt add %s in %s: %w: %s", slug, root, err, strings.TrimSpace(string(out)))
@@ -88,7 +105,7 @@ func Create(dir, slug string) (Worktree, error) {
 }
 
 // Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too,
-// or at the default branch when head is gone as well.
+// or at the freshly fetched default branch when head is gone as well.
 func Restore(w Worktree, head string) error {
 	if _, err := os.Stat(w.Path); err == nil {
 		return nil
@@ -101,10 +118,10 @@ func Restore(w Worktree, head string) error {
 	add := []string{gd, "worktree", "add", w.Path, w.Branch}
 	if exec.Command("git", gd, "show-ref", "--verify", "--quiet", "refs/heads/"+w.Branch).Run() != nil {
 		if head == "" || exec.Command("git", gd, "cat-file", "-e", head+"^{commit}").Run() != nil {
-			head = Base(filepath.Dir(w.GitDir))
-		}
-		if head == "" {
-			return fmt.Errorf("%s and its branch %s are gone and neither the recorded commit nor a default branch is left to recreate them", w.Path, w.Branch)
+			var err error
+			if head, err = Fresh(filepath.Dir(w.GitDir)); err != nil {
+				return fmt.Errorf("%s and its branch %s are gone with no recorded commit to recreate them from: %w", w.Path, w.Branch, err)
+			}
 		}
 		add = []string{gd, "worktree", "add", "-b", w.Branch, w.Path, head}
 	}
