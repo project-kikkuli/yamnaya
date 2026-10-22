@@ -15,7 +15,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemListCmd(with), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
+	cmd.AddCommand(itemAddCmd(with), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
@@ -227,6 +227,16 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				for _, it := range items {
 					if it.Recipient == m.ID {
 						mine = append(mine, it)
+					}
+				}
+				if e.core.Remotes != nil {
+					me := core.RemoteKey(e.core.SelfName(), m.ID)
+					for _, r := range e.core.Remotes.Boards() {
+						for _, it := range r.Items {
+							if it.State == core.ItemOpen && it.Recipient == me {
+								mine = append(mine, it)
+							}
+						}
 					}
 				}
 				return printItems(cmd.OutOrStdout(), mine, asJSON)
@@ -443,6 +453,9 @@ func printItems(w io.Writer, items []core.Item, asJSON bool) error {
 		id := it.ID
 		if len(scopes) > 1 {
 			id = it.Qualified()
+		}
+		if it.Host != "" {
+			id = it.Key()
 		}
 		line := fmt.Sprintf("%-5s %-8s %-9s %s", id, it.Kind, it.State, it.Question)
 		if it.Rec != "" {

@@ -107,6 +107,10 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 `ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
 
+Goals run on the host where they start, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there; `ym remote install` also keeps it running across reboots with a systemd user timer (`ym service keep`), so a remote goal moves with no board open anywhere. The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, and `ym goal send`, `relaunch`, `drop` and `ack` take remote ids.
+
+Hosts talk through relays. Each host keeps every ask, message and command bound for another host until a host carrying it confirms, and this host's `ym serve` trades relays with each remembered host every cycle in one ssh round trip, passing on what is bound for a third. A host that cannot be reached keeps working on its own and keeps its relays; the board shows it unreachable with its last known sessions and goals, and what it held takes effect once when it is back. `ym relay` lists what this host still has to carry.
+
 ## Background service
 
 `ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update. Once a state directory has had a serve, any `ym` command run against it starts one again if none runs, so a serve that died comes back the next time an agent or you run `ym`; `YAMNAYA_NO_SERVE=1` keeps one command from starting it. A Claude session ym launched that sits at the folder trust dialog in its first ten minutes (another Claude session's save of its config can drop the trust ym records before the launch) is trusted again and restarted.
@@ -134,6 +138,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
 | | `ym goal steer [--file F\|-] <id>` / `context [--all] <id>` | change what a goal or chief is about / print its plan revisions |
 | | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
+| | `ym goal ack <goal>` | clear a done or stuck goal from your queue |
 | | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
 | | `ym chief [--over ID,ID] [--remit T] "<name>"` | start a chief; `attach <child> <chief>`, `detach <child>` |
 | Manager | `ym goal update "<line>"` | post where the goal stands |
@@ -159,6 +164,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |
 | Drift | `ym health drift [--since D] [file...]` | replay this machine's transcripts and list each time an agent was busy going nowhere |
 | Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
+| | `ym relay` / `ym service keep` | what this host still has to carry to others / keep `ym serve` running here |
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
 | | `ym service status\|restart` / `ym docs [connect <email>]` | background service / Notion |
 
