@@ -12,7 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const ymPackage = "github.com/project-kikkuli/yamnaya/cmd/ym"
+const (
+	ymModule  = "github.com/project-kikkuli/yamnaya"
+	ymPackage = ymModule + "/cmd/ym"
+)
 
 // goRunner runs the go tool with args, writing its output to out.
 type goRunner func(out io.Writer, args ...string) error
@@ -24,7 +27,16 @@ func runGo(out io.Writer, args ...string) error {
 	}
 	c := exec.Command(gobin, args...)
 	c.Stdout, c.Stderr = out, out
+	c.Env = append(os.Environ(), past("GONOPROXY"), past("GONOSUMDB"))
 	return c.Run()
+}
+
+// past adds ym's module to a go list of modules fetched from their repository, since the proxy serves a stale latest for a while after a push.
+func past(key string) string {
+	if v := os.Getenv(key); v != "" {
+		return key + "=" + ymModule + "," + v
+	}
+	return key + "=" + ymModule
 }
 
 func updateCmd(run goRunner) *cobra.Command {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -70,5 +72,30 @@ func TestUpdateStopsWhenInstallFails(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("go ran %d times after install failed, want 1", calls)
+	}
+}
+
+func TestUpdateFetchesYmFromItsRepositoryNotTheProxysCache(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho \"$GONOPROXY|$GONOSUMDB\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	for _, tc := range []struct{ name, before, want string }{
+		{"nothing set", "", "github.com/project-kikkuli/yamnaya|github.com/project-kikkuli/yamnaya"},
+		{"owner's own list", "corp.example/*", "github.com/project-kikkuli/yamnaya,corp.example/*|github.com/project-kikkuli/yamnaya,corp.example/*"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GONOPROXY", tc.before)
+			t.Setenv("GONOSUMDB", tc.before)
+			var out bytes.Buffer
+			if err := runGo(&out, "install", ymPackage+"@latest"); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(out.String()); got != tc.want {
+				t.Fatalf("go ran with GONOPROXY|GONOSUMDB %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
