@@ -40,6 +40,8 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   state title reviewDecision headRefName headRefOid isDraft mergeable mergeStateStatus
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
+  author { login }
+  latestReviews(first: 50) { nodes { state body author { login } commit { oid } } }
   last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
   baseRef { target { ... on Commit { statusCheckRollup { state } } } }
@@ -71,6 +73,21 @@ type prJSON struct {
 	Commits        struct {
 		TotalCount int `json:"totalCount"`
 	} `json:"commits"`
+	Author struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	LatestReviews struct {
+		Nodes []struct {
+			State  string `json:"state"`
+			Body   string `json:"body"`
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			Commit struct {
+				OID string `json:"oid"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"latestReviews"`
 	ReviewThreads struct {
 		TotalCount int `json:"totalCount"`
 		Nodes      []struct {
@@ -129,6 +146,12 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 	}
 	// Threads past the first page are counted unresolved until they can be read.
 	st.Unresolved += st.Threads - len(pr.ReviewThreads.Nodes)
+	// A reviewer's standing change request, or their top-level comment on the current head, is open feedback like a thread.
+	for _, r := range pr.LatestReviews.Nodes {
+		if r.State == "CHANGES_REQUESTED" || (r.State == "COMMENTED" && strings.TrimSpace(r.Body) != "" && r.Commit.OID == pr.HeadRefOID && !strings.EqualFold(r.Author.Login, pr.Author.Login)) {
+			st.Unresolved++
+		}
+	}
 	for _, n := range pr.Last.Nodes {
 		if n.Commit.Rollup == nil {
 			continue
