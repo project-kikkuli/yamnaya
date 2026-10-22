@@ -237,6 +237,39 @@ func TestCreateBranchesFromFreshRemoteBaseNotTheCheckout(t *testing.T) {
 	}
 }
 
+func TestCreateSkipsBranchNamesOriginHas(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		pushed []string
+		want   string
+	}{
+		{"free on origin", nil, "task"},
+		{"another clone pushed it and its successor", []string{"task", "task-2"}, "task-3"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
+			run(t, base, "git", "clone", "-q", "origin.git", "other")
+			other := filepath.Join(base, "other")
+			run(t, other, "git", "commit", "-q", "--allow-empty", "-m", "root")
+			run(t, other, "git", "push", "-q", "origin", "main")
+			for _, b := range c.pushed {
+				run(t, other, "git", "push", "-q", "origin", "main:"+b)
+			}
+			run(t, base, "git", "clone", "-q", "origin.git", "repo")
+			t.Setenv("YAMNAYA_WT_BIN", "")
+			t.Setenv("PATH", "/bin:/usr/bin:"+os.Getenv("PATH"))
+			w, err := Create(filepath.Join(base, "repo"), "task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w.Branch != c.want {
+				t.Errorf("branch %q, want %q", w.Branch, c.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeSlug(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
 		{"Mafchine Identity", "mafchine-identity"},

@@ -78,12 +78,16 @@ func Create(dir, slug string) (Worktree, error) {
 	if err != nil {
 		return Worktree{}, err
 	}
+	remote, err := remoteHeads(root)
+	if err != nil {
+		return Worktree{}, err
+	}
 	slug = Free(root, slug, func(p string) bool {
 		_, err := os.Stat(p)
 		return err == nil
 	}, func(b string) bool {
 		_, err := git(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+b)
-		return err == nil
+		return err == nil || remote[b]
 	})
 	w := Worktree{Path: WorktreePath(root, slug), Branch: slug, GitDir: filepath.Join(root, ".git")}
 	bin := os.Getenv("YAMNAYA_WT_BIN")
@@ -102,6 +106,21 @@ func Create(dir, slug string) (Worktree, error) {
 		return Worktree{}, fmt.Errorf("wt add %s in %s: %w: %s", slug, root, err, strings.TrimSpace(string(out)))
 	}
 	return w, nil
+}
+
+// remoteHeads are the branches origin has now, so a new branch never reuses the name of another clone's or a merged pull request's.
+func remoteHeads(root string) (map[string]bool, error) {
+	out, err := git(root, "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, err
+	}
+	heads := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if _, ref, ok := strings.Cut(line, "\t"); ok {
+			heads[strings.TrimPrefix(ref, "refs/heads/")] = true
+		}
+	}
+	return heads, nil
 }
 
 // Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too,
