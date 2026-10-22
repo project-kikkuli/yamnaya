@@ -162,7 +162,7 @@ snapshot() {
 	has_table ym_goal_events && q "SELECT 'event ' || seq || ' goal=' || goal || ' ' || kind || ' delivered=' || (delivered_to_manager IS NOT NULL) || ' ' || replace(substr(payload,1,160),char(10),' ') FROM ym_goal_events"
 	has_table ym_goal_timers && q "SELECT 'timer ' || seq || ' ' || manager || ' due=' || due || ' fired=' || (fired IS NOT NULL) || ' ' || replace(substr(why,1,120),char(10),' ') FROM ym_goal_timers"
 	has_table ym_goal_verifications && q "SELECT 'verify ' || num || ' attempt=' || attempt || ' verdict=' || verdict || ' verifier=' || substr(verifier_session,1,8) || ' failures=' || failures || ' facts=' || replace(substr(fact_checks,1,100),char(10),' ') || ' findings=' || replace(substr(findings,1,140),char(10),' ') FROM ym_goal_verifications"
-	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" '.[] | select((.cwd // "") | startswith($run)) | "session \(.id[0:8]) \(.status) pid=\(.pid) crew=\(.crew) \((.title // "")[0:60])"' 2>/dev/null || true
+	YAMNAYA_NO_SERVE=1 "$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" '.[] | select((.cwd // "") | startswith($run)) | "session \(.id[0:8]) \(.status) pid=\(.pid) crew=\(.crew) \((.title // "")[0:60])"' 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" list-panes -a -F 'pane #{session_name} dead=#{pane_dead} status=#{pane_dead_status} pid=#{pane_pid}' 2>/dev/null || true
 	if [ $((ticks % 4)) -eq 0 ] || [ ! -f "$run/snap/prs" ]; then
 		prs --state all --json number,state,headRefName,reviewDecision,statusCheckRollup,comments,reviews \
@@ -187,12 +187,12 @@ tick() {
 manager_pid() {
 	local s
 	s=$(q "SELECT session FROM ym_managers WHERE role='manager' ORDER BY num DESC LIMIT 1")
-	"$ym" sessions --json --local 2>/dev/null | jq -r --arg s "$s" '.[] | select(.id == $s) | .pid' | head -1
+	YAMNAYA_NO_SERVE=1 "$ym" sessions --json --local 2>/dev/null | jq -r --arg s "$s" '.[] | select(.id == $s) | .pid' | head -1
 }
 worker_pid() {
 	local m
 	m=$(q "SELECT group_concat(session, ',') FROM ym_managers")
-	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" --arg m "$m" --arg st "${1:-busy}" \
+	YAMNAYA_NO_SERVE=1 "$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" --arg m "$m" --arg st "${1:-busy}" \
 		'.[] | select((.cwd // "") | startswith($run)) | select((.cwd // "") | test("-wt-verify-") | not) | select(.id as $id | ($m | split(",") | index($id)) | not) | select(.status == $st) | .pid' | head -1
 }
 first_pr() { prs --state open --json number,headRefName '"\(.number) \(.headRefName)"' | head -1; }
@@ -253,8 +253,8 @@ outcome=timeout
 while [ "$(date +%s)" -lt "$deadline" ]; do
 	tick
 	if [ "$scenario" != clean ]; then chaos; fi
-	if [ "$scenario" != kill-serve ] && ! kill -0 "$serve_pid" 2>/dev/null; then
-		note "ym serve pid $serve_pid exited; see $run/serve.log"
+	if [ "$scenario" != kill-serve ] && ! kill -0 "$(jq -r .pid "$run/state/work-service.json" 2>/dev/null || echo 0)" 2>/dev/null; then
+		note "ym serve is not running; see $run/serve.log"
 		start_serve
 	fi
 	state=$(q "SELECT state FROM ym_goals ORDER BY num DESC LIMIT 1")
