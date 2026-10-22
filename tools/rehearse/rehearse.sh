@@ -48,7 +48,7 @@ if [ "$reset" = 1 ]; then
 	tmp=$(mktemp -d)
 	git clone -q "git@github.com:$ground.git" "$tmp/g"
 	git -C "$tmp/g" push -q --force origin "$(git -C "$tmp/g" rev-list --max-parents=0 HEAD):main"
-	rm -rf "$tmp"
+	rm -rf "$tmp" "${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims"
 	echo "reset $ground: open pull requests closed, main at its first commit"
 	exit 0
 fi
@@ -61,17 +61,42 @@ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 note() { printf '%s %s\n' "$(date +%H:%M:%S)" "$*" | tee -a "$log"; }
 
+case "$scenario" in
+clean | kill-manager | kill-worker | freeze-worker | break-ci | kill-serve | review-comment) ;;
+*) echo "unknown scenario $scenario" >&2; exit 2 ;;
+esac
+
+# features are flags the proving ground's cmd/tally may gain, one per line as "flag|ask"; a run takes the first one main
+# lacks that no other run has claimed, so every rehearsal is new work.
+features='min|Add a -min N flag to cmd/tally that hides words seen fewer than N times (default 1), with table tests in tally for the filtering.
+json|Add a -json flag to cmd/tally that prints the counts as a JSON array of {"word", "n"} objects, with a test.
+pairs|Add a Bigrams(text string, n int) []Count function to package tally that counts adjacent word pairs joined by a space, with table tests, and a -pairs flag in cmd/tally that uses it.
+stop|Add a -stop FILE flag to cmd/tally that ignores the words listed one per line in FILE, with tests in tally for a TopExcept(text, n, stop) function.
+len|Add a -len N flag to cmd/tally that ignores words shorter than N letters, with table tests in tally.
+reverse|Add a -reverse flag to cmd/tally that prints the least frequent words first, with table tests in tally.
+prefix|Add a -prefix P flag to cmd/tally that counts only words starting with P, with table tests in tally.
+digits|Add a -digits=false flag to cmd/tally that drops words made only of digits, with table tests in tally.
+total|Add a -total flag to cmd/tally that prints one last line with the number of words read, with a test in tally for the count.
+unique|Add a -unique flag to cmd/tally that prints only how many distinct words the input has, with table tests in tally.
+sep|Add a -sep S flag to cmd/tally that puts S between the count and the word instead of a tab, with a test.
+percent|Add a -percent flag to cmd/tally that prints each count as a percentage of all words with one decimal, with table tests in tally.
+csv|Add a -csv flag to cmd/tally that prints word,count lines with a header row, with a test.
+alpha|Add a -alpha flag to cmd/tally that sorts the printed words alphabetically instead of by count, with table tests in tally.
+bars|Add a -bars flag to cmd/tally that prints a bar of # characters scaled so the top word has 40, with table tests in tally.
+lines|Add a -lines flag to cmd/tally that counts whole lines instead of words, with table tests in tally.
+chars|Add a -chars flag to cmd/tally that counts letters instead of words, with table tests in tally.
+suffix|Add a -suffix S flag to cmd/tally that counts only words ending in S, with table tests in tally.'
 if [ -z "$ask" ]; then
-	case "$scenario" in
-	clean) ask="Add a -min N flag to cmd/tally that hides words seen fewer than N times (default 1), with table tests in tally for the filtering. Open a pull request, get CI green, and merge it." ;;
-	kill-manager) ask="Add a -json flag to cmd/tally that prints the counts as a JSON array of {word, n} objects, with a test. Open a pull request, get CI green, and merge it." ;;
-	kill-worker) ask="Add a Bigrams(text string, n int) []Count function to package tally that counts adjacent word pairs joined by a space, with table tests, and a -pairs flag in cmd/tally that uses it. Open a pull request, get CI green, and merge it." ;;
-	freeze-worker) ask="Add a -stop FILE flag to cmd/tally that ignores the words listed one per line in FILE, with tests in tally for a TopExcept(text, n, stop) function. Open a pull request, get CI green, and merge it." ;;
-	break-ci) ask="Add a -len N flag to cmd/tally that ignores words shorter than N letters, with table tests in tally. Open a pull request, get CI green, and merge it." ;;
-	kill-serve) ask="Add a -top-only flag to cmd/tally that prints only the words, one per line, without counts, with a test in tally for a Words-only helper. Open a pull request, get CI green, and merge it." ;;
-	review-comment) ask="Add a -reverse flag to cmd/tally that prints the least frequent words first, with table tests in tally. Open a pull request, get CI green, and merge it." ;;
-	*) echo "unknown scenario $scenario" >&2; exit 2 ;;
-	esac
+	claims=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims
+	mkdir -p "$claims"
+	main_go=$(gh api "repos/$ground/contents/cmd/tally/main.go" --jq .content | base64 -d)
+	while IFS='|' read -r flag text; do
+		if ! grep -q "\"$flag\"" <<<"$main_go" && mkdir "$claims/$flag" 2>/dev/null; then
+			ask="$text Open a pull request, get CI green, and merge it."
+			break
+		fi
+	done <<<"$features"
+	[ -n "$ask" ] || { echo "every feature is on main or claimed; run --reset-ground and clear $claims" >&2; exit 2; }
 fi
 
 git -C "$src" fetch -q origin
