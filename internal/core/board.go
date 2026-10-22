@@ -48,8 +48,6 @@ type Core struct {
 	Woke time.Time
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
-	// Scope, when set, limits the board to sessions working under that directory, such as a rehearsal's own run.
-	Scope string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
 	Remotes     Remotes
 	ShowRemotes bool
@@ -305,13 +303,8 @@ func (c *Core) Board() (Board, error) {
 	}
 	wg.Wait()
 	var found []Session
-	scope := filepath.Clean(c.Scope)
 	for _, d := range discovered {
-		for _, s := range d {
-			if c.Scope == "" || s.Cwd == scope || strings.HasPrefix(s.Cwd, scope+"/") {
-				found = append(found, s)
-			}
-		}
+		found = append(found, d...)
 	}
 	c.place(found, b.At)
 	c.placeDrift(found, b.At)

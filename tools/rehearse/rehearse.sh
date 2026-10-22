@@ -107,8 +107,6 @@ git clone -q "git@github.com:$ground.git" "$run/proving-ground"
 
 export YAMNAYA_STATE_DIR=$run/state
 export YAMNAYA_YM_SOCKET=ymr-$stamp
-# The run's ym tracks only its own sessions and their pull requests, not every session on this host.
-export YAMNAYA_SCOPE=$run
 export PATH=$run/bin:$PATH
 unset TMUX TMUX_PANE CLAUDECODE CLAUDE_CODE_ENTRYPOINT YAMNAYA_TMUX_SOCKET
 db=$run/state/ym.db
