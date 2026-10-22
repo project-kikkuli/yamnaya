@@ -168,12 +168,31 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 	if err != nil {
 		return st, err
 	}
+	if g, ok := o.Goals[m.GoalID]; ok && g.State == GoalVerifying {
+		if err := c.reopen(g); err != nil {
+			return st, err
+		}
+	}
 	if m.Session != "" {
 		if err := c.tell(b, m.Session, steerText(o, m, st), author == Owner); err != nil {
 			return st, err
 		}
 	}
 	return st, nil
+}
+
+// reopen withdraws a verifying goal's claim to be done, made against a plan that has since changed.
+func (c *Core) reopen(g Goal) error {
+	if v, err := c.Store.OpenVerification(g.ID); err == nil {
+		v.Verdict, v.DecidedAt = VerdictSuperseded, c.now()
+		if err := c.Store.SaveVerification(v); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	g.State, g.LastMovedAt = GoalActive, c.now()
+	return c.Store.SaveGoal(g)
 }
 
 // raisedTo is who hears that st went unadopted: the chief that steered, or the first working one above it, else the owner.
@@ -202,8 +221,12 @@ func subject(o Org, m Manager) string {
 }
 
 func steerText(o Org, m Manager, st Steer) string {
-	return fmt.Sprintf("ym: %s steered %s. Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
-		st.By(), subject(o, m), st.Revision, st.Text, m.ID, st.Revision)
+	reopened := ""
+	if g, ok := o.Goals[m.GoalID]; ok && g.State == GoalVerifying {
+		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."
+	}
+	return fmt.Sprintf("ym: %s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
+		st.By(), subject(o, m), reopened, st.Revision, st.Text, m.ID, st.Revision)
 }
 
 // Adopt records that the calling manager or chief took revision of its own plan on; only its newest revision can be adopted.

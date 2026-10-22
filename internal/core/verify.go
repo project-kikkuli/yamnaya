@@ -382,6 +382,10 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "You are the verifier of goal %s in yamnaya (ym), attempt %d. You did not do this work and you are not its manager. Decide independently whether the goal is really done as the owner asked. Do not trust the claims below: check them against the repository, GitHub and the code's actual behaviour.\n\n", g.ID, v.Attempt)
 	fmt.Fprintf(&sb, "The owner's ask, in their own words:\n%s\n\n", g.Ask)
+	if steers, err := c.Store.Steers(g.ManagerID); err == nil && len(steers) > 0 {
+		st := steers[len(steers)-1]
+		fmt.Fprintf(&sb, "The plan was steered since: revision %d by %s replaces the ask where they differ. Judge the work against it:\n%s\n\n", st.Revision, st.By(), st.Text)
+	}
 	fmt.Fprintf(&sb, "The manager's summary:\n%s\n\n", v.Summary)
 	sb.WriteString("Evidence the manager claims:\n")
 	if len(v.Evidence) == 0 {

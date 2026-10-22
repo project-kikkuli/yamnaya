@@ -28,6 +28,8 @@ var Commands = map[string]string{
 	"ym goal list":      "enter",
 	"ym goal show":      "B",
 	"ym goal send":      "s",
+	"ym goal steer":     "S",
+	"ym goal context":   "enter",
 	"ym goal relaunch":  "R",
 	"ym goal drop":      "K",
 	"ym goal feed":      "enter",

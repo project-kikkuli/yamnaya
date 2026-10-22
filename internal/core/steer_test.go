@@ -296,3 +296,22 @@ func TestAStaleBriefNudgesItsManagerOncePerEventAndNotMidTurn(t *testing.T) {
 		t.Fatalf("a refreshed brief still drew nudges: %d", n)
 	}
 }
+
+func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTheNewPlan(t *testing.T) {
+	w := newVerifyWorld(t)
+	w.done(t, "importer handles CSV")
+	w.steer(t, w.goal.ID, "make the importer handle CSV and TSV", Owner)
+	g, v := w.state(t)
+	if g.State != GoalActive || v.Verdict != VerdictSuperseded {
+		t.Fatalf("after a steer the goal is %s with verification %q, want active and superseded", g.State, v.Verdict)
+	}
+	if told := strings.Join(w.messages(w.manager.Session), "\n"); !strings.Contains(told, "verification is called off") {
+		t.Fatalf("manager was not told its done claim was withdrawn: %q", told)
+	}
+	w.done(t, "importer handles CSV and TSV")
+	w.tick(t, time.Minute)
+	starts := w.launches.starts
+	if p := starts[len(starts)-1].Prompt; !strings.Contains(p, "make the importer handle CSV and TSV") || !strings.Contains(p, "revision 1") {
+		t.Fatalf("verifier prompt does not judge against the steered plan:\n%s", p)
+	}
+}
