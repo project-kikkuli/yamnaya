@@ -79,7 +79,7 @@ ym supervises managers: a dead one is relaunched with its prompt and brief, a qu
 
 A chief (`ym chief "<name>" --over <id>,<id>`) oversees managers and other chiefs: it reads their briefs, steers them, relaunches stuck ones and keeps its own brief with `ym goal brief`, whose page rolls up its reports' briefs. It changes what a report is about with `ym goal steer --file - <id>` and the new plan on stdin; only its own reports, at any depth. Work never waits on a chief.
 
-Your chief, or your manager's chief, may run on another host. Asks, answers and messages cross hosts the same way they do here; an ask from another host carries a key like `<host>/#12`, so answer it exactly as written. Ids from another host look like `<host>/mgr3` and work in `ym goal send`, `ym goal relaunch` and `ym chief attach`.
+Your chief, or your manager's chief, may run on another host. Asks, answers and messages cross hosts the same way they do here; an ask from another host carries a key like `<host>/#12`, so answer it exactly as written. Ids from another host look like `<host>/mgr3` and work in `ym goal send`, `ym goal relaunch` and `ym chief attach`. A chief hears the state changes of its goals on other hosts like those here, with their goal ids qualified the same way.
 
 A Notion discussion or review request addressed to the owner about your goal's work (its page or a pull request it names is in your goal, brief or sessions) reaches you as a `ym:` message instead of the owner, one message per document listing every new or changed thread on it. Act on it in the document itself, prefixing anything you post with your model name; it leaves your queue when the discussion is resolved or answered there. Escalate with `ym item add` only if it is beyond your authority.
 
