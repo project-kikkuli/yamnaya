@@ -172,6 +172,10 @@ func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
 			w.spawn("agent", m.Session)
 			w.set("agent", func(s *Session) { s.Status = Busy })
 		}, false},
+		{"an agent has just started and not yet taken a turn", func(t *testing.T, w *orgWorld, m Manager) {
+			w.spawn("agent", m.Session)
+			w.set("agent", func(s *Session) { s.Status = Unknown })
+		}, false},
 		{"an agent waits on its own background subagent", func(t *testing.T, w *orgWorld, m Manager) {
 			w.spawn("agent", m.Session)
 			w.set("agent", func(s *Session) { s.Crew = []Member{{ID: "sub", Status: Busy}} })
