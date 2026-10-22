@@ -83,16 +83,19 @@ func NewRoot() *cobra.Command {
 			return run(e, cmd, args)
 		}
 	}
-	withHosts := func(run runFunc) func(*cobra.Command, []string) error {
-		return with(func(e *env, cmd *cobra.Command, args []string) error {
-			if err := e.readRemotes(remoteWait); err != nil {
-				return err
-			}
-			return run(e, cmd, args)
-		})
+	remotes := func(show bool) func(runFunc) func(*cobra.Command, []string) error {
+		return func(run runFunc) func(*cobra.Command, []string) error {
+			return with(func(e *env, cmd *cobra.Command, args []string) error {
+				if err := e.readRemotes(remoteWait, show); err != nil {
+					return err
+				}
+				return run(e, cmd, args)
+			})
+		}
 	}
+	withHosts, routed := remotes(true), remotes(false)
 	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
-		if err := e.readRemotes(0); err != nil {
+		if err := e.readRemotes(0, true); err != nil {
 			return err
 		}
 		adoptChildren()
@@ -115,24 +118,24 @@ func NewRoot() *cobra.Command {
 		serviceCmd(),
 		goalCmd(with),
 		chiefCmd(with),
-		itemCmd(with, withHosts),
+		itemCmd(with, routed),
 		phaseCmd(with),
 		vibeCmd(with),
 		projectCmd(with),
 		linkCmd(with),
 		sessionsCmd(withHosts),
 		boardCmd(with),
-		openCmd(withHosts),
-		switchCmd(withHosts),
+		openCmd(routed),
+		switchCmd(routed),
 		newCmd(with),
-		reviveCmd(withHosts),
-		landCmd(withHosts),
+		reviveCmd(routed),
+		landCmd(routed),
 		gcCmd(with),
-		killCmd(withHosts),
+		killCmd(routed),
 		launchedCmd(with),
 		linkLaunchCmd(with),
 		adoptCmd(with),
-		sendCmd(withHosts),
+		sendCmd(routed),
 		waitingCmd(withHosts),
 		sendHoldCmd(with),
 		resumeWatchCmd(),
@@ -146,7 +149,7 @@ func NewRoot() *cobra.Command {
 	return root
 }
 
-// remoteWait is how long a one-shot command waits for the hosts ym remote reached; the board never waits.
+// remoteWait is how long a one-shot command waits for a host ym remote reached; the board never waits.
 const remoteWait = 8 * time.Second
 
 // caller is the session ym was run from: --session, else the nearest claude or codex ancestor process.

@@ -736,7 +736,7 @@ func (l launcher) remote(err error, ref string, verb ...string) (string, error) 
 	if l.core == nil {
 		return "", err
 	}
-	host, rest, ok := l.core.RemoteRef(ref)
+	host, rest, ok := l.core.RemoteSession(ref)
 	if !ok {
 		return "", err
 	}

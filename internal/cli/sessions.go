@@ -133,7 +133,11 @@ func switchSession(k *core.Core, ref, to string, relaunch bool, out io.Writer) e
 	}
 	s, ok := sessionByPrefix(b, ref)
 	if !ok {
-		return fmt.Errorf("no live session %q", ref)
+		r, err := k.Find(ref)
+		if err != nil || r.Remote == "" {
+			return fmt.Errorf("no live session %q", ref)
+		}
+		s = r
 	}
 	var msg string
 	if relaunch {

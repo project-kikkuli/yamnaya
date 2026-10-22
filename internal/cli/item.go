@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -390,12 +391,15 @@ func writeJSON(w io.Writer, v any) error {
 
 // item resolves an item ID within the scope of -p, else of the calling session; from outside any session, within no scope.
 func (e *env) item(b core.Board, ref string) (core.Item, error) {
-	for _, r := range b.Remotes {
-		for _, it := range r.Items {
-			if ref == it.Key() || ref == core.RemoteKey(r.Host, it.ID) || ref == core.RemoteKey(r.Host, it.Qualified()) {
-				return it, nil
+	if host, rest, ok := e.core.RemoteRef(ref); ok {
+		for _, r := range e.core.Remotes.Boards() {
+			for _, it := range r.Items {
+				if r.Host == host && (rest == "#"+strconv.FormatInt(it.Seq, 10) || rest == it.ID || rest == it.Qualified()) {
+					return it, nil
+				}
 			}
 		}
+		return core.Item{}, fmt.Errorf("item %s: not found on %s", rest, host)
 	}
 	return e.core.Store.Find(e.itemScope(b), ref)
 }

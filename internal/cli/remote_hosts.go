@@ -35,6 +35,8 @@ func newRemoteHosts(names []string, wait time.Duration, seen func(string, time.T
 		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}}
 }
 
+func (r *remoteHosts) Hosts() []string { return r.names }
+
 func (r *remoteHosts) Boards() []core.RemoteBoard {
 	r.mu.Lock()
 	var first []chan struct{}
@@ -69,6 +71,9 @@ wait:
 		b, ok := r.last[h]
 		if !ok {
 			b = core.RemoteBoard{Host: h}
+			if r.wait > 0 {
+				b.Err = fmt.Errorf("no answer in %s", r.wait)
+			}
 		}
 		out = append(out, b)
 	}
@@ -145,8 +150,9 @@ func sshErr(err error, stderr []byte) error {
 	return err
 }
 
-// readRemotes makes the board read every host ym remote reached, waiting up to wait for a host's first answer.
-func (e *env) readRemotes(wait time.Duration) error {
+// readRemotes routes commands to every host ym remote reached, waiting up to wait for a host's first answer; show also puts their
+// boards on this one.
+func (e *env) readRemotes(wait time.Duration, show bool) error {
 	hosts, err := e.core.Store.KnownHosts()
 	if err != nil || len(hosts) == 0 {
 		return err
@@ -157,5 +163,6 @@ func (e *env) readRemotes(wait time.Duration) error {
 	}
 	st := e.core.Store
 	e.core.Remotes = newRemoteHosts(names, wait, func(h string, at time.Time) { st.SeeHost(h, at) })
+	e.core.ShowRemotes = show
 	return nil
 }

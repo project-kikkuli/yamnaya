@@ -22,7 +22,13 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 	if !yes && !tty {
 		return errors.New("ym kill asks y/n on a terminal; pass --yes to kill without asking")
 	}
-	s, err := c.Find(ref)
+	var s core.Live
+	var err error
+	if host, rest, ok := c.RemoteRef(ref); ok {
+		s = core.Live{Session: core.Session{ID: rest}, Remote: host}
+	} else {
+		s, err = c.Find(ref)
+	}
 	if errors.Is(err, core.ErrNotFound) && c.Launches != nil {
 		var matches []core.Launched
 		for _, l := range c.Launches.Launched() {

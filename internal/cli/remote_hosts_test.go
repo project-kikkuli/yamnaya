@@ -82,3 +82,11 @@ func TestRemoteHostsNeverHoldTheBoardWhenItWaitsForNoOne(t *testing.T) {
 	}
 	t.Errorf("later reads = %+v", r.Boards())
 }
+
+func TestOneShotReadsCallAHostStillSilentAtTheirDeadlineUnreachable(t *testing.T) {
+	r := newRemoteHosts([]string{"slow"}, time.Second, nil)
+	r.ssh, r.timeout = fakeSSH(t), 5*time.Second
+	if got := r.Boards()[0].State(); got != "unreachable: no answer in 1s" {
+		t.Errorf("state = %q", got)
+	}
+}

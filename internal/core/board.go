@@ -40,8 +40,9 @@ type Core struct {
 	KeepAlive      func() error
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
-	// Remotes are the other hosts whose boards this one shows; nil shows only this host.
-	Remotes Remotes
+	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
+	Remotes     Remotes
+	ShowRemotes bool
 
 	gc gitCache
 }
@@ -335,7 +336,9 @@ func (c *Core) Board() (Board, error) {
 	if c.Launches != nil {
 		b.Launched = c.Launches.Launched()
 	}
-	b.addRemotes(c.remoteBoards(), parents, &items, &dormant)
+	if c.ShowRemotes {
+		b.addRemotes(c.remoteBoards(), parents, &items, &dormant)
+	}
 	for _, d := range dormant {
 		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
 			parents[d.ID()] = d.Parent

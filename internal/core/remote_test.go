@@ -12,9 +12,17 @@ type fakeRemotes struct {
 	boards []RemoteBoard
 	ran    [][]string
 	out    string
+	reads  int
 }
 
-func (f *fakeRemotes) Boards() []RemoteBoard { return f.boards }
+func (f *fakeRemotes) Hosts() []string {
+	var out []string
+	for _, b := range f.boards {
+		out = append(out, b.Host)
+	}
+	return out
+}
+func (f *fakeRemotes) Boards() []RemoteBoard { f.reads++; return f.boards }
 func (f *fakeRemotes) Run(host string, args ...string) (string, error) {
 	f.ran = append(f.ran, append([]string{host}, args...))
 	return f.out, nil
@@ -34,7 +42,7 @@ func remoteWorld(t *testing.T) (*world, *fakeRemotes) {
 			Waiting: []RemoteWaiting{{Session: "remote-lead-0001", Line: "which branch?", Reply: "which branch?"}}},
 		{Host: "gone", Err: errors.New("ssh: Could not resolve hostname gone")},
 	}}
-	w.core.Remotes = r
+	w.core.Remotes, w.core.ShowRemotes = r, true
 	return w, r
 }
 
@@ -115,5 +123,28 @@ func TestOpeningARemoteSessionAttachesOverSSH(t *testing.T) {
 	}
 	if s, err := w.core.Find("remote-lead"); err != nil || s.Remote != "box" {
 		t.Errorf("Find = %+v, %v", s, err)
+	}
+}
+
+func TestLocalRefsNeverReadRemoteHosts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(c *Core, b Board)
+	}{
+		{"answer", func(c *Core, b Board) { c.Answer(b, "#99", "x") }},
+		{"snooze", func(c *Core, b Board) { c.Snooze("D99") }},
+		{"archive", func(c *Core, b Board) { c.StopSession("launch:local-key") }},
+		{"find", func(c *Core, b Board) { c.Find("local-lead") }},
+		{"qualified", func(c *Core, b Board) { c.RemoteRef("box/#1") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r := remoteWorld(t)
+			w.core.ShowRemotes = false
+			b := w.board(t)
+			tc.act(w.core, b)
+			if r.reads != 0 || len(r.ran) != 0 {
+				t.Errorf("read remote boards %d times and ran %v for a local ref", r.reads, r.ran)
+			}
+		})
 	}
 }

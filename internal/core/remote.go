@@ -9,6 +9,8 @@ import (
 
 // Remotes reports what other hosts' ym boards show and carries ym commands to those hosts.
 type Remotes interface {
+	// Hosts names the remembered hosts without reading any of them.
+	Hosts() []string
 	// Boards is the last board each remembered host reported, in host order; it never waits on a host longer than the remote's own wait.
 	Boards() []RemoteBoard
 	// Run runs ym args on host and returns what it printed.
@@ -66,15 +68,25 @@ func (c *Core) remoteBoards() []RemoteBoard {
 	return c.Remotes.Boards()
 }
 
-// RemoteRef finds the host ref belongs to and the ref that host knows it by: a host-qualified key, else a remote session id or its prefix.
+// RemoteRef splits a host-qualified key into its host and the ref that host knows it by, reading no host.
 func (c *Core) RemoteRef(ref string) (host, rest string, ok bool) {
-	boards := c.remoteBoards()
-	for _, r := range boards {
-		if after, found := strings.CutPrefix(strings.TrimPrefix(ref, "launch:"), r.Host+"/"); found {
-			return r.Host, after, true
+	if c.Remotes == nil {
+		return "", "", false
+	}
+	for _, h := range c.Remotes.Hosts() {
+		if after, found := strings.CutPrefix(strings.TrimPrefix(ref, "launch:"), h+"/"); found {
+			return h, after, true
 		}
 	}
-	for _, r := range boards {
+	return "", "", false
+}
+
+// RemoteSession is RemoteRef, else the host whose live session ref names by id or prefix; only that fallback reads the hosts.
+func (c *Core) RemoteSession(ref string) (host, rest string, ok bool) {
+	if host, rest, ok := c.RemoteRef(ref); ok {
+		return host, rest, true
+	}
+	for _, r := range c.remoteBoards() {
 		for _, s := range r.Sessions {
 			if s.ID != "" && (s.ID == ref || len(ref) >= 6 && strings.HasPrefix(s.ID, ref)) {
 				return r.Host, s.ID, true

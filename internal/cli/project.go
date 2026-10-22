@@ -182,6 +182,11 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			}
 			ts := e.core.Targets(b, key, harness)
 			if len(ts) == 0 {
+				if s, err := e.core.Find(args[0]); err == nil && s.Remote != "" {
+					ts = []core.Target{{Session: s.Session, Remote: s.Remote}}
+				}
+			}
+			if len(ts) == 0 {
 				return fmt.Errorf("no session %q", args[0])
 			}
 			if len(ts) > 1 && pick == 0 {
