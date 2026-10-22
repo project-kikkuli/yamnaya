@@ -4,7 +4,7 @@ import "math"
 
 // pines frame the edges of a wide screen with tall snowy conifers in the foreground.
 func (p *painter) pines() {
-	if p.w < 70 {
+	if p.w < 110 {
 		return
 	}
 	for k := range 5 {

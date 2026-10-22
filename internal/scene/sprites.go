@@ -63,7 +63,7 @@ func (p *painter) mark(x float64, row int, name string) {
 func (p *painter) team(i int) {
 	m, g := p.l.mounts[i], p.geo[i]
 	hm := p.layers[m.depth].hm
-	shown := min(m.climbers, max(1, int(g.half*.45)), 7)
+	shown := min(m.climbers, max(1, int(g.half*.3)), 7)
 	progress := m.progress
 	if m.weather == Summit {
 		progress = 1

@@ -15,6 +15,21 @@ func (p *painter) shore() {
 			}
 		}
 	}
+	p.village()
+}
+
+// village is a scatter of warm windows along the shore, the way a valley town looks under the peaks at dusk.
+func (p *painter) village() {
+	if !p.th.night {
+		return
+	}
+	for x := range p.w {
+		if fbm(0x7111, float64(x)*.04, 2) < .58 || unit(0x7112, x) > .35 {
+			continue
+		}
+		y := p.hz - 1 - int(unit(0x7113, x)*2.5)
+		p.set(x, y, mix(hex("#ffc66e"), hex("#ff9a4a"), unit(0x7114, x)))
+	}
 }
 
 // lake mirrors everything above the horizon, broken by wind-driven ripples.

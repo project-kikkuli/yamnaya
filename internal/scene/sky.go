@@ -72,7 +72,7 @@ func (p *painter) moon() {
 	if !p.th.night || p.w < 60 {
 		return
 	}
-	cx, cy, r := float64(p.w)*.86, float64(p.hz)*.15, 2.6
+	cx, cy, r := float64(p.w)*.86, float64(p.hz)*.15, 3.6
 	for y := int(cy - 12); y < int(cy+12); y++ {
 		for x := int(cx - 12); x < int(cx+12); x++ {
 			if x < 0 || x >= p.w || y < 0 || y >= p.hz {
