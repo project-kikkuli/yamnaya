@@ -113,23 +113,33 @@ func TestTheSelectedRowLightsItsPeakAndAClickOnAPeakSelectsItsRow(t *testing.T) 
 	t.Fatal("the lead's climber is not drawn")
 }
 
-func TestKeysComeBeforeTheMountainsMove(t *testing.T) {
-	m := New(&core.Core{})
-	b := workBoard()
-	b.Tree = nil
-	m.board, m.loaded = b, true
-	m.width, m.height = 174, 72
-	m.peaks.start = time.Now().Add(-time.Hour)
-	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	next, cmd := next.(Model).Update(mountainFrame{})
-	if f := next.(Model).peaks.frame; f != 0 || cmd == nil {
-		t.Fatalf("a frame right after a key advanced the mountains to %d (next tick %v)", f, cmd != nil)
-	}
-	held := next.(Model)
-	held.peaks.quiet = time.Now().Add(-time.Millisecond)
-	next, _ = held.Update(mountainFrame{})
-	if next.(Model).peaks.frame == 0 {
-		t.Fatal("the mountains stayed still after the keys stopped")
+func TestKeysAndPastesComeBeforeTheMountainsMove(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{"key", tea.KeyPressMsg{Code: tea.KeyDown}},
+		{"paste", tea.PasteMsg{Content: "ship it"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := New(&core.Core{})
+			b := workBoard()
+			b.Tree = nil
+			m.board, m.loaded = b, true
+			m.width, m.height = 174, 72
+			m.peaks.start = time.Now().Add(-time.Hour)
+			next, _ := m.Update(c.msg)
+			next, cmd := next.(Model).Update(mountainFrame{})
+			if f := next.(Model).peaks.frame; f != 0 || cmd == nil {
+				t.Fatalf("a frame right after a %s advanced the mountains to %d (next tick %v)", c.name, f, cmd != nil)
+			}
+			held := next.(Model)
+			held.peaks.quiet = time.Now().Add(-time.Millisecond)
+			next, _ = held.Update(mountainFrame{})
+			if next.(Model).peaks.frame == 0 {
+				t.Fatalf("the mountains stayed still after the %s", c.name)
+			}
+		})
 	}
 }
 

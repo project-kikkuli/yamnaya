@@ -16,7 +16,7 @@ import (
 
 // mountains is the range drawn behind the board. Each repository is a range: its goals stand as the main peaks
 // and the sessions the owner started beside them, every agent a named climber and every pull request a camp.
-// keyQuiet is how long the mountains hold still after a key, so the board answers keys first.
+// keyQuiet is how long the mountains hold still after a key or paste, so the board answers it first.
 const keyQuiet = 300 * time.Millisecond
 
 type mountains struct {

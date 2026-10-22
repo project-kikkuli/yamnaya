@@ -257,7 +257,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	}
-	if _, ok := msg.(tea.KeyPressMsg); ok {
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.PasteMsg:
 		m.peaks.quiet = time.Now().Add(keyQuiet)
 	}
 	m.page = nil
