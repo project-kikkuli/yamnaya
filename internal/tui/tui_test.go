@@ -462,6 +462,37 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	}
 }
 
+func TestOOnAMissionNothingRunsInRevivesItsLatestExitedSessionAndGoesThere(t *testing.T) {
+	m, c, _ := setup(t)
+	l := &launches{dormant: []core.Dormant{
+		{Key: "docs-old", Harness: "claude", Session: "old", Title: "Docs pass", State: "gone", Started: time.Now().Add(-time.Hour)},
+		{Key: "docs-pass", Harness: "claude", Session: "new", Title: "Docs pass again", State: "exited 0", Parent: "old", Started: time.Now()},
+	}}
+	c.Launches = l
+	m = refresh(t, m)
+	for range 10 {
+		if r, _ := m.selected(); r.project != nil && len(r.project.Sessions) == 0 && len(r.project.Dormant) == 2 && r.dormant == nil {
+			break
+		}
+		m = press(t, m, "down")
+	}
+	if r, _ := m.selected(); r.project == nil || len(r.project.Dormant) != 2 {
+		t.Fatalf("no mission holds both exited sessions:\n%s", m.View().Content)
+	}
+	next, cmd := m.Update(keyOf("o"))
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatalf("o on a mission with only exited sessions did nothing; message %q", m.message)
+	}
+	msg, ok := cmd().(revivedMsg)
+	if !ok || len(l.revived) != 1 || l.revived[0] != "docs-pass" {
+		t.Fatalf("o revived %v (%T); want the mission's latest exited session", l.revived, msg)
+	}
+	if msg.open == nil || strings.Join(msg.open.Args[1:], " ") != "open docs-pass" {
+		t.Fatalf("o goes to %v after reviving, want ym open docs-pass", msg.open)
+	}
+}
+
 func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
 	for _, c := range []struct{ key, verb string }{{"L", "land"}, {"F", "forget"}} {
 		t.Run(c.key, func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -318,6 +319,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.message
 		}
 		return m, m.refresh(false)
+	case revivedMsg:
+		m.message = msg.message
+		if msg.open == nil {
+			return m, m.refresh(false)
+		}
+		key := msg.key
+		return m, tea.Exec(attached{msg.open, m.out}, func(err error) tea.Msg { return doneMsg{"back from " + key, err} })
 	case adoptedMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
@@ -1046,13 +1054,55 @@ func (m *Model) scrollBy(n int) {
 }
 
 // revive resumes a launched session whose agent exited.
+// revive resumes an exited launched session, here or on its host, and goes to it.
 func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 	if m.core.Launches == nil {
 		m.message = "no launcher to revive " + d.Key
 		return m, nil
 	}
-	l := m.core.Launches
-	return m, m.do(func() (string, error) { return l.Revive(d.Key) })
+	l, c := m.core.Launches, m.core
+	m.message = "reviving " + d.Key + "…"
+	return m, func() tea.Msg {
+		out, err := l.Revive(d.Key)
+		if err != nil {
+			return doneMsg{"", err}
+		}
+		return revivedMsg{key: d.Key, message: out, open: openLaunch(c, d.Key)}
+	}
+}
+
+// revivedMsg is a revived session to go to.
+type revivedMsg struct {
+	key, message string
+	open         *exec.Cmd
+}
+
+// openLaunch is the command that shows the launched session key in this terminal: ym open on its host, or here.
+func openLaunch(c *core.Core, key string) *exec.Cmd {
+	if host, rest, ok := c.RemoteRef(key); ok && c.Remotes != nil {
+		return c.Remotes.Attach(host, "open", rest)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	cmd := exec.Command(self, "open", key)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd
+}
+
+// lastExited is the mission's most recently started exited session, for o on a mission nothing runs in.
+func lastExited(p *core.Project) (core.Dormant, bool) {
+	if p == nil || len(p.Dormant) == 0 {
+		return core.Dormant{}, false
+	}
+	last := p.Dormant[0]
+	for _, d := range p.Dormant[1:] {
+		if d.Started.After(last.Started) {
+			last = d
+		}
+	}
+	return last, true
 }
 
 // push enters a deeper level, remembering where esc returns to.
@@ -1323,6 +1373,12 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 		}
 	}
 	if key == "" {
+		if d, ok := lastExited(r.project); ok && r.session == nil && r.item == nil {
+			return m.revive(d)
+		}
+		if r.project != nil {
+			m.message = "nothing runs in " + r.project.Name + " and ym launched none of its sessions, so there is nothing to resume"
+		}
 		return m, nil
 	}
 	if s, ok := m.board.Session(key); ok && s.Adoptable() && len(s.Copies) <= 1 && m.core.Launches != nil {
