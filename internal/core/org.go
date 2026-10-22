@@ -227,8 +227,8 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 		m.Harness = "claude"
 	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, parent_id, goal_id, harness, repo, brief_path) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING num`,
-		m.Role, m.Name, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath).Scan(&num)
+	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, parent_id, goal_id, harness, repo, brief_path, launched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		m.Role, m.Name, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt)).Scan(&num)
 	m.ID = managerID(num)
 	return m, err
 }

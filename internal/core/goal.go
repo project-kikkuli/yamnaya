@@ -33,7 +33,7 @@ func (c *Core) NewGoal(ask, repo, harness string) (Goal, Manager, error) {
 	if err := writeBrief(g.BriefPath, "# "+oneLine(ask)+"\n\nNot started yet: the manager writes this brief.\n"); err != nil {
 		return g, Manager{}, err
 	}
-	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Repo: repo, BriefPath: g.BriefPath})
+	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
 	if err != nil {
 		return g, m, err
 	}
@@ -60,7 +60,7 @@ func (c *Core) NewChief(name, remit, repo string, children []string) (Manager, e
 		return Manager{}, errors.New("a chief needs a name")
 	}
 	repo = MainCheckout(repo)
-	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Repo: repo})
+	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}

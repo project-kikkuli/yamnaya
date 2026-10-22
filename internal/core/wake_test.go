@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func (w *orgWorld) loop(t *testing.T, n int) {
@@ -426,18 +428,33 @@ func TestASupervisorRunningWhileAManagerOrChiefLaunchesNeverStartsASecondSession
 		{"goal", func(w *orgWorld, t *testing.T) { w.goal(t, "ship the importer", "/repo/august") }},
 		{"chief", func(w *orgWorld, t *testing.T) { w.chief(t, "platform") }},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w := newOrgWorld(t)
-			w.launches.during = func() {
-				if err := w.core.Supervise(w.board(t)); err != nil {
-					t.Fatal(err)
+		for _, when := range []string{"while ym reads the board", "while the session starts"} {
+			t.Run(tc.name+" "+when, func(t *testing.T) {
+				w := newOrgWorld(t)
+				var ran bool
+				supervise := func() {
+					ran = true
+					if err := w.core.Supervise(w.board(t)); err != nil {
+						t.Fatal(err)
+					}
 				}
-			}
-			tc.start(w, t)
-			if len(w.launches.starts) != 1 {
-				t.Fatalf("%d sessions started, want 1: a supervisor running mid-launch started another", len(w.launches.starts))
-			}
-		})
+				if when == "while the session starts" {
+					w.launches.during = supervise
+				} else {
+					procs := w.core.Procs
+					w.core.Procs = func() ([]proc.Proc, error) {
+						if !ran {
+							supervise()
+						}
+						return procs()
+					}
+				}
+				tc.start(w, t)
+				if !ran || len(w.launches.starts) != 1 {
+					t.Fatalf("%d sessions started, want 1: a supervisor running %s started another", len(w.launches.starts), when)
+				}
+			})
+		}
 	}
 }
 
