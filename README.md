@@ -117,7 +117,6 @@ Hosts talk through relays. Each host keeps every ask, message and command bound 
 
 - The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
-- `YAMNAYA_SCOPE=<dir>` limits a ym to sessions working under that directory and their pull requests; rehearsals use it.
 - A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
 
     ym service status     heartbeat and last error
