@@ -110,8 +110,8 @@ func TestOpenHandoffItemsOfOwnerSessionsBecomeTheirWaitingRowsOnce(t *testing.T)
 		got, _ := st.Item(open.Key())
 		old, _ := st.Item(answered.Key())
 		asks, _ := st.asking()
-		if got.State != ItemDismissed || got.Delivered.IsZero() || old.State != ItemAnswered || old.Answer != "keep" || asks["mine"] != message {
-			t.Fatalf("open %s delivered %v, answered %s %q, waiting %q", got.State, got.Delivered, old.State, old.Answer, asks["mine"])
+		if got.State != ItemDismissed || got.Delivered.IsZero() || old.State != ItemAnswered || old.Answer != "keep" || asks["mine"].text != message {
+			t.Fatalf("open %s delivered %v, answered %s %q, waiting %q", got.State, got.Delivered, old.State, old.Answer, asks["mine"].text)
 		}
 		st.Close()
 	}

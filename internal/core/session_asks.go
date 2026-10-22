@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const askedReason = "handoff from a session you started; its waiting row shows the agent's message"
@@ -67,19 +68,25 @@ func sessionAsks(db *sql.DB) error {
 	return tx.Commit()
 }
 
-func (s *Store) asking() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT session, text FROM ym_session_asks`)
+type sessionAsk struct {
+	text string
+	at   time.Time
+}
+
+func (s *Store) asking() (map[string]sessionAsk, error) {
+	rows, err := s.db.Query(`SELECT session, text, at FROM ym_session_asks`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]sessionAsk{}
 	for rows.Next() {
-		var session, text string
-		if err := rows.Scan(&session, &text); err != nil {
+		var session, text, at string
+		if err := rows.Scan(&session, &text, &at); err != nil {
 			return nil, err
 		}
-		out[session] = text
+		t, _ := time.Parse(time.RFC3339Nano, at)
+		out[session] = sessionAsk{text, t}
 	}
 	return out, rows.Err()
 }

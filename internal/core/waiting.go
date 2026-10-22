@@ -99,9 +99,9 @@ func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
 		if covered[key] {
 			continue
 		}
-		if text, ok := asking[key]; ok && !dismissed[key+"\x00"+replyKey(text)] {
+		if a, ok := asking[key]; ok && !s.ResultAt.After(a.at) && !dismissed[key+"\x00"+replyKey(a.text)] {
 			covered[key] = true
-			out = append(out, Need{Session: s, Project: s.Project, Reply: text, Line: c.askLine(text)})
+			out = append(out, Need{Session: s, Project: s.Project, Reply: a.text, Line: c.askLine(a.text)})
 			continue
 		}
 		if s.Status != Idle || s.Prompt != nil || s.Result == "" {
