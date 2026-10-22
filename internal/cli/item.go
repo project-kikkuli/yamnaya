@@ -12,9 +12,10 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-func itemCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
 	cmd.AddCommand(itemAddCmd(with), itemListCmd(with), itemShowCmd(with), itemInboxCmd(with))
+	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
 		Short: "Answer an item; an idle agent gets it typed in, a busy one reads it from ym item inbox",
@@ -315,6 +316,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 }
 
 type itemJSON struct {
+	Seq        int64         `json:"seq"`
 	Action     string        `json:"action,omitempty"`
 	ID         string        `json:"id"`
 	Project    string        `json:"project"`
@@ -334,6 +336,8 @@ type itemJSON struct {
 	CreatedAt  string        `json:"created_at"`
 	AnsweredAt string        `json:"answered_at,omitempty"`
 	Received   bool          `json:"received"`
+	Recipient  string        `json:"recipient"`
+	Host       string        `json:"host,omitempty"`
 }
 
 func ts(t time.Time) string {
@@ -344,7 +348,7 @@ func ts(t time.Time) string {
 }
 
 func toJSON(it core.Item) itemJSON {
-	return itemJSON{Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }
@@ -386,6 +390,13 @@ func writeJSON(w io.Writer, v any) error {
 
 // item resolves an item ID within the scope of -p, else of the calling session; from outside any session, within no scope.
 func (e *env) item(b core.Board, ref string) (core.Item, error) {
+	for _, r := range b.Remotes {
+		for _, it := range r.Items {
+			if ref == it.Key() || ref == core.RemoteKey(r.Host, it.ID) || ref == core.RemoteKey(r.Host, it.Qualified()) {
+				return it, nil
+			}
+		}
+	}
 	return e.core.Store.Find(e.itemScope(b), ref)
 }
 

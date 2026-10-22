@@ -80,6 +80,9 @@ func (l launcher) Send(s core.Live, text string) (string, error) { return l.send
 
 // sendFrom is Send for text that is the owner's own words only when owner is set.
 func (l launcher) sendFrom(s core.Live, text string, owner bool) (string, error) {
+	if s.Remote != "" {
+		return l.core.RunRemote(s.Remote, "send", s.Key(), text)
+	}
 	if s.ID == "" {
 		return "", fmt.Errorf("pid %d has no session id yet", s.PID)
 	}

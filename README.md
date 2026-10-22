@@ -62,6 +62,8 @@ Run `agent-slot -- go test ./...`, `agent-slot -- go vet ./...` and `staticcheck
 
 `ym remote install <host>` cross-compiles ym from the source embedded in the local binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host over ssh, runs `ym install --statusline` there, and touches nothing outside the remote home. `--statusline` adds a statusline that records limits when Claude Code has none, and otherwise adds the record line to the existing statusline script after it reads `$input`. Re-running upgrades; an unchanged binary is not copied again. Without `wt` on the host, `ym new` creates worktrees with `git worktree add`. `ym remote <host>` puts `~/.local/bin` on PATH, so sessions it starts there find ym and the tools a login shell would.
 
+Every host `ym remote` reaches is remembered, and the board, `ym sessions` and `ym waiting` show its sessions and open items beside this host's, labelled with the host. ym reads all hosts at once over ssh with `ym board`, each bounded by a timeout; the board never waits on a host and refreshes each one every few seconds, and a host that does not answer shows as unreachable with ssh's reason. Opening a remote session attaches to it over `ssh -t`; kill, send, land, revive, switch and item answers run through ssh on that host. `ym sessions --local` lists this host alone.
+
 Usage is read incrementally from `~/.claude/projects` and `~/.codex/sessions` into the ym database; prices come from LiteLLM, refreshed daily into the state directory, with an embedded snapshot offline.
 
 An answer goes to the session carrying the conversation now, following Claude's continued-in record when a session moved to the background. A Claude session gets `re D4: <answer>` through its own messaging socket (the one cross-session messages use), as its next prompt, busy or idle, wherever it runs, when the session would read it rather than hold it for review (ym marks the owner's words, meaning answers, dismissals and `ym send` run outside any agent session, as sent in bypass mode to a session that bypasses permission prompts, so it reads them; a `crossSessionInbound` setting still decides first), and counts it only when the session sends back no held, refused or dropped receipt within a second, showing an answer the session holds for the owner as held in session; `ym send` messages arrive the same way as `msg: <text>`. Without one, an idle agent in a tmux pane gets it typed in; otherwise it reads it with `ym item inbox` on its next turn.
@@ -80,7 +82,7 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym goal authority [<repo> --merge|--no-merge]   repositories whose managers may merge their own pull requests
     ym chief [--repo P] [--remit T] [--over ID,ID] "<name>"   start a chief over managers and chiefs
     ym chief attach <child> <chief> | detach <child>
-    ym sessions [--json]                every live session with host and project
+    ym sessions [--json] [--local]      every live session with host and project, on this host and the hosts ym remote reached
     ym new [--codex] [--repo P] [--slug S] "<prompt>"
                                         start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
     ym waiting [--json]                 idle sessions whose last reply asks you with no item filed, with that reply; answer with ym send
@@ -114,6 +116,8 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym update                           go install the latest ym; a running board restarts into it
     ym remote install <host>            build ym for the host, copy it to ~/.local/bin/ym there, link the skill and wire the statusline
     ym remote <host> [ym args...]       run ym on the host over ssh: the board by default
+    ym remote forget <host>             stop showing the host's sessions here until ym remote reaches it again
+    ym board                            this host's sessions, open items, launches and waiting sessions as JSON
 
 Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; pass `--session` to override.
 

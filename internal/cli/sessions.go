@@ -17,53 +17,51 @@ import (
 )
 
 type sessionJSON struct {
-	Harness  string   `json:"harness"`
-	ID       string   `json:"id"`
-	PID      int      `json:"pid"`
-	TTY      string   `json:"tty"`
-	Cwd      string   `json:"cwd"`
-	Repo     string   `json:"repo"`
-	Branch   string   `json:"branch"`
-	Title    string   `json:"title"`
-	Status   string   `json:"status"`
-	Prompt   string   `json:"prompt,omitempty"`
-	Host     string   `json:"host"`
-	Project  string   `json:"project"`
-	Crew     int      `json:"crew"`
-	Copies   int      `json:"copies"`
-	CopyPIDs []int    `json:"copy_pids,omitempty"`
-	Resume   []string `json:"resume,omitempty"`
+	Harness    string   `json:"harness"`
+	ID         string   `json:"id"`
+	PID        int      `json:"pid"`
+	TTY        string   `json:"tty"`
+	Cwd        string   `json:"cwd"`
+	Repo       string   `json:"repo"`
+	RepoKey    string   `json:"repo_key,omitempty"`
+	Worktree   string   `json:"worktree,omitempty"`
+	Branch     string   `json:"branch"`
+	Title      string   `json:"title"`
+	Status     string   `json:"status"`
+	WaitingFor string   `json:"waiting_for,omitempty"`
+	Since      string   `json:"since,omitempty"`
+	Background bool     `json:"background,omitempty"`
+	Prompt     string   `json:"prompt,omitempty"`
+	Host       string   `json:"host"`
+	Remote     string   `json:"remote,omitempty"`
+	Project    string   `json:"project"`
+	Crew       int      `json:"crew"`
+	Copies     int      `json:"copies"`
+	CopyPIDs   []int    `json:"copy_pids,omitempty"`
+	Resume     []string `json:"resume,omitempty"`
 }
 
 func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var asJSON bool
+	var asJSON, local bool
 	cmd := &cobra.Command{
 		Use:   "sessions",
-		Short: "List every live Claude Code and Codex session with its host and project",
+		Short: "List every live Claude Code and Codex session, on this host and the hosts ym remote reached, with its host and project",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if local {
+				e.core.Remotes = nil
+			}
 			b, err := e.core.Board()
 			if err != nil {
 				return err
 			}
-			var out []sessionJSON
-			for _, s := range b.Sessions {
-				j := sessionJSON{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, Branch: s.Branch,
-					Title: s.Title, Status: s.Status.String(), Host: s.Location(), Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies)}
-				if s.Prompt != nil {
-					j.Prompt = s.Prompt.String()
-				}
-				for _, c := range s.Copies {
-					j.CopyPIDs = append(j.CopyPIDs, c.PID)
-				}
-				if s.Handle == nil {
-					for _, t := range e.core.Targets(b, s.Key(), s.Harness) {
-						j.Resume = t.Resume
+			out := sessionsJSON(e.core, b)
+			if asJSON {
+				for _, r := range b.Remotes {
+					if r.Err != nil || r.At.IsZero() {
+						out = append(out, sessionJSON{Remote: r.Host, Host: r.Host, Status: "unreachable", Title: r.State()})
 					}
 				}
-				out = append(out, j)
-			}
-			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			for _, j := range out {
@@ -76,11 +74,39 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
+			for _, r := range b.Remotes {
+				if r.Err != nil || r.At.IsZero() {
+					fmt.Fprintf(cmd.OutOrStdout(), "host   %s %s\n", r.Host, r.State())
+				}
+			}
 			return nil
 		}),
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVar(&local, "local", false, "only this host's sessions")
 	return cmd
+}
+
+func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
+	out := []sessionJSON{}
+	for _, s := range b.Sessions {
+		j := sessionJSON{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, Worktree: s.Worktree,
+			Branch: s.Branch, Title: s.Title, Status: s.Status.String(), WaitingFor: s.WaitingFor, Since: ts(s.Since), Background: s.Background,
+			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies)}
+		if s.Prompt != nil {
+			j.Prompt = s.Prompt.String()
+		}
+		for _, cp := range s.Copies {
+			j.CopyPIDs = append(j.CopyPIDs, cp.PID)
+		}
+		if s.Handle == nil && s.Remote == "" {
+			for _, t := range c.Targets(b, s.Key(), s.Harness) {
+				j.Resume = t.Resume
+			}
+		}
+		out = append(out, j)
+	}
+	return out
 }
 
 func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {

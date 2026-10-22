@@ -160,6 +160,7 @@ func linkCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 
 func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var pick int
+	var noBoard bool
 	cmd := &cobra.Command{
 		Use:   "open <session-id|item-id>",
 		Short: "Focus the terminal running a session, or print its resume command when no terminal can be reached",
@@ -198,6 +199,9 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				t = ts[pick-1]
 			}
 			if c := e.core.AttachCmd(t); c != nil {
+				if noBoard {
+					return c.Run()
+				}
 				return e.attach(c)
 			}
 			err = e.core.Focus(t)
@@ -212,6 +216,7 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		}),
 	}
 	cmd.Flags().IntVar(&pick, "pick", 0, "which process to open when a session runs in several")
+	cmd.Flags().BoolVar(&noBoard, "no-board", false, "after detaching, return to the caller instead of showing the board")
 	return cmd
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya"
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 // remoteBin is where ym lives on a remote host, so nothing outside the user's home changes.
@@ -32,6 +33,9 @@ func remoteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if args[0] == "-h" || args[0] == "--help" {
 				return cmd.Help()
+			}
+			if err := rememberHost(args[0]); err != nil {
+				return err
 			}
 			flags := []string{args[0], remoteCommand(args[1:])}
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
@@ -48,8 +52,50 @@ func remoteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(remoteInstallCmd())
+	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd())
 	return cmd
+}
+
+// rememberHost records host so this host's board reads its sessions from now on.
+func rememberHost(host string) error {
+	path, err := core.DefaultStorePath()
+	if err != nil {
+		return err
+	}
+	st, err := core.OpenStore(path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return st.RecordHost(host, time.Now())
+}
+
+func remoteForgetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "forget <host>",
+		Short: "Stop showing a host's sessions on this board until ym remote reaches it again",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := core.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			st, err := core.OpenStore(path)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			known, err := st.ForgetHost(args[0])
+			if err != nil {
+				return err
+			}
+			if !known {
+				return fmt.Errorf("ym does not remember %s", args[0])
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "forgot %s\n", args[0])
+			return nil
+		},
+	}
 }
 
 // remoteCommand runs ym on a host with its own directory on PATH, so what it starts finds ym and the user's tools without a login shell.
@@ -69,6 +115,9 @@ func remoteInstallCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			host, out := args[0], cmd.OutOrStdout()
 			start := time.Now()
+			if err := rememberHost(host); err != nil {
+				return err
+			}
 			probe, err := exec.Command("ssh", host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
 			if exit, ok := err.(*exec.ExitError); ok {
 				return fmt.Errorf("ssh %s: %w: %s", host, err, bytes.TrimSpace(exit.Stderr))

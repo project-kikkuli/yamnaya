@@ -9,6 +9,9 @@ type Attacher interface {
 
 // AttachCmd is the command that shows t in the caller's terminal, or nil when its host focuses in place instead.
 func (c *Core) AttachCmd(t Target) *exec.Cmd {
+	if t.Remote != "" && c.Remotes != nil {
+		return c.Remotes.Attach(t.Remote, "open", "--no-board", t.Session.Key())
+	}
 	if t.Handle == nil {
 		return nil
 	}

@@ -103,9 +103,14 @@ type Target struct {
 	Handle  *Handle
 	App     string
 	Resume  []string
+	// Remote is the host the session runs on when that is not this one.
+	Remote string
 }
 
 func (t Target) String() string {
+	if t.Remote != "" {
+		return fmt.Sprintf("%s on %s (pid %d)", Short(t.Session.Key()), t.Remote, t.Session.PID)
+	}
 	if t.Handle != nil {
 		return fmt.Sprintf("%s %s (pid %d)", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	}
@@ -122,6 +127,8 @@ func (t Target) String() string {
 func (t Target) Advice() string {
 	resume := strings.Join(t.Resume, " ")
 	switch {
+	case t.Remote != "":
+		return fmt.Sprintf("runs on %s; ym open %s attaches to it there over ssh", t.Remote, Short(t.Session.Key()))
 	case t.Session.Background:
 		return fmt.Sprintf("runs as a background job (pid %d) with no terminal ym can attach to; a answers and s sends reach it through its inbox", t.Session.PID)
 	case t.Handle != nil:
@@ -145,6 +152,9 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 	for _, s := range b.Sessions {
 		if s.Key() != key {
 			continue
+		}
+		if s.Remote != "" {
+			return []Target{{Session: s.Session, Remote: s.Remote}}
 		}
 		for _, cp := range copiesOf(s) {
 			t := Target{Session: cp, App: s.App}
@@ -223,6 +233,9 @@ func (d Delivery) String() string {
 // Answer records the answer and hands it to the source agent, wherever its conversation runs now: through the session's own inbox,
 // else typed in when it sits idle at its prompt in a host that accepts input.
 func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
+	if it, d, ok, err := c.remoteItem(id, "answer", text); ok {
+		return it, d, err
+	}
 	it, err := c.Store.Transition(id, ItemAnswered, text)
 	if err != nil {
 		return it, Queued, err
@@ -232,6 +245,9 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 
 // Go answers a go item with GoAhead.
 func (c *Core) Go(b Board, id string) (Item, Delivery, error) {
+	if it, d, ok, err := c.remoteItem(id, "go"); ok {
+		return it, d, err
+	}
 	it, err := c.Store.Item(id)
 	if err != nil {
 		return it, Queued, err
@@ -244,6 +260,9 @@ func (c *Core) Go(b Board, id string) (Item, Delivery, error) {
 
 // Dismiss closes the item for good and tells the agent the way Answer does.
 func (c *Core) Dismiss(b Board, id, reason string) (Item, Delivery, error) {
+	if it, d, ok, err := c.remoteItem(id, "dismiss", reason); ok {
+		return it, d, err
+	}
 	it, err := c.Store.Transition(id, ItemDismissed, reason)
 	if err != nil {
 		return it, Queued, err
@@ -291,9 +310,21 @@ func (c *Core) Redeliver(b Board) (int, error) {
 	return n, nil
 }
 
-func (c *Core) Snooze(id string) (Item, error) { return c.Store.Transition(id, ItemSnoozed, "") }
+func (c *Core) Snooze(id string) (Item, error) {
+	if it, _, ok, err := c.remoteItem(id, "snooze"); ok {
+		it.State = ItemSnoozed
+		return it, err
+	}
+	return c.Store.Transition(id, ItemSnoozed, "")
+}
 
-func (c *Core) Reopen(id string) (Item, error) { return c.Store.Transition(id, ItemOpen, "") }
+func (c *Core) Reopen(id string) (Item, error) {
+	if it, _, ok, err := c.remoteItem(id, "reopen"); ok {
+		it.State = ItemOpen
+		return it, err
+	}
+	return c.Store.Transition(id, ItemOpen, "")
+}
 
 // deliver hands the items' notices to session as one message, claiming each first so no other delivery repeats them.
 func (c *Core) deliver(b Board, session string, items []Item) Delivery {

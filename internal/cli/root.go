@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,7 +83,18 @@ func NewRoot() *cobra.Command {
 			return run(e, cmd, args)
 		}
 	}
+	withHosts := func(run runFunc) func(*cobra.Command, []string) error {
+		return with(func(e *env, cmd *cobra.Command, args []string) error {
+			if err := e.readRemotes(remoteWait); err != nil {
+				return err
+			}
+			return run(e, cmd, args)
+		})
+	}
 	root.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		if err := e.readRemotes(0); err != nil {
+			return err
+		}
 		adoptChildren()
 		if err := ensureWorkService(); err != nil {
 			return err
@@ -103,24 +115,25 @@ func NewRoot() *cobra.Command {
 		serviceCmd(),
 		goalCmd(with),
 		chiefCmd(with),
-		itemCmd(with),
+		itemCmd(with, withHosts),
 		phaseCmd(with),
 		vibeCmd(with),
 		projectCmd(with),
 		linkCmd(with),
-		sessionsCmd(with),
-		openCmd(with),
-		switchCmd(with),
+		sessionsCmd(withHosts),
+		boardCmd(with),
+		openCmd(withHosts),
+		switchCmd(withHosts),
 		newCmd(with),
-		reviveCmd(with),
-		landCmd(with),
+		reviveCmd(withHosts),
+		landCmd(withHosts),
 		gcCmd(with),
-		killCmd(with),
+		killCmd(withHosts),
 		launchedCmd(with),
 		linkLaunchCmd(with),
 		adoptCmd(with),
-		sendCmd(with),
-		waitingCmd(with),
+		sendCmd(withHosts),
+		waitingCmd(withHosts),
 		sendHoldCmd(with),
 		resumeWatchCmd(),
 		installCmd(),
@@ -132,6 +145,9 @@ func NewRoot() *cobra.Command {
 	)
 	return root
 }
+
+// remoteWait is how long a one-shot command waits for the hosts ym remote reached; the board never waits.
+const remoteWait = 8 * time.Second
 
 // caller is the session ym was run from: --session, else the nearest claude or codex ancestor process.
 func (e *env) caller() (core.Caller, error) {

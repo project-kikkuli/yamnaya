@@ -8,6 +8,9 @@ import (
 
 // Switch ports an idle session to the other harness and says how to resume it there.
 func (c *Core) Switch(b Board, s Live, to string) (string, error) {
+	if s.Remote != "" {
+		return c.RunRemote(s.Remote, "switch", s.Key(), "--to", to)
+	}
 	if err := c.switchable(s, to); err != nil {
 		return "", err
 	}
@@ -25,6 +28,9 @@ func (c *Core) Switch(b Board, s Live, to string) (string, error) {
 // Relaunch ends an idle session, ports it to the other harness and resumes the port on ym's server in the same directory.
 // Any failure from the kill on says the command that resumes the conversation by hand.
 func (c *Core) Relaunch(s Live, to string) (string, error) {
+	if s.Remote != "" {
+		return c.RunRemote(s.Remote, "switch", s.Key(), "--to", to, "--relaunch")
+	}
 	if err := c.switchable(s, to); err != nil {
 		return "", err
 	}

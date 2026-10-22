@@ -9,6 +9,9 @@ import (
 
 // Kill sends SIGTERM to each process running s and waits for them to end. Its terminal, worktree and transcript stay.
 func (c *Core) Kill(s Live) (string, error) {
+	if s.Remote != "" {
+		return c.RunRemote(s.Remote, "kill", "--yes", s.Key())
+	}
 	signal := c.Signal
 	if signal == nil {
 		signal = syscall.Kill

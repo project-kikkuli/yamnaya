@@ -12,7 +12,13 @@ import (
 )
 
 // Key names the item uniquely across scopes.
-func (it Item) Key() string { return "#" + strconv.FormatInt(it.Seq, 10) }
+func (it Item) Key() string {
+	key := "#" + strconv.FormatInt(it.Seq, 10)
+	if it.Host != "" {
+		return RemoteKey(it.Host, key)
+	}
+	return key
+}
 
 // Qualified is the ID with its scope's name, for lists that mix scopes.
 func (it Item) Qualified() string {

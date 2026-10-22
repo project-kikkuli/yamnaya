@@ -68,6 +68,8 @@ type Item struct {
 	// Recipient is who the item waits on: Owner, or the id of the manager or chief it was routed to.
 	Recipient string
 	History   []Event
+	// Host is the host whose ym holds the item when that is not this one.
+	Host string
 }
 
 type Event struct {
@@ -192,7 +194,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema + forwardSchema + orgSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + forwardSchema + orgSchema + hostSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}

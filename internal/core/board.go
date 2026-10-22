@@ -40,6 +40,8 @@ type Core struct {
 	KeepAlive      func() error
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
+	// Remotes are the other hosts whose boards this one shows; nil shows only this host.
+	Remotes Remotes
 
 	gc gitCache
 }
@@ -56,10 +58,15 @@ type Live struct {
 	Project string
 	// Messages are the follow-ups the owner sent this session.
 	Messages []Message
+	// Remote is the host the session runs on when that is not this one; Where is where that host says it runs.
+	Remote, Where string
 }
 
 // Location names where the session runs, for display.
 func (l Live) Location() string {
+	if l.Remote != "" {
+		return l.Remote + " " + l.Where
+	}
 	if l.Background {
 		return "bg job"
 	}
@@ -149,6 +156,8 @@ type Board struct {
 	Kills    map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
+	// Remotes are the other hosts the board reads, reachable or not.
+	Remotes []RemoteBoard
 
 	parents map[string]string
 	lin     Lineage
@@ -326,6 +335,7 @@ func (c *Core) Board() (Board, error) {
 	if c.Launches != nil {
 		b.Launched = c.Launches.Launched()
 	}
+	b.addRemotes(c.remoteBoards(), parents, &items, &dormant)
 	for _, d := range dormant {
 		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
 			parents[d.ID()] = d.Parent
@@ -374,7 +384,7 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	b.Needs = collapse(append(b.Needs, wait...), b.Org, b)
+	b.Needs = collapse(append(append(b.Needs, wait...), b.remoteWaiting()...), b.Org, b)
 	return b, c.queue(&b, b.Org)
 }
 

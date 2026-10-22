@@ -56,6 +56,8 @@ func (l Live) Adoptable() bool { return l.Unadoptable() == "" }
 // Unadoptable says why ym cannot move s onto its own server, or is empty when it can.
 func (l Live) Unadoptable() string {
 	switch {
+	case l.Remote != "":
+		return fmt.Sprintf("%s runs on %s; ym open %s reaches it there over ssh", Short(l.Key()), l.Remote, Short(l.Key()))
 	case l.Background:
 		return fmt.Sprintf("%s is a background job with no terminal to move; ym answers and sends reach it through its inbox", Short(l.Key()))
 	case l.Handle != nil:

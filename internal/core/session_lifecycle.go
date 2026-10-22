@@ -13,6 +13,10 @@ func freshSessions(sessions []Live, stops map[string]time.Time, observed time.Ti
 }
 
 func (c *Core) StopSession(session string) error {
+	if host, rest, ok := c.RemoteRef(session); ok {
+		_, err := c.RunRemote(host, "kill", "--yes", rest)
+		return err
+	}
 	if c.Store != nil {
 		if err := c.Store.RecordKill(session, c.now()); err != nil {
 			return err

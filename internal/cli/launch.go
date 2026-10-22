@@ -458,7 +458,7 @@ func (l launcher) Dormant() []core.Dormant {
 func (l launcher) Revive(key string) (string, error) {
 	rec, err := l.find(key)
 	if err != nil {
-		return "", err
+		return l.remote(err, key, "revive")
 	}
 	return l.revive(rec)
 }
@@ -482,11 +482,8 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			if err != nil {
 				return err
 			}
-			rec, err := l.find(args[0])
-			if err != nil {
-				return err
-			}
-			msg, err := l.revive(rec)
+			l.core = e.core
+			msg, err := l.Revive(args[0])
 			if err != nil {
 				return err
 			}
@@ -507,7 +504,7 @@ func (u unlandable) Error() string {
 func (l launcher) Land(ref string) (string, error) {
 	rec, err := l.find(ref)
 	if err != nil {
-		return "", err
+		return l.remote(err, ref, "land")
 	}
 	if rec.IsLanded() {
 		return "", fmt.Errorf("%s landed %s; ym revive %s", rec.Key, rec.Landed.Format(time.DateTime), rec.Key)
@@ -546,7 +543,7 @@ func (l launcher) landed(rec launch.Record, why string) error {
 func (l launcher) Forget(ref string) (string, error) {
 	rec, err := l.find(ref)
 	if err != nil {
-		return "", err
+		return l.remote(err, ref, "land", "--forget")
 	}
 	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 		return "", err
@@ -716,4 +713,16 @@ func resumeWatchCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// remote runs ym verb ref on the host ref names when no launch here matches it, else returns err.
+func (l launcher) remote(err error, ref string, verb ...string) (string, error) {
+	if l.core == nil {
+		return "", err
+	}
+	host, rest, ok := l.core.RemoteRef(ref)
+	if !ok {
+		return "", err
+	}
+	return l.core.RunRemote(host, append(verb, rest)...)
 }

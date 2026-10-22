@@ -11,6 +11,11 @@ import (
 // A session that continued under another id yields the live session it continued in.
 func (c *Core) Find(ref string) (Live, error) {
 	l, err := c.find(ref)
+	if err != nil {
+		if r, ok := c.remoteFind(ref); ok {
+			return r, nil
+		}
+	}
 	id := ref
 	if err == nil {
 		if l.Status != Moved {

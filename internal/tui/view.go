@@ -132,6 +132,17 @@ func (m Model) header() string {
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
+	if len(m.board.Remotes) > 0 {
+		var hosts []string
+		for _, r := range m.board.Remotes {
+			line := r.Host + " " + r.State()
+			if r.Err != nil {
+				line = pal.red.Render(line)
+			}
+			hosts = append(hosts, line)
+		}
+		h += "\n " + pal.dim.Render("hosts ") + strings.Join(hosts, "   ")
+	}
 	if m.core != nil && m.core.Meter != nil {
 		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
 	}
