@@ -175,7 +175,7 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 // wakeText lists a goal's new events for its manager, oldest first.
 func wakeText(g Goal, events []GoalEvent) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s on goal %s %q, oldest first:", plural(len(events), "new event"), g.ID, oneLine(g.Ask))
+	fmt.Fprintf(&sb, "%s on goal %s %q, oldest first:", plural(len(events), "new event"), g.ID, shortName(g.Ask))
 	for _, e := range events {
 		sb.WriteString("\n- " + e.Kind + ": " + e.Payload)
 	}
@@ -347,7 +347,7 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	return err
 }
 
-// inFlight reports whether anything of m's is still moving on its own: an agent working or just launched, a pull request with CI
+// inFlight reports whether anything of m's is still moving on its own: an agent or a subagent of one working or just launched, a pull request with CI
 // still running, a wake set, or an open ask one of its sessions filed.
 func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 	statuses, _ := c.Store.PRStatuses()
@@ -358,6 +358,11 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 		}
 		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting) {
 			return true
+		}
+		for _, member := range s.Crew {
+			if member.Status == Busy || member.Status == Waiting {
+				return true
+			}
 		}
 		for _, pr := range s.AllPRs() {
 			st, ok := statuses[pr.URL]

@@ -170,6 +170,10 @@ func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
 			w.spawn("agent", m.Session)
 			w.set("agent", func(s *Session) { s.Status = Busy })
 		}, false},
+		{"an agent waits on its own background subagent", func(t *testing.T, w *orgWorld, m Manager) {
+			w.spawn("agent", m.Session)
+			w.set("agent", func(s *Session) { s.Crew = []Member{{ID: "sub", Status: Busy}} })
+		}, false},
 		{"a pull request awaits CI", func(t *testing.T, w *orgWorld, m Manager) {
 			w.spawn("agent", m.Session)
 			w.pr(t, "agent", "https://github.com/acme/august/pull/3", PRStatus{State: "OPEN", Pending: 3})
