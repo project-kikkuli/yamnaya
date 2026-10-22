@@ -117,7 +117,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym sessions [--local] [--json]` | every live session on this host and remembered hosts |
 | | `ym waiting [--json]` | idle sessions whose last reply asks you |
 | | `ym board` | this host's state as JSON, for another host's ym |
-| Goals | `ym goal [--repo P] "<ask>"` | start a goal and its manager |
+| Goals | `ym goal [--repo P] "<ask>"` | start a goal and its manager; the ask is one quoted argument, so a subcommand this binary lacks is refused instead of becoming a goal |
 | | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs |
 | | `ym goal show <id>` / `feed <id>` | one goal with its verifications / its event feed |
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
