@@ -458,6 +458,10 @@ func (l launcher) Dormant() []core.Dormant {
 		}
 		st := stateIn(panes, rec)
 		if landsAlone(rec, st, time.Now()) {
+			// Landing removes the worktree, so it goes by the pane as it is now, not a table read before the session started.
+			_, st = l.state(rec)
+		}
+		if landsAlone(rec, st, time.Now()) {
 			_, err := l.landUnused(rec, dirs)
 			if err == nil {
 				continue
