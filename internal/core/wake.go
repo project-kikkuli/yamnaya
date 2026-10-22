@@ -189,7 +189,7 @@ func (c *Core) Wake(b Board) error {
 			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
 		}
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, c.wakeRemoteChiefs(o))...)
 }
 
 func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
@@ -447,8 +447,8 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 
 // NotifyOwner raises a desktop notification, once, for every goal that finished or got stuck.
 func (c *Core) NotifyOwner() error {
-	if c.Notify == nil {
-		return nil
+	if self, err := c.Store.RelaySelf(); err != nil || c.Notify == nil && self.Courier == "" {
+		return err
 	}
 	events, err := c.Store.unnotified()
 	if err != nil {
@@ -461,7 +461,7 @@ func (c *Core) NotifyOwner() error {
 			errs = append(errs, err)
 			continue
 		}
-		if err := c.Notify(fmt.Sprintf("ym: %s %s", g.ID, e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
+		if err := c.notify(fmt.Sprintf("ym: %s %s", g.ID, e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
 			errs = append(errs, err)
 			continue
 		}

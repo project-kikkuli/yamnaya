@@ -508,6 +508,13 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
 			m.feedFrom = m.board.At
+			if host, rest, ok := core.SplitRemote(n.Goal.ID); ok && n.Goal.Host != "" {
+				c := m.core
+				return m, m.do(func() (string, error) {
+					_, err := c.RunOrRelay(host, "goal", "feed", rest)
+					return "", err
+				}), true
+			}
 			if err := m.core.Looked(n.Goal.ID); err != nil {
 				m.message = "error: " + err.Error()
 			}

@@ -21,6 +21,10 @@ const (
 	RelayRoute = "route"
 	// RelayYM runs a ym command on the destination, such as an answer to an item that lives there.
 	RelayYM = "ym"
+	// RelayEvents hands a chief on the destination the state changes of goals below it on the origin, and every chief above it too.
+	RelayEvents = "events"
+	// RelayNotify raises the owner's desktop notification on the destination, the host the owner sits at.
+	RelayNotify = "notify"
 )
 
 // Relay is one message for another host, kept until a host carrying it there confirms it, so a host that is unreachable loses
@@ -60,6 +64,11 @@ type relayRoute struct {
 
 type relayYM struct {
 	Args []string `json:"args"`
+}
+
+type relayNotify struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
 }
 
 // RelaySync is one round trip between a host and a host it reaches over ssh: what the caller carries there and what it confirms.
@@ -431,6 +440,18 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 			return nil
 		}
 		return c.askManager(b, o, it)
+	case RelayEvents:
+		var t relayTell
+		if err := json.Unmarshal([]byte(r.Body), &t); err != nil {
+			return err
+		}
+		return c.tellChiefs(b, o, t.Manager, t.Text)
+	case RelayNotify:
+		var n relayNotify
+		if err := json.Unmarshal([]byte(r.Body), &n); err != nil {
+			return err
+		}
+		return c.notify(strings.Replace(n.Title, "ym: ", "ym: "+r.Origin+" ", 1), n.Body)
 	case RelayYM:
 		var y relayYM
 		if err := json.Unmarshal([]byte(r.Body), &y); err != nil {
@@ -459,4 +480,78 @@ func (c *Core) relayAsk(b Board, o Org, it Item) error {
 	shown := it
 	shown.Host = c.SelfName()
 	return c.Relay(host, RelayAsk, relayAsk{Item: shown.Host, Seq: it.Seq, Recipient: rest, Text: askText(b, o, shown)})
+}
+
+// tellChiefs hands text to the chief id names, or the first one above it that can answer, and to every chief above that one, here
+// or through a relay to the host the next one runs on.
+func (c *Core) tellChiefs(b Board, o Org, id, text string) error {
+	seen := map[string]bool{}
+	for at := id; at != "" && !seen[at]; {
+		seen[at] = true
+		up := o.Above(at)
+		if up == Owner {
+			return nil
+		}
+		if host, rest, remote := SplitRemote(up); remote {
+			return c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: text})
+		}
+		if err := c.tell(b, o.Managers[up].Session, text, false); err != nil {
+			return err
+		}
+		at = o.Managers[up].ParentID
+	}
+	return nil
+}
+
+// notify raises the owner's desktop notification here, or relays it to the host that carries this one's relays, where the owner sits.
+func (c *Core) notify(title, body string) error {
+	if r, err := c.Store.RelaySelf(); err == nil && r.Courier != "" {
+		return c.Relay(r.Courier, RelayNotify, relayNotify{Title: title, Body: body})
+	}
+	if c.Notify == nil {
+		return nil
+	}
+	return c.Notify(title, body)
+}
+
+// wakeRemoteChiefs hands each chief on another host the state changes of the goals below it here: the goals of every manager and
+// chief whose chief runs there. A chief hears only what happened after this host first reported to it.
+func (c *Core) wakeRemoteChiefs(o Org) error {
+	var errs []error
+	for _, m := range o.Ordered() {
+		if _, _, remote := SplitRemote(m.ParentID); !remote || !o.Active(m) {
+			continue
+		}
+		var goals []string
+		for _, below := range o.Subtree(m.ID) {
+			if g, ok := o.Goals[below.GoalID]; ok {
+				goals = append(goals, g.ID)
+			}
+		}
+		heard, err := c.Store.heardAny(m.ParentID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		events, err := c.Store.chiefPending(m.ParentID, goals, time.Time{})
+		if err != nil || len(events) == 0 && heard {
+			errs = append(errs, err)
+			continue
+		}
+		if heard {
+			shown := Org{Goals: map[string]Goal{}}
+			self := c.SelfName()
+			for id, g := range o.Goals {
+				g.ID, g.ManagerID = RemoteKey(self, g.ID), RemoteKey(self, g.ManagerID)
+				shown.Goals[id] = g
+			}
+			host, rest, _ := SplitRemote(m.ParentID)
+			if err := c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: "ym: " + chiefText(shown, events)}); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		errs = append(errs, c.Store.markHeard(m.ParentID, events, c.now()))
+	}
+	return errors.Join(errs...)
 }

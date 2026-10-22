@@ -39,6 +39,8 @@ type RemoteBoard struct {
 	Goals           []Goal
 	ManagerSessions map[string]string
 	Standing        map[string]string
+	// Feeds are its goals' news for the owner.
+	Feeds map[string]Feed
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
 	Stale bool
 }
@@ -154,7 +156,7 @@ func (c *Core) remoteHost(ref string) (host, rest string, ok bool) {
 
 // mergeRemoteOrg adds every remote host's managers, chiefs and goals to o under host-qualified ids, so chiefs and their reports
 // meet in one tree across hosts, and returns how each remote one stands by its own host's reading.
-func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard) map[string]string {
+func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard, feeds map[string]Feed) map[string]string {
 	self := c.SelfName()
 	q := func(host, ref string) string {
 		if ref == "" {
@@ -186,6 +188,11 @@ func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard) map[string]string {
 		}
 		for id, st := range r.Standing {
 			standing[q(r.Host, id)] = st
+		}
+		for id, f := range r.Feeds {
+			if feeds != nil {
+				feeds[q(r.Host, id)] = f
+			}
 		}
 	}
 	return standing

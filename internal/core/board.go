@@ -428,7 +428,7 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	if c.ShowRemotes {
-		b.remoteStanding = c.mergeRemoteOrg(&b.Org, b.Remotes)
+		b.remoteStanding = c.mergeRemoteOrg(&b.Org, b.Remotes, feeds)
 	}
 	if err := c.tree(&b, b.Org, feeds); err != nil {
 		return b, err

@@ -18,11 +18,12 @@ type boardJSON struct {
 	Dormant  []dormantJSON  `json:"dormant"`
 	Waiting  []waitingJSON  `json:"waiting"`
 	// Self is what this host calls itself; the rest is its goal tree and how each manager and chief stands by this host's reading.
-	Self            string            `json:"self,omitempty"`
-	Managers        []core.Manager    `json:"managers,omitempty"`
-	Goals           []core.Goal       `json:"goals,omitempty"`
-	ManagerSessions map[string]string `json:"manager_sessions,omitempty"`
-	Standing        map[string]string `json:"standing,omitempty"`
+	Self            string               `json:"self,omitempty"`
+	Managers        []core.Manager       `json:"managers,omitempty"`
+	Goals           []core.Goal          `json:"goals,omitempty"`
+	ManagerSessions map[string]string    `json:"manager_sessions,omitempty"`
+	Standing        map[string]string    `json:"standing,omitempty"`
+	Feeds           map[string]core.Feed `json:"feeds,omitempty"`
 }
 
 type launchedJSON struct {
@@ -80,6 +81,9 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				}
 			}
 			out.Self, out.ManagerSessions, out.Standing = e.core.SelfName(), b.Org.Sessions, map[string]string{}
+			if out.Feeds, err = e.core.Store.Feeds(); err != nil {
+				return err
+			}
 			for _, m := range b.Org.Managers {
 				out.Managers = append(out.Managers, m)
 			}
@@ -146,7 +150,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
-	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing
+	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds
 	return r
 }
 

@@ -145,7 +145,7 @@ func (c *Core) checkRemoteChief(child Manager, chief string) error {
 	if err != nil {
 		return err
 	}
-	c.mergeRemoteOrg(&o, c.Remotes.Boards())
+	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
 	boss, ok := o.Managers[strings.ToLower(chief)]
 	if !ok {
 		return nil

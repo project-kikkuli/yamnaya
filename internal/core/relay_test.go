@@ -248,3 +248,55 @@ func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing
 		}
 	}
 }
+
+func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *testing.T) {
+	f := newFleet(t)
+	var notified []string
+	f.a.core.Notify = func(title, body string) error {
+		notified = append(notified, title+": "+body)
+		return nil
+	}
+	top := f.a.chief(t, "org")
+	chief := f.a.chief(t, "platform")
+	if err := f.a.core.Attach(chief.ID, top.ID); err != nil {
+		t.Fatal(err)
+	}
+	g, mgr := f.b.goal(t, "ship the fix", "/repo/app")
+	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
+		t.Fatal(err)
+	}
+	cycle := func() {
+		t.Helper()
+		if err := f.b.core.Loop(f.b.board(t)); err != nil {
+			t.Fatal(err)
+		}
+		f.sync(t)
+		f.sync(t)
+	}
+	if _, _, err := f.b.core.RecordGoalEvent(g.ID, EventUpdate, "before the chief", ""); err != nil {
+		t.Fatal(err)
+	}
+	cycle()
+	if _, _, err := f.b.core.RecordGoalEvent(g.ID, EventMerged, "PR 7 merged", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.b.core.RecordGoalEvent(g.ID, EventDone, "shipped", ""); err != nil {
+		t.Fatal(err)
+	}
+	cycle()
+	cycle()
+	for _, who := range []Manager{chief, top} {
+		var heard []string
+		for _, h := range f.a.handedTo(who.Session) {
+			if strings.Contains(h, "b/"+g.ID) {
+				heard = append(heard, h)
+			}
+		}
+		if len(heard) != 1 || !strings.Contains(heard[0], "PR 7 merged") || strings.Contains(heard[0], "before the chief") {
+			t.Errorf("%s heard %q; want one batch with b's merge, naming b's goal, and nothing from before it was told", who.Name, heard)
+		}
+	}
+	if len(notified) != 1 || !strings.HasPrefix(notified[0], "ym: b "+g.ID+" done") {
+		t.Errorf("owner's host notified %q, want b's done goal once", notified)
+	}
+}

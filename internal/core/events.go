@@ -357,3 +357,13 @@ func (s *Store) fireTimer(seq int64, at time.Time) error {
 	_, err := s.db.Exec(`UPDATE ym_goal_timers SET fired = ? WHERE seq = ?`, stamp(at), seq)
 	return err
 }
+
+// heardAny reports whether chief was ever reported to; the first report marks it, with event 0, so only what follows reaches it.
+func (s *Store) heardAny(chief string) (bool, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM ym_goal_event_deliveries WHERE manager = ?`, chief).Scan(&n); err != nil || n > 0 {
+		return n > 0, err
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO ym_goal_event_deliveries (event, manager, at) VALUES (0, ?, ?)`, chief, stamp(time.Now()))
+	return false, err
+}

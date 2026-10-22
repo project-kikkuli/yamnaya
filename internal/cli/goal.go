@@ -569,6 +569,18 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		Short: "Print everything that happened on a goal, oldest first, and mark it read",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if host, rest, ok := core.SplitRemote(args[0]); ok && e.core.Remotes != nil {
+				remote := []string{"goal", "feed", rest}
+				if keep {
+					remote = append(remote, "--keep-unread")
+				}
+				out, err := e.core.RunRemote(host, remote...)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), out)
+				return nil
+			}
 			g, err := e.core.GoalByRef(args[0])
 			if err != nil {
 				return err
