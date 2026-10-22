@@ -121,7 +121,7 @@ func TestADismissedDocAskReturnsOnlyWhenSomeoneWritesAgain(t *testing.T) {
 	b := w.route(t)
 	for _, n := range b.Needs {
 		if n.Doc != nil {
-			if err := w.core.Store.DismissQueue(n.Key()); err != nil {
+			if err := w.core.Store.DismissQueue(n.DismissKeys()...); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -207,7 +207,7 @@ func TestADocsOpenThreadsShareOneQueueRowNewestFirstAndResolveOneByOne(t *testin
 	}
 	for _, n := range b.Needs {
 		if n.Doc != nil && n.Doc.Page == "strategy" {
-			if err := w.core.Store.DismissQueue(n.Key()); err != nil {
+			if err := w.core.Store.DismissQueue(n.DismissKeys()...); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -215,10 +215,14 @@ func TestADocsOpenThreadsShareOneQueueRowNewestFirstAndResolveOneByOne(t *testin
 	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di"}) {
 		t.Fatalf("a dismissed doc still shows: %q", got)
 	}
+	sync("strategy", []DocAsk{strategy[0]})
+	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di"}) {
+		t.Fatalf("a dismissed doc came back when one of its threads resolved: %q", got)
+	}
 	again := strategy[0]
 	again.Version, again.At, again.Text = "d1@later", "2026-10-22T11:00:00Z", "still why now?"
-	sync("strategy", []DocAsk{again, strategy[2]})
-	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di", "strategy: Ann Cy"}) {
+	sync("strategy", []DocAsk{again})
+	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di", "strategy: Ann"}) {
 		t.Fatalf("a new comment on a dismissed doc: rows %q", got)
 	}
 }

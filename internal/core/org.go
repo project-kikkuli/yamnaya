@@ -397,10 +397,14 @@ func (s *Store) OpenReviews() ([]ReviewRequest, error) {
 	return out, rows.Err()
 }
 
-// DismissQueue hides the queue row key names until its key changes, as a new PR head or review update does.
-func (s *Store) DismissQueue(key string) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO ym_queue_dismissed (key, at) VALUES (?, ?)`, key, now())
-	return err
+// DismissQueue hides the queue rows keys name until their keys change, as a new PR head or review update does.
+func (s *Store) DismissQueue(keys ...string) error {
+	for _, key := range keys {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO ym_queue_dismissed (key, at) VALUES (?, ?)`, key, now()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) queueDismissed() (map[string]bool, error) {

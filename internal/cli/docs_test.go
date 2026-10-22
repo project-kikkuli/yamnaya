@@ -125,7 +125,7 @@ func TestConnectingNotionMakesServeQueueItsAsksUntilTheyResolve(t *testing.T) {
 	}
 	for _, n := range cycle().Needs {
 		if n.Doc != nil && n.Doc.Kind == "review" {
-			if err := st.DismissQueue(n.Key()); err != nil {
+			if err := st.DismissQueue(n.DismissKeys()...); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -153,9 +153,10 @@ func TestConnectingNotionMakesServeQueueItsAsksUntilTheyResolve(t *testing.T) {
 	if got := docKinds(cycle()); !slices.Equal(got, []string{"comment Alice", "mention Alice", "reply Bob"}) {
 		t.Fatalf("an edit that left the review request as it was brought back its dismissed row: %q", got)
 	}
-	for _, unchanged := range []string{"a0000000-0000-4000-8000-00000000000d", "a0000000-0000-4000-8000-00000000000e"} {
+	for _, unchanged := range []string{"a0000000-0000-4000-8000-00000000000a", "a0000000-0000-4000-8000-00000000000b",
+		"a0000000-0000-4000-8000-00000000000d", "a0000000-0000-4000-8000-00000000000e"} {
 		if slices.Contains(calls, "GET /blocks/"+unchanged+"/children") {
-			t.Fatalf("a sweep reread page %s, unchanged and with no open ask: %q", unchanged, calls)
+			t.Fatalf("a sweep reread the blocks of page %s, whose edit and comments had not changed: %q", unchanged, calls)
 		}
 	}
 	resolved := recordedNotion(t, map[string]string{
@@ -338,6 +339,55 @@ func TestTheRecheckSkipsOwnerPagesNotEditedWithinTheWindow(t *testing.T) {
 		}
 		if got := slices.Contains(calls, "GET /comments "+signed); got != step.checked {
 			t.Fatalf("%s: comments read %v, want %v: %q", step.name, got, step.checked, calls)
+		}
+	}
+}
+
+func TestAnOpenAskOnAPageEditedBeforeTheWindowClosesWhenItsThreadResolves(t *testing.T) {
+	const (
+		owner, carol = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000004"
+		old          = "a0000000-0000-4000-8000-00000000000e"
+		thread       = "d0000000-0000-4000-8000-0000000000e1"
+	)
+	dir := t.TempDir()
+	t.Setenv("NOTION_TOKEN", "secret_test")
+	t.Setenv("NOTION_OWNER_ID", owner)
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	page := `{"object":"page","id":"` + old + `","created_time":"2026-09-01T00:00:00.000Z","last_edited_time":"2026-09-25T00:00:00.000Z",` +
+		`"created_by":{"object":"user","id":"aaaaaaaa-0000-4000-8000-000000000003"},"parent":{"type":"workspace","workspace":true},` +
+		`"archived":false,"in_trash":false,"properties":{"Name":{"id":"title","type":"title","title":[{"plain_text":"Old spec"}]}},` +
+		`"url":"https://www.notion.so/Old-spec-a000000000004000800000000000000e"}`
+	open := `{"object":"list","results":[` +
+		notionComment("c0000000-0000-4000-8000-0000000000e1", thread, owner, "Is this final?", "2026-09-25T00:00:00.000Z", "") + "," +
+		notionComment("c0000000-0000-4000-8000-0000000000e2", thread, carol, "Not yet, see section 3", "2026-09-26T00:00:00.000Z", "") +
+		`],"has_more":false,"next_cursor":null}`
+	resolved := `{"object":"list","results":[],"has_more":false,"next_cursor":null}`
+	d := &docSweeper{dir: dir, recheck: time.Hour}
+	for _, step := range []struct {
+		name, comments string
+		now            time.Time
+		want           int
+	}{
+		{"Carol's reply opens an ask", open, time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC), 1},
+		{"Carol resolves the thread after the page's edit left the window", resolved, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), 0},
+	} {
+		srv := recordedNotion(t, map[string]string{
+			"POST /search":                        `{"object":"list","results":[` + page + `],"has_more":false,"next_cursor":null}`,
+			"GET /pages/" + old:                   page,
+			"GET /pages/" + intake.NotionKey(old): page,
+			"GET /comments " + old:                step.comments,
+		}, nil)
+		now := step.now
+		d.api, d.notion, d.now, d.checked = srv.URL, nil, func() time.Time { return now }, time.Time{}
+		if err := d.sweep(context.Background(), st); err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if asks, err := st.OpenDocAsks(); err != nil || len(asks) != step.want {
+			t.Fatalf("%s: %d open asks, want %d (%v)", step.name, len(asks), step.want, err)
 		}
 	}
 }

@@ -464,8 +464,8 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			open := m.openURL
 			return m, m.do(func() (string, error) { return "opened " + url, open(url) }), true
 		case "x":
-			id := r.need.Key()
-			return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(id) }), true
+			keys := r.need.DismissKeys()
+			return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(keys...) }), true
 		}
 		return m, nil, false
 	}

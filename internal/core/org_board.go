@@ -264,12 +264,28 @@ func (c *Core) queue(b *Board, o Org) error {
 	for _, p := range order {
 		threads := SortDocAsks(pages[p])
 		n := Need{Doc: &threads[0], Docs: threads}
-		if !dismissed[n.Key()] {
-			extra = append(extra, n)
+		for _, k := range n.DismissKeys() {
+			if !dismissed[k] {
+				extra = append(extra, n)
+				break
+			}
 		}
 	}
 	b.Needs = append(extra, b.Needs...)
 	return nil
+}
+
+// DismissKeys are what clearing the need records: one per open thread for a document, so its row stays hidden while threads
+// resolve and returns when any thread gains a comment.
+func (n Need) DismissKeys() []string {
+	if n.Doc == nil {
+		return []string{n.Key()}
+	}
+	out := make([]string, len(n.Docs))
+	for i, a := range n.Docs {
+		out[i] = "doc:" + a.Key + "@" + a.Version
+	}
+	return out
 }
 
 // Key names the row for dismissal; a new head or review update gives the same duty a new key.
