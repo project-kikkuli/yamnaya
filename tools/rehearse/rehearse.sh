@@ -16,7 +16,7 @@ usage() {
 	cat <<'EOF'
 usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF] [--keep]
 
-Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment.
+Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
 Each run clones the proving ground afresh, builds ym from REF (default origin/main) and writes
 ~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/timeline.log. --keep leaves the run's tmux server and ym serve up.
 EOF
@@ -52,6 +52,7 @@ if [ -z "$ask" ]; then
 	kill-worker) ask="Add a Bigrams(text string, n int) []Count function to package tally that counts adjacent word pairs joined by a space, with table tests, and a -pairs flag in cmd/tally that uses it. Open a pull request, get CI green, and merge it." ;;
 	freeze-worker) ask="Add a -stop FILE flag to cmd/tally that ignores the words listed one per line in FILE, with tests in tally for a TopExcept(text, n, stop) function. Open a pull request, get CI green, and merge it." ;;
 	break-ci) ask="Add a -len N flag to cmd/tally that ignores words shorter than N letters, with table tests in tally. Open a pull request, get CI green, and merge it." ;;
+	kill-serve) ask="Add a -top-only flag to cmd/tally that prints only the words, one per line, without counts, with a test in tally for a Words-only helper. Open a pull request, get CI green, and merge it." ;;
 	review-comment) ask="Add a -reverse flag to cmd/tally that prints the least frequent words first, with table tests in tally. Open a pull request, get CI green, and merge it." ;;
 	*) echo "unknown scenario $scenario" >&2; exit 2 ;;
 	esac
@@ -86,6 +87,7 @@ cleanup() {
 		return
 	fi
 	[ -n "$serve_pid" ] && kill "$serve_pid" 2>/dev/null || true
+	pkill -f "^$ym serve" 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" kill-server 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -123,7 +125,7 @@ snapshot() {
 	fi
 	cat "$run/snap/prs"
 	for b in "$run"/state/goals/*/brief.md; do [ -f "$b" ] && echo "brief $(basename "$(dirname "$b")") $(md5 -q "$b") $(sed -n '1,3p' "$b" | short 100)"; done
-	[ -f "$run/state/work-service.json" ] && jq -r '"serve error=" + (.error[0:160])' "$run/state/work-service.json" 2>/dev/null || true
+	[ -f "$run/state/work-service.json" ] && jq -r '"serve pid=\(.pid) error=" + (.error[0:160])' "$run/state/work-service.json" 2>/dev/null || true
 }
 
 prev=$run/snap/prev cur=$run/snap/cur
@@ -183,6 +185,10 @@ chaos() {
 		git -C "$w" add -A && git -C "$w" commit -qm "Break CI on purpose for the rehearsal" && git -C "$w" push -q origin "$branch"
 		note "CHAOS pushed a failing test to $branch of PR #$pr" && chaos_done=1
 		;;
+	kill-serve)
+		[ -n "$(worker_pid busy)" ] || return 0
+		kill -9 "$serve_pid" && note "CHAOS kill -9 ym serve pid $serve_pid; the rehearsal does not restart it" && chaos_done=1
+		;;
 	review-comment)
 		read -r pr branch <<<"$(first_pr)"
 		[ -n "${pr:-}" ] && [ "$pr" != null ] || return 0
@@ -202,7 +208,7 @@ outcome=timeout
 while [ "$(date +%s)" -lt "$deadline" ]; do
 	tick
 	if [ "$scenario" != clean ]; then chaos; fi
-	if ! kill -0 "$serve_pid" 2>/dev/null; then
+	if [ "$scenario" != kill-serve ] && ! kill -0 "$serve_pid" 2>/dev/null; then
 		note "ym serve pid $serve_pid exited; see $run/serve.log"
 		start_serve
 	fi
