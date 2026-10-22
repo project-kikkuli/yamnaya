@@ -53,7 +53,7 @@ func (p *painter) mark(x float64, row int, name string) {
 	if name == "" || row < 1 {
 		return
 	}
-	name = ansi.Truncate(name, max(4, p.w/3), "…")
+	name = ansi.Truncate(ansi.Strip(name), max(4, p.w/3), "…")
 	n := ansi.StringWidth(name)
 	start := min(max(0, int(x)-n/2), max(0, p.w-n))
 	p.label(start, row-1, name, p.th.label)

@@ -27,7 +27,7 @@ func (c rgb) bytes() (int, int, int) {
 }
 
 func clamp(v, lo, hi float64) float64 {
-	if v < lo {
+	if !(v >= lo) {
 		return lo
 	}
 	if v > hi {

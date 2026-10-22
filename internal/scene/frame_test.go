@@ -2,6 +2,7 @@ package scene
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,9 @@ func TestCrowdsMergeAndKeepTheSelection(t *testing.T) {
 }
 
 func TestFiveHundredPeaksDrawQuickly(t *testing.T) {
+	if raceDetector {
+		t.Skip("the race detector slows drawing several times over")
+	}
 	s := Scene{Dark: true}
 	for r := range 25 {
 		rg := Range{ID: fmt.Sprint("r", r)}
@@ -228,6 +232,44 @@ func TestWeatherOfARangeIsItsWorstStormOrAllDone(t *testing.T) {
 	for _, c := range cases {
 		if got := combine(c.own, c.parts); got != c.want {
 			t.Errorf("combine(%v, %v) = %v, want %v", c.own, c.parts, got, c.want)
+		}
+	}
+}
+
+func TestAnyPeakNameKeepsTheFrameShape(t *testing.T) {
+	names := []string{"日本語の山の名前です", "🏔️⛰️🗻", "é́x", "\x1b[31mred\x1b[0m", "a\tb\rc", strings.Repeat("宽", 200), ""}
+	table := "日本語テーブル\n🎉 party row\n\x1b[31mred\x1b[0m row"
+	for _, name := range names {
+		for _, size := range sizes {
+			s := Scene{Dark: true, Selected: "b", Ranges: []Range{{ID: "r", Name: name, Peaks: []Peak{{ID: "a", Name: name, Climbers: 3}}}}}
+			for i := range 40 {
+				s.Peaks = append(s.Peaks, Peak{ID: fmt.Sprint(i), Name: name, Weather: Weather(i % 5), Climbers: i % 4})
+			}
+			s.Peaks[1].ID = "b"
+			for _, sel := range []string{"b", "r"} {
+				s.Selected = sel
+				out := Frame(s, size.w, size.h, 3, table)
+				rows := strings.Split(out, "\n")
+				for i, row := range rows {
+					if got := ansi.StringWidth(row); got != size.w {
+						t.Fatalf("name %q at %dx%d: row %d width %d", name, size.w, size.h, i, got)
+					}
+				}
+				if size.h >= 3 && !strings.Contains(ansi.Strip(out), ansi.Strip(ansi.Truncate("🎉 party row", size.w, ""))) {
+					t.Fatalf("name %q at %dx%d: table row lost", name, size.w, size.h)
+				}
+			}
+		}
+	}
+}
+
+func TestProgressOutOfRangeDrawsAsItsNearestEnd(t *testing.T) {
+	at := func(progress float64) string {
+		return Frame(Scene{Dark: true, Peaks: []Peak{{ID: "a", Climbers: 4, Progress: progress}}}, 80, 24, 0, "")
+	}
+	for _, c := range []struct{ odd, end float64 }{{math.NaN(), 0}, {-3, 0}, {math.Inf(-1), 0}, {7, 1}, {math.Inf(1), 1}} {
+		if at(c.odd) != at(c.end) {
+			t.Errorf("progress %v drew differently from %v", c.odd, c.end)
 		}
 	}
 }

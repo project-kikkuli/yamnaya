@@ -28,12 +28,20 @@ func (p *painter) encode(lines []string, tw int) string {
 				x, last = p.table.x1-1, ""
 				continue
 			}
+			g := p.cells[y*p.w+x]
+			if g.cont {
+				continue
+			}
 			style, r := p.cell(x, y)
 			if style != last {
 				b.WriteString(style)
 				last = style
 			}
-			b.WriteRune(r)
+			if g.s != "" {
+				b.WriteString(g.s)
+			} else {
+				b.WriteRune(r)
+			}
 		}
 		b.WriteString(reset)
 		if y < rows-1 {

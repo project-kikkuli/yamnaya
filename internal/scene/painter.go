@@ -1,5 +1,7 @@
 package scene
 
+import "github.com/charmbracelet/x/ansi"
+
 // painter lays the scene down in pixels two to a cell, then glyphs on top.
 type painter struct {
 	th     theme
@@ -20,10 +22,13 @@ type painter struct {
 	table  rect
 }
 
+// glyph is a drawn character; a wide one owns the next cell too, marked cont.
 type glyph struct {
-	r   rune
-	fg  rgb
-	set bool
+	r          rune
+	s          string
+	fg         rgb
+	set        bool
+	wide, cont bool
 }
 
 // layer is one depth of ridgeline: its height per column and which mount owns that column.
@@ -86,16 +91,52 @@ func (p *painter) blend(x, y int, c rgb, a float64) {
 	}
 }
 
+func (p *painter) free(x, y int) bool {
+	return x >= 0 && x < p.w && y >= 0 && y < p.p/2 && !p.table.has(x, y) && !p.front[2*y*p.w+x] && !p.front[(2*y+1)*p.w+x]
+}
+
+// clear empties a cell, and the other half of any wide glyph it held.
+func (p *painter) clear(x, y int) {
+	i := y*p.w + x
+	switch {
+	case p.cells[i].cont:
+		p.cells[i-1] = glyph{}
+	case p.cells[i].wide:
+		p.cells[i+1] = glyph{}
+	}
+	p.cells[i] = glyph{}
+}
+
 func (p *painter) put(x, y int, r rune, fg rgb) {
-	if x >= 0 && x < p.w && y >= 0 && y < p.p/2 && !p.table.has(x, y) && !p.front[2*y*p.w+x] && !p.front[(2*y+1)*p.w+x] {
-		p.cells[y*p.w+x] = glyph{r, fg, true}
+	if p.free(x, y) {
+		p.clear(x, y)
+		p.cells[y*p.w+x] = glyph{r: r, fg: fg, set: true}
 	}
 }
 
+func (p *painter) putCluster(x, y int, s string, width int, fg rgb) {
+	if !p.free(x, y) || width == 2 && !p.free(x+1, y) {
+		return
+	}
+	p.clear(x, y)
+	p.cells[y*p.w+x] = glyph{s: s, fg: fg, set: true, wide: width == 2}
+	if width == 2 {
+		p.clear(x+1, y)
+		p.cells[y*p.w+x+1] = glyph{set: true, cont: true}
+	}
+}
+
+// label writes text a grapheme at a time, wide ones over two cells, dropping escapes and controls.
 func (p *painter) label(x, y int, text string, fg rgb) {
-	for _, r := range text {
-		p.put(x, y, r, fg)
-		x++
+	text = ansi.Strip(text)
+	for text != "" {
+		c, width := ansi.FirstGraphemeCluster(text, ansi.GraphemeWidth)
+		text = text[len(c):]
+		if width < 1 || width > 2 || c[0] < ' ' || c[0] == 0x7f {
+			continue
+		}
+		p.putCluster(x, y, c, width, fg)
+		x += width
 	}
 }
 
