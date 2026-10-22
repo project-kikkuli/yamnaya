@@ -87,6 +87,9 @@ func (c attached) Run() error {
 }
 
 func (c attached) SetStdin(r io.Reader) {
+	if in, ok := r.(input); ok {
+		r = in.File
+	}
 	if c.Stdin == nil {
 		c.Stdin = r
 	}
