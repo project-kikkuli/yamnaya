@@ -28,6 +28,13 @@ type painter struct {
 	far    []float64
 	geo    []geom
 	table  rect
+	// lit is the selected mountain's light laid over the backdrop's pixels when a frame is painted.
+	lit []pixel
+}
+
+type pixel struct {
+	i int
+	c rgb
 }
 
 // glyph is a drawn character; a wide one owns the next cell too, marked cont.
@@ -52,6 +59,12 @@ type rect struct{ x0, y0, x1, y1 int }
 func (r rect) has(x, y int) bool { return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1 }
 
 func newPainter(s Scene, width, height, frame int) *painter {
+	p := blankPainter(s, width, height, frame)
+	p.l = plan(s, width)
+	return p
+}
+
+func blankPainter(s Scene, width, height, frame int) *painter {
 	th := themeAt(s.Now, s.Dark)
 	p := &painter{th: th, w: width, p: height * 2, frame: frame, t: float64(frame)}
 	p.px = make([]rgb, p.w*p.p)
@@ -60,7 +73,6 @@ func newPainter(s Scene, width, height, frame int) *painter {
 	p.cells = make([]glyph, p.w*height)
 	p.hz = p.p * 64 / 100
 	p.top = float64(p.hz) * .07
-	p.l = plan(s, width)
 	return p
 }
 
@@ -101,6 +113,9 @@ func (p *painter) at(frame int, table rect) *painter {
 	q := *p
 	q.frame, q.t, q.table = frame, float64(frame), table
 	q.px = append([]rgb(nil), p.px...)
+	for _, d := range p.lit {
+		q.px[d.i] = d.c
+	}
 	q.cells = make([]glyph, len(p.cells))
 	return &q
 }

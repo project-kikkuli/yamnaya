@@ -18,10 +18,28 @@ func Frame(s Scene, width, height, frame int, table string) string {
 	if reducedMotion {
 		frame = 0
 	}
+	key := fmt.Sprintf("%d %d %d %v %v %v %q %v", width, height, frame, s.Dark, s.Now, s.Ranges, s.Selected, s.Peaks)
+	painted.Lock()
+	if painted.key == key && painted.table == table {
+		out := painted.out
+		painted.Unlock()
+		return out
+	}
+	painted.Unlock()
 	lines, tw, box := place(table, width, height)
 	p := still(s, width, height).at(frame, box)
 	p.motion()
-	return p.encode(lines, tw)
+	out := p.encode(lines, tw)
+	painted.Lock()
+	painted.key, painted.table, painted.out = key, table, out
+	painted.Unlock()
+	return out
+}
+
+// painted is the last frame drawn, returned as is when nothing that shapes it changed.
+var painted struct {
+	sync.Mutex
+	key, table, out string
 }
 
 // light is how finely the time of day moves the sky: once per bucket, so the backdrop is reused in between.
@@ -31,24 +49,108 @@ var backdrops struct {
 	sync.Mutex
 	key  string
 	p    *painter
-	hits int
+	builds int
+	// lit holds, per mountain, the pixels its selection light changes on the backdrop.
+	lit map[int][]pixel
 }
 
-// still is the backdrop for a scene at a size, kept while nothing that shapes it changes: the work drawn, the
-// selection, the theme and the time of day to the bucket. The table plays no part in it.
+// still is the backdrop for a scene at a size with the selected mountain lit, the work and selection laid out
+// on it for the frame to draw. The backdrop is kept while nothing it paints changes: the shape of the ranges,
+// their weather, the theme and the time of day to the bucket. The table plays no part in it.
 func still(s Scene, width, height int) *painter {
 	s.Now = s.Now.Truncate(light)
-	key := fmt.Sprintf("%d %d %v %v %v %q %v", width, height, s.Dark, s.Now.Format(time.TimeOnly), s.Ranges, s.Selected, s.Peaks)
+	l := plan(s, width)
+	bare := unlit(l)
+	key := fmt.Sprintf("%d %d %v %v %v", width, height, s.Dark, s.Now.Format(time.TimeOnly), shape(bare))
 	backdrops.Lock()
 	defer backdrops.Unlock()
-	if backdrops.p != nil && backdrops.key == key {
-		backdrops.hits++
-		return backdrops.p
+	if backdrops.p == nil || backdrops.key != key {
+		backdrops.builds++
+		p := blankPainter(s, width, height, 0)
+		p.l = bare
+		p.backdrop()
+		backdrops.key, backdrops.p, backdrops.lit = key, p, map[int][]pixel{}
+		go warm(key, s, width, height, bare)
 	}
-	p := newPainter(s, width, height, 0)
+	q := *backdrops.p
+	q.l = l
+	for i, m := range l.mounts {
+		if !m.selected {
+			continue
+		}
+		lit, ok := backdrops.lit[i]
+		if !ok {
+			lit = lighting(backdrops.p, s, width, height, bare, i)
+			backdrops.lit[i] = lit
+		}
+		q.lit = lit
+	}
+	return &q
+}
+
+// warm works out every mountain's selection light ahead of the keys that move the selection to it.
+func warm(key string, s Scene, width, height int, bare layout) {
+	backdrops.Lock()
+	base := backdrops.p
+	backdrops.Unlock()
+	for i := range bare.mounts {
+		backdrops.Lock()
+		_, done := backdrops.lit[i]
+		stale := backdrops.key != key
+		backdrops.Unlock()
+		if stale {
+			return
+		}
+		if done {
+			continue
+		}
+		lit := lighting(base, s, width, height, bare, i)
+		backdrops.Lock()
+		if backdrops.key == key {
+			backdrops.lit[i] = lit
+		}
+		backdrops.Unlock()
+	}
+}
+
+// lighting is the pixels that differ from the bare backdrop when mountain i is the selected one.
+func lighting(base *painter, s Scene, width, height int, bare layout, i int) []pixel {
+	l := bare
+	l.mounts = append([]mount(nil), bare.mounts...)
+	l.mounts[i].selected = true
+	p := blankPainter(s, width, height, 0)
+	p.l = l
 	p.backdrop()
-	backdrops.key, backdrops.p = key, p
-	return p
+	var out []pixel
+	for k, c := range p.px {
+		if c != base.px[k] {
+			out = append(out, pixel{k, c})
+		}
+	}
+	return out
+}
+
+// unlit is a layout with no mountain selected, the way the backdrop is painted.
+func unlit(l layout) layout {
+	l.mounts = append([]mount(nil), l.mounts...)
+	for i := range l.mounts {
+		l.mounts[i].selected = false
+	}
+	return l
+}
+
+// shape is everything about a layout the backdrop paints: where each mountain and range stands, how tall and
+// in what weather; not its names, climbers or camps, which are drawn on top each frame.
+func shape(l layout) string {
+	var b strings.Builder
+	fmt.Fprint(&b, l.depth)
+	for _, m := range l.mounts {
+		fmt.Fprintf(&b, "|%x %v %v %v %d %d", m.seed, m.cx, m.half, m.lift, m.depth, m.weather)
+	}
+	for _, m := range l.massifs {
+		fmt.Fprintf(&b, "|%x %v %v %d %d", m.seed, m.x0, m.x1, m.depth, m.weather)
+	}
+	return b.String()
 }
 
 // Hit is the id of the peak or range drawn at cell x, y of the frame Frame draws for the same scene, size and table,

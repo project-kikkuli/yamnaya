@@ -212,20 +212,65 @@ func BenchmarkFrame(b *testing.B) {
 	}
 }
 
-func TestLaterFramesReuseTheBackdrop(t *testing.T) {
+func TestLaterFramesAndNewSelectionsReuseTheBackdrop(t *testing.T) {
 	s := fiveHundred()
 	Frame(s, 300, 90, 0, board(20, 0))
-	hits := backdrops.hits
+	builds := backdrops.builds
 	for f := 1; f <= 8; f++ {
 		Frame(s, 300, 90, f*4, board(20, 0))
 	}
-	if got := backdrops.hits - hits; got != 8 {
-		t.Fatalf("%d of 8 later frames reused the backdrop", got)
+	for _, sel := range []string{"3-4", "0-1", "3-4", ""} {
+		s.Selected = sel
+		Frame(s, 300, 90, 40, board(20, 0))
 	}
-	s.Selected = "3-4"
-	Frame(s, 300, 90, 40, board(20, 0))
-	if backdrops.hits-hits != 8 {
-		t.Fatal("a new selection reused the old backdrop")
+	s.Ranges[2].Peaks[4].Team = []Climber{{Name: "renamed", Stance: Waiting}}
+	s.Ranges[2].Peaks[4].Name = "renamed"
+	s.Ranges[2].Peaks[4].Progress = .9
+	Frame(s, 300, 90, 44, board(20, 0))
+	if got := backdrops.builds - builds; got != 0 {
+		t.Fatalf("%d backdrops painted for later frames, selections and changed names", got)
+	}
+	for k := range s.Ranges[2].Peaks {
+		s.Ranges[2].Peaks[k].Weather = Summit
+	}
+	Frame(s, 300, 90, 44, board(20, 0))
+	if backdrops.builds-builds != 1 {
+		t.Fatal("new weather kept the old backdrop")
+	}
+}
+
+func TestASelectionLightsTheBackdropAsIfPaintedSelected(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Scene
+	}{
+		{"peaks", Scene{Dark: true, Peaks: []Peak{{ID: "a", Team: team(1)}, {ID: "b", Weather: Storm}, {ID: "c", Weather: Eruption}, {ID: "d", Weather: Summit}}}},
+		{"ranges", work()},
+		{"crowd", fiveHundred()},
+	}
+	for _, c := range cases {
+		ids := []string{}
+		for _, p := range c.s.Peaks {
+			ids = append(ids, p.ID)
+		}
+		for _, r := range c.s.Ranges[:min(4, len(c.s.Ranges))] {
+			ids = append(ids, r.ID)
+			if len(r.Peaks) > 0 {
+				ids = append(ids, r.Peaks[len(r.Peaks)-1].ID)
+			}
+		}
+		for _, id := range ids {
+			s := c.s
+			s.Selected = id
+			want := newPainter(s, 174, 72, 0)
+			want.backdrop()
+			got := still(s, 174, 72).at(0, rect{})
+			for k := range want.px {
+				if want.px[k] != got.px[k] {
+					t.Fatalf("%s selecting %s: pixel %d is %v, painted selected it is %v", c.name, id, k, got.px[k], want.px[k])
+				}
+			}
+		}
 	}
 }
 
@@ -235,7 +280,7 @@ func TestATableGrowsUpFromAFixedBottomAndRedrawsOnlyTheRowsItCovers(t *testing.T
 	frames := make([][]string, len(heights))
 	boxes := make([]rect, len(heights))
 	Frame(s, 174, 72, 0, board(heights[0], 0))
-	hits := backdrops.hits
+	builds := backdrops.builds
 	for k, n := range heights {
 		frames[k] = strings.Split(Frame(s, 174, 72, 0, board(n, 0)), "\n")
 		_, _, boxes[k] = place(board(n, 0), 174, 72)
@@ -243,8 +288,8 @@ func TestATableGrowsUpFromAFixedBottomAndRedrawsOnlyTheRowsItCovers(t *testing.T
 			t.Fatalf("a table of %d rows ends at row %d, one of %d at %d", n+1, boxes[k].y1, heights[0]+1, boxes[0].y1)
 		}
 	}
-	if got := backdrops.hits - hits; got != len(heights) {
-		t.Fatalf("%d of %d frames reused the backdrop across table heights", got, len(heights))
+	if got := backdrops.builds - builds; got != 0 {
+		t.Fatalf("%d backdrops painted across table heights", got)
 	}
 	for k := 1; k < len(heights); k++ {
 		top := min(boxes[k].y0, boxes[k-1].y0)
