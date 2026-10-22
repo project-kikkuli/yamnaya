@@ -43,7 +43,7 @@ The loop is code in `ym serve`, not instructions in a prompt:
 
 Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply while the machine is awake counts as hung: a hung manager is relaunched, and a hung or exited agent becomes a goal event, so its manager hears it once in its next wake with the `ym revive` that resumes it, and its chiefs and the goal's feed see it too.
 
-Busy is not the same as moving. ym reads each agent's transcript, as it already does for its status, for signs it is busy going nowhere: the same failure in five of its last 20 tool results, over three minutes or more, with no file changed between (pending CI checks and searches that find nothing do not count); its context compacted three times in a row, each within 15 minutes of the last with under 10 tool calls between; or three or more files written in a repository other than the one it runs in. Such an agent's row reads `adrift` and its goal stands adrift. Each episode becomes one goal event with the evidence, so the manager hears it in its next wake and its chiefs see it; a manager adrift itself shows up to its chiefs the same way. Nothing reaches you unless the manager escalates. `h` lists every agent adrift now, and `ym health drift` replays every transcript on the machine and lists past episodes.
+Busy is not moving. ym reads each agent's transcript for signs it is going nowhere: the same failure in 5 of its last 20 tool results over 3 minutes or more with no file changed between (pending CI and empty searches do not count), its context compacted 3 times in a row within 15 minutes each with under 10 tool calls between, or 3 or more files written in a repository other than its own. That agent's row reads `adrift`, its goal stands adrift, and each episode becomes one goal event with the evidence for the manager and its chiefs. It reaches you only if the manager escalates. `h` lists every agent adrift now; `ym health drift` replays this machine's transcripts for past episodes.
 
 ## What reaches you
 
@@ -57,7 +57,13 @@ The **Needs you** queue holds only:
 - permission prompts
 - one row per session you started yourself that asks you something
 
-It stays quiet because ym refuses a decision or default bound for you without a recommendation, and a decision without two options with their effects. Every ask arrives with the goal, its pull requests and CI, recent agent activity and the goal's feed events you have not read; answering or dismissing one of its asks, or opening the goal, marks them read. An ask that climbed to you past a stuck or retired manager without those shows as unprepared, and that manager is told to prepare it. Done and stuck also raise a desktop notification; nothing else does.
+It stays quiet because every ask arrives ready to decide:
+
+- ym refuses a decision or default bound for you without a recommendation, and a decision without two options with their effects. Chores and go items need neither.
+- ym attaches the goal, its manager, the work's pull requests with CI, recent agent activity and the goal's feed events you have not read, and `ym serve` refreshes them each cycle. The selected row sums it up in one `evidence:` line; `enter` shows what was tried, the evidence and the full context. Answering or dismissing one of the goal's asks, opening the goal or `ym goal feed` marks the news read.
+- An ask that climbed to you past a stuck or retired manager or chief without a recommendation or options shows `unprepared`, with what is missing and who was told to fix it with `ym item prepare`. Asks from your own sessions are never marked unprepared.
+
+Done and stuck also raise a desktop notification; nothing else does.
 
 Each goal row shows its unread feed count and newest line. `enter` opens the goal with its feed and marks it read.
 
@@ -140,7 +146,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."]` | ask your manager, or the owner when you have none; ym attaches the evidence it can find |
 | | `ym item list [--all] [--everywhere] [--to-me]` | open items; `--to-me` is what is routed to the calling manager |
 | | `ym item show\|answer\|dismiss\|snooze\|reopen\|go <id>` | act on one item |
-| | `ym item prepare <id> [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."]` | make an open ask ready to decide; an ask that climbed to you past a stuck or retired manager shows unprepared until that manager runs this |
+| | `ym item prepare <id> [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."] [--assumption "..."]` | (manager) add what an open ask lacks; `--option` replaces its options, `--evidence` appends; refused if an owner-bound ask would still not be ready |
 | | `ym item inbox` | answers and messages the calling session has not received |
 | Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
 | | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |
