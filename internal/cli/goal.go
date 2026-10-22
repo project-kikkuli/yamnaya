@@ -20,13 +20,13 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	cmd := &cobra.Command{
 		Use:   "goal [--repo NAME|PATH] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
-		Args:  cobra.MinimumNArgs(1),
+		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			dir, err := e.repoArg(repo)
 			if err != nil {
 				return err
 			}
-			g, m, err := e.core.NewGoal(strings.Join(args, " "), dir, "")
+			g, m, err := e.core.NewGoal(args[0], dir, "")
 			if err != nil {
 				return err
 			}
@@ -42,6 +42,21 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(with),
 		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(with))
 	return cmd
+}
+
+// goalArgs takes the ask as one quoted argument, so a subcommand this ym does not have is refused rather than started as a goal.
+func goalArgs(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 {
+		return nil
+	}
+	if len(args) == 0 {
+		return errors.New(`a goal needs the ask in your words: ym goal "<ask>"`)
+	}
+	var subs []string
+	for _, c := range cmd.Commands() {
+		subs = append(subs, c.Name())
+	}
+	return fmt.Errorf(`ym goal has no subcommand %q (it has %s); to start a goal, quote the whole ask: ym goal "<ask>"`, args[0], strings.Join(subs, ", "))
 }
 
 func (e *env) repoArg(repo string) (string, error) {
