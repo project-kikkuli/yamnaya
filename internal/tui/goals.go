@@ -496,7 +496,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
 			m.feedFrom = m.board.At
-			if err := m.core.Store.MarkSeen(n.Goal.ID, m.board.At); err != nil {
+			if err := m.core.Looked(n.Goal.ID); err != nil {
 				m.message = "error: " + err.Error()
 			}
 		} else {

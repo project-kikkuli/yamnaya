@@ -537,7 +537,7 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if keep {
 				return nil
 			}
-			return e.core.Store.MarkSeen(g.ID, time.Now())
+			return e.core.Looked(g.ID)
 		}),
 	}
 	cmd.Flags().BoolVar(&keep, "keep-unread", false, "leave the news unread")

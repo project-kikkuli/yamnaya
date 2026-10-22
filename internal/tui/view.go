@@ -613,7 +613,7 @@ func (m Model) needLines(i int, n core.Need) string {
 	if it.Kind == core.KindGo {
 		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
 	}
-	if missing := core.Missing(*it); len(missing) > 0 {
+	if len(core.Unprepared(*it)) > 0 {
 		q = pal.yellow.Render("unprepared · ") + q
 	}
 	if more := len(n.Asks) - 1; more > 0 {
@@ -1133,7 +1133,7 @@ func toolCounts(tools map[string]int) string {
 
 // unprepared says what an ask that reached the owner lacks, and who was told to prepare it.
 func (m Model) unprepared(it core.Item) string {
-	missing := core.Missing(it)
+	missing := core.Unprepared(it)
 	if len(missing) == 0 {
 		return ""
 	}

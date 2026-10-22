@@ -336,7 +336,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				line("option", o.Label+" = "+o.Effect)
 			}
 			line("assumption", it.Assumption)
-			if m := core.Missing(it); it.State == core.ItemOpen && it.Recipient == core.Owner && len(m) > 0 {
+			if m := core.Unprepared(it); len(m) > 0 {
 				line("unprepared", "missing "+strings.Join(m, " and ")+preparedBy(e, it))
 			}
 			line("tried", it.Tried)
@@ -422,11 +422,7 @@ func toJSON(it core.Item) itemJSON {
 	if ev == nil {
 		ev = []string{}
 	}
-	var missing []string
-	if it.State == core.ItemOpen && it.Recipient == core.Owner {
-		missing = core.Missing(it)
-	}
-	return itemJSON{Missing: missing, Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }

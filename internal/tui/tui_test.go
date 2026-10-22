@@ -744,7 +744,14 @@ func TestAnAsksEvidenceShowsOnItsRowAndInFullWhenExpanded(t *testing.T) {
 
 func TestAnUnpreparedAskIsMarkedOnItsRowAndWhenExpanded(t *testing.T) {
 	m, c, _ := setup(t)
-	if _, err := c.Store.AddItem(core.Item{Kind: core.KindDecision, Question: "Use v2 key ids?", Session: "lead", Blocks: 9}); err != nil {
+	it, err := c.Store.AddItem(core.Item{Kind: core.KindDecision, Question: "Use v2 key ids?", Session: "lead", Blocks: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := refresh(t, m).View().Content; strings.Contains(v, "unprepared") {
+		t.Fatalf("a thin ask nobody was told to prepare is marked unprepared:\n%s", v)
+	}
+	if err := c.Store.SetPreparer(it.Seq, "mgr1"); err != nil {
 		t.Fatal(err)
 	}
 	m = refresh(t, m)

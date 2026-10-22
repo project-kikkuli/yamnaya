@@ -100,6 +100,15 @@ func Missing(it Item) []string {
 	return out
 }
 
+// Unprepared is what an open ask that climbed to the owner past a stuck or retired manager still lacks; an ask the owner's own
+// session filed, or one filed before ym refused thin asks, has no one to prepare it and is never unprepared.
+func Unprepared(it Item) []string {
+	if it.State != ItemOpen || it.Recipient != Owner || it.Preparer == "" {
+		return nil
+	}
+	return Missing(it)
+}
+
 var missingFlag = map[string]string{
 	"a recommendation":               "--rec \"<what you recommend and why>\"",
 	"two options with their effects": "at least two --option \"<label>=<what happens if picked>\"",
@@ -194,12 +203,9 @@ func titleFor(s Live) string {
 	return Short(s.Key())
 }
 
-// quietKinds are a manager's own wakes, never news for the owner deciding an ask.
-var quietKinds = map[string]bool{EventTimer: true, EventNudge: true}
-
-// changes lists the goal's events the owner has not read, oldest first, leaving out the asked item's own; since is the owner's
-// last read, zero when the owner never read the goal.
-func (c *Core) changes(goal, skip string) (time.Time, []string, error) {
+// changes lists the goal's news the owner has not read, the same events the feed counts unread, oldest first; since is the
+// owner's last read, zero when the owner never read the goal.
+func (c *Core) changes(goal string) (time.Time, []string, error) {
 	events, err := c.Store.GoalEvents(goal)
 	if err != nil {
 		return time.Time{}, nil, err
@@ -213,7 +219,7 @@ func (c *Core) changes(goal, skip string) (time.Time, []string, error) {
 			}
 			continue
 		}
-		if quietKinds[e.Kind] || (e.Kind == EventAsked && strings.Contains(e.Payload, "("+skip+")")) {
+		if !e.OwnerNews() {
 			continue
 		}
 		line := oneLine(e.Payload)
@@ -292,7 +298,7 @@ func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 	}
 	if d.Goal != "" {
 		var err error
-		if d.Since, d.Changes, err = c.changes(d.Goal, it.Key()); err != nil {
+		if d.Since, d.Changes, err = c.changes(d.Goal); err != nil {
 			return d, err
 		}
 	}

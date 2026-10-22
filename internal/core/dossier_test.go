@@ -133,9 +133,9 @@ func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = w.core.Store.Item(two.Key())
-	if !has(got.Dossier.Changes, "CI passed on \"verifier\"") ||
+	if has(got.Dossier.Changes, "CI passed") ||
 		!slices.ContainsFunc(got.Dossier.PRs, func(p PRNote) bool { return p.URL == second && p.CI == "passing" }) {
-		t.Fatalf("after ym serve refreshed, dossier = %+v; want the PR's CI now passing", got.Dossier)
+		t.Fatalf("after ym serve refreshed, dossier = %+v; want the PR's CI now passing, and green CI, which the feed does not count as news, left out", got.Dossier)
 	}
 	if err := w.core.Looked(got.Dossier.Goal); err != nil {
 		t.Fatal(err)
