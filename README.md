@@ -1,146 +1,157 @@
 # yamnaya
 
-`ym` runs your agent work like a company. You type a goal in one line; ym starts a manager session that owns it until it is done and runs its own agents. The agents report to the manager, managers report to chiefs when you group them, and only what truly needs you reaches your queue. The board shows the goals as mountains with your queue floating over them, plus every Claude Code and Codex session you started yourself. Run it in any terminal tab. It reads the harnesses' own files and never changes your tmux layout, panes or key bindings.
+`ym` hands your work to Claude Code managers and keeps you out of the loop until you are actually needed.
+You type a goal once. A manager owns it until it is done, runs its own agents, answers their questions and checks its own work.
+The board shows every goal as a mountain, with your queue of things only you can settle floating over it.
 
-## Goals, managers and chiefs
-
-- **Goal**: `ym goal "<ask>"` from any shell (the repository is the current directory's, or `--repo`), or `n` on the board (the selected row's repository; `N` picks one). ym records the ask in your words and starts its manager.
-- **Manager**: an ordinary interactive Claude session on ym's tmux server with a persistent identity: when its session is replaced, the manager, its goal and its agents stay. Its launch prompt carries the goal, its authority, how to start agents (`ym new`, which links them under it), the markdown brief it keeps (`B` shows it) and how to register a richer artifact (`V` opens it). Open it with `o` and talk to it like any session; that is how you change direction.
-- **Authority**: a manager owns its goal outright, go-aheads, decisions and fixes included. It may merge its own pull requests only in repositories `ym goal authority` clears (seeded: auth-plane may merge, august may not); elsewhere a green pull request comes to your merge queue. It writes to other humans only with a model-name prefix.
-- **Chief**: `ym chief "<name>" --over <id>,<id>` (or `C` over the selected rows) oversees managers and other chiefs, to any depth. It reads their briefs, steers them, relaunches stuck ones and keeps a rolled-up brief. A manager needs no chief, and work never waits on one: a stuck or retired chief is passed over.
-- **Routing**: `ym item add` from an agent goes to its manager's session as a message, never to you; the manager answers with `ym item answer`. A manager's own ask climbs to its chief, a chief's to its chief, and only the top reaches you, ready to decide: ym refuses a decision or default bound for you without a recommendation (and a decision without two options with their effects), and attaches on its own the goal, the manager, the work's pull requests with their CI, its agents' latest activity and what changed in the goal since you last looked (answering one of its asks or opening the goal counts as looking). `ym serve` keeps that evidence current while the ask waits; the selected row sums it up and `enter` shows it in full. When an agent a manager runs goes idle, its last message reaches that manager verbatim, once per message, and the manager judges it.
-- **Supervision**: `ym serve` watches every active goal. A dead manager is relaunched with its prompt and brief, with backoff so a launch that keeps failing never spins. When nothing moves (no turns, brief edits or agent activity) for 30 minutes, the manager is nudged; still nothing after two nudges, and the goal shows one stuck row in your queue with the evidence. A busy session with no tool call, reply or busy subagent for 15 minutes counts as hung, not moving: a hung manager is ended and relaunched, and a hung agent's manager hears it once with what the agent last did. When an agent's process exits or is killed, its manager hears it once with the worktree and the `ym revive` that resumes it.
-- **Wakes**: `ym serve` records what happens on each goal without a model: an agent finishing or asking, a pull request opened, CI red or green on a head, new review threads or a review decision, merged or closed, stuck, verification and done. Once per cycle it hands the manager everything new in one message; a manager that is down gets what it missed in its relaunch prompt, and nothing is handed twice. A manager that ends a turn with nothing in flight (no agent working, no pull request awaiting CI, no wake set, no ask waiting) is nudged at once. Managers run `ym goal wake <when> <why>` (`30m`, `2h`, `15:04`) to be woken at a time, and `ym goal update "<line>"` to tell you where the goal stands.
-- **Chiefs hear their goals**: every chief, nested chiefs included, gets the state changes of the goals below it in one batched message per cycle. Chiefs never gate work; asks still go to the nearest manager.
-- **Feed**: each goal row shows how much news you have not read and its newest line; a chief row adds up its goals'. `enter` opens the goal with its feed and marks it read; `ym goal feed <goal>` prints it from a shell. A goal that is done or stuck also raises a desktop notification (terminal-notifier when installed, else osascript); nothing else does.
-- **Steering**: `s` sends your message to the selected goal or chief, or to every row picked with `space`; on a chief, `tab` widens it to its whole subtree. `ym goal send <id>[,<id>] [--subtree] <text>` does the same from a shell.
-
-Sessions you start yourself (`+` on the board, or `ym new` from your own shell) get no manager. Each shows as one row in your queue when it asks you anything, however many asks it filed. One that goes idle with a block of questions for you, or with a follow-up to one since you last wrote, shows as a waiting row carrying that message in full.
-
-## Install
+## Quickstart
 
     go install github.com/project-kikkuli/yamnaya/cmd/ym@latest
-    ym install
+    ym install --statusline
+    cd ~/dev/some-repo
+    ym goal "make the export endpoint stream instead of buffering"
+    ym
 
-`ym install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex`. State lives in `~/.local/state/yamnaya/ym.db` (override with `YAMNAYA_STATE_DIR`).
+1. `ym install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex`; `--statusline` makes Claude Code's statusline record your limits.
+2. `ym goal` records the ask in your words and starts a manager session for it on ym's own tmux server (`tmux -L ym`).
+3. `ym` opens the board and starts `ym serve` in the background if it is not running.
 
-`ym update` runs that `go install` again and prints the version and path it installed. A running board polls its own executable every second and, once a new binary has settled on disk, restores the terminal and execs it in place with the same arguments and environment, unless you are typing or confirming. Sessions on ym's tmux server are untouched.
+On the board you see the goal under **Goals**, moving. Its mountain grows climbers as the manager starts agents and camps as pull requests open.
+**Needs you** stays empty until the manager hits something only you can decide, or the goal passes verification and is done.
+Press `o` on the goal to open the manager and talk to it like any session.
 
-## The screen
+## How work flows
 
-- **Needs you**: your queue. Finished and stuck goals, escalations no manager or chief settled, pull requests ready to merge in repositories no manager may merge in, review requests GitHub addresses to you personally (not to your teams), document asks (see below), permission prompts, and one row per session you started that asks you something (`enter` lists its asks). `x` clears a goal, merge, review or document row; a document row comes back only when someone writes in that discussion again.
-- **Goals**: the goal tree. A chief is one row with its reports' worst state; `enter` drills in. A goal stands moving, quiet, down (its manager died and is being relaunched), stuck, or done. `t` switches to goals by repository.
-- **Mountains**: each repository is a range and a chief a range of its goals. Goals and the sessions you started are peaks named with their measured progress. Busy agents climb the west face named, as high as the progress; agents stopped on you are red, idle teammates rest at the foot. Pull requests are camps on the east face at the gate they reached (red failing, green passing, merged folded into one flag). A red flare rises from work that needs you. Clouds when it goes quiet, a storm when a check fails or it is stuck, an eruption when its manager dies, a summit when it is done. The sky follows your local clock from dawn to night; a light terminal only lifts the contrast. The selected row lights its peak, and clicking a peak selects its row. Work moves once a second (an eruption faster); stars, high cloud and the lake stir every few seconds; the scene holds still for a moment after each key and pauses while the terminal is unfocused. The board's bottom edge stays put and it grows upward, so expanding a row redraws only the board. `A` hides them; `NO_COLOR` leaves them out; `YM_REDUCED_MOTION=1` holds them still.
-- **Sessions you started**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result.
-- **Progress**: `(crew finished + gates passed) / (crew dispatched + 6 × open branches)`. A branch passes six gates: branch, commits, pull request open, CI green, review threads resolved, merged. A subagent killed or failed mid-turn counts in neither part, so it neither inflates the bar nor holds it below 100%; one that ends by handing back its report counts as finished. Agent-set phases are a label and never move the bar. A mission's detail shows the raw counts and each branch's gate strip.
-- **Asks**: permission prompts with the tool and command, then items with the agent's recommendation, how much they block and which session filed them. Answer (`a`), later (`l`), why (`w`) or dismiss (`x`) inline. Last come idle sessions you started whose last reply asks you while no open item, permission prompt or earlier dismissal covers it, shown as `waiting:` with the first question: `w` or `enter` shows the whole reply, `a` sends your answer the way `ym send` does and clears the row, and `x` hides it until the session asks again.
-- **Fleet line**: each Claude and Codex limit window with its use and reset, and today's and the last seven days' spend at API prices. Every repo, mission, session and agent shows its own spend, subagents and child threads included.
-- `enter` drills down and `esc` climbs back: repo, then its missions, then a mission's sessions and crew, then a session (task, latest ask, what it is doing now, pull requests and CI, items, crew), then one agent (its full brief, result, files written and tool trail). Rename (`r`), merge (`m`) or split (`S`) missions, advance (`p`) or set (`P`) their phases, and set their vibe (`v`).
-- `h` shows health by week: median and p90 time from item filed to answered, the share of items dismissed or open past a day, assistant messages per day that print a block of questions in chat, and agent-hours per day spent waiting on you (from a turn that ended asking you, or a permission prompt you answered, to your next typed message). It reads transcripts incrementally into per-day rows in the ym database.
-- Anything the CLI does for the owner has a key; `?` lists them. `n` hands a new goal to a manager in the selected row's repository; `N` picks the repository first, from recent repos then every repo under the roots. `+` starts a session of your own in the selected row's repository (prompt; the worktree is named from it; `tab` picks claude or codex). `K` kills a live session's agent with SIGTERM after confirmation and removes the stopped session from the active board. On an exited session or mission, `K` archives it without workspace cleanup. Terminals, worktrees, transcripts and items stay; `E` retains launch history and `ym revive` can resume a launched session. Stop intent survives stale discovery snapshots and restarts; a fresh live observation establishes a resume. `L` lands a registered launch, removing its worktree only when clean and merged or pushed. Exited launches can also land automatically once they have nothing to lose, with a day of retention after an owner kill or signal. `G` runs `ym gc`, `T` ends an idle session and relaunches it in the other harness on ym's server, in the same directory, `I` lists every item including answered, dismissed and snoozed ones, `U` shows usage and limits, `E` lists what ym launched.
-- `o` goes to a session. When ym runs inside tmux and the session is in a tmux pane, ym jumps there with `switch-client` and `select-pane`. Otherwise it says where the session runs (for example `iTerm ttys012`) and never opens windows or tabs. It never starts a second copy, and flags a session that runs in two processes.
-- `O` opens a tmux session beside the board instead: ym splits its own pane and attaches the new pane to a grouped copy of the session's tmux session, so the board stays in view and no other client's window moves. The pane closes when you detach from it. It needs ym running inside tmux.
+    you -> goal -> manager -> agents
+                    |
+                  chiefs (optional, any depth) -> you
 
-Everything shown is read from the harnesses' own files: Claude Code transcripts and subagent files, Codex's thread database (including its spawn edges) and rollouts. Agents need not report anything. ym reads each transcript once and then only what was appended, keeping its offsets in its database. Pull request status, checks and review threads come from one `gh api graphql` query, fetched in the background at most every two minutes per open pull request.
+- **Goal**: one ask, in your words. States: moving, quiet, down (manager died, being relaunched), verifying, stuck, done.
+- **Manager**: an interactive Claude session with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
+- **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message reaches the manager once.
+- **Chiefs**: `ym chief "<name>" --over <id>,<id>` groups managers and other chiefs. A chief reads their briefs, steers them and hears their state changes. Work never waits on a chief.
+- **Authority**: a manager decides everything about its goal. It merges its own pull requests only in repositories cleared by `ym goal authority`; elsewhere a green pull request lands in your merge queue. It writes to other people only with a model-name prefix.
 
-Sessions started with `ym new` run on a separate tmux server, `tmux -L ym`, with its own config and the default `C-b` prefix; ym never touches any other tmux server. `enter` on one of them attaches it in the board's terminal, and detaching returns to the board.
+The loop is code in `ym serve`, not instructions in a prompt:
 
-Claude Code reports its limits only to the statusline, so pipe the statusline input into ym from your statusline command, backgrounded so it adds no latency:
+1. **Notice.** ym records goal events without a model: agent finished, agent asked, PR opened, CI red or green, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
+2. **Act.** Once per cycle the manager gets everything new in one message. A manager that ends a turn with nothing in flight (no busy agent, no PR awaiting CI, no wake set, no ask waiting) is nudged at once. Managers set their own timers with `ym goal wake 30m "<why>"`.
+3. **Verify.** `ym goal done` moves the goal to verifying. ym checks the facts first: every claimed PR merged, CI green on the merge commit, no unresolved review threads. Then a fresh Claude session, not the worker, gets your original ask and the evidence and records a verdict. A fail puts the goal back to active with the findings as an event.
+4. **Report.** Only a pass reaches you as done. Managers post progress lines with `ym goal update "<line>"`; they show in the goal's feed.
 
-    printf '%s' "$input" | ym limits record >/dev/null 2>&1 &
+Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply counts as hung: a hung manager is relaunched, and a hung or exited agent's manager hears it once with the `ym revive` that resumes it.
 
-Spend covers the transcripts on the host ym runs on, and the board names that host; limits are account-wide.
+## What reaches you
 
-## Background service
+The **Needs you** queue holds only:
 
-`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes, sweeps Notion for asks addressed to you and forwards idle agents' last messages to their managers, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
+- goals that are done (passed verification) or stuck
+- asks that climbed past every manager and chief
+- green pull requests in repositories where managers may not merge
+- GitHub review requests addressed to you personally, not to your teams
+- Notion discussions and reviews addressed to you that no goal claims
+- permission prompts
+- one row per session you started yourself that asks you something
 
-## Document asks
+It stays quiet because ym refuses a decision or default bound for you without a recommendation, and a decision without two options with their effects. Every ask arrives with the goal, its pull requests and CI, recent agent activity and what changed since you last looked. Done and stuck also raise a desktop notification; nothing else does.
 
-`ym serve` sweeps every Notion page shared with your integration that was edited in the last 21 days, plus any older page with an ask still open, at most every three minutes, three requests a second. It reads a page again only when it was edited since ym last read it or has an ask open, so the first sweep after connecting is the long one and asks appear as it goes, newest pages first. A discussion becomes one ask when its last comment is a person's other than yours, the comment asking you was written in the last 21 days, and it is addressed to you: it mentions you since you last wrote in it, or you wrote in it or created the page and nobody since your last comment mentions someone else instead. A database page whose people property named for review, approval or sign-off (not reviewed, approved or signed by) lists you is an ask until its status is in the Complete group or an approval checkbox is ticked; edits that leave its status as it was do not bring back a row you cleared. Bots, threads you answered last, older threads and discussions among others are not asks. An ask closes when its discussion is resolved, you reply, or the page stops being shared. A page ym cannot read keeps its asks as last read and is read again next sweep; a list of pages it cannot finish changes nothing. Either shows in `ym service status`.
+Each goal row shows its unread feed count and newest line. `enter` opens the goal with its feed and marks it read.
 
-An ask about a goal's work goes to that goal's manager instead of you, once per new comment, with the thread: the page or a pull request it names appears in the goal's ask, evidence, summary, artifact or brief, or the pull request belongs to the goal's sessions. If that manager can no longer answer it climbs like any item. Everything else is a `doc` row in your queue with the thread; `enter` opens the discussion.
+## The board
 
-To connect, create an internal integration at notion.so/profile/integrations with read content, read comments and read user information including email addresses, share your top-level pages or teamspaces with it (page menu, Connections), then run `ym docs connect <your Notion email>` and paste its token. The token and your Notion user id are saved in `notion.json` in ym's state dir, readable only by you; `NOTION_TOKEN` and `NOTION_OWNER_ID` override them. `ym docs` shows the last sweep and every open ask with where it went.
+| Key | Does |
+| --- | --- |
+| `n` / `N` | new goal in the selected row's repository / pick the repository first |
+| `+` | new session of your own, no manager; `tab` switches claude and codex |
+| `enter` / `esc` | open or drill in / go back |
+| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board |
+| `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
+| `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item |
+| `B` / `V` | show the manager's brief / open its registered artifact |
+| `C` / `c` | new chief over the selection / put the selection under a chief |
+| `R` | relaunch a manager or chief |
+| `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
+| `L` / `F` | land a launched session (remove its worktree when clean and merged) / forget it |
+| `T` | relaunch an idle session in the other harness |
+| `G` | gc old worktrees and merged branches |
+| `t` | goals as the chief tree or by repository |
+| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, weekly health |
+| `A` | hide or show the mountains |
+| `/` `?` `q` | filter, all keys, back or quit |
 
-Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents file them with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action.
+Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**, and an idle one whose last reply asks you shows as a `waiting:` row you can answer with `a`.
 
-## Validation
+The fleet line shows each Claude and Codex limit window and today's and this week's spend at API prices.
 
-Run `agent-slot -- go test ./...`, `agent-slot -- go vet ./...` and `staticcheck ./...`.
+## Mountains
 
-`tools/rehearse/rehearse.sh [--scenario S] [--ref REF] [--timeout MIN]` rehearses a real goal end to end: it builds ym from `origin/main` (or REF) into a fresh run directory under `~/tmp/arbiter-work/yamnaya-rehearsal`, gives it its own state directory and tmux server, clones the private proving-ground repository (`rajatscode/yamnaya-proving-ground`, a small Go project with CI, or `$YM_REHEARSAL_REPO`), clears it for manager merges, starts `ym serve`, and hands a real Claude manager a goal there. Every 15 seconds it appends what changed to the run's `timeline.log`: goal state, managers and relaunches, items, messages to sessions, goal events and verifications, sessions and panes, pull requests with their checks and reviews, the brief, and serve errors. It stops when the goal is done. Scenarios add one fault once there is something to break: `clean` (none), `kill-manager` (SIGKILL the manager once an agent is busy), `kill-worker` (SIGKILL a busy agent), `freeze-worker` (hold a busy agent stopped), `break-ci` (push a failing test to the first pull request), `review-comment` (a file review thread and a top-level review on it). Rehearsal sessions are real Claude Code sessions, so your own board lists them too.
+Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done. The sky follows your local clock. `A` hides them, `NO_COLOR` leaves them out, `YM_REDUCED_MOTION=1` holds them still.
 
 ## Remote hosts
 
-`ym remote install <host>` cross-compiles ym from the source embedded in the local binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host over ssh, runs `ym install --statusline` there, and touches nothing outside the remote home. `--statusline` adds a statusline that records limits when Claude Code has none, and otherwise adds the record line to the existing statusline script after it reads `$input`. Re-running upgrades; an unchanged binary is not copied again. Without `wt` on the host, `ym new` creates worktrees with `git worktree add`. `ym remote <host>` puts `~/.local/bin` on PATH, so sessions it starts there find ym and the tools a login shell would.
+    ym remote install <host>
+    ym remote <host>
 
-Every host `ym remote` reaches is remembered, and the board, `ym sessions` and `ym waiting` show its sessions and open items beside this host's, labelled with the host. ym reads all hosts at once over ssh with `ym board`, each bounded by a timeout; the board never waits on a host and refreshes each one every few seconds, and a host that does not answer shows as unreachable with ssh's reason. Opening a remote session attaches to it over `ssh -t`; kill, send, land, revive, switch and item answers run through ssh on that host. `ym sessions --local` lists this host alone.
+`ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
 
-Usage is read incrementally from `~/.claude/projects` and `~/.codex/sessions` into the ym database; prices come from LiteLLM, refreshed daily into the state directory, with an embedded snapshot offline.
+## Background service
 
-An answer goes to the session carrying the conversation now, following Claude's continued-in record when a session moved to the background. A Claude session gets `re D4: <answer>` through its own messaging socket (the one cross-session messages use), as its next prompt, busy or idle, wherever it runs, when the session would read it rather than hold it for review (ym marks the owner's words, meaning answers, dismissals and `ym send` run outside any agent session, as sent in bypass mode to a session that bypasses permission prompts, so it reads them; a `crossSessionInbound` setting still decides first), and counts it only when the session sends back no held, refused or dropped receipt within a second, showing an answer the session holds for the owner as held in session; `ym send` messages arrive the same way as `msg: <text>`. Without one, an idle agent in a tmux pane gets it typed in; otherwise it reads it with `ym item inbox` on its next turn.
+`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers. The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
+
+    ym service status     heartbeat and last error
+    ym service restart    restart it with this shell's environment
+
+Answers reach a Claude session as its next prompt through its messaging socket, busy or idle; otherwise an idle agent in a tmux pane gets them typed in, and anything else reads them with `ym item inbox` on its next turn.
+
+**Notion.** Create an internal integration at notion.so/profile/integrations with read content, read comments and read user information including email, share your pages with it, then run `ym docs connect <your Notion email>` and paste the token. ym sweeps pages edited in the last 21 days. A discussion addressed to you becomes an ask; one about a goal's work goes to that goal's manager instead. `ym docs` shows the last sweep and where each ask went.
+
+**Limits.** Claude Code reports limits only to its statusline. `ym install --statusline` wires it; by hand, add `printf '%s' "$input" | ym limits record >/dev/null 2>&1 &` to your statusline command.
 
 ## Commands
 
-    ym                                  the board
-    ym goal [--repo P] "<ask>"          hand a goal to a new manager that owns it until it is done
-    ym goal list [--under CHIEF] [--json]   goals, managers and chiefs as a tree, with state and brief
-    ym goal show <id>                   one goal or chief, its brief, and each verification with its facts and findings
-    ym goal send [--subtree] <id>[,<id>] <text>   message managers or chiefs
-    ym goal relaunch <id>               end a manager's or chief's session and start a fresh one from its prompt and brief
-    ym goal drop <id>                   drop a goal or retire a chief; ym stops supervising it
-    ym goal done --summary "<line>" [--evidence "<line>"]...   (manager) hand its goal to verification
-    ym goal verdict <goal> --pass|--fail [--finding "<line>"]...   (verifier) record the verdict on the goal it checks
-    ym goal artifact <url>              (manager or chief) register a richer brief
-    ym goal authority [<repo> --merge|--no-merge]   repositories whose managers may merge their own pull requests
-    ym chief [--repo P] [--remit T] [--over ID,ID] "<name>"   start a chief over managers and chiefs
-    ym chief attach <child> <chief> | detach <child>
-    ym sessions [--json] [--local]      every live session with host and project, on this host and the hosts ym remote reached
-    ym new [--codex] [--repo P] [--slug S] "<prompt>"
-                                        start claude (or codex) on the prompt in a new wt worktree, on ym's own tmux server
-    ym waiting [--json]                 idle sessions whose last reply asks you with no item filed, with that reply; answer with ym send
-    ym open <session|item|key>          show a session: ym's own sessions attach in this terminal; detach (C-b d) returns to the board
-    ym launched [--landed]              sessions ym started, and whether each agent still runs; --landed adds landed ones
-    ym revive <key|session>             resume an exited or landed one in its worktree, recreating the worktree and branch at its
-                                        recorded commit (origin's default branch when that commit is gone) if they are gone
-    ym land <key|session>               end it and remove its worktree, only when the branch is clean and merged or pushed;
-                                        the branch goes too when merged into origin's default branch. The record stays, marked
-                                        landed, and each landing is appended to landings.jsonl in ym's state dir
-    ym land --all                       land every exited launch that loses nothing, say what stayed
-    ym gc [--dry-run]                   remove worktrees of known repos that are clean, on a remote, untouched 3 days and no process's cwd,
-                                        then local branches merged into origin's default branch that no worktree uses; lists the dirty and
-                                        local-only worktrees it keeps with their sizes, and drops launch records landed over 14 days ago.
-                                        The board runs it in the background at most hourly
-    ym kill <session> [--yes]           end its claude or codex process with SIGTERM; asks y/n, or needs --yes without a terminal. A
-                                        launched session it kills waits a day before landing by itself
-    ym item add --kind decision|default|chore|go --question "..." [--rec "..."] [--option "label=effect"]... [--evidence <link>]...
-                [--tried "..."] [--assumption "..."] [--blocks N]
-                                        ym attaches the goal, its pull requests with CI, recent agent activity and what changed
-                                        since you last looked; it refuses a decision or default bound for you without
-                                        --rec, or a decision without two options with effects
-    ym item list [--all] [--everywhere] [--to-me] [--json]   --to-me: what is routed to the calling manager
-    ym item show|answer|dismiss|snooze|reopen <id> ...
-    ym item go <id>                     answer a go item with PLEASE GO IMPLEMENT THIS
-    ym item inbox                       answers the calling session has not received
-    ym phase set "a,b,c" | next | show
-    ym spawn <child-session>            record that the calling session started another
-    ym project rename|merge|split ...
-    ym switch <session> --to claude|codex [--relaunch]   port an idle session with cs; --relaunch ends it and starts the port on ym's server
-    ym usage [--top N] [--json]         API-priced spend per session, today and 7d, and limits
-    ym health [--weeks N] [--json]      weekly item answer times, stale items, questions reprinted in chat, agent time blocked on you
-    ym limits                           Claude and Codex limit windows
-    ym limits record                    save Claude limits from statusline JSON on stdin
-    ym update                           go install the latest ym; a running board restarts into it
-    ym remote install <host>            build ym for the host, copy it to ~/.local/bin/ym there, link the skill and wire the statusline
-    ym remote <host> [ym args...]       run ym on the host over ssh: the board by default
-    ym remote forget <host>             stop showing the host's sessions here until ym remote reaches it again
-    ym docs [--json]                    open Notion asks addressed to you, who each went to, and how the last sweep went
-    ym docs connect <your Notion email>  save a Notion integration token (read from stdin) and find you among its people
-    ym board                            this host's sessions, open items, launches and waiting sessions as JSON
+| Group | Command | Does |
+| --- | --- | --- |
+| Board | `ym` | the board |
+| | `ym sessions [--local] [--json]` | every live session on this host and remembered hosts |
+| | `ym waiting [--json]` | idle sessions whose last reply asks you |
+| | `ym board` | this host's state as JSON, for another host's ym |
+| Goals | `ym goal [--repo P] "<ask>"` | start a goal and its manager |
+| | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs |
+| | `ym goal show <id>` / `feed <id>` | one goal with its verifications / its event feed |
+| | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
+| | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
+| | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
+| | `ym chief [--over ID,ID] [--remit T] "<name>"` | start a chief; `attach <child> <chief>`, `detach <child>` |
+| Manager | `ym goal update "<line>"` | post where the goal stands |
+| | `ym goal wake <when> <why>` | wake me at `30m`, `2h`, `15:04` |
+| | `ym goal done --summary "<line>" [--evidence "<line>"]...` | hand the goal to verification |
+| | `ym goal artifact <url>` | register a richer brief |
+| | `ym goal verdict <goal> --pass\|--fail [--finding "<line>"]...` | (verifier) record the verdict |
+| Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]...` | ask your manager, or the owner when you have none |
+| | `ym item list [--all] [--everywhere] [--to-me]` | open items; `--to-me` is what is routed to the calling manager |
+| | `ym item show\|answer\|dismiss\|snooze\|reopen\|go <id>` | act on one item |
+| | `ym item inbox` | answers and messages the calling session has not received |
+| Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
+| | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |
+| | `ym adopt <session>` | move a session from another terminal onto ym's server |
+| | `ym kill <session> [--yes]` | SIGTERM its agent; worktree and transcript stay |
+| | `ym launched [--landed]` / `ym revive <key>` | what ym started / resume an exited one |
+| | `ym land <key>` / `ym land --all` | remove worktrees that lose nothing |
+| | `ym gc [--dry-run]` | remove idle clean worktrees and merged branches |
+| | `ym switch <session> --to claude\|codex [--relaunch]` | port a session to the other harness |
+| Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |
+| Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
+| Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
+| | `ym service status\|restart` / `ym docs [connect <email>]` | background service / Notion |
 
-Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; pass `--session` to override.
+Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; `--session` overrides. State lives in `~/.local/state/yamnaya/ym.db` (`YAMNAYA_STATE_DIR` overrides).
 
-## Layout
+## Development
 
-`internal/core` holds sessions, projects, items, phases and the goal tree (goals, managers, chiefs, routing and supervision) and imports no adapter. `internal/scene` draws the mountains. Harness adapters (`internal/harness/claude`, `internal/harness/codex`) read each CLI's files; the host adapter (`internal/host/tmux`) finds, focuses and types into panes and runs ym's own server; `internal/launch` creates and trusts worktrees for `ym new` and decides when one can be landed. An adapter that cannot read something reports it as unknown instead of failing.
+    agent-slot -- go test ./...
+    agent-slot -- go vet ./...
+    staticcheck ./...
+
+`internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` draws the mountains.
+
+`tools/rehearse/rehearse.sh [--scenario S] [--ref REF] [--timeout MIN]` runs a real goal end to end against a private proving-ground repository (`$YM_REHEARSAL_REPO`) with its own state directory and tmux server, logging every change to `timeline.log`. Scenarios inject one fault: `clean`, `kill-manager`, `kill-worker`, `freeze-worker`, `break-ci`, `review-comment`.
