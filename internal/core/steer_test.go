@@ -315,3 +315,20 @@ func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTh
 		t.Fatalf("verifier prompt does not judge against the steered plan:\n%s", p)
 	}
 }
+
+func TestAFailedVerificationMakesTheBriefStale(t *testing.T) {
+	w := newVerifyWorld(t)
+	w.core.WriteBrief(w.manager.Session, brief("call it done"))
+	w.clock = w.clock.Add(time.Minute)
+	w.done(t, "importer reads CSV")
+	w.tick(t, time.Second)
+	if f := node(t, w.board(t), w.manager.ID).Fresh; f.Stale() {
+		t.Fatalf("calling the goal done made the brief stale before any verdict: %+v", f)
+	}
+	if _, err := w.core.RecordVerdict(w.verifiers()[0], w.goal.ID, VerdictFail, []string{"no tests for headers"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := node(t, w.board(t), w.manager.ID).Fresh; !f.Stale() || f.BehindWhat != "verification 1: fail" {
+		t.Fatalf("a failed verification left the brief fresh: %+v", f)
+	}
+}
