@@ -25,7 +25,7 @@ Sessions you start yourself (`+` on the board, or `ym new` from your own shell) 
 
 ## The screen
 
-- **Needs you**: your queue. Finished and stuck goals, escalations no manager or chief settled, pull requests ready to merge in repositories no manager may merge in, review requests GitHub addresses to you personally (not to your teams), permission prompts, and one row per session you started that asks you something (`enter` lists its asks). `x` clears a goal, merge or review row.
+- **Needs you**: your queue. Finished and stuck goals, escalations no manager or chief settled, pull requests ready to merge in repositories no manager may merge in, review requests GitHub addresses to you personally (not to your teams), document asks (see below), permission prompts, and one row per session you started that asks you something (`enter` lists its asks). `x` clears a goal, merge, review or document row; a document row comes back only when someone writes in that discussion again.
 - **Goals**: the goal tree. A chief is one row with its reports' worst state; `enter` drills in. A goal stands moving, quiet, down (its manager died and is being relaunched), stuck, or done. `t` switches to goals by repository.
 - **Mountains**: each repository is a range and a chief a range of its goals. Goals and the sessions you started are peaks named with their measured progress. Busy agents climb the west face named, as high as the progress; agents stopped on you are red, idle teammates rest at the foot. Pull requests are camps on the east face at the gate they reached (red failing, green passing, merged folded into one flag). A red flare rises from work that needs you. Clouds when it goes quiet, a storm when a check fails or it is stuck, an eruption when its manager dies, a summit when it is done. The sky follows your local clock from dawn to night; a light terminal only lifts the contrast. The selected row lights its peak, and clicking a peak selects its row. Work moves once a second (an eruption faster); stars, high cloud and the lake stir every few seconds; the scene holds still for a moment after each key and pauses while the terminal is unfocused. The board's bottom edge stays put and it grows upward, so expanding a row redraws only the board. `A` hides them; `NO_COLOR` leaves them out; `YM_REDUCED_MOTION=1` holds them still.
 - **Sessions you started**: one row per repository, with its missions under it. Every worktree of a repo (by git common dir) counts as the repo; a mission whose lead works outside any repo goes under the repo its crew writes in. Each row shows live sessions, running agents, what needs you, and pull requests with their CI result.
@@ -50,7 +50,15 @@ Spend covers the transcripts on the host ym runs on, and the board names that ho
 
 ## Background service
 
-`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes and forwards idle agents' last messages to their managers, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
+`ym serve` supervises goals, redelivers answers, refreshes pull request status, polls your personal GitHub review requests every five minutes, sweeps Notion for asks addressed to you and forwards idle agents' last messages to their managers, independently of the terminal. Opening the board starts it detached; closing the board leaves it running. It reloads after a binary update. `ym service status` shows its heartbeat and last error; `ym service restart` adopts the current shell environment.
+
+## Document asks
+
+`ym serve` sweeps every Notion page shared with your integration that was edited in the last 21 days, plus any older page with an ask still open, at most every three minutes, three requests a second. A discussion becomes one ask when its last comment is a person's other than yours and it is addressed to you: it mentions you since you last wrote in it, you wrote in it, or it is on a page you created. A database page whose people property named for review, approval or sign-off lists you is an ask until its status is in the Complete group or an approval checkbox is ticked. Bots, threads you answered last, and discussions among others on pages you did not create are not asks. An ask closes when its discussion is resolved, you reply, or the page stops being shared. A sweep that cannot read every page changes nothing and reports its error in `ym service status`.
+
+An ask about a goal's work goes to that goal's manager instead of you, once per new comment, with the thread: the page or a pull request it names appears in the goal's ask, evidence, summary, artifact or brief, or the pull request belongs to the goal's sessions. If that manager can no longer answer it climbs like any item. Everything else is a `doc` row in your queue with the thread; `enter` opens the discussion.
+
+To connect, create an internal integration at notion.so/profile/integrations with read content, read comments and read user information including email addresses, share your top-level pages or teamspaces with it (page menu, Connections), then run `ym docs connect <your Notion email>` and paste its token. The token and your Notion user id are saved in `notion.json` in ym's state dir, readable only by you; `NOTION_TOKEN` and `NOTION_OWNER_ID` override them. `ym docs` shows the last sweep and every open ask with where it went.
 
 Chat actions display **action in chat**; `o` opens that session and `O` opens it beside the board. Agents file them with `ym item add --kind chore --action chat --question "Enter the login code in this chat"`. Opening a conversation does not complete the action.
 
@@ -118,6 +126,8 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym remote install <host>            build ym for the host, copy it to ~/.local/bin/ym there, link the skill and wire the statusline
     ym remote <host> [ym args...]       run ym on the host over ssh: the board by default
     ym remote forget <host>             stop showing the host's sessions here until ym remote reaches it again
+    ym docs [--json]                    open Notion asks addressed to you, who each went to, and how the last sweep went
+    ym docs connect <your Notion email>  save a Notion integration token (read from stdin) and find you among its people
     ym board                            this host's sessions, open items, launches and waiting sessions as JSON
 
 Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; pass `--session` to override.

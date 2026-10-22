@@ -13,7 +13,7 @@ import (
 var agentOnly = map[string]bool{
 	"ym item add": true, "ym item inbox": true, "ym spawn": true, "ym limits record": true,
 	"ym install": true, "ym update": true, "ym completion": true, "ym remote": true, "ym remote install": true, "ym remote forget": true, "ym board": true, "ym help": true,
-	"ym serve": true, "ym service status": true, "ym service restart": true,
+	"ym serve": true, "ym docs connect": true, "ym service status": true, "ym service restart": true,
 	"ym goal done": true, "ym goal verdict": true, "ym goal artifact": true, "ym goal authority": true,
 }
 

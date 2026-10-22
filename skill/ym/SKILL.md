@@ -71,6 +71,8 @@ ym supervises managers: a dead one is relaunched with its prompt and brief, a qu
 
 A chief (`ym chief "<name>" --over <id>,<id>`) oversees managers and other chiefs: it reads their briefs, steers them, relaunches stuck ones and keeps a rolled-up brief. Work never waits on a chief.
 
+A Notion discussion or review request addressed to the owner about your goal's work (its page or a pull request it names is in your goal, brief or sessions) reaches you as a `ym:` message with the thread instead of the owner. Act on it in the document itself, prefixing anything you post with your model name; it leaves your queue when the discussion is resolved or answered there. Escalate with `ym item add` only if it is beyond your authority.
+
 ## Actions in the conversation
 
 When the owner must act in the native chat, file `ym item add --kind chore --action chat --question "<specific action>" --rec "<necessary context>"`. The board labels it action in chat and opens the originating session with `o` or `O`. Opening it is not an approval or completion. Existing owner answers in the ledger are authoritative even when an agent repeats the question in prose.

@@ -138,6 +138,8 @@ type Need struct {
 	Manager string
 	// Review is a pull request GitHub asks the owner to review.
 	Review *ReviewRequest
+	// Doc is a document discussion or review request waiting on the owner.
+	Doc *DocAsk
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.

@@ -139,7 +139,7 @@ func (c *Core) standing(b Board, n Node) string {
 }
 
 // queue adds the owner's other duties to the needs list: goals that finished or got stuck, pull requests ready to merge that no
-// manager may merge, and review requests GitHub addresses to the owner personally.
+// manager may merge, review requests GitHub addresses to the owner personally, and document asks no goal claims.
 func (c *Core) queue(b *Board, o Org) error {
 	dismissed, err := c.Store.queueDismissed()
 	if err != nil {
@@ -190,6 +190,16 @@ func (c *Core) queue(b *Board, o Org) error {
 			extra = append(extra, n)
 		}
 	}
+	docs, err := c.Store.OpenDocAsks()
+	if err != nil {
+		return err
+	}
+	for _, a := range docs {
+		n := Need{Doc: &a}
+		if a.Recipient == Owner && a.Routed == a.Version && !dismissed[n.Key()] {
+			extra = append(extra, n)
+		}
+	}
 	b.Needs = append(extra, b.Needs...)
 	return nil
 }
@@ -207,6 +217,8 @@ func (n Need) Key() string {
 		return "merge:" + n.PR.URL + "@" + head
 	case n.Review != nil:
 		return "review:" + n.Review.URL + "@" + n.Review.Updated
+	case n.Doc != nil:
+		return "doc:" + n.Doc.Key + "@" + n.Doc.Version
 	case len(n.Asks) > 0:
 		return "asks:" + n.Item.Session
 	case n.Item != nil:

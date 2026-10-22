@@ -117,6 +117,7 @@ func NewRoot() *cobra.Command {
 	})
 	root.AddCommand(
 		serveCmd(with),
+		docsCmd(with),
 		serviceCmd(),
 		goalCmd(with),
 		chiefCmd(with),

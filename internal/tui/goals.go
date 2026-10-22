@@ -194,7 +194,7 @@ func briefOf(n core.Node) string {
 	return n.Manager.BriefPath
 }
 
-// queueLines draws the owner duties that are not an item or a session: finished and stuck goals, merges and reviews.
+// queueLines draws the owner duties that are not an item or a session: finished and stuck goals, merges, reviews and doc asks.
 func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	sel := i == m.cursor
 	var head, what, keys string
@@ -217,6 +217,9 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	case n.Review != nil:
 		head, what = pal.yellow.Render(pad("review", 8)), n.Review.URL
 		keys = "enter open in browser   x dismiss"
+	case n.Doc != nil:
+		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Asker+": "+n.Doc.Text+pal.dim.Render("  "+n.Doc.Title)
+		keys = "enter open in browser   x dismiss"
 	default:
 		return "", false
 	}
@@ -225,6 +228,11 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	if sel {
 		if n.Goal != nil && n.Goal.Evidence != "" {
 			b += pal.dim.Render("         "+n.Goal.Evidence) + "\n"
+		}
+		if n.Doc != nil {
+			for _, l := range strings.Split(n.Doc.Evidence+"\n"+n.Doc.URL, "\n") {
+				b += pal.dim.Render("         "+ansi.Truncate(l, max(10, m.width-10), "…")) + "\n"
+			}
 		}
 		b += pal.dim.Render("         "+keys) + "\n"
 	}
@@ -359,12 +367,15 @@ func (m Model) goalKey(k tea.KeyMsg) (Model, tea.Cmd, bool) {
 		m.inLabel = fmt.Sprintf("new chief over %d", len(over))
 		return m, nil, true
 	}
-	if r.need != nil && (r.need.PR != nil || r.need.Review != nil) {
+	if r.need != nil && (r.need.PR != nil || r.need.Review != nil || r.need.Doc != nil) {
 		url := ""
-		if r.need.PR != nil {
+		switch {
+		case r.need.PR != nil:
 			url = r.need.PR.URL
-		} else {
+		case r.need.Review != nil:
 			url = r.need.Review.URL
+		default:
+			url = r.need.Doc.URL
 		}
 		switch key {
 		case "enter", "o":

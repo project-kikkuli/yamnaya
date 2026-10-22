@@ -51,10 +51,19 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			go monitorWorkService(ctx, cancel, dir, upgraded)
 		}
 		reviews := reviewPoll{fetch: intake.New().Requests, every: 5 * time.Minute}
+		docs := &docSweeper{dir: dir, every: 3 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
+		if discover && !once {
+			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
+		}
 		for {
+			if discover && once {
+				if err := docs.sweep(ctx, e.core.Store); err != nil {
+					return err
+				}
+			}
 			err := serveCycle(e.core)
 			if discover {
-				err = errors.Join(err, reviews.poll(ctx, e.core))
+				err = errors.Join(err, reviews.poll(ctx, e.core), docSweepErrors(e.core.Store))
 			}
 			message := ""
 			if err != nil {
@@ -111,6 +120,9 @@ func serveCycle(c *core.Core) error {
 		failures = append(failures, err)
 	}
 	if err = c.Supervise(b); err != nil {
+		failures = append(failures, err)
+	}
+	if err = c.RouteDocs(b); err != nil {
 		failures = append(failures, err)
 	}
 	return errors.Join(failures...)

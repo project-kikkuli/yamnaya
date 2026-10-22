@@ -529,6 +529,8 @@ func needText(n core.Need) string {
 		return "merge " + n.PR.URL
 	case n.Review != nil:
 		return "review " + n.Review.URL
+	case n.Doc != nil:
+		return "doc " + n.Doc.Asker + " " + n.Doc.Title + " " + n.Doc.Text
 	}
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question

@@ -17,6 +17,7 @@ var Commands = map[string]string{
 	"ym project merge":  "m",
 	"ym project split":  "S",
 	"ym sessions":       "enter",
+	"ym docs":           "enter",
 	"ym open":           "o",
 	"ym adopt":          "o",
 	"ym revive":         "enter",

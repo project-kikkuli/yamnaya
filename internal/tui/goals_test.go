@@ -163,3 +163,38 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 		t.Fatalf("the new goal is not on the board:\n%s", m.View())
 	}
 }
+
+func TestADocAskShowsItsThreadOpensItsDiscussionAndDismisses(t *testing.T) {
+	m, c, _ := goalSetup(t)
+	url := "https://www.notion.so/Launch-plan-a0?d=d1"
+	if err := c.Store.SyncDocAsks("notion", []core.DocAsk{{Key: "notion:d1", Kind: "mention", URL: url, Page: "a0", Title: "Launch plan",
+		Asker: "Alice", Text: "@Rajat is PR 7 the final cut?", Evidence: "Alice: @Rajat is PR 7 the final cut?", Version: "c1"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RouteDocs(b); err != nil {
+		t.Fatal(err)
+	}
+	var opened []string
+	m.openURL = func(u string) error { opened = append(opened, u); return nil }
+	isDoc := func(r row) bool { return r.need != nil && r.need.Doc != nil }
+	m = refresh(t, m)
+	for range 30 {
+		m = press(t, m, "up")
+	}
+	m = to(t, m, isDoc)
+	if v := m.View(); !strings.Contains(v, "Alice: @Rajat is PR 7 the final cut?") || !strings.Contains(v, url) {
+		t.Fatalf("the doc row hides its ask or link:\n%s", v)
+	}
+	press(t, m, "enter")
+	if !slices.Equal(opened, []string{url}) {
+		t.Fatalf("enter opened %v, want the discussion", opened)
+	}
+	m = refresh(t, press(t, m, "x"))
+	if slices.ContainsFunc(m.rows(), isDoc) {
+		t.Fatal("a dismissed doc ask still shows")
+	}
+}
