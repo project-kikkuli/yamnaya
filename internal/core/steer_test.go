@@ -41,7 +41,9 @@ func TestASteerIsANumberedRevisionTheManagerMustAdoptExactly(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	w.steer(t, g.ID, "ship the importer for CSV only; TSV can wait", Owner)
+	w.loop(t, 1)
 	second := w.steer(t, m.ID, "ship the importer for CSV and TSV", Owner)
+	w.loop(t, 2)
 	if second.Revision != 2 {
 		t.Fatalf("second steer is revision %d, want 2", second.Revision)
 	}
@@ -301,6 +303,7 @@ func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTh
 	w := newVerifyWorld(t)
 	w.done(t, "importer handles CSV")
 	w.steer(t, w.goal.ID, "make the importer handle CSV and TSV", Owner)
+	w.loop(t, 1)
 	g, v := w.state(t)
 	if g.State != GoalActive || v.Verdict != VerdictSuperseded {
 		t.Fatalf("after a steer the goal is %s with verification %q, want active and superseded", g.State, v.Verdict)
@@ -328,7 +331,7 @@ func TestAFailedVerificationMakesTheBriefStaleAndAPassDoesNot(t *testing.T) {
 	if _, err := w.core.RecordVerdict(w.verifiers()[0], w.goal.ID, VerdictFail, []string{"no tests for headers"}); err != nil {
 		t.Fatal(err)
 	}
-	if f := node(t, w.board(t), w.manager.ID).Fresh; !f.Stale() || f.BehindWhat != "verification 1: fail" {
+	if f := node(t, w.board(t), w.manager.ID).Fresh; !f.Stale() || !strings.HasPrefix(f.BehindWhat, EventFailedVerify) {
 		t.Fatalf("a failed verification left the brief fresh: %+v", f)
 	}
 	w.core.WriteBrief(w.manager.Session, brief("headers tested, call it done again"))
@@ -340,5 +343,35 @@ func TestAFailedVerificationMakesTheBriefStaleAndAPassDoesNot(t *testing.T) {
 	}
 	if f := node(t, w.board(t), w.manager.ID).Fresh; f.Stale() {
 		t.Fatalf("a passing verification made the final brief stale: %+v", f)
+	}
+}
+
+func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWake(t *testing.T) {
+	w := newOrgWorld(t)
+	g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+	chief := w.chief(t, "data", m.ID)
+	w.core.WriteBrief(m.Session, brief("open the PR"))
+	w.clock = w.clock.Add(time.Minute)
+	w.steer(t, g.ID, "make the importer handle CSV and TSV", Owner)
+	w.loop(t, 2)
+	got := wakes(w.handedTo(m.Session))
+	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "ym goal adopt "+m.ID+" --revision 1") {
+		t.Fatalf("manager wakes %q, want one carrying the steer and how to adopt it", got)
+	}
+	if strings.Contains(got[0], "Your brief predates") {
+		t.Fatalf("an unadopted steer asked for a fresh brief before adoption:\n%s", got[0])
+	}
+	if heard := strings.Join(wakes(w.handedTo(chief.Session)), "\n"); !strings.Contains(heard, "steered") {
+		t.Fatalf("chief did not hear its report was steered: %q", heard)
+	}
+	w.spawn("agent", m.Session)
+	w.pr(t, "agent", "https://github.com/acme/august/pull/7", PRStatus{State: "OPEN", Title: "TSV importer"})
+	w.loop(t, 1)
+	got = wakes(w.handedTo(m.Session))
+	if len(got) != 2 || !strings.Contains(got[1], "pr-opened") || !strings.Contains(got[1], "Your brief predates these") {
+		t.Fatalf("a pull request opening did not ask for a fresh brief in its wake: %q", got)
+	}
+	if f := node(t, w.board(t), m.ID).Fresh; !f.Stale() || !strings.HasPrefix(f.BehindWhat, EventPROpened) {
+		t.Fatalf("brief after the pull request opened: %+v, want stale behind pr-opened", f)
 	}
 }

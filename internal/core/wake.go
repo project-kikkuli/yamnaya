@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -198,12 +199,24 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	return c.Store.markDelivered(events, c.now())
 }
 
+func stalesBrief(events []GoalEvent) bool {
+	for _, e := range events {
+		if slices.Contains(briefKinds, e.Kind) {
+			return true
+		}
+	}
+	return false
+}
+
 // wakeText lists a goal's new events for its manager, oldest first.
 func wakeText(g Goal, events []GoalEvent) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s on goal %s %q, oldest first:", plural(len(events), "new event"), g.ID, shortName(g.Ask))
 	for _, e := range events {
 		sb.WriteString("\n- " + e.Kind + ": " + e.Payload)
+	}
+	if stalesBrief(events) {
+		sb.WriteString("\nYour brief predates these: once you have acted, record a fresh one with ym goal brief.")
 	}
 	sb.WriteString("\nAct on what needs you. When the goal moves, tell the owner in one line with ym goal update \"<line>\". ym wakes you on the next event, or at a time you set with ym goal wake <when> <why>.")
 	return sb.String()

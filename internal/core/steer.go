@@ -11,6 +11,11 @@ import (
 const (
 	// AdoptAfter is how long a manager has to adopt a steer before it is nudged, and between nudges.
 	AdoptAfter = 10 * time.Minute
+
+	// EventSteered is a new revision of a goal's plan; its manager is woken with it.
+	EventSteered = "steered"
+	// EventAdopted is the manager taking a revision on; its brief must follow.
+	EventAdopted = "adopted"
 )
 
 const steerSchema = `
@@ -173,8 +178,13 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 			return st, err
 		}
 	}
+	text = steerText(o, m, st)
+	if g, ok := o.Goals[m.GoalID]; ok {
+		_, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventSteered, Payload: text, Key: fmt.Sprintf("%s:steer:%d", g.ID, st.Revision), Created: st.CreatedAt})
+		return st, err
+	}
 	if m.Session != "" {
-		if err := c.tell(b, m.Session, steerText(o, m, st), author == Owner); err != nil {
+		if err := c.tell(b, m.Session, "ym: "+text, author == Owner); err != nil {
 			return st, err
 		}
 	}
@@ -225,7 +235,7 @@ func steerText(o Org, m Manager, st Steer) string {
 	if g, ok := o.Goals[m.GoalID]; ok && g.State == GoalVerifying {
 		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."
 	}
-	return fmt.Sprintf("ym: %s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
+	return fmt.Sprintf("%s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
 		st.By(), subject(o, m), reopened, st.Revision, st.Text, m.ID, st.Revision)
 }
 
@@ -264,7 +274,14 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return st, nil
 	}
 	st.AdoptedAt, st.AdoptedSession = c.now(), session
-	return st, c.Store.saveSteer(st)
+	if err := c.Store.saveSteer(st); err != nil {
+		return st, err
+	}
+	if g, ok := o.Goals[m.GoalID]; ok {
+		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.ID, st.Revision),
+			Key: fmt.Sprintf("%s:adopt:%d", g.ID, st.Revision), Created: st.AdoptedAt, Delivered: st.AdoptedAt})
+	}
+	return st, err
 }
 
 // watchSteers nudges a running manager that has not adopted its newest steer, and once every nudge went unanswered tells whoever

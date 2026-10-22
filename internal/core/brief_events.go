@@ -1,28 +1,38 @@
 package core
 
-import "fmt"
+import (
+	"database/sql"
+	"strings"
+)
 
-// meaningfulEvents lists, by manager id, the goal events a brief must not predate: today a verification that failed or could not finish.
+// briefKinds are the goal events a manager's brief must not predate: what changes where the goal stands.
+var briefKinds = []string{EventFinished, EventAgentStopped, EventAgentHung, EventPROpened, EventCIRed, EventCIGreen, EventReview, EventMerged, EventClosed, EventStuck,
+	EventFailedVerify, EventAdopted}
+
+// meaningfulEvents maps each manager to the newest event of its goal that a brief must not predate.
 func (c *Core) meaningfulEvents() (map[string][]stamped, error) {
-	goals, err := c.Store.Goals()
+	args := make([]any, len(briefKinds))
+	for i, k := range briefKinds {
+		args[i] = k
+	}
+	rows, err := c.Store.db.Query(`SELECT g.manager_id, e.kind, e.payload, max(e.created) FROM ym_goal_events e
+		JOIN ym_goals g ON e.goal = 'goal' || g.num WHERE e.kind IN (?`+strings.Repeat(", ?", len(briefKinds)-1)+`) GROUP BY e.goal`, args...)
 	if err != nil {
 		return nil, err
 	}
-	managerOf := map[string]string{}
-	for _, g := range goals {
-		managerOf[g.ID] = g.ManagerID
-	}
-	all, err := c.Store.Verifications("")
-	if err != nil {
-		return nil, err
-	}
+	defer rows.Close()
 	out := map[string][]stamped{}
-	for _, v := range all {
-		if v.DecidedAt.IsZero() || v.Verdict == VerdictSuperseded || v.Verdict == VerdictPass {
-			continue
+	for rows.Next() {
+		var manager, kind, payload string
+		var at sql.NullString
+		if err := rows.Scan(&manager, &kind, &payload, &at); err != nil {
+			return nil, err
 		}
-		m := managerOf[v.Goal]
-		out[m] = append(out[m], stamped{At: v.DecidedAt, What: fmt.Sprintf("verification %d: %s", v.Attempt, v.Verdict)})
+		what := kind
+		if line, _, _ := strings.Cut(payload, "\n"); line != "" {
+			what += ": " + clip(line, 80)
+		}
+		out[manager] = append(out[manager], stamped{At: parseTime(at), What: what})
 	}
-	return out, nil
+	return out, rows.Err()
 }

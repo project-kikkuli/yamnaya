@@ -40,6 +40,7 @@ var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true,
+	EventSteered: true, EventAdopted: true,
 }
 
 // notifyKinds are the only events that also raise a desktop notification.
