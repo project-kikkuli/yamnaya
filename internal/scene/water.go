@@ -40,6 +40,9 @@ func (p *painter) lake() {
 		src := p.hz - 1 - int(k*1.15)
 		fade := .3 + .4*k/math.Max(1, depth)
 		for x := range p.w {
+			if !p.paints(x) {
+				continue
+			}
 			fx := float64(x)
 			shift := math.Sin(k*.6+fx*.03) * math.Min(2, .12*k+.3)
 			sx := min(p.w-1, max(0, x+int(math.Round(shift))))

@@ -19,6 +19,9 @@ func (p *painter) cloudBank(i int) {
 	mid, thick := g.y+g.height*.4, math.Max(2, g.height*.12)
 	for y := max(0, int(mid-thick*3)); y < min(p.hz, int(mid+thick*3)); y++ {
 		for x := max(0, int(g.x-g.half*1.4)); x < min(p.w, int(g.x+g.half*1.4)); x++ {
+			if !p.paints(x) {
+				continue
+			}
 			fx, fy := float64(x)+.5, float64(y)+.5
 			n := fbm2(m.seed+21, fx*.06, fy*.5, 5)
 			tilt := mid + (fx-g.x)*.12 + (fbm(m.seed+22, fx*.05, 2)-.5)*thick*2
@@ -41,6 +44,9 @@ func (p *painter) storm(i int) {
 	}
 	for y := max(0, int(cy-ry*2.2)); y < min(p.hz, int(cy+ry*1.2)); y++ {
 		for x := max(0, int(g.x-rx*1.8)); x < min(p.w, int(g.x+rx*1.8)); x++ {
+			if !p.paints(x) {
+				continue
+			}
 			fx, fy := float64(x)+.5, float64(y)+.5
 			warp := fbm2(m.seed+33, fx*.08, fy*.15, 3) - .5
 			e := 0.0

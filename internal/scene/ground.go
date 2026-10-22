@@ -15,7 +15,9 @@ func (p *painter) ground(d int) {
 		fog = .12
 	}
 	for x := range p.w {
-		p.column(x, lay.hm, d, lay.own[x], fog)
+		if p.paints(x) {
+			p.column(x, lay.hm, d, lay.own[x], fog)
+		}
 	}
 }
 

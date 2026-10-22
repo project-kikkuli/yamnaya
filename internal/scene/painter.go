@@ -30,6 +30,9 @@ type painter struct {
 	table  rect
 	// lit is the selected mountain's light laid over the backdrop's pixels when a frame is painted.
 	lit []pixel
+	// pre is the backdrop before its landscape was painted; only limits painting to some columns.
+	pre  []rgb
+	only []bool
 }
 
 type pixel struct {
@@ -84,6 +87,13 @@ func (p *painter) backdrop() {
 	p.wisps()
 	p.air = append([]rgb(nil), p.px...)
 	p.ridge()
+	p.pre = append([]rgb(nil), p.px...)
+	p.landscape()
+}
+
+// landscape paints what a selection lights and everything laid over it: the mountains, their standing weather,
+// the shore, the lake and the pines.
+func (p *painter) landscape() {
 	for d := range p.layers {
 		p.ground(d)
 	}
@@ -92,6 +102,9 @@ func (p *painter) backdrop() {
 	p.lake()
 	p.pines()
 }
+
+// paints reports whether column x is painted; a painter limited to some columns leaves the rest as they were.
+func (p *painter) paints(x int) bool { return p.only == nil || p.only[x] }
 
 // motion paints what moves over a copy of the backdrop: the slow ambient life of the scene, then the work.
 func (p *painter) motion() {
@@ -121,13 +134,13 @@ func (p *painter) at(frame int, table rect) *painter {
 }
 
 func (p *painter) set(x, y int, c rgb) {
-	if x >= 0 && x < p.w && y >= 0 && y < p.p {
+	if x >= 0 && x < p.w && y >= 0 && y < p.p && p.paints(x) {
 		p.px[y*p.w+x] = c
 	}
 }
 
 func (p *painter) blend(x, y int, c rgb, a float64) {
-	if x >= 0 && x < p.w && y >= 0 && y < p.p && a > 0 {
+	if x >= 0 && x < p.w && y >= 0 && y < p.p && a > 0 && p.paints(x) {
 		p.px[y*p.w+x] = mix(p.px[y*p.w+x], c, a)
 	}
 }
