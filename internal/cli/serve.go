@@ -76,8 +76,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 					return err
 				}
 			}
-			b, err := serveCycle(e.core)
-			site.observe(b)
+			err := serveCycle(e.core, site.observe)
 			if discover {
 				err = errors.Join(err, reviews.poll(ctx, e.core), docSweepErrors(e.core.Store))
 			}
@@ -121,13 +120,17 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	return cmd
 }
 
-func serveCycle(c *core.Core) (core.Board, error) {
+// serveCycle is one pass of ym serve; each of seen gets the board it worked from.
+func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 	b, err := c.Board()
 	if err != nil {
-		return b, err
+		return err
+	}
+	for _, f := range seen {
+		f(b)
 	}
 	if _, err = c.Redeliver(b); err != nil {
-		return b, err
+		return err
 	}
 	var failures []error
 	if _, err = c.RefreshPRs(b); err != nil {
@@ -137,7 +140,7 @@ func serveCycle(c *core.Core) (core.Board, error) {
 		failures = append(failures, err)
 	}
 	failures = append(failures, c.Loop(b))
-	return b, errors.Join(append(failures, c.Brief(b))...)
+	return errors.Join(append(failures, c.Brief(b))...)
 }
 
 // reviewPoll asks GitHub for the owner's personal review requests at most once per every.

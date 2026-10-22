@@ -49,7 +49,7 @@ func TestServingAnAskingSessionSpawnsNoModelAndFilesNoItem(t *testing.T) {
 			return []proc.Proc{{PID: 7, PPID: 1, TTY: "/dev/ttys007", Args: []string{"claude"}}}, nil
 		}}
 	for range 3 {
-		if _, err := serveCycle(c); err != nil {
+		if err := serveCycle(c); err != nil {
 			t.Fatal(err)
 		}
 	}

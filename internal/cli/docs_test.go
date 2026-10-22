@@ -107,7 +107,7 @@ func TestConnectingNotionMakesServeQueueItsAsksUntilTheyResolve(t *testing.T) {
 		t.Fatalf("saved connection is not private: %v %v", info, err)
 	}
 	cycle := func() core.Board {
-		if _, err := serveCycle(c); err != nil {
+		if err := serveCycle(c); err != nil {
 			t.Fatal(err)
 		}
 		b, err := c.Board()
