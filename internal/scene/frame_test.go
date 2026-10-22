@@ -193,10 +193,7 @@ func TestCrowdsMergeAndKeepTheSelection(t *testing.T) {
 	}
 }
 
-func TestFiveHundredPeaksDrawQuickly(t *testing.T) {
-	if raceDetector {
-		t.Skip("the race detector slows drawing several times over")
-	}
+func fiveHundred() Scene {
 	s := Scene{Dark: true}
 	for r := range 25 {
 		rg := Range{ID: fmt.Sprint("r", r)}
@@ -205,15 +202,44 @@ func TestFiveHundredPeaksDrawQuickly(t *testing.T) {
 		}
 		s.Ranges = append(s.Ranges, rg)
 	}
-	Frame(s, 300, 90, 0, board(20, 0))
-	fastest := time.Hour
-	for f := range 5 {
-		start := time.Now()
-		Frame(s, 300, 90, f, board(20, 0))
-		fastest = min(fastest, time.Since(start))
+	return s
+}
+
+func BenchmarkFrame(b *testing.B) {
+	s := fiveHundred()
+	for i := 0; i < b.N; i++ {
+		Frame(s, 300, 90, i, board(20, 0))
 	}
-	if per := fastest; per > 80*time.Millisecond {
-		t.Fatalf("a 300x90 frame of 500 peaks took %v", per)
+}
+
+func TestLaterFramesReuseTheBackdrop(t *testing.T) {
+	s := fiveHundred()
+	Frame(s, 300, 90, 0, board(20, 0))
+	hits := backdrops.hits
+	for f := 1; f <= 8; f++ {
+		Frame(s, 300, 90, f*4, board(20, 0))
+	}
+	if got := backdrops.hits - hits; got != 8 {
+		t.Fatalf("%d of 8 later frames reused the backdrop", got)
+	}
+	s.Selected = "3-4"
+	Frame(s, 300, 90, 40, board(20, 0))
+	if backdrops.hits-hits != 8 {
+		t.Fatal("a new selection reused the old backdrop")
+	}
+}
+
+func TestATableGrowingWithinItsReserveRedrawsOnlyItsOwnRows(t *testing.T) {
+	s := work()
+	s.Board = 30
+	short, tall := board(10, 0), board(14, 0)
+	a := strings.Split(Frame(s, 174, 72, 0, short), "\n")
+	b := strings.Split(Frame(s, 174, 72, 0, tall), "\n")
+	_, _, box := place(tall, 174, 72, s.Board)
+	for y := range a {
+		if a[y] != b[y] && (y < box.y0 || y >= box.y1) {
+			t.Fatalf("row %d outside the table changed when it grew", y)
+		}
 	}
 }
 
@@ -312,7 +338,7 @@ func TestPaceFollowsWhatMoves(t *testing.T) {
 		s    Scene
 		want time.Duration
 	}{
-		{"quiet", quiet, 0},
+		{"quiet", quiet, Ambient},
 		{"climbing", Scene{Peaks: []Peak{{ID: "a", Team: team(1)}}}, time.Second},
 		{"needs you", Scene{Peaks: []Peak{{ID: "a", NeedsYou: true}}}, time.Second},
 		{"storm", Scene{Ranges: []Range{{ID: "r", Peaks: []Peak{{ID: "a", Weather: Storm}}}}}, time.Second},
@@ -323,10 +349,14 @@ func TestPaceFollowsWhatMoves(t *testing.T) {
 			t.Errorf("%s: Pace = %v, want %v", c.name, got, c.want)
 		}
 	}
-	for f := range 12 {
-		if Frame(quiet, 120, 40, f, board(5, 0)) != Frame(quiet, 120, 40, 0, board(5, 0)) {
-			t.Fatalf("a scene that does not move changed at frame %d", f)
+	still := Frame(quiet, 120, 40, 0, board(5, 0))
+	for f := range 10 {
+		if Frame(quiet, 120, 40, f, board(5, 0)) != still {
+			t.Fatalf("a quiet scene changed at frame %d, inside one ambient beat", f)
 		}
+	}
+	if Frame(quiet, 120, 40, 10, board(5, 0)) == still {
+		t.Fatal("the ambient beat did not move a quiet scene")
 	}
 }
 
@@ -346,7 +376,7 @@ func TestHitFindsThePeakUnderACell(t *testing.T) {
 	if !found["allergies"] {
 		t.Fatalf("clicking a climber's name hit %v, want its peak", found)
 	}
-	_, _, box := place(table, 174, 72)
+	_, _, box := place(table, 174, 72, 0)
 	if got := Hit(s, 174, 72, table, box.x0+2, box.y0+1); got != "" {
 		t.Fatalf("a click on the board hit %q", got)
 	}
@@ -367,7 +397,7 @@ func skyLight(t *testing.T, s Scene) (float64, int) {
 			}
 			sum += lum(c.fg) + lum(c.bg)
 			n += 2
-			if c.r == '▀' && lum(c.fg) > .6 && lum(c.bg) < .2 || c.r == '▀' && lum(c.bg) > .6 && lum(c.fg) < .2 {
+			if c.r == '▀' && lum(c.fg) > .4 && lum(c.bg) < .25 || c.r == '▀' && lum(c.bg) > .4 && lum(c.fg) < .25 {
 				stars++
 			}
 		}

@@ -6,7 +6,7 @@ import "time"
 const Step = 250 * time.Millisecond
 
 // Pace is how often the scene changes: every step while an eruption plays, once a second while agents climb, rain
-// falls or a flare signals the owner, and never when nothing moves.
+// falls or a flare signals the owner, else at the slow ambient beat; never under reduced motion.
 func Pace(s Scene) time.Duration {
 	if reducedMotion {
 		return 0
@@ -34,6 +34,9 @@ func Pace(s Scene) time.Duration {
 	}
 	for _, p := range s.Peaks {
 		walk(p)
+	}
+	if pace == 0 {
+		return Ambient
 	}
 	return pace
 }

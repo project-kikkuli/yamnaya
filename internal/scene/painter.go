@@ -67,7 +67,8 @@ func newPainter(s Scene, width, height, frame int, table rect) *painter {
 	return p
 }
 
-func (p *painter) paint() {
+// backdrop paints everything that holds still: sky, terrain, standing weather, the lake and the pines.
+func (p *painter) backdrop() {
 	p.terrain()
 	p.sky()
 	p.halos()
@@ -81,7 +82,30 @@ func (p *painter) paint() {
 	p.shore()
 	p.lake()
 	p.pines()
+}
+
+// motion paints what moves over a copy of the backdrop: the slow ambient life of the scene, then the work.
+func (p *painter) motion() {
+	p.ambient()
+	for i, m := range p.l.mounts {
+		switch m.weather {
+		case Storm:
+			p.bolt(i)
+		case Eruption:
+			p.lava(i)
+			p.plume(i)
+		}
+	}
 	p.sprites()
+}
+
+// at is a copy of a backdrop to paint one frame on; the backdrop's pixels stay as they were.
+func (p *painter) at(frame int, table rect) *painter {
+	q := *p
+	q.frame, q.t, q.table = frame, float64(frame), table
+	q.px = append([]rgb(nil), p.px...)
+	q.cells = make([]glyph, len(p.cells))
+	return &q
 }
 
 func (p *painter) set(x, y int, c rgb) {
@@ -138,10 +162,15 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 		parts = append(parts, part{c, width})
 		n += width
 	}
+	var bg rgb
+	for k := range n {
+		c := mix(p.px[2*y*p.w+x+k], p.px[(2*y+1)*p.w+x+k], .5).scale(1 / float64(n))
+		bg = rgb{bg.r + c.r, bg.g + c.g, bg.b + c.b}
+	}
+	fg = readable(fg, bg)
 	for _, c := range parts {
-		bg := mix(p.px[2*y*p.w+x], p.px[(2*y+1)*p.w+x], .5)
 		p.clear(x, y)
-		p.cells[y*p.w+x] = glyph{s: c.s, fg: readable(fg, bg), set: true, wide: c.width == 2}
+		p.cells[y*p.w+x] = glyph{s: c.s, fg: fg, set: true, wide: c.width == 2}
 		p.taken[y*p.w+x] = true
 		p.who[y*p.w+x] = p.writer
 		if c.width == 2 {

@@ -11,4 +11,6 @@ type Scene struct {
 	Dark     bool
 	// Now is the local time; zero draws dusk.
 	Now time.Time
+	// Board is how many rows to keep for the table: its top edge stays put while it is no taller.
+	Board int
 }

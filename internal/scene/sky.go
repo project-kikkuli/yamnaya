@@ -14,14 +14,6 @@ func (p *painter) sky() {
 			if w := tint[x]; w.a > 0 {
 				c = p.tint(c, w.weather, w.a, v)
 			}
-			if p.th.stars > 0 && v < .62 {
-				i := y*p.w + x
-				if spread(0x57a5, i)%1000 < 5 {
-					b := .35 + .65*unit(0x57a6, i)
-					b *= .65 + .35*unit(0x57a7, i)
-					c = mix(c, white, b*p.th.stars*(1-v/.62))
-				}
-			}
 			p.px[y*p.w+x] = c
 		}
 	}
@@ -100,7 +92,7 @@ func (p *painter) halos() {
 		case Summit:
 			c, a, r = p.th.glow, .6, math.Max(5, g.height*.5)
 		case Eruption:
-			c, a, r = p.th.lava, .75*(.85+.15*math.Sin(p.t*.7)), math.Max(6, g.height*.6)
+			c, a, r = p.th.lava, .75, math.Max(6, g.height*.6)
 		default:
 			continue
 		}

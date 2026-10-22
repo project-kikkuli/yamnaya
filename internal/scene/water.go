@@ -53,14 +53,6 @@ func (p *painter) lake() {
 			if y-p.hz < 1 {
 				c = mix(c, p.th.tree, .3)
 			}
-			swell := noise2(0x1a4e, fx*.07, k*.75)
-			glint := p.th.skyAt(.97)
-			switch {
-			case swell > .7:
-				c = mix(c, glint, (swell-.7)*1.6)
-			case swell < .28:
-				c = c.scale(.84)
-			}
 			p.px[y*p.w+x] = c
 		}
 	}

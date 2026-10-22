@@ -4,6 +4,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -108,4 +111,37 @@ func TestTheSelectedRowLightsItsPeakAndAClickOnAPeakSelectsItsRow(t *testing.T) 
 		}
 	}
 	t.Fatal("the lead's climber is not drawn")
+}
+
+func TestKeysComeBeforeTheMountainsMove(t *testing.T) {
+	m := New(&core.Core{})
+	b := workBoard()
+	b.Tree = nil
+	m.board, m.loaded = b, true
+	m.width, m.height = 174, 72
+	m.peaks.start = time.Now().Add(-time.Hour)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next, cmd := next.(Model).Update(mountainFrame{})
+	if f := next.(Model).peaks.frame; f != 0 || cmd == nil {
+		t.Fatalf("a frame right after a key advanced the mountains to %d (next tick %v)", f, cmd != nil)
+	}
+	held := next.(Model)
+	held.peaks.quiet = time.Now().Add(-time.Millisecond)
+	next, _ = held.Update(mountainFrame{})
+	if next.(Model).peaks.frame == 0 {
+		t.Fatal("the mountains stayed still after the keys stopped")
+	}
+}
+
+func TestTheBoardKeepsItsTopEdgeWhenItShrinks(t *testing.T) {
+	var p mountains
+	p.keep(strings.Repeat("row\n", 29)+"row", 174, 72)
+	p.keep("row\nrow", 174, 72)
+	if p.reserve != 30 {
+		t.Fatalf("reserve %d after shrinking, want the 30 rows it reached", p.reserve)
+	}
+	p.keep("row\nrow", 120, 40)
+	if p.reserve != 2 {
+		t.Fatalf("reserve %d after a resize, want it to start over", p.reserve)
+	}
 }

@@ -9,9 +9,6 @@ func (p *painter) weather() {
 			p.cloudBank(i)
 		case Storm:
 			p.storm(i)
-		case Eruption:
-			p.lava(i)
-			p.plume(i)
 		}
 	}
 }
@@ -33,12 +30,10 @@ func (p *painter) cloudBank(i int) {
 	}
 }
 
-// storm buries a stuck peak's summit in dark cloud, with lightning now and then.
+// storm buries a stuck peak's summit in dark cloud.
 func (p *painter) storm(i int) {
 	m, g := p.l.mounts[i], p.geo[i]
-	rx, ry := math.Max(6, g.half*.75), math.Max(4, g.height*.32)
-	cy := g.y + ry*.2
-	flash := !reducedMotion && (p.frame/4+int(m.seed%97))%13 == 0
+	rx, ry, cy := stormShape(g)
 	type lump struct{ x, y, r float64 }
 	var lumps []lump
 	for k := range 7 {
@@ -57,19 +52,28 @@ func (p *painter) storm(i int) {
 			n := fbm2(m.seed+31, fx*.12, fy*.3, 4)
 			a := smooth(.0, .25, e+(n-.5)*.5)
 			col := mix(p.th.stormTop, p.th.stormCloud, smooth(cy-ry*1.6, cy+ry*.2, fy)+(n-.5)*.6)
-			if flash {
-				col = mix(col, p.th.bolt, .35)
-			}
 			p.blend(x, y, col, a*.97)
 		}
 	}
-	if flash {
-		x, y := g.x+(unit(m.seed, p.frame/4)-.5)*rx, cy+ry*.4
-		for step := 0; y < g.y+g.height*.55; step++ {
-			p.set(int(x), int(y), p.th.bolt)
-			x += (unit(m.seed+41, p.frame/4*31+step) - .5) * 2.4
-			y++
-		}
+}
+
+func stormShape(g geom) (rx, ry, cy float64) {
+	rx, ry = math.Max(6, g.half*.75), math.Max(4, g.height*.32)
+	return rx, ry, g.y + ry*.2
+}
+
+// bolt strikes now and then from a storm's cloud down onto the peak.
+func (p *painter) bolt(i int) {
+	m, g := p.l.mounts[i], p.geo[i]
+	if reducedMotion || (p.frame/4+int(m.seed%97))%13 != 0 {
+		return
+	}
+	rx, ry, cy := stormShape(g)
+	x, y := g.x+(unit(m.seed, p.frame/4)-.5)*rx, cy+ry*.4
+	for step := 0; y < g.y+g.height*.55; step++ {
+		p.set(int(x), int(y), p.th.bolt)
+		x += (unit(m.seed+41, p.frame/4*31+step) - .5) * 2.4
+		y++
 	}
 }
 
