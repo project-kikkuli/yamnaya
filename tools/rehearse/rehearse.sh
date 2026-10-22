@@ -15,6 +15,10 @@ fi
 usage() {
 	cat <<'EOF'
 usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF] [--keep]
+       tools/rehearse/rehearse.sh --reset-ground
+
+--reset-ground closes the proving ground's open pull requests and puts its main back at its first commit, so the
+scenarios' asks are new work again; run it only while no rehearsal runs.
 
 Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
 Each run clones the proving ground afresh, builds ym from REF (default origin/main) and writes
@@ -22,7 +26,7 @@ Each run clones the proving ground afresh, builds ym from REF (default origin/ma
 EOF
 }
 
-scenario=clean ask="" timeout=60 ref=origin/main keep=0
+scenario=clean ask="" timeout=60 ref=origin/main keep=0 reset=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--scenario) scenario=$2; shift 2 ;;
@@ -30,12 +34,24 @@ while [ $# -gt 0 ]; do
 	--timeout) timeout=$2; shift 2 ;;
 	--ref) ref=$2; shift 2 ;;
 	--keep) keep=1; shift ;;
+	--reset-ground) reset=1; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
 done
 
 ground=${YM_REHEARSAL_REPO:-rajatscode/yamnaya-proving-ground}
+if [ "$reset" = 1 ]; then
+	for n in $(gh pr list --repo "$ground" --state open --json number --jq '.[].number'); do
+		gh pr close "$n" --repo "$ground" --delete-branch >/dev/null
+	done
+	tmp=$(mktemp -d)
+	git clone -q "git@github.com:$ground.git" "$tmp/g"
+	git -C "$tmp/g" push -q --force origin "$(git -C "$tmp/g" rev-list --max-parents=0 HEAD):main"
+	rm -rf "$tmp"
+	echo "reset $ground: open pull requests closed, main at its first commit"
+	exit 0
+fi
 src=$YM_REHEARSAL_SRC
 stamp=$(date +%Y%m%d-%H%M%S)
 run=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/$stamp-$scenario
@@ -82,6 +98,10 @@ start_serve() {
 	note "ym serve started pid $serve_pid"
 }
 cleanup() {
+	if [ -f "$run/frozen" ]; then
+		touch "$run/thaw"
+		kill -CONT "$(cat "$run/frozen")" 2>/dev/null || true
+	fi
 	if [ "$keep" = 1 ]; then
 		note "kept: tmux -L $YAMNAYA_YM_SOCKET, ym serve pid $serve_pid; YAMNAYA_STATE_DIR=$run/state"
 		return
@@ -148,7 +168,7 @@ worker_pid() {
 	local m
 	m=$(q "SELECT group_concat(session, ',') FROM ym_managers")
 	"$ym" sessions --json --local 2>/dev/null | jq -r --arg run "$run" --arg m "$m" --arg st "${1:-busy}" \
-		'.[] | select((.cwd // "") | startswith($run)) | select(.id as $id | ($m | split(",") | index($id)) | not) | select(.status == $st) | .pid' | head -1
+		'.[] | select((.cwd // "") | startswith($run)) | select((.cwd // "") | test("-wt-verify-") | not) | select(.id as $id | ($m | split(",") | index($id)) | not) | select(.status == $st) | .pid' | head -1
 }
 first_pr() { prs --state open --json number,headRefName '"\(.number) \(.headRefName)"' | head -1; }
 
