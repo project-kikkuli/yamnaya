@@ -196,6 +196,11 @@ worker_pid() {
 		'.[] | select((.cwd // "") | startswith($run)) | select((.cwd // "") | test("-wt-verify-") | not) | select(.id as $id | ($m | split(",") | index($id)) | not) | select(.status == $st) | .pid' | head -1
 }
 first_pr() { prs --state open --json number,headRefName '"\(.number) \(.headRefName)"' | head -1; }
+# green_pr is the first open pull request whose checks all passed, so a fault lands on a pull request CI actually runs.
+green_pr() {
+	prs --state open --json number,headRefName,statusCheckRollup \
+		'select((.statusCheckRollup | length) > 0 and all(.statusCheckRollup[]; .conclusion == "SUCCESS")) | "\(.number) \(.headRefName)"' | head -1
+}
 
 chaos_done=0
 chaos() {
@@ -222,12 +227,13 @@ chaos() {
 		note "CHAOS froze busy worker claude pid $pid (SIGSTOP held against tmux's SIGCONT)" && chaos_done=1 && echo "$pid" >"$run/frozen"
 		;;
 	break-ci)
-		read -r pr branch <<<"$(first_pr)"
+		read -r pr branch <<<"$(green_pr)"
 		[ -n "${pr:-}" ] && [ "$pr" != null ] || return 0
 		local w=$run/breaker
-		git clone -q --branch "$branch" "git@github.com:$ground.git" "$w"
+		rm -rf "$w"
+		git clone -q --branch "$branch" "git@github.com:$ground.git" "$w" || return 0
 		printf 'package tally\n\nimport "testing"\n\nfunc TestRehearsalBreaksCI(t *testing.T) { t.Fatal("rehearsal: this test was pushed to break CI; remove it") }\n' >"$w/tally/break_test.go"
-		git -C "$w" add -A && git -C "$w" commit -qm "Break CI on purpose for the rehearsal" && git -C "$w" push -q origin "$branch"
+		git -C "$w" add -A && git -C "$w" commit -qm "Break CI on purpose for the rehearsal" && git -C "$w" push -q origin "$branch" || return 0
 		note "CHAOS pushed a failing test to $branch of PR #$pr" && chaos_done=1
 		;;
 	kill-serve)
@@ -238,10 +244,11 @@ chaos() {
 		read -r pr branch <<<"$(first_pr)"
 		[ -n "${pr:-}" ] && [ "$pr" != null ] || return 0
 		local head
-		head=$(gh pr view "$pr" --repo "$ground" --json headRefOid --jq .headRefOid)
+		# GitHub may refuse a call under its rate limits; the fault is left for the next tick then.
+		head=$(gh pr view "$pr" --repo "$ground" --json headRefOid --jq .headRefOid) || return 0
 		gh api "repos/$ground/pulls/$pr/comments" -f commit_id="$head" -f path=cmd/tally/main.go -f subject_type=file \
-			-f body="Rehearsal reviewer: the new flag's usage string should say what happens at its default value." >/dev/null
-		gh pr review "$pr" --repo "$ground" --comment --body "Rehearsal reviewer: please add a one-line mention of the new flag to README.md before this merges." >/dev/null
+			-f body="Rehearsal reviewer: the new flag's usage string should say what happens at its default value." >/dev/null || return 0
+		gh pr review "$pr" --repo "$ground" --comment --body "Rehearsal reviewer: please add a one-line mention of the new flag to README.md before this merges." >/dev/null || return 0
 		note "CHAOS left a file review thread on cmd/tally/main.go and a top-level review asking for a README line on PR #$pr" && chaos_done=1
 		;;
 	esac
