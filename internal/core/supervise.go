@@ -101,7 +101,7 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 	alive := b.Alive(m)
 	starting := !m.LaunchedAt.IsZero() && now.Sub(m.LaunchedAt) < StartGrace && m.LastError == ""
 	s, _ := b.Session(m.Session)
-	hung := alive && !starting && s.Hung(now)
+	hung := alive && !starting && s.Hung(now, c.Woke)
 	switch {
 	case hung:
 		if now.Before(m.NextAttempt) {
@@ -227,7 +227,7 @@ func (c *Core) lastMoved(b Board, o Org, m Manager, g Goal) time.Time {
 		if owner, ok := o.Managed(s.Key(), b.parents); !ok || owner.ID != m.ID {
 			continue
 		}
-		if (s.Status == Busy && !s.Hung(now)) || s.Status == Waiting {
+		if (s.Status == Busy && !s.Hung(now, c.Woke)) || s.Status == Waiting {
 			return now
 		}
 		seen(s.lastActive())

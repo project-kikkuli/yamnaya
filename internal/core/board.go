@@ -44,6 +44,8 @@ type Core struct {
 	// Notify raises a desktop notification for the owner; nil raises none.
 	Notify    func(title, body string) error
 	KeepAlive func() error
+	// Woke is when this host last woke from sleep; a session's silence while it slept does not make it hung.
+	Woke time.Time
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.

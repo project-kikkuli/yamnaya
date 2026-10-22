@@ -55,7 +55,12 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if discover && !once {
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
 		}
+		last := time.Now()
 		for {
+			if at := time.Now(); at.Round(0).Sub(last.Round(0))-at.Sub(last) > time.Minute {
+				e.core.Woke = at
+			}
+			last = time.Now()
 			if discover && once {
 				if err := docs.sweep(ctx, e.core.Store); err != nil {
 					return err

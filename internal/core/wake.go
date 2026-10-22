@@ -386,7 +386,7 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 		if !mine(s.Key()) {
 			continue
 		}
-		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting) && !s.Hung(c.now()) {
+		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting) && !s.Hung(c.now(), c.Woke) {
 			return true
 		}
 		for _, member := range s.Crew {

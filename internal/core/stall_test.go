@@ -12,17 +12,23 @@ func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T)
 		name     string
 		doing    time.Duration
 		crew     time.Duration
+		woke     time.Duration
 		wantHung bool
 	}{
-		{"last tool call long ago", -20 * time.Minute, 0, true},
-		{"a long tool call", -9 * time.Minute, 0, false},
-		{"a subagent still working", -40 * time.Minute, -2 * time.Minute, false},
+		{"last tool call long ago", -20 * time.Minute, 0, 0, true},
+		{"a long tool call", -9 * time.Minute, 0, 0, false},
+		{"a subagent still working", -40 * time.Minute, -2 * time.Minute, 0, false},
+		{"silent mostly while the host slept", -40 * time.Minute, 0, -5 * time.Minute, false},
+		{"silent long after the host woke", -40 * time.Minute, 0, -16 * time.Minute, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newOrgWorld(t)
 			g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
 			w.spawn("agent", m.Session)
 			w.clock = w.clock.Add(time.Hour)
+			if c.woke != 0 {
+				w.core.Woke = w.clock.Add(c.woke)
+			}
 			w.set("agent", func(s *Session) {
 				s.Status, s.Since = Busy, w.clock.Add(-45*time.Minute)
 				s.Doing = Action{Tool: "Bash", Detail: "go test ./...", At: w.clock.Add(c.doing)}
@@ -52,27 +58,41 @@ func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T)
 }
 
 func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
-	w := newOrgWorld(t)
-	_, m := w.goal(t, "make the importer handle CSV", "/repo/august")
-	w.core.Signal = func(pid int, _ syscall.Signal) error {
-		w.stop(w.claude.sessions[pid].ID)
-		return nil
-	}
-	w.clock = w.clock.Add(time.Hour)
-	w.set(m.Session, func(s *Session) {
-		s.Status, s.Since = Busy, w.clock.Add(-30*time.Minute)
-		s.Doing = Action{Tool: "Bash", At: w.clock.Add(-20 * time.Minute)}
-	})
-	w.supervise(t)
-	o, err := w.core.LoadOrg()
-	if err != nil {
-		t.Fatal(err)
-	}
-	again := o.Managers[m.ID]
-	if again.Session == m.Session || len(w.launches.starts) != 2 {
-		t.Fatalf("hung manager kept session %s after %d launches, want a relaunch", again.Session, len(w.launches.starts))
-	}
-	if !strings.Contains(w.launches.starts[1].Prompt, "relaunched") {
-		t.Fatalf("relaunch prompt lacks the resume note:\n%s", w.launches.starts[1].Prompt)
+	for _, c := range []struct {
+		name         string
+		woke         time.Duration
+		wantRelaunch bool
+	}{
+		{"silent while awake", 0, true},
+		{"silent mostly while the host slept", -2 * time.Minute, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+			w.core.Signal = func(pid int, _ syscall.Signal) error {
+				w.stop(w.claude.sessions[pid].ID)
+				return nil
+			}
+			w.clock = w.clock.Add(time.Hour)
+			if c.woke != 0 {
+				w.core.Woke = w.clock.Add(c.woke)
+			}
+			w.set(m.Session, func(s *Session) {
+				s.Status, s.Since = Busy, w.clock.Add(-30*time.Minute)
+				s.Doing = Action{Tool: "Bash", At: w.clock.Add(-20 * time.Minute)}
+			})
+			w.supervise(t)
+			o, err := w.core.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			again := o.Managers[m.ID]
+			if relaunched := again.Session != m.Session && len(w.launches.starts) == 2; relaunched != c.wantRelaunch {
+				t.Fatalf("manager session %s -> %s after %d launches, want relaunch=%v", m.Session, again.Session, len(w.launches.starts), c.wantRelaunch)
+			}
+			if c.wantRelaunch && !strings.Contains(w.launches.starts[1].Prompt, "relaunched") {
+				t.Fatalf("relaunch prompt lacks the resume note:\n%s", w.launches.starts[1].Prompt)
+			}
+		})
 	}
 }

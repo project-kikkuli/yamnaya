@@ -26,9 +26,13 @@ func (s Live) lastActive() time.Time {
 	return latest
 }
 
-// Hung reports whether a busy session has shown no activity for HungAfter.
-func (s Live) Hung(now time.Time) bool {
-	return s.Status == Busy && !s.lastActive().IsZero() && now.Sub(s.lastActive()) >= HungAfter
+// Hung reports whether a busy session has shown no activity for HungAfter while the host was awake since woke.
+func (s Live) Hung(now, woke time.Time) bool {
+	quiet := s.lastActive()
+	if woke.After(quiet) {
+		quiet = woke
+	}
+	return s.Status == Busy && !s.lastActive().IsZero() && now.Sub(quiet) >= HungAfter
 }
 
 // noticeHung records each hung agent once per stall, with what it last did.
@@ -36,7 +40,7 @@ func (c *Core) noticeHung(b Board, o Org) error {
 	now := c.now()
 	for _, s := range b.Sessions {
 		key := s.Key()
-		if !s.Hung(now) {
+		if !s.Hung(now, c.Woke) {
 			continue
 		}
 		if _, isManager := o.ManagerOf(key); isManager {
