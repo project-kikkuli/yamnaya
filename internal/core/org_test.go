@@ -17,6 +17,13 @@ type fakeLaunches struct {
 	w      *world
 	fail   error
 	starts []NewLaunch
+	forgot []string
+}
+
+func (l *fakeLaunches) Forget(ref string) (string, error) {
+	l.forgot = append(l.forgot, ref)
+	l.w.stop(ref)
+	return "forgot " + ref, nil
 }
 
 func (l *fakeLaunches) Start(n NewLaunch) (string, error) {
@@ -396,7 +403,11 @@ func TestASessionTheOwnerStartedShowsOneWaitingRowForAllItsAsks(t *testing.T) {
 func TestAFinishedGoalShowsOnceUntilCleared(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
-	if _, err := w.core.FinishGoal(m.Session, "importer shipped"); err != nil {
+	if _, _, err := w.core.FinishGoal(m.Session, "importer shipped", nil); err != nil {
+		t.Fatal(err)
+	}
+	w.supervise(t)
+	if _, err := w.core.RecordVerdict(w.launches.starts[len(w.launches.starts)-1].Session, g.ID, VerdictPass, nil); err != nil {
 		t.Fatal(err)
 	}
 	if rows := goalRows(w.board(t)); !slices.Equal(rows, []string{g.ID + " done"}) {
@@ -507,7 +518,7 @@ func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
 	if got := w.handedTo("moved-session"); len(got) != 1 {
 		t.Fatalf("manager under its new session id got %q, want the late agent's ask", got)
 	}
-	if _, err := w.core.FinishGoal("moved-session", "shipped"); err != nil {
+	if _, _, err := w.core.FinishGoal("moved-session", "shipped", nil); err != nil {
 		t.Fatalf("the moved manager could not finish its goal: %v", err)
 	}
 }

@@ -84,6 +84,9 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.noticeMerges(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.verify(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -118,13 +121,13 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 		}
 		return nil
 	}
-	if g.State == GoalStuck && !strings.HasPrefix(g.Evidence, quietEvidence) {
+	if g.State == GoalStuck && !strings.HasPrefix(g.Evidence, quietEvidence) && !strings.HasPrefix(g.Evidence, verifyEvidence) {
 		g.State, g.Evidence = GoalActive, ""
 		if err := c.Store.SaveGoal(g); err != nil {
 			return err
 		}
 	}
-	if !alive {
+	if !alive || g.State == GoalVerifying {
 		return nil
 	}
 	return c.watchQuiet(b, o, m, g)
@@ -135,7 +138,7 @@ func (c *Core) watchQuiet(b Board, o Org, m Manager, g Goal) error {
 	now := c.now()
 	if moved := c.lastMoved(b, o, m, g); moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) {
 		g.LastMovedAt = moved
-		if g.State == GoalStuck {
+		if g.State == GoalStuck && strings.HasPrefix(g.Evidence, quietEvidence) {
 			g.State, g.Evidence = GoalActive, ""
 		}
 		if err := c.Store.SaveGoal(g); err != nil {

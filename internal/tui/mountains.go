@@ -167,8 +167,11 @@ func goalPeak(n core.Node, waiting map[string]bool) scene.Peak {
 	p.ID, p.Name = n.Manager.ID, shortAsk(n.Goal.Ask, 32)
 	p.Weather = weather(n.Standing)
 	p.NeedsYou = waiting[n.Manager.ID]
-	if n.Goal.State == core.GoalDone {
+	switch n.Goal.State {
+	case core.GoalDone:
 		p.Progress = 1
+	case core.GoalVerifying:
+		p.Progress = max(p.Progress, 0.9)
 	}
 	return p
 }

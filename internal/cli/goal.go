@@ -38,7 +38,7 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		}),
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
-	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalArtifactCmd(with), goalSendCmd(with),
+	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(with),
 		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with))
 	return cmd
 }
@@ -152,6 +152,11 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 					if r.Artifact != "" {
 						fmt.Fprintln(cmd.OutOrStdout(), "  artifact "+r.Artifact)
 					}
+					if r.Goal != "" {
+						if err := printVerifications(cmd.OutOrStdout(), e.core, r.Goal); err != nil {
+							return err
+						}
+					}
 					if brief, err := os.ReadFile(r.Brief); err == nil {
 						fmt.Fprintf(cmd.OutOrStdout(), "\n%s", brief)
 					}
@@ -163,27 +168,91 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	}
 }
 
+func printVerifications(w io.Writer, c *core.Core, goal string) error {
+	all, err := c.Store.Verifications(goal)
+	if err != nil {
+		return err
+	}
+	for _, v := range all {
+		verdict := v.Verdict
+		if verdict == "" {
+			verdict = "under way"
+			if v.LaunchedAt.IsZero() {
+				verdict = "checking facts"
+			} else if v.Session != "" {
+				verdict = "verifier " + core.Short(v.Session) + " checking"
+			}
+		}
+		fmt.Fprintf(w, "  verification %d: %s\n", v.Attempt, verdict)
+		for _, f := range v.Facts {
+			fmt.Fprintln(w, "    fact "+f.String())
+		}
+		for _, f := range v.Findings {
+			fmt.Fprintln(w, "    finding "+f)
+		}
+		if v.Verdict == "" && v.LastError != "" {
+			fmt.Fprintln(w, "    last error "+v.LastError)
+		}
+	}
+	return nil
+}
+
 func goalDoneCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var summary string
+	var evidence []string
 	cmd := &cobra.Command{
-		Use:   "done --summary <line>",
-		Short: "Mark the calling manager's goal done; the owner sees it once in their queue",
+		Use:   "done --summary <line> [--evidence <line>]...",
+		Short: "Hand the calling manager's goal to verification; the owner sees it done once a fresh verifier passes it",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()
 			if err != nil {
 				return err
 			}
-			g, err := e.core.FinishGoal(c.Session, summary)
+			g, v, err := e.core.FinishGoal(c.Session, summary, evidence)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s done\n", g.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s verifying (attempt %d): ym checks its pull requests, then a fresh verifier session checks the work; its findings come back here\n", g.ID, v.Attempt)
 			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&summary, "summary", "", "one line on what was done")
+	cmd.Flags().StringArrayVar(&evidence, "evidence", nil, "a line of proof the verifier should check, such as a pull request URL or a commit on main; repeatable")
 	cmd.MarkFlagRequired("summary")
+	return cmd
+}
+
+func goalVerdictCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var pass, fail bool
+	var findings []string
+	cmd := &cobra.Command{
+		Use:   "verdict <goal> --pass|--fail [--finding <line>]...",
+		Short: "Record a verifier session's verdict on the goal it was launched to check",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if pass == fail {
+				return errors.New("pass exactly one of --pass or --fail")
+			}
+			c, err := e.caller()
+			if err != nil {
+				return err
+			}
+			verdict := core.VerdictPass
+			if fail {
+				verdict = core.VerdictFail
+			}
+			v, err := e.core.RecordVerdict(c.Session, args[0], verdict, findings)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s attempt %d: %s recorded; ym ends this session now\n", v.Goal, v.Attempt, verdict)
+			return nil
+		}),
+	}
+	cmd.Flags().BoolVar(&pass, "pass", false, "the goal is done as the owner asked")
+	cmd.Flags().BoolVar(&fail, "fail", false, "the goal is not done; name each gap with --finding")
+	cmd.Flags().StringArrayVar(&findings, "finding", nil, "one concrete, checkable line; repeatable")
 	return cmd
 }
 

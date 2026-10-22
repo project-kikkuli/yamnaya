@@ -37,6 +37,7 @@ func Wire(path string) (*core.Core, error) {
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),
+		Landings:  gh.New(),
 		Port:      port,
 		Roots:     core.RepoRoots,
 		Ask:       health.Addressed,

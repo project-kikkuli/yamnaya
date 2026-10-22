@@ -64,7 +64,8 @@ The owner starts a goal with `ym goal "<ask>"` (or `n` on the board), and ym sta
 - Keep the brief at the path in your prompt current: where the goal stands, what is in flight, decisions and why, what is next. Register a richer page with `ym goal artifact <url>`.
 - Merge your own pull requests only in repositories `ym goal authority` lists as "may merge". Elsewhere a green pull request goes to the owner's merge queue by itself.
 - Prefix anything you write to a human with your model name, like "Claude: ...". Never speak as the owner.
-- When the goal is done, update the brief, then `ym goal done --summary "<one line>"`.
+- When the goal is done, update the brief, then `ym goal done --summary "<one line>" --evidence "<proof>"`, one `--evidence` per pull request URL, commit or result to check. The goal moves to verifying: ym checks that its pull requests merged with green CI and no open threads, then a fresh verifier session checks the work against the owner's ask. A pass makes it done for the owner; a fail reopens it and sends you the findings, so fix them and run `ym goal done` again.
+- If your prompt says you are a goal's verifier, check read-only and finish with `ym goal verdict <goal> --pass --finding "<what you checked>"` or `--fail --finding "<concrete gap>"`, one `--finding` per line.
 
 ym supervises managers: a dead one is relaunched with its prompt and brief, a quiet one is nudged, and one still stuck after its nudges shows the owner one stuck row. `ym goal list [--under <chief>]` shows the tree; `ym goal send <id>[,<id>] <text>` steers managers (`--subtree` reaches everyone below a chief); `ym goal relaunch <id>` replaces a manager's session.
 

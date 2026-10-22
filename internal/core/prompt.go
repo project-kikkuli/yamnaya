@@ -46,7 +46,7 @@ func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 	fmt.Fprintf(sb, "- Keep your brief at %s: a short markdown page a cold reader can follow. Where the goal stands, what is in flight (agents, PRs), the decisions you made and why, what comes next. Update it whenever something moves. If you also publish a richer page, such as a Claude artifact, register its URL with ym goal artifact <url>.\n", m.BriefPath)
 	fmt.Fprintf(sb, "- Escalate only what is beyond your authority (a merge you may not do, a chore only a human can do, a change to the goal itself) with ym item add; it goes to %s. Keep working on everything else meanwhile.\n", c.boss(o, m))
 	sb.WriteString("- ym watches you. If you go quiet it nudges you; if your session dies it relaunches you with this prompt and your brief.\n")
-	sb.WriteString("- When the goal is done, write the final brief, then run: ym goal done --summary \"<one line>\".\n\n")
+	sb.WriteString("- When the goal is done, write the final brief, then run: ym goal done --summary \"<one line>\" --evidence \"<proof>\", one --evidence per pull request URL, commit or result to check. That starts verification, not done: ym checks your pull requests merged with green CI and no open threads, then a fresh verifier checks the work against the owner's ask. A pass makes the goal done for the owner; a fail reopens it and sends you the findings to fix before ym goal done again.\n\n")
 	sb.WriteString("The owner can open this session and talk to you directly; what they say there changes your direction.")
 }
 

@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	GoalActive  = "active"
-	GoalStuck   = "stuck"
-	GoalDone    = "done"
-	GoalDropped = "dropped"
+	GoalActive = "active"
+	GoalStuck  = "stuck"
+	// GoalVerifying is a goal its manager called done that waits on its facts and a verifier's verdict.
+	GoalVerifying = "verifying"
+	GoalDone      = "done"
+	GoalDropped   = "dropped"
 
 	RoleManager = "manager"
 	RoleChief   = "chief"

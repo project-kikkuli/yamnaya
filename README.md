@@ -73,11 +73,12 @@ An answer goes to the session carrying the conversation now, following Claude's 
     ym                                  the board
     ym goal [--repo P] "<ask>"          hand a goal to a new manager that owns it until it is done
     ym goal list [--under CHIEF] [--json]   goals, managers and chiefs as a tree, with state and brief
-    ym goal show <id>                   one goal or chief, and its brief
+    ym goal show <id>                   one goal or chief, its brief, and each verification with its facts and findings
     ym goal send [--subtree] <id>[,<id>] <text>   message managers or chiefs
     ym goal relaunch <id>               end a manager's or chief's session and start a fresh one from its prompt and brief
     ym goal drop <id>                   drop a goal or retire a chief; ym stops supervising it
-    ym goal done --summary "<line>"     (manager) mark its goal done
+    ym goal done --summary "<line>" [--evidence "<line>"]...   (manager) hand its goal to verification
+    ym goal verdict <goal> --pass|--fail [--finding "<line>"]...   (verifier) record the verdict on the goal it checks
     ym goal artifact <url>              (manager or chief) register a richer brief
     ym goal authority [<repo> --merge|--no-merge]   repositories whose managers may merge their own pull requests
     ym chief [--repo P] [--remit T] [--over ID,ID] "<name>"   start a chief over managers and chiefs

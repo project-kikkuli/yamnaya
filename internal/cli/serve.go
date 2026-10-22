@@ -30,7 +30,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if !discover {
 			e.core.Harnesses = nil
 			e.core.Procs = func() ([]proc.Proc, error) { return nil, nil }
-			e.core.PRs = nil
+			e.core.PRs, e.core.Landings = nil, nil
 		}
 		dir, err := stateDir()
 		if err != nil {

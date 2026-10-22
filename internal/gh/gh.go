@@ -22,6 +22,8 @@ type Source struct {
 	// Repo reports whether GitHub has repository owner/name.
 	Repo func(repo string) (bool, error)
 	Now  func() time.Time
+	// LandingRun runs the landing query for a pull request URL; nil runs gh.
+	LandingRun func(url string) ([]byte, error)
 }
 
 func New() *Source { return &Source{Run: query, REST: rest, Repo: repoExists, Now: time.Now} }

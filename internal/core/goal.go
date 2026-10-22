@@ -163,20 +163,6 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 	return len(sent), errors.Join(errs...)
 }
 
-// FinishGoal marks the goal the calling manager owns done; its row waits in the owner's queue until cleared.
-func (c *Core) FinishGoal(session, summary string) (Goal, error) {
-	o, err := c.LoadOrg()
-	if err != nil {
-		return Goal{}, err
-	}
-	g, err := o.goalOf(c.Resolve(session))
-	if err != nil {
-		return g, err
-	}
-	g.State, g.Summary, g.DoneAt, g.Evidence, g.AckedAt = GoalDone, strings.TrimSpace(summary), c.now(), "", timeZero
-	return g, c.Store.SaveGoal(g)
-}
-
 // SetArtifact registers the URL of the richer brief the calling manager publishes.
 func (c *Core) SetArtifact(session, url string) error {
 	o, err := c.LoadOrg()

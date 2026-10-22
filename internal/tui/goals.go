@@ -126,11 +126,12 @@ func (m Model) chiefRows() []row {
 }
 
 var standStyle = map[string]func(string) string{
-	core.StandDone:   func(s string) string { return pal.green.Render(s) },
-	core.StandMoving: func(s string) string { return s },
-	core.StandQuiet:  func(s string) string { return pal.dim.Render(s) },
-	core.StandDown:   func(s string) string { return pal.red.Render(s) },
-	core.StandStuck:  func(s string) string { return pal.red.Render(s) },
+	core.StandDone:      func(s string) string { return pal.green.Render(s) },
+	core.StandVerifying: func(s string) string { return pal.yellow.Render(s) },
+	core.StandMoving:    func(s string) string { return s },
+	core.StandQuiet:     func(s string) string { return pal.dim.Render(s) },
+	core.StandDown:      func(s string) string { return pal.red.Render(s) },
+	core.StandStuck:     func(s string) string { return pal.red.Render(s) },
 }
 
 // nodeLines is a goal or chief row: who owns it, how it stands, and what it is about.
