@@ -353,7 +353,8 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 }
 
 // nudgeIdle wakes a manager at once when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI,
-// no wake set, no ask waiting on someone, and no event since its last wake.
+// no wake set, no ask waiting on someone, and no event since its last wake. It nudges once until something else happens on the
+// goal; a manager that stays idle after that is the quiet watch's to nudge and flag.
 func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	if g.State != GoalActive {
 		return nil
@@ -366,6 +367,9 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 		return err
 	}
 	if last, err := c.Store.lastDelivered(g.ID); err != nil || last.After(s.ResultAt) {
+		return err
+	}
+	if kind, err := c.Store.lastKind(g.ID); err != nil || kind == EventNudge {
 		return err
 	}
 	if c.inFlight(b, o, m) {

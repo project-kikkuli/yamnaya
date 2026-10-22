@@ -219,8 +219,8 @@ func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
 			w.set(m.Session, func(s *Session) { s.ResultAt = w.clock })
 			w.loop(t, 1)
 			events, _ := w.core.Store.GoalEvents(g.ID)
-			if n := strings.Count(strings.Join(kinds(events), " "), EventNudge); tc.nudged && n != 2 {
-				t.Fatalf("a second idle turn with nothing in flight got %d nudges in all, want 2", n)
+			if n := strings.Count(strings.Join(kinds(events), " "), EventNudge); tc.nudged && n != 1 {
+				t.Fatalf("a second idle turn with nothing new got %d nudges in all, want still 1", n)
 			}
 		})
 	}
@@ -476,5 +476,34 @@ func TestAWakeOfAGoalThatEndedFiresSilently(t *testing.T) {
 	events, _ := w.core.Store.GoalEvents(g.ID)
 	if len(timers) != 0 || len(events) != 0 {
 		t.Fatalf("a dropped goal's wake left timers %+v and events %v, want it fired with no event", timers, kinds(events))
+	}
+}
+
+func TestAManagerThatOnlyAnswersNudgesIsNudgedOnceUntilSomethingHappens(t *testing.T) {
+	w := newOrgWorld(t)
+	g, m := w.goal(t, "ship the importer", "/repo/august")
+	turn := func() {
+		w.clock = w.clock.Add(10 * time.Second)
+		w.set(m.Session, func(s *Session) { s.Result, s.ResultAt = "OK", w.clock })
+		w.loop(t, 1)
+	}
+	nudges := func() int {
+		events, _ := w.core.Store.GoalEvents(g.ID)
+		return strings.Count(strings.Join(kinds(events), " "), EventNudge)
+	}
+	for range 10 {
+		turn()
+	}
+	if n := nudges(); n != 1 {
+		t.Fatalf("a manager that answered every nudge with OK got %d nudges, want 1", n)
+	}
+	w.spawn("agent", m.Session)
+	w.set("agent", func(s *Session) { s.Result, s.ResultAt = "parser done", w.clock })
+	w.loop(t, 1)
+	for range 5 {
+		turn()
+	}
+	if n := nudges(); n != 2 {
+		t.Fatalf("after its agent finished the manager got %d nudges in all, want 2", n)
 	}
 }
