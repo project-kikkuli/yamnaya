@@ -48,7 +48,12 @@ func (m Model) treeRows() []row {
 			}
 		}
 		walk(m.board.Tree)
-		sort.SliceStable(all, func(i, j int) bool { return filepath.Base(all[i].Goal.Repo) < filepath.Base(all[j].Goal.Repo) })
+		sort.SliceStable(all, func(i, j int) bool {
+			if a, b := core.RepoLabel(all[i].Repo), core.RepoLabel(all[j].Repo); a != b {
+				return a < b
+			}
+			return all[i].Repo < all[j].Repo
+		})
 		for i := range all {
 			if m.matches(all[i].Goal.Ask, all[i].Manager.Name) {
 				out = append(out, row{node: &all[i]})
@@ -146,7 +151,7 @@ func (m Model) nodeLines(i int, n core.Node) string {
 		head = pad(n.Goal.ID, 8)
 		what = n.Goal.Ask
 		if m.byRepo {
-			what = filepath.Base(n.Goal.Repo) + "  " + what
+			what = core.RepoLabel(n.Repo) + "  " + what
 		}
 	} else {
 		head = pad("chief", 8)

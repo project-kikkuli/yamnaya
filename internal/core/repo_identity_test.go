@@ -57,7 +57,7 @@ type dormantOnly struct {
 	dormant []Dormant
 }
 
-func (d *dormantOnly) Dormant() []Dormant    { return d.dormant }
+func (d *dormantOnly) Dormant() []Dormant   { return d.dormant }
 func (d *dormantOnly) Launched() []Launched { return nil }
 
 func TestClonesOfOneRepositoryShareOneRepoRowAcrossDirectoriesAndHosts(t *testing.T) {

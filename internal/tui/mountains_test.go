@@ -132,3 +132,30 @@ func TestKeysComeBeforeTheMountainsMove(t *testing.T) {
 		t.Fatal("the mountains stayed still after the keys stopped")
 	}
 }
+
+func TestGoalsByRepositoryGatherEveryCloneOfARepositoryUnderItsOriginName(t *testing.T) {
+	goal := func(id, dir, repo string) core.Node {
+		return core.Node{Manager: core.Manager{ID: "m" + id}, Goal: &core.Goal{ID: id, Ask: "ask " + id, Repo: dir}, Repo: repo, Standing: core.StandMoving}
+	}
+	m := New(&core.Core{})
+	m.board = core.Board{Tree: []core.Node{
+		goal("g1", "/a/proving-ground", "github.com/o/yamnaya-proving-ground"),
+		goal("g2", "/x/atlas", "github.com/o/zeta"),
+		goal("g3", "/b/yamnaya-proving-ground", "github.com/o/yamnaya-proving-ground"),
+	}}
+	m.loaded, m.byRepo = true, true
+	var got []string
+	for i, r := range m.treeRows() {
+		got = append(got, r.node.Goal.ID)
+		if line := ansi.Strip(m.nodeLines(i, *r.node)); r.node.Goal.ID != "g2" && !strings.Contains(line, "yamnaya-proving-ground ask") {
+			t.Errorf("row %q does not name the origin's repository", line)
+		}
+	}
+	if want := []string{"g1", "g3", "g2"}; !slices.Equal(got, want) {
+		t.Errorf("goals by repository %v, want both clones' goals together %v", got, want)
+	}
+	s := m.sceneOf()
+	if len(s.Ranges) != 2 || s.Ranges[0].Name != "yamnaya-proving-ground" || len(s.Ranges[0].Peaks) != 2 {
+		t.Errorf("ranges %+v, want one range holding both clones' goals", s.Ranges)
+	}
+}
