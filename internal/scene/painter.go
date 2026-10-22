@@ -52,10 +52,7 @@ type rect struct{ x0, y0, x1, y1 int }
 func (r rect) has(x, y int) bool { return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1 }
 
 func newPainter(s Scene, width, height, frame int, table rect) *painter {
-	th := day
-	if s.Dark {
-		th = dusk
-	}
+	th := themeAt(s.Now, s.Dark)
 	p := &painter{th: th, w: width, p: height * 2, frame: frame, t: float64(frame), table: table}
 	p.px = make([]rgb, p.w*p.p)
 	p.solid = make([]bool, p.w*p.p)

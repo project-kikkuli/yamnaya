@@ -14,12 +14,12 @@ func (p *painter) sky() {
 			if w := tint[x]; w.a > 0 {
 				c = p.tint(c, w.weather, w.a, v)
 			}
-			if p.th.night && v < .62 {
+			if p.th.stars > 0 && v < .62 {
 				i := y*p.w + x
 				if spread(0x57a5, i)%1000 < 5 {
 					b := .35 + .65*unit(0x57a6, i)
 					b *= .65 + .35*unit(0x57a7, i)
-					c = mix(c, white, b*(1-v/.62))
+					c = mix(c, white, b*p.th.stars*(1-v/.62))
 				}
 			}
 			p.px[y*p.w+x] = c
@@ -69,7 +69,7 @@ func (p *painter) tint(c rgb, w Weather, a, v float64) rgb {
 }
 
 func (p *painter) moon() {
-	if !p.th.night || p.w < 60 {
+	if p.th.stars < .3 || p.w < 60 {
 		return
 	}
 	cx, cy, r := float64(p.w)*.86, float64(p.hz)*.15, 3.6

@@ -2,6 +2,7 @@ package scene
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"strings"
 	"testing"
@@ -351,5 +352,54 @@ func TestHitFindsThePeakUnderACell(t *testing.T) {
 	}
 	if got := Hit(s, 174, 72, table, 1, 0); got != "" {
 		t.Fatalf("a click in the sky hit %q", got)
+	}
+}
+
+// skyLight is the mean brightness of the top rows of a frame, and how many cells there hold a lit star.
+func skyLight(t *testing.T, s Scene) (float64, int) {
+	t.Helper()
+	grid := cells(t, Frame(s, 160, 48, 0, board(10, 0)))
+	sum, n, stars := 0.0, 0, 0
+	for _, row := range grid[:8] {
+		for _, c := range row {
+			lum := func(px color.RGBA) float64 {
+				return (rgb{float64(px.R) / 255, float64(px.G) / 255, float64(px.B) / 255}).luma()
+			}
+			sum += lum(c.fg) + lum(c.bg)
+			n += 2
+			if c.r == '▀' && lum(c.fg) > .6 && lum(c.bg) < .2 || c.r == '▀' && lum(c.bg) > .6 && lum(c.fg) < .2 {
+				stars++
+			}
+		}
+	}
+	return sum / float64(n), stars
+}
+
+func TestTheSkyFollowsTheLocalClockNotTheTerminalTheme(t *testing.T) {
+	at := func(h, m int) time.Time { return time.Date(2026, 1, 15, h, m, 0, 0, time.Local) }
+	for _, dark := range []bool{true, false} {
+		s := caucasus(dark)
+		s.Now = at(12, 0)
+		noon, noonStars := skyLight(t, s)
+		s.Now = at(0, 0)
+		midnight, midnightStars := skyLight(t, s)
+		if noon < midnight+.25 {
+			t.Errorf("dark=%v: noon sky %.2f is not clearly brighter than midnight %.2f", dark, noon, midnight)
+		}
+		if noonStars != 0 || midnightStars == 0 {
+			t.Errorf("dark=%v: stars at noon %d, at midnight %d", dark, noonStars, midnightStars)
+		}
+		s.Now = at(11, 59)
+		before, _ := skyLight(t, s)
+		if d := before - noon; d > .01 || d < -.01 {
+			t.Errorf("dark=%v: the sky jumped %.3f in the minute before noon", dark, d)
+		}
+	}
+	day, night := caucasus(true), caucasus(false)
+	day.Now, night.Now = at(12, 0), at(12, 0)
+	a, _ := skyLight(t, day)
+	b, _ := skyLight(t, night)
+	if d := a - b; d > .1 || d < -.1 {
+		t.Errorf("the terminal theme changed the time of day: dark noon %.2f, light noon %.2f", a, b)
 	}
 }

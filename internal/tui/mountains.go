@@ -84,7 +84,7 @@ func weather(standing string) scene.Weather {
 // session the owner started stands in the range of its repository.
 func (m Model) sceneOf() scene.Scene {
 	b := m.board
-	s := scene.Scene{Dark: m.peaks.dark, Selected: m.peakOf()}
+	s := scene.Scene{Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute)}
 	waiting := needs(b)
 	repos := map[string]*scene.Range{}
 	var order []string

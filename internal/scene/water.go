@@ -20,7 +20,7 @@ func (p *painter) shore() {
 
 // village is a scatter of warm windows along the shore, the way a valley town looks under the peaks at dusk.
 func (p *painter) village() {
-	if !p.th.night {
+	if p.th.stars < .3 {
 		return
 	}
 	for x := range p.w {

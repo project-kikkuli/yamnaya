@@ -3,6 +3,7 @@ package scene
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 type sample struct {
@@ -65,8 +66,17 @@ func samples() []sample {
 			Camps: []Camp{{Label: "#88", State: Green, Stage: 4}, {Label: "#91", State: Open, Stage: 2}}},
 		{ID: "teardown", Name: "retire the work layer", Weather: Summit, Progress: 1, Camps: []Camp{{Label: "#80", State: Merged, Stage: 6}}},
 	}})
+	at := func(h, m int) Scene {
+		s := goals
+		s.Now = time.Date(2026, 1, 15, h, m, 0, 0, time.Local)
+		return s
+	}
 	return []sample{
 		{"work-174x72", goals, 174, 72, 0, board(22, 0)},
+		{"dawn-174x72", at(6, 40), 174, 72, 0, board(22, 0)},
+		{"noon-174x72", at(11, 55), 174, 72, 0, board(22, 0)},
+		{"golden-174x72", at(18, 0), 174, 72, 0, board(22, 0)},
+		{"midnight-174x72", at(0, 30), 174, 72, 0, board(22, 0)},
 		{"dusk-160x48", caucasus(true), 160, 48, 30, board(12, 0)},
 		{"day-160x48", caucasus(false), 160, 48, 30, board(12, 0)},
 		{"dusk-80x24", caucasus(true), 80, 24, 30, board(8, 0)},

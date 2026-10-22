@@ -1,6 +1,6 @@
 package scene
 
-// theme is the light of the scene: winter dusk on dark terminals, a clear winter day on light ones.
+// theme is the light of the scene at one time of day.
 type theme struct {
 	sky                            []stop
 	snowLit, snowShade             rgb
@@ -16,7 +16,8 @@ type theme struct {
 	bolt                           rgb
 	green, gold                    rgb
 	valley                         float64
-	night                          bool
+	// stars is how bright the night sky is: stars, moon and lit windows show above zero.
+	stars float64
 }
 
 type stop struct {
@@ -37,7 +38,7 @@ var dusk = theme{
 	smoke: hex("#b8b0b4"), smokeDark: hex("#2e2629"),
 	climber: hex("#fff0b8"), rope: hex("#ff8a3d"), flag: hex("#ff4733"), label: hex("#ffe6c0"),
 	bolt: hex("#f2ecff"), green: hex("#7ee08a"), gold: hex("#ffd36b"),
-	valley: .5, night: true,
+	valley: .5, stars: .8,
 }
 
 var day = theme{
