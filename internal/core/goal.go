@@ -258,6 +258,11 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager {
 		c.Store.SaveManager(m)
 		return m
 	}
+	m.LastError = ""
+	if err := c.Store.SaveManager(m); err != nil {
+		m.LastError = err.Error()
+		return m
+	}
 	session := uuid.NewString()
 	waiting := c.waitingFor(o, m)
 	events, heard := c.missed(o, m)

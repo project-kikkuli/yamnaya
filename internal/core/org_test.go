@@ -19,6 +19,8 @@ type fakeLaunches struct {
 	starts   []NewLaunch
 	forgot   []string
 	launched []Launched
+	// during runs while a start is in progress, as another ym process may.
+	during func()
 }
 
 func (l *fakeLaunches) Forget(ref string) (string, error) {
@@ -31,6 +33,10 @@ func (l *fakeLaunches) Launched() []Launched { return l.launched }
 
 func (l *fakeLaunches) Start(n NewLaunch) (string, error) {
 	l.starts = append(l.starts, n)
+	if during := l.during; during != nil {
+		l.during = nil
+		during()
+	}
 	if l.fail != nil {
 		return "", l.fail
 	}

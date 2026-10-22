@@ -227,7 +227,8 @@ func plural(n int, what string) string {
 	return strconv.Itoa(n) + " " + what + "s"
 }
 
-// fireTimers turns every due timer into a wake: an event on a manager's goal, or a message to a running chief.
+// fireTimers turns every due timer into a wake: an event on a manager's goal, or a message to a running chief. A timer of a goal
+// that ended, or of a retired chief, fires silently.
 func (c *Core) fireTimers(b Board, o Org) error {
 	timers, err := c.Store.Timers()
 	if err != nil {
@@ -239,11 +240,14 @@ func (c *Core) fireTimers(b Board, o Org) error {
 			break
 		}
 		why := fmt.Sprintf("the wake you set at %s for %s: %s", t.Created.Local().Format(time.Kitchen), t.Due.Local().Format(time.Kitchen), t.Why)
-		if t.Goal != "" {
+		m, ok := o.Managers[t.Manager]
+		switch {
+		case !ok || !o.Active(m):
+		case t.Goal != "":
 			if _, _, err := c.RecordGoalEvent(t.Goal, EventTimer, why, "timer:"+strconv.FormatInt(t.Seq, 10)); err != nil {
 				return err
 			}
-		} else if m, ok := o.Managers[t.Manager]; ok && o.Active(m) {
+		default:
 			if _, running := b.Session(m.Session); !running {
 				continue
 			}

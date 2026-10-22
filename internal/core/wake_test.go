@@ -410,3 +410,47 @@ func TestAPullRequestStaysWatchedAfterTheAgentThatOpenedItEnds(t *testing.T) {
 		t.Fatalf("events %v: the merge of a pull request whose agent ended went unnoticed", got)
 	}
 }
+
+func TestASupervisorRunningWhileAManagerOrChiefLaunchesNeverStartsASecondSession(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start func(w *orgWorld, t *testing.T)
+	}{
+		{"goal", func(w *orgWorld, t *testing.T) { w.goal(t, "ship the importer", "/repo/august") }},
+		{"chief", func(w *orgWorld, t *testing.T) { w.chief(t, "platform") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.launches.during = func() {
+				if err := w.core.Supervise(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tc.start(w, t)
+			if len(w.launches.starts) != 1 {
+				t.Fatalf("%d sessions started, want 1: a supervisor running mid-launch started another", len(w.launches.starts))
+			}
+		})
+	}
+}
+
+func TestAWakeOfAGoalThatEndedFiresSilently(t *testing.T) {
+	w := newOrgWorld(t)
+	g, m := w.goal(t, "watch the rollout", "/repo/august")
+	if _, err := w.core.SetWake(m.Session, w.clock.Add(time.Minute), "check the canary"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.DropGoal(g.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.clock = w.clock.Add(2 * time.Minute)
+	w.loop(t, 2)
+	timers, err := w.core.Store.Timers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, _ := w.core.Store.GoalEvents(g.ID)
+	if len(timers) != 0 || len(events) != 0 {
+		t.Fatalf("a dropped goal's wake left timers %+v and events %v, want it fired with no event", timers, kinds(events))
+	}
+}
