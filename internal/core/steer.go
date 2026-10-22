@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -121,8 +122,27 @@ func (s *Store) LatestSteers() (map[string]Steer, error) {
 	return out, rows.Err()
 }
 
+// PlanContext is what a goal or chief is about now, as ym goal context --json prints it for another host.
+type PlanContext struct {
+	Manager  Manager `json:"manager"`
+	Text     string  `json:"text"`
+	Revision int     `json:"revision"`
+}
+
 // Context is what the goal or chief ref names is about now: its newest revision's text, else the goal's ask.
 func (c *Core) Context(ref string) (Manager, string, int, error) {
+	if host, rest, ok := c.remoteHost(ref); ok {
+		out, err := c.RunRemote(host, "goal", "context", "--json", rest)
+		if err != nil {
+			return Manager{}, "", 0, err
+		}
+		var ctx PlanContext
+		if err := json.Unmarshal([]byte(out), &ctx); err != nil {
+			return Manager{}, "", 0, fmt.Errorf("ym goal context on %s: %w", host, err)
+		}
+		ctx.Manager.ID, ctx.Manager.Host = RemoteKey(host, ctx.Manager.ID), host
+		return ctx.Manager, ctx.Text, ctx.Revision, nil
+	}
 	o, err := c.LoadOrg()
 	if err != nil {
 		return Manager{}, "", 0, err
@@ -147,6 +167,14 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Steer{}, errors.New("a steer needs the new plan in words")
+	}
+	if host, rest, ok := c.remoteHost(ref); ok {
+		args := []string{"goal", "steer", "--text", text}
+		if author != Owner {
+			args = append(args, "--by", RemoteKey(c.SelfName(), author))
+		}
+		_, err := c.RunOrRelay(host, append(args, rest)...)
+		return Steer{Manager: ref, Text: text, Author: author}, err
 	}
 	o, err := c.LoadOrg()
 	if err != nil {

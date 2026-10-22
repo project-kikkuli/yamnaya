@@ -238,6 +238,9 @@ func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing
 		{func() error { _, err := w.core.Steer(b, []string{chief.ID}, true, true, "focus"); return err }, "box goal send --subtree mgr1 focus"},
 		{func() error { return w.core.Attach("box/mgr2", chief.ID) }, "box chief attach mgr2 a/" + chief.ID},
 		{func() error { return w.core.Attach("box/mgr1", "") }, "box chief detach mgr1"},
+		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", Owner); return err }, "box goal steer --text ship it smaller mgr1"},
+		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", chief.ID); return err },
+			"box goal steer --text ship it smaller --by a/" + chief.ID + " mgr1"},
 	} {
 		r.ran = nil
 		if err := act.do(); err != nil {

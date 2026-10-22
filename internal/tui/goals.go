@@ -554,6 +554,10 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.show("B", " "+pal.bold.Render(n.Manager.Label())+pal.dim.Render("  "+briefOf(n))+"\n\n"+string(text))
 		return m, nil, true
 	case "W":
+		if n.Manager.Host != "" {
+			m.message = "the brief page of " + n.Manager.ID + " is served on " + m.hostTag(n.Manager.Host) + "; B shows the brief here"
+			return m, nil, true
+		}
 		url, open := core.BriefURL(n.Manager.ID), m.openURL
 		return m, m.do(func() (string, error) { return "opened " + url, open(url) }), true
 	case "S":

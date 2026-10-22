@@ -35,7 +35,7 @@ func (e *env) author() (string, error) {
 }
 
 func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var file string
+	var file, inline, by string
 	cmd := &cobra.Command{
 		Use:   "steer [--file PATH|-] <goal|manager|chief>",
 		Short: "Change what a goal or chief is about as its next numbered revision; its manager must adopt it",
@@ -50,6 +50,8 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			}
 			var text string
 			switch {
+			case inline != "":
+				text = inline
 			case file == "-" || (file == "" && !term.IsTerminal(os.Stdin.Fd())):
 				raw, err := io.ReadAll(cmd.InOrStdin())
 				if err != nil {
@@ -83,6 +85,9 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
+			if _, _, remote := core.SplitRemote(by); remote && author == core.Owner {
+				author = by
+			}
 			b, err := e.core.Board()
 			if err != nil {
 				return err
@@ -96,6 +101,10 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 		}),
 	}
 	cmd.Flags().StringVar(&file, "file", "", "read the new plan from this file, or - for stdin")
+	cmd.Flags().StringVar(&inline, "text", "", "the new plan itself")
+	cmd.Flags().StringVar(&by, "by", "", "the chief on another host that steers, as host/id")
+	cmd.Flags().MarkHidden("text")
+	cmd.Flags().MarkHidden("by")
 	return cmd
 }
 
@@ -128,15 +137,18 @@ func goalAdoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 }
 
 func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var all bool
+	var all, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "context [--all] <goal|manager|chief>",
 		Short: "Print what a goal or chief is about now, its revision and whether its manager adopted it; --all prints every revision",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			m, text, _, err := e.core.Context(args[0])
+			m, text, rev, err := e.core.Context(args[0])
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				return writeJSON(cmd.OutOrStdout(), core.PlanContext{Manager: m, Text: text, Revision: rev})
 			}
 			steers, err := e.core.Store.Steers(m.ID)
 			if err != nil {
@@ -160,6 +172,7 @@ func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 		}),
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "print every revision, oldest first")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the current plan as JSON")
 	return cmd
 }
 
