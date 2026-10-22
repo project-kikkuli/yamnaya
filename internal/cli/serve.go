@@ -182,9 +182,6 @@ var ensureService = ensureWorkService
 // keepServing restarts ym serve from any ym command once a state dir has had one, so a serve that died comes back the next time
 // an agent or the owner runs ym, board or not.
 func keepServing(w io.Writer) {
-	if os.Getenv("YAMNAYA_NO_SERVE") == "1" {
-		return
-	}
 	dir, err := stateDir()
 	if err != nil {
 		return
@@ -197,7 +194,11 @@ func keepServing(w io.Writer) {
 	}
 }
 
+// ensureWorkService starts ym serve unless it runs, or YAMNAYA_NO_SERVE=1 keeps this command from starting it.
 func ensureWorkService() error {
+	if os.Getenv("YAMNAYA_NO_SERVE") == "1" {
+		return nil
+	}
 	dir, err := stateDir()
 	if err != nil {
 		return err
