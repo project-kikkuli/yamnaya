@@ -138,7 +138,7 @@ func serviceCmd() *cobra.Command {
 }
 
 // keepWorkService installs and starts a systemd user timer that starts ym serve at boot and every minute it is not running, so a
-// host's goals keep moving with no board open anywhere.
+// host's goals keep moving with no board open anywhere. An ssh command has no XDG_RUNTIME_DIR, which systemctl --user needs.
 func keepWorkService() (string, error) {
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		return "", fmt.Errorf("keeping ym serve running needs systemd: %w", err)
@@ -155,10 +155,15 @@ func keepWorkService() (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	path := "PATH=" + filepath.Dir(self) + ":" + os.Getenv("PATH")
+	env := "Environment=" + strconv.Quote("PATH="+filepath.Dir(self)+":"+os.Getenv("PATH")) + "\n"
+	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET"} {
+		if v := os.Getenv(k); v != "" {
+			env += "Environment=" + strconv.Quote(k+"="+v) + "\n"
+		}
+	}
 	units := map[string]string{
-		"ym-serve.service": "[Unit]\nDescription=Start ym serve unless it runs\n\n[Service]\nType=oneshot\nKillMode=process\nEnvironment=" +
-			strconv.Quote(path) + "\nExecStart=" + self + " service ensure\n",
+		"ym-serve.service": "[Unit]\nDescription=Start ym serve unless it runs\n\n[Service]\nType=oneshot\nKillMode=process\n" + env +
+			"ExecStart=" + self + " service ensure\n",
 		"ym-serve.timer": "[Unit]\nDescription=Keep ym serve running\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n",
 	}
 	for name, text := range units {
@@ -166,8 +171,14 @@ func keepWorkService() (string, error) {
 			return "", err
 		}
 	}
+	bus := os.Environ()
+	if os.Getenv("XDG_RUNTIME_DIR") == "" {
+		bus = append(bus, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", os.Getuid()))
+	}
 	for _, args := range [][]string{{"--user", "daemon-reload"}, {"--user", "enable", "--now", "ym-serve.timer"}, {"--user", "start", "ym-serve.service"}} {
-		if out, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
+		c := exec.Command("systemctl", args...)
+		c.Env = bus
+		if out, err := c.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
