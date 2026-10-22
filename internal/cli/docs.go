@@ -73,10 +73,10 @@ func connectNotion(ctx context.Context, n *intake.Notion, email, dir string) (no
 	return cfg, os.Rename(filepath.Join(dir, notionFile+".new"), filepath.Join(dir, notionFile))
 }
 
-// docSweeper sweeps Notion for asks waiting on the owner, one full sweep at a time, starting a sweep at most once per every; a sweep
-// deep-reads only pages whose edit time moved. At most once per recheck it rereads the comments of every page tied to the owner
-// that was edited within the window or holds an open ask, and deep-reads one whose comments changed, so a new comment, reply or
-// resolution is found whether or not it moves the page's edit time.
+// docSweeper sweeps Notion for asks waiting on the owner, one full sweep at a time, starting a sweep at most once per every. A sweep
+// deep-reads a page only when its edit time moved or its discussion asks went quiet past the window, which that read closes. At
+// most once per recheck it rereads the comments of every page tied to the owner that was edited within the window or holds an open
+// ask, and deep-reads one whose comments changed, so a new comment, reply or resolution is found whatever the page's edit time.
 type docSweeper struct {
 	dir     string
 	every   time.Duration
@@ -118,14 +118,24 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 	if err != nil {
 		return err
 	}
-	open := map[string]bool{}
+	open, aged := map[string]bool{}, map[string]bool{}
 	for _, p := range keep {
 		open[p] = true
+	}
+	asks, err := st.OpenDocAsks()
+	if err != nil {
+		return err
+	}
+	for _, a := range asks {
+		if at, err := time.Parse(time.RFC3339, a.At); a.Source == "notion" && a.Kind != "review" && err == nil &&
+			at.Before(d.notion.Now().Add(-d.notion.Window)) {
+			aged[a.Page] = true
+		}
 	}
 	var failures []error
 	fresh := map[string]bool{}
 	for _, p := range pages {
-		if !p.Gone && read[p.Key] == p.Edited {
+		if !p.Gone && read[p.Key] == p.Edited && !aged[p.Key] {
 			continue
 		}
 		fresh[p.Key] = true

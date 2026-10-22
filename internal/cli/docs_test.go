@@ -343,20 +343,14 @@ func TestTheRecheckSkipsOwnerPagesNotEditedWithinTheWindow(t *testing.T) {
 	}
 }
 
-func TestAnOpenAskOnAPageEditedBeforeTheWindowClosesWhenItsThreadResolves(t *testing.T) {
+func TestAnOpenAskOnAPageEditedBeforeTheWindowClosesWhenItsThreadResolvesOrAges(t *testing.T) {
 	const (
 		owner, carol = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000004"
 		old          = "a0000000-0000-4000-8000-00000000000e"
 		thread       = "d0000000-0000-4000-8000-0000000000e1"
 	)
-	dir := t.TempDir()
 	t.Setenv("NOTION_TOKEN", "secret_test")
 	t.Setenv("NOTION_OWNER_ID", owner)
-	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
 	page := `{"object":"page","id":"` + old + `","created_time":"2026-09-01T00:00:00.000Z","last_edited_time":"2026-09-25T00:00:00.000Z",` +
 		`"created_by":{"object":"user","id":"aaaaaaaa-0000-4000-8000-000000000003"},"parent":{"type":"workspace","workspace":true},` +
 		`"archived":false,"in_trash":false,"properties":{"Name":{"id":"title","type":"title","title":[{"plain_text":"Old spec"}]}},` +
@@ -366,28 +360,43 @@ func TestAnOpenAskOnAPageEditedBeforeTheWindowClosesWhenItsThreadResolves(t *tes
 		notionComment("c0000000-0000-4000-8000-0000000000e2", thread, carol, "Not yet, see section 3", "2026-09-26T00:00:00.000Z", "") +
 		`],"has_more":false,"next_cursor":null}`
 	resolved := `{"object":"list","results":[],"has_more":false,"next_cursor":null}`
-	d := &docSweeper{dir: dir, recheck: time.Hour}
-	for _, step := range []struct {
-		name, comments string
-		now            time.Time
-		want           int
+	type step struct {
+		comments string
+		now      time.Time
+		want     int
+	}
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		name  string
+		steps []step
 	}{
-		{"Carol's reply opens an ask", open, time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC), 1},
-		{"Carol resolves the thread after the page's edit left the window", resolved, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), 0},
+		{"Carol resolves the thread after the page's edit left the window", []step{{open, day(9, 27), 1}, {resolved, day(10, 20), 0}}},
+		{"the ask closes once Carol's comment leaves the window, the thread unchanged", []step{{open, day(9, 27), 1}, {open, day(10, 15), 1}, {open, day(10, 20), 0}}},
 	} {
-		srv := recordedNotion(t, map[string]string{
-			"POST /search":                        `{"object":"list","results":[` + page + `],"has_more":false,"next_cursor":null}`,
-			"GET /pages/" + old:                   page,
-			"GET /pages/" + intake.NotionKey(old): page,
-			"GET /comments " + old:                step.comments,
-		}, nil)
-		now := step.now
-		d.api, d.notion, d.now, d.checked = srv.URL, nil, func() time.Time { return now }, time.Time{}
-		if err := d.sweep(context.Background(), st); err != nil {
-			t.Fatalf("%s: %v", step.name, err)
-		}
-		if asks, err := st.OpenDocAsks(); err != nil || len(asks) != step.want {
-			t.Fatalf("%s: %d open asks, want %d (%v)", step.name, len(asks), step.want, err)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			d := &docSweeper{dir: dir, recheck: time.Hour}
+			for i, s := range tc.steps {
+				srv := recordedNotion(t, map[string]string{
+					"POST /search":                        `{"object":"list","results":[` + page + `],"has_more":false,"next_cursor":null}`,
+					"GET /pages/" + old:                   page,
+					"GET /pages/" + intake.NotionKey(old): page,
+					"GET /comments " + old:                s.comments,
+				}, nil)
+				now := s.now
+				d.api, d.notion, d.now, d.checked = srv.URL, nil, func() time.Time { return now }, time.Time{}
+				if err := d.sweep(context.Background(), st); err != nil {
+					t.Fatalf("step %d: %v", i, err)
+				}
+				if asks, err := st.OpenDocAsks(); err != nil || len(asks) != s.want {
+					t.Fatalf("step %d: %d open asks, want %d (%v)", i, len(asks), s.want, err)
+				}
+			}
+		})
 	}
 }
