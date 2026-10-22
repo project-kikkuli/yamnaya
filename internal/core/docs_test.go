@@ -159,3 +159,87 @@ func TestADocAskWhoseGoalEndsClimbsToTheOwner(t *testing.T) {
 		})
 	}
 }
+
+// pageRows lists each doc row as its page and its threads' askers, newest first.
+func pageRows(b Board) []string {
+	var out []string
+	for _, n := range b.Needs {
+		if n.Doc == nil {
+			continue
+		}
+		row := n.Doc.Page + ":"
+		for _, d := range n.Docs {
+			row += " " + d.Asker
+		}
+		out = append(out, row)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestADocsOpenThreadsShareOneQueueRowNewestFirstAndResolveOneByOne(t *testing.T) {
+	ask := func(key, page, asker, text, at string) DocAsk {
+		return DocAsk{Key: key, Kind: "reply", URL: "https://www.notion.so/" + page + "?d=" + key, Page: page, Title: page, Asker: asker,
+			Text: text, Version: key + "@" + at, At: at}
+	}
+	strategy := []DocAsk{
+		ask("d1", "strategy", "Ann", "why now?", "2026-10-20T10:00:00Z"),
+		ask("d2", "strategy", "Bo", "lgtm", "2026-10-22T09:00:00Z"),
+		ask("d3", "strategy", "Cy", "which metric?", "2026-10-21T10:00:00Z"),
+	}
+	other := []DocAsk{ask("d4", "notes", "Di", "ok?", "2026-10-21T08:00:00Z")}
+	w := newOrgWorld(t)
+	sync := func(page string, asks []DocAsk) {
+		if err := w.core.Store.SyncDocPage("notion", page, "e1", asks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("strategy", strategy)
+	sync("notes", other)
+	b := w.route(t)
+	if got := pageRows(b); !slices.Equal(got, []string{"notes: Di", "strategy: Bo Cy Ann"}) {
+		t.Fatalf("rows %q, want one row per doc with its threads newest first", got)
+	}
+	sync("strategy", []DocAsk{strategy[0], strategy[2]})
+	b = w.route(t)
+	if got := pageRows(b); !slices.Equal(got, []string{"notes: Di", "strategy: Cy Ann"}) {
+		t.Fatalf("after Bo's thread resolved: rows %q", got)
+	}
+	for _, n := range b.Needs {
+		if n.Doc != nil && n.Doc.Page == "strategy" {
+			if err := w.core.Store.DismissQueue(n.Key()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di"}) {
+		t.Fatalf("a dismissed doc still shows: %q", got)
+	}
+	again := strategy[0]
+	again.Version, again.At, again.Text = "d1@later", "2026-10-22T11:00:00Z", "still why now?"
+	sync("strategy", []DocAsk{again, strategy[2]})
+	if got := pageRows(w.route(t)); !slices.Equal(got, []string{"notes: Di", "strategy: Ann Cy"}) {
+		t.Fatalf("a new comment on a dismissed doc: rows %q", got)
+	}
+}
+
+func TestAManagerHearsOfEveryNewThreadOnADocInOneMessage(t *testing.T) {
+	w := newOrgWorld(t)
+	_, m := w.goal(t, "finish https://www.notion.so/55555555555555555555555555555555", "/repo/app")
+	page := "55555555555555555555555555555555"
+	var asks []DocAsk
+	for i, who := range []string{"Ann", "Bo", "Cy"} {
+		asks = append(asks, DocAsk{Key: "d" + who, Kind: "mention", Page: page, Title: "Spec", Asker: who, Text: who + " asks",
+			Version: "v1", At: "2026-10-2" + string(rune('0'+i)) + "T00:00:00Z"})
+	}
+	if err := w.core.Store.SyncDocPage("notion", page, "e1", asks); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		w.route(t)
+	}
+	msgs := w.handedTo(m.Session)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "3 thread(s)") || strings.Index(msgs[0], "Cy asks") > strings.Index(msgs[0], "Ann asks") {
+		t.Fatalf("manager got %d messages, want one listing all three newest first: %q", len(msgs), msgs)
+	}
+}

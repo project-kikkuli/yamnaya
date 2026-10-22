@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/intake"
@@ -61,11 +62,13 @@ func recordedNotion(t *testing.T, edits map[string]string, calls *[]string) *htt
 	return srv
 }
 
+func recordedNow() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
+
 func docKinds(b core.Board) []string {
 	var out []string
 	for _, n := range b.Needs {
-		if n.Doc != nil {
-			out = append(out, n.Doc.Kind+" "+n.Doc.Asker)
+		for _, d := range n.Docs {
+			out = append(out, d.Kind+" "+d.Asker)
 		}
 	}
 	slices.Sort(out)
@@ -84,7 +87,7 @@ func TestConnectingNotionMakesServeQueueItsAsksUntilTheyResolve(t *testing.T) {
 	}
 	defer st.Close()
 	c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-	d := &docSweeper{dir: dir, api: srv.URL}
+	d := &docSweeper{dir: dir, api: srv.URL, now: recordedNow}
 	if err := d.sweep(context.Background(), st); err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +185,110 @@ func TestConnectingNotionMakesServeQueueItsAsksUntilTheyResolve(t *testing.T) {
 		}
 		if err := docSweepErrors(st); err == nil || !strings.Contains(err.Error(), tc.report) {
 			t.Fatalf("%s: the failure is not reported: %v", tc.key, err)
+		}
+	}
+}
+
+func notionComment(id, discussion, by, text, at string, mention string) string {
+	parts := `{"type":"text","text":{"content":"` + text + `"},"plain_text":"` + text + `"}`
+	if mention != "" {
+		parts = `{"type":"mention","mention":{"type":"user","user":{"object":"user","id":"` + mention + `"}},"plain_text":"@Rajat"},` + parts
+	}
+	return `{"object":"comment","id":"` + id + `","parent":{"type":"page_id","page_id":"a0000000-0000-4000-8000-00000000000e"},` +
+		`"discussion_id":"` + discussion + `","created_time":"` + at + `","last_edited_time":"` + at + `",` +
+		`"created_by":{"object":"user","id":"` + by + `"},"rich_text":[` + parts + `]}`
+}
+
+func TestANewCommentOnAnUneditedPageTheOwnerIsInReachesTheQueueAtTheNextRecheck(t *testing.T) {
+	const (
+		owner, carol = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000004"
+		signed       = "a0000000-0000-4000-8000-00000000000e"
+		thread       = "d0000000-0000-4000-8000-0000000000e1"
+	)
+	dir := t.TempDir()
+	t.Setenv("NOTION_TOKEN", "secret_test")
+	t.Setenv("NOTION_OWNER_ID", owner)
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+	answered := notionComment("c0000000-0000-4000-8000-0000000000e1", thread, carol, "Is this final?", "2026-10-19T09:00:00.000Z", "") + "," +
+		notionComment("c0000000-0000-4000-8000-0000000000e2", thread, owner, "Yes", "2026-10-19T10:00:00.000Z", "")
+	list := func(comments string) string {
+		return `{"object":"list","results":[` + comments + `],"has_more":false,"next_cursor":null}`
+	}
+	raw, err := os.ReadFile("../intake/testdata/notion/workspace.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	var search struct{ Results []json.RawMessage }
+	if err = json.Unmarshal(fixtures["POST /search cursor-2"], &search); err != nil {
+		t.Fatal(err)
+	}
+	page := ""
+	for _, r := range search.Results {
+		if strings.Contains(string(r), `"id": "`+signed+`"`) {
+			page = string(r)
+		}
+	}
+	if page == "" {
+		t.Fatal("the recorded search has no signed page")
+	}
+	before := map[string]string{"GET /comments " + signed: list(answered), "GET /pages/" + intake.NotionKey(signed): page}
+	after := map[string]string{"GET /pages/" + intake.NotionKey(signed): page, "GET /comments " + signed: list(answered + "," +
+		notionComment("c0000000-0000-4000-8000-0000000000e3", thread, carol, " one more question", "2026-10-22T09:00:00.000Z", owner))}
+	queued := func() []string {
+		if err := serveCycle(c); err != nil {
+			t.Fatal(err)
+		}
+		b, err := c.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return docKinds(b)
+	}
+	base := []string{"comment Alice", "mention Alice", "reply Bob", "review Notion"}
+	d := &docSweeper{dir: dir, recheck: time.Hour, now: recordedNow}
+	for _, step := range []struct {
+		name      string
+		edits     map[string]string
+		recheck   bool
+		want      []string
+		reread    bool
+		commented bool
+	}{
+		{"first sweep reads every page", before, false, base, true, true},
+		{"recheck finds the comments unchanged", before, true, base, false, true},
+		{"a new comment before the recheck is due", after, false, base, false, false},
+		{"the recheck finds the new comment", after, true, append([]string{"mention Carol"}, base...), true, true},
+	} {
+		var calls []string
+		srv := recordedNotion(t, step.edits, &calls)
+		d.api, d.notion = srv.URL, nil
+		if step.recheck {
+			d.checked = time.Time{}
+		}
+		if err := d.sweep(context.Background(), st); err != nil {
+			t.Fatalf("%s: %v after %q", step.name, err, calls)
+		}
+		got := queued()
+		slices.Sort(got)
+		want := append([]string{}, step.want...)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s: queue %q, want %q", step.name, got, want)
+		}
+		if r := slices.Contains(calls, "GET /blocks/"+signed+"/children"); r != step.reread {
+			t.Fatalf("%s: page reread %v, want %v: %q", step.name, r, step.reread, calls)
+		}
+		if r := slices.Contains(calls, "GET /comments "+signed); r != step.commented {
+			t.Fatalf("%s: comments read %v, want %v", step.name, r, step.commented)
 		}
 	}
 }

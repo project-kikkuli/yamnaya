@@ -229,7 +229,10 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		head, what = pal.yellow.Render(pad("review", 8)), n.Review.URL
 		keys = "enter open in browser   x dismiss"
 	case n.Doc != nil:
-		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Asker+": "+n.Doc.Text+pal.dim.Render("  "+n.Doc.Title)
+		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Title+pal.dim.Render("  "+n.Doc.Asker+": "+n.Doc.Text)
+		if len(n.Docs) > 1 {
+			head, what = pal.yellow.Render(pad("doc", 8)), fmt.Sprintf("%s  %d open threads", n.Doc.Title, len(n.Docs))+pal.dim.Render("  newest "+n.Doc.Asker+": "+n.Doc.Text)
+		}
 		keys = "enter open in browser   x dismiss"
 	default:
 		return "", false
@@ -240,9 +243,13 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		if n.Goal != nil && n.Goal.Evidence != "" {
 			b += pal.dim.Render("         "+n.Goal.Evidence) + "\n"
 		}
-		if n.Doc != nil {
-			for _, l := range strings.Split(n.Doc.Evidence+"\n"+n.Doc.URL, "\n") {
-				b += pal.dim.Render("         "+ansi.Truncate(l, max(10, m.width-10), "…")) + "\n"
+		for _, d := range n.Docs {
+			lines := []string{d.Asker + ": " + d.Text, d.URL}
+			if len(n.Docs) == 1 {
+				lines = append(strings.Split(d.Evidence, "\n"), d.URL)
+			}
+			for _, l := range lines {
+				b += pal.dim.Render("         "+ansi.Truncate(oneLine(l), max(10, m.width-10), "…")) + "\n"
 			}
 		}
 		b += pal.dim.Render("         "+keys) + "\n"
@@ -400,6 +407,9 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			url = r.need.Review.URL
 		default:
 			url = r.need.Doc.URL
+			if len(r.need.Docs) > 1 {
+				url, _, _ = strings.Cut(url, "?d=")
+			}
 		}
 		switch key {
 		case "enter", "o":

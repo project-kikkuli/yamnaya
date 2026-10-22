@@ -52,7 +52,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			go monitorWorkService(ctx, cancel, dir, upgraded)
 		}
 		reviews := reviewPoll{fetch: intake.New().Requests, every: 5 * time.Minute}
-		docs := &docSweeper{dir: dir, every: 3 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
+		docs := &docSweeper{dir: dir, every: 3 * time.Minute, recheck: 20 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
 		if discover && !once {
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
 		}

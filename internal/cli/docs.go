@@ -73,13 +73,18 @@ func connectNotion(ctx context.Context, n *intake.Notion, email, dir string) (no
 	return cfg, os.Rename(filepath.Join(dir, notionFile+".new"), filepath.Join(dir, notionFile))
 }
 
-// docSweeper sweeps Notion for asks waiting on the owner, one full sweep at a time, starting a sweep at most once per every.
+// docSweeper sweeps Notion for asks waiting on the owner, one full sweep at a time, starting a sweep at most once per every. At most
+// once per recheck it also rereads the comments of every page that involves the owner, edited or not, so a new comment is found
+// whether or not it moves the page's edit time.
 type docSweeper struct {
-	dir    string
-	every  time.Duration
-	pace   time.Duration
-	notion *intake.Notion
-	api    string
+	dir     string
+	every   time.Duration
+	recheck time.Duration
+	pace    time.Duration
+	notion  *intake.Notion
+	api     string
+	checked time.Time
+	now     func() time.Time
 }
 
 func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
@@ -90,6 +95,9 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 	if d.notion == nil || d.notion.Token != cfg.Token || d.notion.Owner != cfg.Owner {
 		d.notion = intake.NewNotion(cfg.Token, cfg.Owner)
 		d.notion.Pace = d.pace
+		if d.now != nil {
+			d.notion.Now = d.now
+		}
 		if d.api != "" {
 			d.notion.URL = d.api
 		}
@@ -114,25 +122,54 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 		open[p] = true
 	}
 	var failures []error
+	fresh := map[string]bool{}
 	for _, p := range pages {
 		if !p.Gone && read[p.Key] == p.Edited && !open[p.Key] {
 			continue
 		}
-		found, err := d.notion.PageAsks(ctx, p)
-		if ctx.Err() != nil {
+		fresh[p.Key] = true
+		if err := d.read(ctx, st, p); ctx.Err() != nil {
 			return nil
-		}
-		if err != nil {
+		} else if errors.Is(err, errUnreadable) {
 			failures = append(failures, err)
-			continue
-		}
-		asks := make([]core.DocAsk, len(found))
-		for i, a := range found {
-			asks[i] = core.DocAsk{Key: a.Key, Kind: a.Kind, URL: a.URL, Page: a.Page, Title: a.Title, Asker: a.Asker, Text: a.Text,
-				Evidence: a.Evidence, Version: a.Version, Refs: a.Refs}
-		}
-		if err = st.SyncDocPage("notion", p.Key, p.Edited, asks); err != nil {
+		} else if err != nil {
 			return err
+		}
+	}
+	if time.Since(d.checked) >= d.recheck {
+		d.checked = time.Now()
+		watched, err := st.WatchedDocPages("notion")
+		if err != nil {
+			return err
+		}
+		for _, w := range watched {
+			if fresh[w.Page] {
+				continue
+			}
+			sig, err := d.notion.Comments(ctx, w.Blocks)
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err != nil {
+				failures = append(failures, fmt.Errorf("%w: %w", errUnreadable, err))
+				continue
+			}
+			if sig == w.Comments {
+				continue
+			}
+			p, err := d.notion.Page(ctx, w.Page)
+			if err == nil {
+				err = d.read(ctx, st, p)
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err != nil && !errors.Is(err, errUnreadable) {
+				return err
+			}
+			if err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 	var failed error
@@ -140,6 +177,25 @@ func (d *docSweeper) sweep(ctx context.Context, st *core.Store) error {
 		failed = fmt.Errorf("%d of %d pages unreadable, retried next sweep; first: %w", len(failures), len(pages), failures[0])
 	}
 	return st.FinishDocSweep("notion", len(pages), failed)
+}
+
+var errUnreadable = errors.New("unreadable")
+
+// read deep-reads one page and commits what it found: its asks, and the blocks and comment signature later rechecks compare against.
+func (d *docSweeper) read(ctx context.Context, st *core.Store, p intake.DocPage) error {
+	r, err := d.notion.ReadPage(ctx, p)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errUnreadable, err)
+	}
+	asks := make([]core.DocAsk, len(r.Asks))
+	for i, a := range r.Asks {
+		asks[i] = core.DocAsk{Key: a.Key, Kind: a.Kind, URL: a.URL, Page: a.Page, Title: a.Title, Asker: a.Asker, Text: a.Text,
+			Evidence: a.Evidence, Version: a.Version, At: a.At, Refs: a.Refs}
+	}
+	if err = st.SyncDocPage("notion", p.Key, p.Edited, asks); err != nil {
+		return err
+	}
+	return st.NoteDocPage("notion", p.Key, r.Blocks, r.Comments, r.Watch)
 }
 
 func (d *docSweeper) run(ctx context.Context, st *core.Store, log io.Writer) {
@@ -208,12 +264,24 @@ func docsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				fmt.Fprintln(out)
 			}
 		}
+		pages := map[string][]core.DocAsk{}
+		var order []string
 		for _, a := range asks {
-			to := "you"
-			if a.Recipient != core.Owner {
-				to = a.Recipient
+			if _, ok := pages[a.Page]; !ok {
+				order = append(order, a.Page)
 			}
-			fmt.Fprintf(out, "\n%-8s %-7s %s on %q\n  %s: %s\n  %s\n", to, a.Kind, a.Source, a.Title, a.Asker, a.Text, a.URL)
+			pages[a.Page] = append(pages[a.Page], a)
+		}
+		for _, p := range order {
+			threads := core.SortDocAsks(pages[p])
+			fmt.Fprintf(out, "\n%s on %q, %d open\n", threads[0].Source, threads[0].Title, len(threads))
+			for _, a := range threads {
+				to := "you"
+				if a.Recipient != core.Owner {
+					to = a.Recipient
+				}
+				fmt.Fprintf(out, "  %-8s %-7s %s: %s\n           %s\n", to, a.Kind, a.Asker, a.Text, a.URL)
+			}
 		}
 		return nil
 	})}

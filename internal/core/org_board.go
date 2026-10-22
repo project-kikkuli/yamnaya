@@ -1,6 +1,11 @@
 package core
 
-import "sort"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strings"
+)
 
 // How a goal or chief stands, worst last.
 const (
@@ -211,9 +216,21 @@ func (c *Core) queue(b *Board, o Org) error {
 	if err != nil {
 		return err
 	}
+	pages := map[string][]DocAsk{}
+	var order []string
 	for _, a := range docs {
-		n := Need{Doc: &a}
-		if a.Recipient == Owner && a.Routed == a.Version && !dismissed[n.Key()] {
+		if a.Recipient != Owner || a.Routed != a.Version {
+			continue
+		}
+		if _, ok := pages[a.Page]; !ok {
+			order = append(order, a.Page)
+		}
+		pages[a.Page] = append(pages[a.Page], a)
+	}
+	for _, p := range order {
+		threads := SortDocAsks(pages[p])
+		n := Need{Doc: &threads[0], Docs: threads}
+		if !dismissed[n.Key()] {
 			extra = append(extra, n)
 		}
 	}
@@ -235,7 +252,13 @@ func (n Need) Key() string {
 	case n.Review != nil:
 		return "review:" + n.Review.URL + "@" + n.Review.Updated
 	case n.Doc != nil:
-		return "doc:" + n.Doc.Key + "@" + n.Doc.Version
+		var vs []string
+		for _, a := range n.Docs {
+			vs = append(vs, a.Key+"@"+a.Version)
+		}
+		sort.Strings(vs)
+		sum := sha256.Sum256([]byte(strings.Join(vs, ",")))
+		return "doc:" + n.Doc.Page + "@" + hex.EncodeToString(sum[:8])
 	case len(n.Asks) > 0:
 		return "asks:" + n.Item.Session
 	case n.Item != nil:

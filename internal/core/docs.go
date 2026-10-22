@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -14,6 +15,8 @@ import (
 // DocAsk is something a person asks of the owner in a document, waiting on the owner or on the manager whose goal it concerns.
 type DocAsk struct {
 	Key, Source, Kind, URL, Page, Title, Asker, Text, Evidence, Version string
+	// At is when the ask last moved: its thread's newest comment, or its page's edit for a review request.
+	At string
 	Refs                                                                []string
 	// Recipient is Owner or the manager the ask was routed to; Routed is the version that routing last placed.
 	Recipient, Routed string
@@ -79,12 +82,13 @@ func (s *Store) SyncDocPage(source, page, edited string, asks []DocAsk) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`INSERT INTO ym_doc_asks (key, source, kind, url, page, title, asker, text, evidence, version, refs, state, seen_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+		if _, err = tx.Exec(`INSERT INTO ym_doc_asks (key, source, kind, url, page, title, asker, text, evidence, version, refs, state, seen_at, at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
 			ON CONFLICT(key) DO UPDATE SET source = excluded.source, kind = excluded.kind, url = excluded.url, page = excluded.page,
 			title = excluded.title, asker = excluded.asker, text = excluded.text, evidence = excluded.evidence, version = excluded.version,
-			refs = excluded.refs, state = 'open', seen_at = CASE ym_doc_asks.state WHEN 'open' THEN ym_doc_asks.seen_at ELSE excluded.seen_at END`,
-			a.Key, source, a.Kind, a.URL, page, a.Title, a.Asker, a.Text, a.Evidence, a.Version, string(refs), now()); err != nil {
+			refs = excluded.refs, at = excluded.at, state = 'open',
+			seen_at = CASE ym_doc_asks.state WHEN 'open' THEN ym_doc_asks.seen_at ELSE excluded.seen_at END`,
+			a.Key, source, a.Kind, a.URL, page, a.Title, a.Asker, a.Text, a.Evidence, a.Version, string(refs), now(), a.At); err != nil {
 			return err
 		}
 	}
@@ -95,9 +99,68 @@ func (s *Store) SyncDocPage(source, page, edited string, asks []DocAsk) error {
 	return tx.Commit()
 }
 
-// DocPagesRead maps each of source's pages to the edit its asks were last read at.
+// docPageWatch adds what a deep read of a page leaves behind for cheaper rechecks: its blocks, its comment signature, and whether
+// the owner created it or takes part in its discussions.
+func docPageWatch(db *sql.DB) error {
+	for _, col := range []string{`ym_doc_pages blocks TEXT NOT NULL DEFAULT '[]'`, `ym_doc_pages comments TEXT NOT NULL DEFAULT ''`,
+		`ym_doc_pages watch INTEGER NOT NULL DEFAULT 0`, `ym_doc_asks at TEXT NOT NULL DEFAULT ''`} {
+		table, def, _ := strings.Cut(col, " ")
+		name, _, _ := strings.Cut(def, " ")
+		var has int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, name).Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// DocPageWatch is a page the owner created or discusses, with the blocks and comment signature its last deep read saw.
+type DocPageWatch struct {
+	Page, Comments string
+	Blocks         []string
+}
+
+// NoteDocPage records a deep read's blocks, comment signature and whether the page involves the owner.
+func (s *Store) NoteDocPage(source, page string, blocks []string, comments string, watch bool) error {
+	raw, err := json.Marshal(append([]string{}, blocks...))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE ym_doc_pages SET blocks = ?, comments = ?, watch = ? WHERE source = ? AND page = ?`, string(raw), comments, watch, source, page)
+	return err
+}
+
+// WatchedDocPages lists source's pages that involve the owner, so their comments are rechecked even when the page is not edited.
+func (s *Store) WatchedDocPages(source string) ([]DocPageWatch, error) {
+	rows, err := s.db.Query(`SELECT page, comments, blocks FROM ym_doc_pages WHERE source = ? AND watch = 1 ORDER BY page`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DocPageWatch
+	for rows.Next() {
+		var w DocPageWatch
+		var blocks string
+		if err := rows.Scan(&w.Page, &w.Comments, &blocks); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(blocks), &w.Blocks); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// DocPagesRead maps each of source's pages to the edit its asks were last read at; a page read before its blocks were recorded maps
+// to no edit, so the next sweep reads it again.
 func (s *Store) DocPagesRead(source string) (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT page, edited FROM ym_doc_pages WHERE source = ?`, source)
+	rows, err := s.db.Query(`SELECT page, CASE blocks WHEN '[]' THEN '' ELSE edited END FROM ym_doc_pages WHERE source = ?`, source)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +210,7 @@ func (s *Store) DocSweeps() ([]DocSweep, error) {
 
 // OpenDocAsks lists every open ask, oldest first.
 func (s *Store) OpenDocAsks() ([]DocAsk, error) {
-	rows, err := s.db.Query(`SELECT key, source, kind, url, page, title, asker, text, evidence, version, refs, recipient, routed, told, seen_at
+	rows, err := s.db.Query(`SELECT key, source, kind, url, page, title, asker, text, evidence, version, refs, recipient, routed, told, seen_at, at
 		FROM ym_doc_asks WHERE state = 'open' ORDER BY seen_at, key`)
 	if err != nil {
 		return nil, err
@@ -159,7 +222,7 @@ func (s *Store) OpenDocAsks() ([]DocAsk, error) {
 		var refs string
 		var seen sql.NullString
 		if err := rows.Scan(&a.Key, &a.Source, &a.Kind, &a.URL, &a.Page, &a.Title, &a.Asker, &a.Text, &a.Evidence, &a.Version, &refs,
-			&a.Recipient, &a.Routed, &a.Told, &seen); err != nil {
+			&a.Recipient, &a.Routed, &a.Told, &seen, &a.At); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(refs), &a.Refs); err != nil {
@@ -261,22 +324,41 @@ func (c *Core) RouteDocs(b Board) error {
 	if err != nil {
 		return err
 	}
+	type batch struct {
+		to   string
+		asks []DocAsk
+	}
+	var order []string
+	batches := map[string]*batch{}
 	var failures []error
 	for _, a := range asks {
 		to := Owner
 		if m, ok := goalOf(b, a); ok {
 			to = b.Org.Above(m.ID)
 		}
-		told := a.Told
-		if to != Owner && (to != a.Recipient || told != a.Version) {
-			if err := c.tell(b, b.Org.Managers[to].Session, docText(b.Org, to, a), false); err != nil {
-				failures = append(failures, err)
-				continue
+		if to != Owner && (to != a.Recipient || a.Told != a.Version) {
+			k := to + "\x00" + a.Page
+			if batches[k] == nil {
+				batches[k] = &batch{to: to}
+				order = append(order, k)
 			}
-			told = a.Version
+			batches[k].asks = append(batches[k].asks, a)
+			continue
 		}
-		if to != a.Recipient || a.Routed != a.Version || told != a.Told {
-			if err := c.Store.routeDocAsk(a.Key, to, a.Version, told); err != nil {
+		if to != a.Recipient || a.Routed != a.Version {
+			if err := c.Store.routeDocAsk(a.Key, to, a.Version, a.Told); err != nil {
+				return err
+			}
+		}
+	}
+	for _, k := range order {
+		bt := batches[k]
+		if err := c.tell(b, b.Org.Managers[bt.to].Session, docText(b.Org, bt.to, bt.asks), false); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		for _, a := range bt.asks {
+			if err := c.Store.routeDocAsk(a.Key, bt.to, a.Version, a.Version); err != nil {
 				return err
 			}
 		}
@@ -284,16 +366,28 @@ func (c *Core) RouteDocs(b Board) error {
 	return errors.Join(failures...)
 }
 
-// docText is how a document ask reaches the manager it was routed to.
-func docText(o Org, to string, a DocAsk) string {
+// docText is how the new or changed asks on one document reach the manager they were routed to, in one message.
+func docText(o Org, to string, asks []DocAsk) string {
 	about := ""
 	if g, ok := o.Goals[o.Managers[to].GoalID]; ok {
 		about = " about goal " + g.ID
 	}
-	return fmt.Sprintf("ym: %s asks the owner in %s doc %q%s (%s, %s): %s Thread: %s"+
-		" You own this: act on it in the document itself (prefix anything you post with your model name). It leaves your queue when"+
-		" the discussion is resolved or answered there. Escalate with ym item add only if it is beyond your authority.",
-		a.Asker, docSource(a.Source), a.Title, about, a.URL, a.Kind, oneLine(a.Text), oneLine(strings.ReplaceAll(a.Evidence, "\n", " | ")))
+	a := asks[0]
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "ym: %s doc %q%s has %d thread(s) for you, asked of the owner:", docSource(a.Source), a.Title, about, len(asks))
+	for i, a := range SortDocAsks(asks) {
+		fmt.Fprintf(&sb, " (%d) %s (%s, %s): %s Thread: %s", i+1, a.Asker, a.URL, a.Kind, oneLine(a.Text), oneLine(strings.ReplaceAll(a.Evidence, "\n", " | ")))
+	}
+	sb.WriteString(" You own these: act on them in the document itself (prefix anything you post with your model name). Each leaves your" +
+		" queue when its discussion is resolved or answered there. Escalate with ym item add only if it is beyond your authority.")
+	return sb.String()
+}
+
+// SortDocAsks orders asks newest first.
+func SortDocAsks(asks []DocAsk) []DocAsk {
+	out := append([]DocAsk{}, asks...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At > out[j].At })
+	return out
 }
 
 func docSource(s string) string {

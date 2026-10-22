@@ -247,6 +247,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate item dossiers: %w", err)
 	}
+	if err := docPageWatch(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate doc pages: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 

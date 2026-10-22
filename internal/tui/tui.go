@@ -541,7 +541,11 @@ func needText(n core.Need) string {
 	case n.Review != nil:
 		return "review " + n.Review.URL
 	case n.Doc != nil:
-		return "doc " + n.Doc.Asker + " " + n.Doc.Title + " " + n.Doc.Text
+		text := "doc " + n.Doc.Title
+		for _, d := range n.Docs {
+			text += " " + d.Asker + " " + d.Text
+		}
+		return text
 	}
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question

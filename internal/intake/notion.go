@@ -21,6 +21,8 @@ type DocAsk struct {
 	Key, Kind, URL, Page, Title, Asker, Text, Evidence string
 	// Version changes when the ask gains a new comment or its page changes.
 	Version string
+	// At is when the ask last moved: its thread's newest comment, or its page's edit for a review request.
+	At string
 	// Refs are the pull request URLs and Notion page ids the page and its thread mention.
 	Refs []string
 }
@@ -172,6 +174,7 @@ type comment struct {
 	ID           string
 	DiscussionID string              `json:"discussion_id"`
 	CreatedTime  string              `json:"created_time"`
+	EditedTime   string              `json:"last_edited_time"`
 	CreatedBy    struct{ ID string } `json:"created_by"`
 	RichText     []richText          `json:"rich_text"`
 	Parent       struct {
@@ -288,8 +291,22 @@ func (n *Notion) Pages(ctx context.Context, keep []string) ([]DocPage, error) {
 	return found, nil
 }
 
+// PageRead is what reading a page found: its asks, the blocks discussions can sit on, a signature of every open comment on them, and
+// whether the owner created the page or takes part in a discussion on it.
+type PageRead struct {
+	Asks     []DocAsk
+	Blocks   []string
+	Comments string
+	Watch    bool
+}
+
 // PageAsks reads one page, its blocks and every discussion on them, and returns each ask on it waiting on the owner.
 func (n *Notion) PageAsks(ctx context.Context, p DocPage) ([]DocAsk, error) {
+	r, err := n.ReadPage(ctx, p)
+	return r.Asks, err
+}
+
+func (n *Notion) ReadPage(ctx context.Context, p DocPage) (PageRead, error) {
 	if n.users == nil {
 		n.users = map[string]notionUser{}
 	}
@@ -297,12 +314,78 @@ func (n *Notion) PageAsks(ctx context.Context, p DocPage) ([]DocAsk, error) {
 		n.statuses = map[string]map[string]bool{}
 	}
 	if p.Gone {
-		return nil, nil
+		return PageRead{}, nil
 	}
 	return n.page(ctx, p.page, n.statuses)
 }
 
-func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map[string]bool) ([]DocAsk, error) {
+// Page looks up one page by id; a page no longer shared or in the trash comes back Gone.
+func (n *Notion) Page(ctx context.Context, id string) (DocPage, error) {
+	raw, err := n.call(ctx, http.MethodGet, "/pages/"+id, nil)
+	if missing(err) {
+		return DocPage{Key: NotionKey(id), Gone: true}, nil
+	}
+	if err != nil {
+		return DocPage{}, err
+	}
+	var p notionPage
+	if err = json.Unmarshal(raw, &p); err != nil {
+		return DocPage{}, err
+	}
+	return DocPage{Key: NotionKey(id), Edited: p.LastEditedTime, Gone: p.Archived || p.InTrash, page: p}, nil
+}
+
+// Comments lists every open comment on blocks, page first, and reports its signature, which changes when any comment is added,
+// edited, or resolved.
+func (n *Notion) Comments(ctx context.Context, blocks []string) (string, error) {
+	_, sig, err := n.comments(ctx, blocks)
+	return sig, err
+}
+
+func (n *Notion) comments(ctx context.Context, blocks []string) (map[string][]comment, string, error) {
+	threads := map[string][]comment{}
+	var stamps []string
+	for _, block := range blocks {
+		cursor := ""
+		for {
+			path := "/comments?block_id=" + block + "&page_size=100"
+			if cursor != "" {
+				path += "&start_cursor=" + url.QueryEscape(cursor)
+			}
+			raw, err := n.call(ctx, http.MethodGet, path, nil)
+			if missing(err) {
+				break
+			}
+			if err != nil {
+				return nil, "", err
+			}
+			var list struct {
+				Results []comment
+				HasMore bool   `json:"has_more"`
+				Next    string `json:"next_cursor"`
+			}
+			if err = json.Unmarshal(raw, &list); err != nil {
+				return nil, "", err
+			}
+			for _, c := range list.Results {
+				d := NotionKey(c.DiscussionID)
+				threads[d] = append(threads[d], c)
+				stamps = append(stamps, NotionKey(c.ID)+"@"+c.EditedTime)
+			}
+			if !list.HasMore {
+				break
+			}
+			if list.Next == "" || list.Next == cursor {
+				return nil, "", fmt.Errorf("Notion comment pagination did not advance")
+			}
+			cursor = list.Next
+		}
+	}
+	sort.Strings(stamps)
+	return threads, strings.Join(stamps, ","), nil
+}
+
+func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map[string]bool) (PageRead, error) {
 	var text strings.Builder
 	blockText, blockLine := map[string]string{}, map[string]string{}
 	blocks := []string{p.ID}
@@ -317,13 +400,13 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 			}
 			raw, err := n.call(ctx, http.MethodGet, path, nil)
 			if missing(err) && parent == p.ID {
-				return nil, nil
+				return PageRead{}, nil
 			}
 			if missing(err) {
 				break
 			}
 			if err != nil {
-				return nil, err
+				return PageRead{}, err
 			}
 			var list struct {
 				Results []map[string]json.RawMessage
@@ -331,7 +414,7 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 				Next    string `json:"next_cursor"`
 			}
 			if err = json.Unmarshal(raw, &list); err != nil {
-				return nil, err
+				return PageRead{}, err
 			}
 			for _, b := range list.Results {
 				var id, kind string
@@ -364,49 +447,27 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 				break
 			}
 			if list.Next == "" || list.Next == cursor {
-				return nil, fmt.Errorf("Notion block pagination did not advance")
+				return PageRead{}, fmt.Errorf("Notion block pagination did not advance")
 			}
 			cursor = list.Next
 		}
 	}
-	threads := map[string][]comment{}
-	var order []string
-	for _, block := range blocks {
-		cursor := ""
-		for {
-			path := "/comments?block_id=" + block + "&page_size=100"
-			if cursor != "" {
-				path += "&start_cursor=" + url.QueryEscape(cursor)
+	threads, sig, err := n.comments(ctx, blocks)
+	if err != nil {
+		return PageRead{}, err
+	}
+	order := make([]string, 0, len(threads))
+	for d := range threads {
+		order = append(order, d)
+	}
+	sort.Strings(order)
+	watch := n.owner(p.CreatedBy.ID)
+	for _, thread := range threads {
+		for _, c := range thread {
+			watch = watch || n.owner(c.CreatedBy.ID)
+			for _, t := range c.RichText {
+				watch = watch || n.owner(t.Mention.User.ID)
 			}
-			raw, err := n.call(ctx, http.MethodGet, path, nil)
-			if missing(err) {
-				break
-			}
-			if err != nil {
-				return nil, err
-			}
-			var list struct {
-				Results []comment
-				HasMore bool   `json:"has_more"`
-				Next    string `json:"next_cursor"`
-			}
-			if err = json.Unmarshal(raw, &list); err != nil {
-				return nil, err
-			}
-			for _, c := range list.Results {
-				d := NotionKey(c.DiscussionID)
-				if _, ok := threads[d]; !ok {
-					order = append(order, d)
-				}
-				threads[d] = append(threads[d], c)
-			}
-			if !list.HasMore {
-				break
-			}
-			if list.Next == "" || list.Next == cursor {
-				return nil, fmt.Errorf("Notion comment pagination did not advance")
-			}
-			cursor = list.Next
 		}
 	}
 	title := p.title()
@@ -414,7 +475,7 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 	for _, d := range order {
 		ask, ok, err := n.discussion(ctx, p, threads[d], blockText, blockLine, text.String())
 		if err != nil {
-			return nil, err
+			return PageRead{}, err
 		}
 		if ok {
 			ask.Key, ask.Page, ask.Title, ask.URL = "notion:"+d, NotionKey(p.ID), title, p.URL+"?d="+d
@@ -423,13 +484,13 @@ func (n *Notion) page(ctx context.Context, p notionPage, statuses map[string]map
 	}
 	review, ok, err := n.review(ctx, p, statuses)
 	if err != nil {
-		return nil, err
+		return PageRead{}, err
 	}
 	if ok {
 		review.Page, review.Title, review.URL, review.Refs = NotionKey(p.ID), title, p.URL, refs(text.String())
 		out = append(out, review)
 	}
-	return out, nil
+	return PageRead{Asks: out, Blocks: blocks, Comments: sig, Watch: watch}, nil
 }
 
 func (n *Notion) owner(id string) bool { return id != "" && NotionKey(id) == NotionKey(n.Owner) }
@@ -519,7 +580,7 @@ func (n *Notion) discussion(ctx context.Context, p notionPage, thread []comment,
 		}
 	}
 	return DocAsk{Kind: kind, Asker: people[asking].Name, Text: plain(thread[asking].RichText), Evidence: strings.TrimSpace(ev.String()),
-		Version: thread[last].ID, Refs: refs(all)}, true, nil
+		Version: thread[last].ID, At: thread[last].CreatedTime, Refs: refs(all)}, true, nil
 }
 
 // review is an ask when a people property named for review or approval lists the owner and the page's status is not complete.
@@ -558,7 +619,7 @@ func (n *Notion) review(ctx context.Context, p notionPage, statuses map[string]m
 	if state != "" {
 		text += "; status " + state
 	}
-	return DocAsk{Key: "notion-review:" + NotionKey(p.ID), Kind: "review", Asker: "Notion", Text: text, Evidence: text, Version: named + ":" + version}, true, nil
+	return DocAsk{Key: "notion-review:" + NotionKey(p.ID), Kind: "review", Asker: "Notion", Text: text, Evidence: text, Version: named + ":" + version, At: p.LastEditedTime}, true, nil
 }
 
 // complete is the status options in a database's Complete group.
