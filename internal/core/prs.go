@@ -126,6 +126,9 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			if st.Fetched.IsZero() {
 				st.Fetched = now
 			}
+			if prev, ok := known[url]; ok && err == nil && st.Merge.Error != "" && st.Merge.OID != "" && st.Merge.OID == prev.Merge.OID {
+				st = prev.unreadSince(st)
+			}
 			if serr := c.Store.SavePRStatus(url, st); err == nil {
 				err = serr
 			}
@@ -141,6 +144,13 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 	}
 	wg.Wait()
 	return n, firstErr
+}
+
+// unreadSince is prev with what a fetch that could not read the head's checks and threads did read: state, title, facts and the error.
+func (prev PRStatus) unreadSince(st PRStatus) PRStatus {
+	prev.State, prev.Title, prev.Head, prev.Commits, prev.Fetched = st.State, st.Title, st.Head, st.Commits, st.Fetched
+	prev.Merge.Author, prev.Merge.Viewer, prev.Merge.Draft, prev.Merge.Error = st.Merge.Author, st.Merge.Viewer, st.Merge.Draft, st.Merge.Error
+	return prev
 }
 
 // AllPRs are the session's pull requests and those its crew opened.

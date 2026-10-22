@@ -145,6 +145,49 @@ func TestPRStatusIsFetchedOffTheBoardAndOnlyWhenStale(t *testing.T) {
 	}
 }
 
+type scriptedSource struct{ next []PRStatus }
+
+func (s *scriptedSource) PRStatus(string) (PRStatus, error) {
+	st := s.next[0]
+	s.next = s.next[1:]
+	return st, nil
+}
+
+func TestAFetchThatCannotReadChecksKeepsTheLastReadOfTheSameHead(t *testing.T) {
+	read := PRStatus{State: "OPEN", Failed: 1, Passed: 3, Threads: 2, Unresolved: 1, Review: "CHANGES_REQUESTED", Merge: PRMergeFacts{OID: "h1", Mergeable: "MERGEABLE"}}
+	limited := func(oid string) PRStatus {
+		return PRStatus{State: "OPEN", Title: "Retries", Merge: PRMergeFacts{OID: oid, Error: "gh: API rate limit already exceeded"}}
+	}
+	for _, tc := range []struct {
+		name               string
+		then               PRStatus
+		failed, unresolved int
+	}{
+		{"same head", limited("h1"), 1, 1},
+		{"a new head", limited("h2"), 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			clock := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+			w.core.PRs, w.core.Now = &scriptedSource{next: []PRStatus{read, tc.then}}, func() time.Time { return clock }
+			url := "https://github.com/me/app/pull/2"
+			w.procs = append(w.procs, procOf(10, "claude"))
+			w.claude.sessions[10] = Session{ID: "lead", Status: Busy, Facts: Facts{PRs: []PR{{URL: url}}}}
+			_, _ = w.core.RefreshPRs(w.board(t))
+			clock = clock.Add(PRStale)
+			_, _ = w.core.RefreshPRs(w.board(t))
+			all, err := w.core.Store.PRStatuses()
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := all[url]
+			if st.Failed != tc.failed || st.Unresolved != tc.unresolved || st.Title != "Retries" || st.Merge.Error == "" || st.ReadyToMerge() {
+				t.Fatalf("status after an unreadable fetch %+v", st)
+			}
+		})
+	}
+}
+
 func TestAPullRequestLinkIntoARepoGitHubLacksLeavesTheBoard(t *testing.T) {
 	w := newWorld(t)
 	src := &countingSource{calls: map[string]int{}}
