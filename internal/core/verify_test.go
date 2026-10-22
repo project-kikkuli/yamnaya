@@ -72,7 +72,10 @@ func (w *verifyWorld) toManager() string { return strings.Join(w.handedTo(w.mana
 func (w *verifyWorld) tick(t *testing.T, d time.Duration) Board {
 	t.Helper()
 	w.clock = w.clock.Add(d)
-	return w.supervise(t)
+	if err := w.core.Loop(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	return w.board(t)
 }
 
 const pr1 = "https://github.com/acme/august/pull/7"
@@ -156,6 +159,27 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 			}
 			if !strings.Contains(strings.Join(v.Findings, "\n"), tc.findingsHave) {
 				t.Fatalf("findings %q, want %q", v.Findings, tc.findingsHave)
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var kinds []string
+			for _, e := range events {
+				kinds = append(kinds, e.Kind)
+				if e.Delivered.IsZero() {
+					t.Fatalf("event %s %q never reached the manager", e.Kind, e.Payload)
+				}
+			}
+			want = []string{EventVerifying, EventFailedVerify}
+			if tc.state == GoalDone {
+				want = []string{EventVerifying, EventVerified, EventDone}
+			}
+			if !slices.Equal(kinds, want) {
+				t.Fatalf("goal events %q, want %q", kinds, want)
+			}
+			if tc.state == GoalActive && !strings.Contains(w.toManager(), "- "+EventFailedVerify+": attempt 1 failed") {
+				t.Fatalf("findings did not come in the manager's wake: %q", w.toManager())
 			}
 		})
 	}
@@ -271,10 +295,20 @@ func TestAnIdleVerifierIsRemindedOnce(t *testing.T) {
 }
 
 func TestTheGoalsAgentPullRequestsAreChecked(t *testing.T) {
+	for _, exited := range []bool{false, true} {
+		t.Run(map[bool]string{false: "agent running", true: "agent exited"}[exited], func(t *testing.T) { agentPRChecked(t, exited) })
+	}
+}
+
+func agentPRChecked(t *testing.T, exited bool) {
 	w := newVerifyWorld(t)
 	w.spawn("agent", w.manager.Session)
 	w.set("agent", func(s *Session) { s.Status = Busy; s.PRs = []PR{{URL: pr1, Repo: "acme/august", Number: 7}} })
 	w.landings[pr1] = Landing{State: "OPEN"}
+	if exited {
+		w.tick(t, time.Second)
+		w.stop("agent")
+	}
 	w.done(t, "importer reads CSV")
 	w.tick(t, time.Second)
 	g, v := w.state(t)

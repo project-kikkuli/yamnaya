@@ -81,7 +81,7 @@ func (c *Core) FinishGoal(session, summary string, evidence []string) (Goal, Ver
 	if err := c.Store.SaveGoal(g); err != nil {
 		return g, v, err
 	}
-	return g, v, c.goalEvent(g, GoalEventVerifying, fmt.Sprintf("attempt %d: %s", v.Attempt, v.Summary))
+	return g, v, c.goalEvent(g, EventVerifying, fmt.Sprintf("attempt %d: %s", v.Attempt, v.Summary), true)
 }
 
 // verify moves every verifying goal on: facts first, then a verifier session, supervised until it records a verdict.
@@ -232,31 +232,34 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 	if err := c.Store.SaveVerification(v); err != nil {
 		return err
 	}
-	var kind, text string
-	list := "\n- " + strings.Join(findings, "\n- ")
+	list := "\n  - " + strings.Join(findings, "\n  - ")
 	switch verdict {
 	case VerdictPass:
 		g.State, g.DoneAt, g.Evidence, g.AckedAt = GoalDone, now, "", timeZero
-		kind, text = GoalEventVerified, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.ID, v.Attempt)
 	case VerdictFail:
 		g.State, g.Evidence, g.LastMovedAt = GoalActive, "", now
-		kind = GoalEventFailedVerify
-		text = fmt.Sprintf("ym: %s failed verification (attempt %d); it is active again. Fix each finding, then run ym goal done again. Findings:%s", g.ID, v.Attempt, list)
 	default:
 		g.State, g.Evidence, g.AckedAt = GoalStuck, verifyEvidence+strings.Join(findings, "; "), timeZero
-		kind = GoalEventStuck
-		text = fmt.Sprintf("ym: verification of %s (attempt %d) could not finish, so it shows stuck to the owner. Once the cause is fixed, run ym goal done again.%s", g.ID, v.Attempt, list)
 	}
 	if err := c.Store.SaveGoal(g); err != nil {
 		return err
 	}
-	if err := c.goalEvent(g, kind, strings.Join(findings, "\n")); err != nil {
-		return err
+	switch verdict {
+	case VerdictPass:
+		if err := c.goalEvent(g, EventVerified, fmt.Sprintf("attempt %d passed:%s", v.Attempt, list), true); err != nil {
+			return err
+		}
+		if err := c.goalEvent(g, EventDone, g.Summary, true); err != nil {
+			return err
+		}
+		if m, ok := o.Managers[g.ManagerID]; ok && m.Session != "" {
+			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.ID, v.Attempt), false)
+		}
+		return nil
+	case VerdictFail:
+		return c.goalEvent(g, EventFailedVerify, fmt.Sprintf("attempt %d failed, so the goal is active again. Fix each finding, then run ym goal done again:%s", v.Attempt, list), false)
 	}
-	if m, ok := o.Managers[g.ManagerID]; ok && m.Session != "" {
-		return c.tell(b, m.Session, text, false)
-	}
-	return nil
+	return c.goalEvent(g, EventStuck, fmt.Sprintf("verification attempt %d could not finish, so the goal shows stuck to the owner. Once the cause is fixed, run ym goal done again:%s", v.Attempt, list), false)
 }
 
 // endVerifiers ends the session of every decided verification whose verifier still runs.
@@ -287,6 +290,14 @@ func (c *Core) withAgentPRs(b Board, o Org, m Manager, evidence []string) []stri
 	have := map[string]bool{}
 	for _, pr := range PRsIn(strings.Join(evidence, "\n")) {
 		have[pr.URL] = true
+	}
+	if tracked, err := c.Store.GoalPRs(); err == nil {
+		for _, url := range tracked[m.GoalID] {
+			if !have[url] {
+				have[url] = true
+				evidence = append(evidence, "opened by the goal's sessions: "+url)
+			}
+		}
 	}
 	for _, s := range b.Sessions {
 		if owner, ok := o.Managed(s.Key(), b.parents); !ok || owner.ID != m.ID {
