@@ -303,6 +303,7 @@ func (c *Core) Board() (Board, error) {
 		found = append(found, d...)
 	}
 	c.place(found, b.At)
+	c.placeDrift(found, b.At)
 	harnessOf := map[string]Harness{}
 	for _, h := range c.Harnesses {
 		harnessOf[h.Name()] = h

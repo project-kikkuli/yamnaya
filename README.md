@@ -26,7 +26,7 @@ Press `o` on the goal to open the manager and talk to it like any session.
                     |
                   chiefs (optional, any depth) -> you
 
-- **Goal**: one ask, in your words. States: moving, quiet, down (manager died, being relaunched), verifying, stuck, done.
+- **Goal**: one ask, in your words. States: moving, quiet, adrift (its manager or an agent is busy going nowhere), down (manager died, being relaunched), verifying, stuck, done.
 - **Manager**: an interactive Claude session with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
 - **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message reaches the manager once.
 - **Chiefs**: `ym chief "<name>" --over <id>,<id>` groups managers and other chiefs. A chief reads their briefs, steers them and hears their state changes. Work never waits on a chief.
@@ -36,12 +36,14 @@ Press `o` on the goal to open the manager and talk to it like any session.
 
 The loop is code in `ym serve`, not instructions in a prompt:
 
-1. **Notice.** ym records goal events without a model: agent finished, asked, stopped or hung, PR opened, CI red or green, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
+1. **Notice.** ym records goal events without a model: agent finished, asked, stopped, hung or adrift, PR opened, CI red or green, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
 2. **Act.** Once per cycle the manager gets everything new in one message. A manager that ends a turn with nothing in flight (no busy agent, no PR awaiting CI, no wake set, no ask waiting) is nudged at once. Managers set their own timers with `ym goal wake 30m "<why>"`.
 3. **Verify.** `ym goal done` moves the goal to verifying. ym checks the facts first, for every PR the manager claims or the goal's agents opened (exited agents' included): merged, CI green on the merge commit, no unresolved review threads. Checks still running are rechecked every minute for up to 2 hours, then the goal shows stuck. Then a fresh Claude session, not the worker, gets your original ask and the evidence and records a verdict; ym takes it only from that session's own process, so no manager passes its own goal. A fail puts the goal back to active and hands the findings to the manager in its next wake. A verifier that dies, or runs 30 minutes without a verdict, is replaced; after 3 in a row the goal shows stuck. `ym goal show <goal>` prints every attempt with its checks and findings.
 4. **Report.** Only a pass reaches you as done. Managers post progress lines with `ym goal update "<line>"`; they show in the goal's feed.
 
 Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply while the machine is awake counts as hung: a hung manager is relaunched, and a hung or exited agent becomes a goal event, so its manager hears it once in its next wake with the `ym revive` that resumes it, and its chiefs and the goal's feed see it too.
+
+Busy is not the same as moving. ym reads each agent's transcript, as it already does for its status, for signs it is busy going nowhere: the same failure in five of its last 20 tool results, over three minutes or more, with no file changed between (pending CI checks and searches that find nothing do not count); its context compacted three times in a row, each within 15 minutes of the last with under 10 tool calls between; or three or more files written in a repository other than the one it runs in. Such an agent's row reads `adrift` and its goal stands adrift. Each episode becomes one goal event with the evidence, so the manager hears it in its next wake and its chiefs see it; a manager adrift itself shows up to its chiefs the same way. Nothing reaches you unless the manager escalates. `h` lists every agent adrift now, and `ym health drift` replays every transcript on the machine and lists past episodes.
 
 ## What reaches you
 
@@ -78,7 +80,7 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `T` | relaunch an idle session in the other harness |
 | `G` | gc old worktrees and merged branches |
 | `t` | goals as the chief tree or by repository |
-| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, weekly health |
+| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, agents adrift now and weekly health |
 | `A` | hide or show the mountains |
 | `/` `?` `q` | filter, all keys, back or quit |
 
@@ -149,6 +151,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym gc [--dry-run]` | remove idle clean worktrees and merged branches |
 | | `ym switch <session> --to claude\|codex [--relaunch]` | port a session to the other harness |
 | Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |
+| Drift | `ym health drift [--since D] [file...]` | replay this machine's transcripts and list each time an agent was busy going nowhere |
 | Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
 | | `ym service status\|restart` / `ym docs [connect <email>]` | background service / Notion |

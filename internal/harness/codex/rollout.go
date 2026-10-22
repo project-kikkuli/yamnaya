@@ -6,14 +6,16 @@ import (
 	"io"
 	"maps"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/drift"
 	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
-const scanFormat = 6
+const scanFormat = 7
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -29,8 +31,17 @@ type scan struct {
 	// Before is the result as it stood before the latest reply, written at BeforeAt, restored when that reply was a compaction summary.
 	Before   string
 	BeforeAt time.Time
+	// Drift tracks the signs of an agent going nowhere; Calls holds each tool call's name and command until its output arrives.
+	Drift drift.Tracker
+	Calls map[string]call
 
 	modified time.Time
+}
+
+// call is a tool call awaiting its output: what ran, and whether it writes files.
+type call struct {
+	Tool, Command string
+	Writes        bool
 }
 
 type rolloutLine struct {
@@ -90,6 +101,7 @@ func (t *scan) add(l rolloutLine, cwd string) {
 	switch l.Type {
 	case "compacted":
 		t.Facts.Result, t.Facts.ResultAt = t.Before, t.BeforeAt
+		t.Drift.Compacted(l.Timestamp)
 	case "event_msg":
 		switch p.Type {
 		case "task_started":
@@ -139,7 +151,25 @@ func (t *scan) add(l rolloutLine, cwd string) {
 				}
 				t.Creating[p.CallID] = true
 			}
+			if t.Calls == nil {
+				t.Calls = map[string]call{}
+			}
+			cmd := command(p)
+			t.Calls[p.CallID] = call{Tool: p.Name, Command: cmd, Writes: len(files) > 0 || len(core.PatchFiles(cmd, "")) > 0}
+			t.Drift.Call()
 		case "function_call_output", "custom_tool_call_output":
+			if c, ok := t.Calls[p.CallID]; ok {
+				delete(t.Calls, p.CallID)
+				var sig, detail string
+				text, failed := outcome(p.Output)
+				if failed {
+					sig, detail = drift.Failure(c.Tool, c.Command, text)
+				}
+				t.Drift.Result(sig, detail, p.CallID, l.Timestamp)
+				if c.Writes && !failed {
+					t.Drift.Wrote()
+				}
+			}
 			if t.Creating[p.CallID] {
 				delete(t.Creating, p.CallID)
 				for _, pr := range core.PRsIn(string(p.Output)) {
@@ -156,7 +186,79 @@ func (t *scan) prompt(text string) {
 			t.First = s
 		}
 		t.Facts.Ask, t.Facts.Asked = s, ""
+		t.Drift.Owner()
 	}
+}
+
+// command is what a tool call ran: a shell command, an exec script, or "" for other tools.
+func command(p payload) string {
+	if p.Input != "" {
+		return p.Input
+	}
+	var args struct {
+		Command json.RawMessage `json:"command"`
+		Cmd     string          `json:"cmd"`
+	}
+	if json.Unmarshal([]byte(p.Arguments), &args) != nil {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(args.Command, &one) == nil {
+		return one
+	}
+	var argv []string
+	if json.Unmarshal(args.Command, &argv) == nil {
+		return strings.Join(argv, " ")
+	}
+	return args.Cmd
+}
+
+var (
+	exited  = regexp.MustCompile(`Process exited with code (\d+)`)
+	headers = regexp.MustCompile(`^(Script failed|Chunk ID: \S+|Wall time:? [\d.]+ seconds|Process exited with code \d+|Original token count: \d+|Output:)\s*`)
+)
+
+// outcome is a tool output's text without the harness's header lines, and whether it reports a failure.
+func outcome(raw json.RawMessage) (string, bool) {
+	var text string
+	var code *int
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		var wrapped struct {
+			Output   string `json:"output"`
+			Metadata struct {
+				ExitCode *int `json:"exit_code"`
+			} `json:"metadata"`
+		}
+		if strings.HasPrefix(s, "{") && json.Unmarshal([]byte(s), &wrapped) == nil {
+			text, code = wrapped.Output, wrapped.Metadata.ExitCode
+		} else {
+			text = s
+		}
+	} else {
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(raw, &parts)
+		var all []string
+		for _, p := range parts {
+			all = append(all, p.Text)
+		}
+		text = strings.Join(all, "\n")
+	}
+	head := text[:min(len(text), 200)]
+	failed := code != nil && *code != 0 || strings.HasPrefix(head, "Script failed") || strings.HasPrefix(head, "failed in sandbox")
+	if m := exited.FindStringSubmatch(head); m != nil && m[1] != "0" {
+		failed = true
+	}
+	for {
+		trimmed := headers.ReplaceAllString(strings.TrimLeft(text, " \n"), "")
+		if trimmed == text {
+			break
+		}
+		text = trimmed
+	}
+	return text, failed
 }
 
 func (a *Adapter) scan(path, cwd string) scan {
@@ -180,6 +282,7 @@ func (a *Adapter) scan(path, cwd string) scan {
 	a.advance(t, path, cwd)
 	out := *t
 	out.Facts.Tools = maps.Clone(t.Facts.Tools)
+	out.Facts.Drift = t.Drift.Signs()
 	return out
 }
 
@@ -221,4 +324,28 @@ func (a *Adapter) advance(t *scan, path, cwd string) {
 			_ = a.Cache.SaveScan(path, t.Offset, data)
 		}
 	}
+}
+
+// Episodes replays a rollout from its start and returns every episode of an agent going nowhere it shows.
+func Episodes(path string) []drift.Sign {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	t := scan{V: scanFormat}
+	var e drift.Episodes
+	r := bufio.NewReaderSize(f, 1<<16)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		var l rolloutLine
+		if json.Unmarshal(line, &l) == nil {
+			t.add(l, "")
+			e.See(t.Drift.Signs())
+		}
+	}
+	return e.List()
 }

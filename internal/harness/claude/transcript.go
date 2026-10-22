@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/drift"
 	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
@@ -35,6 +36,7 @@ type record struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
 	Message *struct {
+		ID         string          `json:"id"`
 		Model      string          `json:"model"`
 		Content    json.RawMessage `json:"content"`
 		StopReason *string         `json:"stop_reason"`
@@ -49,6 +51,7 @@ type block struct {
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
+	IsError   bool            `json:"is_error"`
 }
 
 func (r record) blocks() []block {
@@ -117,7 +120,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 6
+const scanFormat = 7
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -149,6 +152,9 @@ type scan struct {
 	Next string
 	// Mode is the session's latest permission mode, from its metadata records and the mode stamped on each prompt.
 	Mode string
+	// Drift tracks the signs of an agent going nowhere; Calls holds each tool call until its result arrives.
+	Drift drift.Tracker
+	Calls map[string]call
 
 	modified time.Time
 	// file is the transcript last read, so a file replaced under the same path is read again from the start.
@@ -162,6 +168,11 @@ func (t scan) title() string {
 		}
 	}
 	return ""
+}
+
+// call is a tool call awaiting its result: what ran, and the assistant message that made it.
+type call struct {
+	Tool, Command, Batch string
 }
 
 var wrote = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
@@ -185,8 +196,11 @@ func (t *scan) add(r record) {
 			t.Facts.Opened(core.PR{URL: r.PRURL, Repo: r.PRRepo, Number: r.PRNumber})
 		}
 	case "system":
-		if r.Subtype == "turn_duration" {
+		switch r.Subtype {
+		case "turn_duration":
 			t.Open = false
+		case "compact_boundary":
+			t.Drift.Compacted(r.Timestamp)
 		}
 	case "user", "assistant":
 		t.Next = ""
@@ -220,6 +234,7 @@ func (t *scan) add(r record) {
 				t.First = p
 			}
 			t.Facts.Ask, t.Facts.Asked = p, ""
+			t.Drift.Owner()
 		}
 		t.Open = true
 	}
@@ -229,6 +244,12 @@ func (t *scan) assistant(r record) {
 	t.HandedBack = false
 	if r.Message != nil && r.Message.Model != "" && !strings.HasPrefix(r.Message.Model, "<") {
 		t.Facts.Model = r.Message.Model
+	}
+	if r.Message != nil && r.Message.Model == "<synthetic>" {
+		if text := r.text(); text != "" {
+			sig, detail := drift.Failure("harness", "", text)
+			t.Drift.Result(sig, detail, r.Timestamp.String(), r.Timestamp)
+		}
 	}
 	for _, b := range r.blocks() {
 		switch b.Type {
@@ -252,6 +273,15 @@ func (t *scan) assistant(r record) {
 				files = append(files, in.FilePath+in.NotebookPath)
 			}
 			t.Facts.Did(a, files...)
+			var in struct {
+				Command string `json:"command"`
+			}
+			_ = json.Unmarshal(b.Input, &in)
+			if t.Calls == nil {
+				t.Calls = map[string]call{}
+			}
+			t.Calls[b.ID] = call{Tool: b.Name, Command: in.Command, Batch: r.Message.ID}
+			t.Drift.Call()
 			if a.Tool == "Bash" && strings.Contains(string(b.Input), "gh pr create") {
 				if t.Creating == nil {
 					t.Creating = map[string]bool{}
@@ -263,11 +293,25 @@ func (t *scan) assistant(r record) {
 }
 
 func (t *scan) user(r record) {
-	if len(t.Creating) == 0 {
+	if len(t.Creating) == 0 && len(t.Calls) == 0 {
 		return
 	}
 	for _, b := range r.blocks() {
-		if b.Type == "tool_result" && t.Creating[b.ToolUseID] {
+		if b.Type != "tool_result" {
+			continue
+		}
+		if c, ok := t.Calls[b.ToolUseID]; ok {
+			delete(t.Calls, b.ToolUseID)
+			var sig, detail string
+			if b.IsError {
+				sig, detail = drift.Failure(c.Tool, c.Command, resultText(b.Content))
+			}
+			t.Drift.Result(sig, detail, c.Batch, r.Timestamp)
+			if wrote[c.Tool] && !b.IsError {
+				t.Drift.Wrote()
+			}
+		}
+		if t.Creating[b.ToolUseID] {
 			delete(t.Creating, b.ToolUseID)
 			for _, pr := range core.PRsIn(resultText(b.Content)) {
 				t.Facts.Opened(pr)
@@ -304,6 +348,7 @@ func (a *Adapter) scan(path string) scan {
 	t := a.advance(path)
 	out := *t
 	out.Facts.Tools = maps.Clone(t.Facts.Tools)
+	out.Facts.Drift = t.Drift.Signs()
 	a.mu.Unlock()
 	return out
 }
@@ -437,4 +482,28 @@ func firstLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// Episodes replays a transcript from its start and returns every episode of an agent going nowhere it shows.
+func Episodes(path string) []drift.Sign {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	t := scan{V: scanFormat}
+	var e drift.Episodes
+	r := bufio.NewReaderSize(f, 1<<16)
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		var rec record
+		if json.Unmarshal(line, &rec) == nil {
+			t.add(rec)
+			e.See(t.Drift.Signs())
+		}
+	}
+	return e.List()
 }

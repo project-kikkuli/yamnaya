@@ -69,5 +69,6 @@ func healthCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&weeks, "weeks", 8, "weeks to show")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON with every day")
+	cmd.AddCommand(healthDriftCmd())
 	return cmd
 }

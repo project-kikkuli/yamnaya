@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/drift"
 	"github.com/project-kikkuli/yamnaya/internal/progress"
 )
 
@@ -775,7 +776,7 @@ func (m Model) detailView() viewPage {
 		if title == "" {
 			title = core.Short(s.Key())
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(s.Status.String()).Render(pad(s.Status.String(), 9)) + pad(m.where(s), wide)
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + pad(m.where(s), wide)
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}
@@ -840,7 +841,7 @@ func (m Model) crewLine(i int, s core.Live, c core.Member) string {
 			kind = "teammate"
 		}
 	}
-	l := m.mark(i) + "  └ " + pad(c.Name, max(16, m.nameWidth()-4)) + " " + pad(kind, 16) + " " + pad(c.Status.String(), 8) + " " + pad(shortModel(c.Model), 10)
+	l := m.mark(i) + "  └ " + pad(c.Name, max(16, m.nameWidth()-4)) + " " + pad(kind, 16) + " " + pal.state(memberState(c)).Render(pad(memberState(c), 8)) + " " + pad(shortModel(c.Model), 10)
 	if sp := m.memberSpend(s, c); sp != "" {
 		l += " " + pad(sp, 8)
 	}
@@ -900,6 +901,53 @@ func shortModel(model string) string {
 }
 
 // field writes a labelled value, wrapping long values under their label.
+// adriftText lists every agent on the board going nowhere now, with its evidence, ahead of the health report.
+func adriftText(b core.Board) string {
+	var lines []string
+	add := func(who string, signs []drift.Sign) {
+		for _, s := range signs {
+			lines = append(lines, "  "+who+"  "+s.String())
+		}
+	}
+	for _, s := range b.Sessions {
+		who := s.Title
+		if who == "" {
+			who = core.Short(s.Key())
+		}
+		add(who, s.Drift)
+		for _, c := range s.Crew {
+			add(who+" / "+c.Name, c.Drift)
+		}
+	}
+	if len(lines) == 0 {
+		return "adrift now: none\n\n"
+	}
+	return "adrift now (ym health drift lists past episodes)\n" + strings.Join(lines, "\n") + "\n\n"
+}
+
+// stateWord is how a session's row reads: adrift when it shows a sign of going nowhere, else its status.
+func stateWord(s core.Live) string {
+	if len(s.Drift) > 0 {
+		return "adrift"
+	}
+	return s.Status.String()
+}
+
+func memberState(c core.Member) string {
+	if len(c.Drift) > 0 {
+		return "adrift"
+	}
+	return c.Status.String()
+}
+
+func signLines(signs []drift.Sign) string {
+	var out []string
+	for _, s := range signs {
+		out = append(out, s.String())
+	}
+	return strings.Join(out, "\n")
+}
+
 func (m Model) field(b interface{ WriteString(string) (int, error) }, label, value string) {
 	if strings.TrimSpace(value) == "" {
 		return
@@ -943,6 +991,7 @@ func (m Model) sessionView() viewPage {
 		status += " (" + s.WaitingFor + ")"
 	}
 	m.field(&b, "status", status)
+	m.field(&b, "adrift", signLines(s.Drift))
 	m.field(&b, "where", s.Location())
 	m.field(&b, "repo", strings.TrimSpace(s.Repo+" "+s.Branch))
 	if s.Worktree != "" && s.Worktree != s.Cwd {
@@ -1060,6 +1109,7 @@ func (m Model) agentView() viewPage {
 		status += ", last active " + age(m.board.At, c.Last)
 	}
 	m.field(&b, "status", status)
+	m.field(&b, "adrift", signLines(c.Drift))
 	m.field(&b, "model", c.Model)
 	m.field(&b, "spend", m.memberSpend(*s, *c))
 	m.field(&b, "worktree", c.Worktree)
@@ -1267,7 +1317,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  personally, Notion discussions and reviews addressed to you that no goal claims, permission prompts,
  and one row per session you started that asks you something.
  GOALS is the goal tree: a chief collapses to one row with its reports' worst state; enter drills in.
- A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), down (its manager's
+ A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), adrift (an agent is busy
+ going nowhere: the same failure again and again, its context compacted over and over, or writes in
+ another repository; ym tells its manager the evidence), down (its manager's
  session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), or done.
  SESSIONS YOU STARTED groups the sessions no manager runs by repository. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
@@ -1328,7 +1380,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    v            set the mission's vibe, any fitting place from Afghanistan (broken) to Hawaii (great): "place: why"
    I            every item, answered, dismissed and snoozed too; in a mission, just its items
    /            filter
-   h            health: weekly item answer times, stale items, questions reprinted in chat, time blocked on you
+   h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
    E            every session ym launched and whether its agent still runs
    q            back or quit

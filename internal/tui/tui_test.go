@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/drift"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
@@ -766,5 +767,20 @@ func TestAnUnpreparedAskIsMarkedOnItsRowAndWhenExpanded(t *testing.T) {
 	}
 	if v := press(t, m, "enter").View().Content; !strings.Contains(v, "unprepared  "+strings.TrimPrefix(want, "unprepared: ")) {
 		t.Fatalf("expanded view does not mark the ask unprepared:\n%s", v)
+	}
+}
+
+func TestHListsTheAgentsAdriftNowAheadOfHealth(t *testing.T) {
+	m, c, _ := setup(t)
+	c.Health = func() (string, error) { return "week of  answered", nil }
+	lead := c.Harnesses[0].(harness).sessions[1]
+	lead.Status = core.Busy
+	lead.Crew[0].Status = core.Busy
+	lead.Crew[0].Drift = []drift.Sign{{Kind: drift.Looping, Evidence: "failed the same way 6 times in 9m: Bash: Exit code 143"}}
+	c.Harnesses[0].(harness).sessions[1] = lead
+	m = press(t, refresh(t, m), "h")
+	v := m.View().Content
+	if !strings.Contains(v, "Lead work / Run the tests  looping: failed the same way 6 times") || !strings.Contains(v, "week of  answered") {
+		t.Fatalf("h page lacks the adrift crew member or the health report:\n%s", v)
 	}
 }

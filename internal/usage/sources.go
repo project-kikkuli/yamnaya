@@ -33,3 +33,15 @@ func Dirs() (claudeDir, codexHome string) {
 	m := New("")
 	return m.ClaudeDir, m.CodexHome
 }
+
+// AllTranscripts lists every Claude session transcript, its subagents' included, and every Codex rollout.
+func AllTranscripts(claudeDir, codexHome string) []Transcript {
+	var out []Transcript
+	for _, s := range claudeSources(claudeDir) {
+		out = append(out, Transcript{Path: s.Path, Harness: claudeName, Session: s.Session, Size: s.Size, MTime: s.MTime})
+	}
+	for _, s := range codexSources(codexHome) {
+		out = append(out, Transcript{Path: s.Path, Harness: codexName, Session: s.Session, Size: s.Size, MTime: s.MTime})
+	}
+	return out
+}

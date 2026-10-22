@@ -697,11 +697,12 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.core.Health == nil {
 			return m, nil
 		}
-		m.show("h", "reading transcripts…")
+		adrift := adriftText(m.board)
+		m.show("h", adrift+"reading transcripts…")
 		load := m.core.Health
 		return m, func() tea.Msg {
 			text, err := load()
-			return screenMsg{text, err}
+			return screenMsg{adrift + text, err}
 		}
 	case "U":
 		m.show("U", m.usageText())

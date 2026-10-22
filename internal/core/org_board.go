@@ -13,13 +13,15 @@ const (
 	StandDone   = "done"
 	StandMoving = "moving"
 	StandQuiet  = "quiet"
+	// StandAdrift is a goal whose manager or an agent of it is busy going nowhere.
+	StandAdrift = "adrift"
 	StandDown   = "down"
 	StandStuck  = "stuck"
 	// StandVerifying is a goal its manager called done while ym checks it.
 	StandVerifying = "verifying"
 )
 
-var standRank = map[string]int{StandDone: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandDown: 3, StandStuck: 4}
+var standRank = map[string]int{StandDone: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandAdrift: 3, StandDown: 4, StandStuck: 5}
 
 // Node is a manager or chief on the board: its goal, its live session, the agents it runs, and the reports below a chief.
 type Node struct {
@@ -161,6 +163,8 @@ func (c *Core) standing(b Board, n Node) string {
 		own = StandStuck
 	case !b.Alive(m) && !(m.LastError == "" && b.At.Sub(m.LaunchedAt) < StartGrace):
 		own = StandDown
+	case n.Adrift():
+		own = StandAdrift
 	case m.Nudges > 0 || (n.Goal != nil && b.At.Sub(n.Goal.LastMovedAt) > QuietAfter):
 		own = StandQuiet
 	}

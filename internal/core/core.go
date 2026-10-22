@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/drift"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
@@ -81,6 +82,8 @@ type Facts struct {
 	Files []string
 	Trail []Action
 	PRs   []PR
+	// Drift are the ways the agent is going nowhere now, read from its transcript and where it writes.
+	Drift []drift.Sign
 }
 
 // Member is a subagent or teammate running inside a session.

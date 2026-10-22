@@ -138,6 +138,7 @@ var standStyle = map[string]func(string) string{
 	core.StandVerifying: func(s string) string { return pal.yellow.Render(s) },
 	core.StandMoving:    func(s string) string { return s },
 	core.StandQuiet:     func(s string) string { return pal.dim.Render(s) },
+	core.StandAdrift:    func(s string) string { return pal.red.Render(s) },
 	core.StandDown:      func(s string) string { return pal.red.Render(s) },
 	core.StandStuck:     func(s string) string { return pal.red.Render(s) },
 }
@@ -342,7 +343,7 @@ func (m Model) goalView() viewPage {
 		if r.session.Key() == n.Manager.Session {
 			label = pal.dim.Render("manager  ")
 		}
-		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pad(r.session.Status.String(), 8) + " " + doingText(m.board.At, r.session.Session) + "\n")
+		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + doingText(m.board.At, r.session.Session) + "\n")
 	}
 	return b
 }

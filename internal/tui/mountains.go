@@ -75,7 +75,7 @@ func weather(standing string) scene.Weather {
 	switch standing {
 	case core.StandDone:
 		return scene.Summit
-	case core.StandQuiet:
+	case core.StandQuiet, core.StandAdrift:
 		return scene.Clouds
 	case core.StandDown:
 		return scene.Eruption

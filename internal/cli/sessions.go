@@ -40,6 +40,8 @@ type sessionJSON struct {
 	Copies     int      `json:"copies"`
 	CopyPIDs   []int    `json:"copy_pids,omitempty"`
 	Resume     []string `json:"resume,omitempty"`
+	// Adrift are the signs that the session, or a crew member of it, is busy going nowhere.
+	Adrift []string `json:"adrift,omitempty"`
 }
 
 func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -73,6 +75,9 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				if j.Prompt != "" {
 					line += "  [" + j.Prompt + "]"
 				}
+				for _, d := range j.Adrift {
+					line += "  [adrift " + d + "]"
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			for _, r := range b.Remotes {
@@ -99,6 +104,14 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 		}
 		for _, cp := range s.Copies {
 			j.CopyPIDs = append(j.CopyPIDs, cp.PID)
+		}
+		for _, d := range s.Drift {
+			j.Adrift = append(j.Adrift, d.String())
+		}
+		for _, m := range s.Crew {
+			for _, d := range m.Drift {
+				j.Adrift = append(j.Adrift, m.Name+": "+d.String())
+			}
 		}
 		if s.Handle == nil && s.Remote == "" {
 			for _, t := range c.Targets(b, s.Key(), s.Harness) {
