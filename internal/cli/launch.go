@@ -323,19 +323,34 @@ func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 // state is how a launched session's pane stands: running, exited with a status, or gone with its tmux session.
 func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	p, err := l.srv.Pane(tmux.SessionName(rec.Key))
-	switch {
-	case err != nil:
+	if err != nil {
 		return p, "gone"
-	case p.Dead && p.Signal != "":
-		return p, "sig" + p.Signal
-	case p.Dead:
-		return p, fmt.Sprintf("exited %d", p.Status)
 	}
-	return p, "running"
+	return p, paneState(p)
+}
+
+// stateIn is a record's state read from a pane table taken once for many records.
+func stateIn(panes map[string]tmux.Pane, rec launch.Record) string {
+	p, ok := panes[tmux.SessionName(rec.Key)]
+	if !ok {
+		return "gone"
+	}
+	return paneState(p)
+}
+
+func paneState(p tmux.Pane) string {
+	switch {
+	case p.Dead && p.Signal != "":
+		return "sig" + p.Signal
+	case p.Dead:
+		return fmt.Sprintf("exited %d", p.Status)
+	}
+	return "running"
 }
 
 func (l launcher) Launched() []core.Launched {
 	all, _ := l.records.All()
+	panes := l.srv.Panes()
 	out := make([]core.Launched, 0, len(all))
 	for _, rec := range all {
 		if rec.IsLanded() {
@@ -343,7 +358,7 @@ func (l launcher) Launched() []core.Launched {
 			continue
 		}
 		rec = l.settle(rec)
-		_, st := l.state(rec)
+		st := stateIn(panes, rec)
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path})
 	}
 	return out
@@ -432,12 +447,13 @@ func (l launcher) Dormant() []core.Dormant {
 	l.sweepSoon()
 	all, _ := l.records.All()
 	dirs := sync.OnceValue(cwds)
+	panes := l.srv.Panes()
 	var out []core.Dormant
 	for _, rec := range all {
 		if rec.IsLanded() {
 			continue
 		}
-		_, st := l.state(rec)
+		st := stateIn(panes, rec)
 		if landsAlone(rec, st, time.Now()) {
 			_, err := l.landUnused(rec, dirs)
 			if err == nil {

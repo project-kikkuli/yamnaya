@@ -18,7 +18,7 @@ func (p *painter) sky() {
 				i := y*p.w + x
 				if spread(0x57a5, i)%1000 < 5 {
 					b := .35 + .65*unit(0x57a6, i)
-					b *= .65 + .35*math.Sin(p.t*.31+unit(0x57a7, i)*40)
+					b *= .65 + .35*unit(0x57a7, i)
 					c = mix(c, white, b*(1-v/.62))
 				}
 			}
@@ -120,7 +120,7 @@ func (p *painter) wisps() {
 		band := smooth(.14, .26, v) * smooth(.6, .45, v)
 		col := mix(p.th.cloudShade, p.th.cloud, smooth(.25, .6, v))
 		for x := range p.w {
-			n := fbm2(0xc10d, float64(x)*.03+p.t*.004, float64(y)*.28, 4)
+			n := fbm2(0xc10d, float64(x)*.03, float64(y)*.28, 4)
 			p.blend(x, y, col, smooth(.56, .76, n)*.5*band)
 		}
 	}

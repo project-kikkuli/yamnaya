@@ -105,6 +105,25 @@ func (h *Host) Pane(name string) (Pane, error) {
 	return parsePane(name, out)
 }
 
+// Panes reads the first pane of every session on the server in one call, by session name; none when the server is down.
+func (h *Host) Panes() map[string]Pane {
+	panes := map[string]Pane{}
+	out, err := h.run("list-panes", "-a", "-F", "#{session_name}\t"+paneFormat)
+	if err != nil {
+		return panes
+	}
+	for _, line := range strings.Split(out, "\n") {
+		name, rest, ok := strings.Cut(line, "\t")
+		if _, seen := panes[name]; !ok || seen {
+			continue
+		}
+		if p, err := parsePane(name, rest); err == nil {
+			panes[name] = p
+		}
+	}
+	return panes
+}
+
 func parsePane(name, out string) (Pane, error) {
 	f := strings.Split(strings.Split(out, "\n")[0], "\t")
 	if len(f) != 6 {

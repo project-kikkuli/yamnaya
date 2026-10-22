@@ -1,5 +1,7 @@
 package scene
 
+import "math"
+
 const (
 	minPeak  = 6.0
 	minRange = 10.0
@@ -77,8 +79,14 @@ func (l *layout) place(items []item, x0, x1 float64, peakDepth, rangeDepth int) 
 			d := min(peakDepth, maxDepth)
 			l.depth = max(l.depth, d)
 			seed := seedOf(it.id)
-			l.mounts = append(l.mounts, mount{item: it, cx: x + w/2 + (unit(seed, 3)-.5)*w*.2, half: w / 2, lift: .55 + .45*unit(seed, 1), depth: d, seed: seed})
+			l.mounts = append(l.mounts, mount{item: it, cx: x + w/2 + (unit(seed, 3)-.5)*w*.2, half: w / 2, lift: lift(it, seed), depth: d, seed: seed})
 		}
 		x += w
 	}
+}
+
+// lift is how tall a mountain stands: work builds it, a bigger team and more pull requests a higher peak.
+func lift(it item, seed uint64) float64 {
+	work := float64(len(it.team) + len(it.camps))
+	return .5 + .35*math.Min(1, math.Log1p(work)/math.Log(25)) + .15*unit(seed, 1)
 }

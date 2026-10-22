@@ -23,7 +23,7 @@ func (p *painter) cloudBank(i int) {
 	for y := max(0, int(mid-thick*3)); y < min(p.hz, int(mid+thick*3)); y++ {
 		for x := max(0, int(g.x-g.half*1.4)); x < min(p.w, int(g.x+g.half*1.4)); x++ {
 			fx, fy := float64(x)+.5, float64(y)+.5
-			n := fbm2(m.seed+21, fx*.06-p.t*.02, fy*.5, 5)
+			n := fbm2(m.seed+21, fx*.06, fy*.5, 5)
 			tilt := mid + (fx-g.x)*.12 + (fbm(m.seed+22, fx*.05, 2)-.5)*thick*2
 			band := math.Exp(-math.Pow((fy-tilt)/thick, 2)) * smooth(g.half*1.4, g.half*.5, math.Abs(fx-g.x))
 			a := smooth(.25, .55, n*band*1.5)
@@ -38,7 +38,7 @@ func (p *painter) storm(i int) {
 	m, g := p.l.mounts[i], p.geo[i]
 	rx, ry := math.Max(6, g.half*.75), math.Max(4, g.height*.32)
 	cy := g.y + ry*.2
-	flash := !reducedMotion && (p.frame+int(m.seed%97))%47 < 2
+	flash := !reducedMotion && (p.frame/4+int(m.seed%97))%13 == 0
 	type lump struct{ x, y, r float64 }
 	var lumps []lump
 	for k := range 7 {
@@ -47,14 +47,14 @@ func (p *painter) storm(i int) {
 	for y := max(0, int(cy-ry*2.2)); y < min(p.hz, int(cy+ry*1.2)); y++ {
 		for x := max(0, int(g.x-rx*1.8)); x < min(p.w, int(g.x+rx*1.8)); x++ {
 			fx, fy := float64(x)+.5, float64(y)+.5
-			warp := fbm2(m.seed+33, fx*.08+p.t*.03, fy*.15, 3) - .5
+			warp := fbm2(m.seed+33, fx*.08, fy*.15, 3) - .5
 			e := 0.0
 			for _, l := range lumps {
 				d := math.Hypot((fx-l.x)/1.6+warp*4, fy-l.y+warp*3) / l.r
 				e = math.Max(e, 1-d)
 			}
 			e *= smooth(cy+ry*1.1, cy+ry*.5, fy)
-			n := fbm2(m.seed+31, fx*.12+p.t*.04, fy*.3, 4)
+			n := fbm2(m.seed+31, fx*.12, fy*.3, 4)
 			a := smooth(.0, .25, e+(n-.5)*.5)
 			col := mix(p.th.stormTop, p.th.stormCloud, smooth(cy-ry*1.6, cy+ry*.2, fy)+(n-.5)*.6)
 			if flash {
@@ -64,10 +64,10 @@ func (p *painter) storm(i int) {
 		}
 	}
 	if flash {
-		x, y := g.x+(unit(m.seed, p.frame)-.5)*rx, cy+ry*.4
+		x, y := g.x+(unit(m.seed, p.frame/4)-.5)*rx, cy+ry*.4
 		for step := 0; y < g.y+g.height*.55; step++ {
 			p.set(int(x), int(y), p.th.bolt)
-			x += (unit(m.seed+41, p.frame*31+step) - .5) * 2.4
+			x += (unit(m.seed+41, p.frame/4*31+step) - .5) * 2.4
 			y++
 		}
 	}

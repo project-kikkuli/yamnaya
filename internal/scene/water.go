@@ -41,7 +41,7 @@ func (p *painter) lake() {
 		fade := .3 + .4*k/math.Max(1, depth)
 		for x := range p.w {
 			fx := float64(x)
-			shift := math.Sin(k*.6-p.t*.22+fx*.03) * math.Min(2, .12*k+.3)
+			shift := math.Sin(k*.6+fx*.03) * math.Min(2, .12*k+.3)
 			sx := min(p.w-1, max(0, x+int(math.Round(shift))))
 			var c rgb
 			if src >= 0 {
@@ -53,7 +53,7 @@ func (p *painter) lake() {
 			if y-p.hz < 1 {
 				c = mix(c, p.th.tree, .3)
 			}
-			swell := noise2(0x1a4e, fx*.07+p.t*.05, k*.75)
+			swell := noise2(0x1a4e, fx*.07, k*.75)
 			glint := p.th.skyAt(.97)
 			switch {
 			case swell > .7:

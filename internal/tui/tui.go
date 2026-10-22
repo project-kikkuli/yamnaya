@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/scene"
 )
 
 type mode int
@@ -166,7 +167,7 @@ func New(c *core.Core) Model {
 var ErrRestart = errors.New("ym executable changed")
 
 func Run(c *core.Core) error {
-	final, err := tea.NewProgram(New(c), tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(New(c), tea.WithAltScreen(), tea.WithReportFocus(), tea.WithMouseCellMotion()).Run()
 	if m, ok := final.(Model); ok && err == nil && m.restart {
 		return ErrRestart
 	}
@@ -216,23 +217,38 @@ func (m Model) refresh(tick bool) tea.Cmd {
 	}
 }
 
+// blurredInterval is how often the board reloads while its terminal is not focused.
+const blurredInterval = 10 * time.Second
+
 func (m Model) tick() tea.Cmd {
-	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tickMsg{} })
+	interval := m.interval
+	if m.peaks.blurred {
+		interval = max(interval, blurredInterval)
+	}
+	return tea.Tick(interval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(true), mountainTick()) }
+func (m Model) Init() tea.Cmd { return m.refresh(true) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(mountainFrame); ok {
-		m.peaks.frame++
-		return m, mountainTick()
+	switch msg.(type) {
+	case mountainFrame:
+		m.peaks.ticking = false
+		m.peaks.frame = int(time.Since(m.peaks.start) / scene.Step)
+		return m, m.animate()
+	case tea.BlurMsg:
+		m.peaks.blurred = true
+		return m, nil
+	case tea.FocusMsg:
+		m.peaks.blurred = false
+		return m, tea.Batch(m.refresh(false), m.animate())
 	}
 	m.page = nil
 	next, cmd := m.update(msg)
 	if model, ok := next.(Model); ok {
 		prepared := model.prepareView()
 		model.page = &prepared
-		return model, cmd
+		return model, tea.Batch(cmd, model.animate())
 	}
 	return next, cmd
 }
@@ -294,6 +310,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = msg.text
 		if msg.err != nil {
 			m.screen = "error: " + msg.err.Error()
+		}
+		return m, nil
+	case tea.MouseMsg:
+		switch {
+		case msg.Action != tea.MouseActionPress:
+		case msg.Button == tea.MouseButtonWheelUp:
+			return m.key(tea.KeyMsg{Type: tea.KeyUp})
+		case msg.Button == tea.MouseButtonWheelDown:
+			return m.key(tea.KeyMsg{Type: tea.KeyDown})
+		case msg.Button == tea.MouseButtonLeft && m.shown() && m.mode == m.listMode():
+			m.pick(msg.X, msg.Y)
 		}
 		return m, nil
 	case tea.KeyMsg:

@@ -113,5 +113,8 @@ func TestPictures(t *testing.T) {
 	for _, c := range samples() {
 		out := Frame(c.scene, c.w, c.h, c.frame, c.table)
 		picture(t, out, c.scene.Dark, filepath.Join(dir, c.name+".png"))
+		if err := os.WriteFile(filepath.Join(dir, c.name+".ans"), []byte(out), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

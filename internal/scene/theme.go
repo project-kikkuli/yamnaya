@@ -14,6 +14,7 @@ type theme struct {
 	smoke, smokeDark               rgb
 	climber, rope, flag, label     rgb
 	bolt                           rgb
+	green, gold                    rgb
 	valley                         float64
 	night                          bool
 }
@@ -35,7 +36,7 @@ var dusk = theme{
 	lavaHot: hex("#fff3a6"), lava: hex("#ff6418"), lavaDeep: hex("#9c1606"),
 	smoke: hex("#b8b0b4"), smokeDark: hex("#2e2629"),
 	climber: hex("#fff0b8"), rope: hex("#ff8a3d"), flag: hex("#ff4733"), label: hex("#ffe6c0"),
-	bolt:   hex("#f2ecff"),
+	bolt: hex("#f2ecff"), green: hex("#7ee08a"), gold: hex("#ffd36b"),
 	valley: .5, night: true,
 }
 
@@ -51,7 +52,7 @@ var day = theme{
 	lavaHot: hex("#fff3a6"), lava: hex("#ff5a14"), lavaDeep: hex("#9c1606"),
 	smoke: hex("#ecebee"), smokeDark: hex("#55525a"),
 	climber: hex("#e02a20"), rope: hex("#f0a030"), flag: hex("#e0241a"), label: hex("#ffffff"),
-	bolt:   hex("#ffffff"),
+	bolt: hex("#ffffff"), green: hex("#1f9d3a"), gold: hex("#c98a00"),
 	valley: .78,
 }
 
