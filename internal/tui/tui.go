@@ -546,6 +546,8 @@ func needText(n core.Need) string {
 			text += " " + d.Asker + " " + d.Text
 		}
 		return text
+	case n.Steer != nil:
+		return "steer " + n.Manager + " " + n.Steer.Text
 	}
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question

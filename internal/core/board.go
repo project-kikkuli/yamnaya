@@ -148,6 +148,8 @@ type Need struct {
 	// Docs are the open asks on one document waiting on the owner, newest first; Doc is the newest.
 	Doc  *DocAsk
 	Docs []DocAsk
+	// Steer is the owner's revision of a goal's plan that its manager, Manager, left unadopted through every nudge.
+	Steer *Steer
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -420,7 +422,9 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	c.tree(&b, b.Org, feeds)
+	if err := c.tree(&b, b.Org, feeds); err != nil {
+		return b, err
+	}
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)
 	wait, err := c.waiting(b, b.Needs)

@@ -93,6 +93,12 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.noticeHung(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.watchSteers(b, o); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.watchBriefs(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -183,8 +189,8 @@ func (c *Core) watchQuiet(b Board, o Org, m Manager, g Goal) error {
 		return nil
 	}
 	if m.Nudges < Nudges {
-		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs, update your brief at %s, and keep driving the goal to done; if it is blocked on something beyond your authority, escalate with ym item add.",
-			g.ID, g.LastMovedAt.Local().Format(time.Kitchen), m.BriefPath)
+		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs, refresh your brief with ym goal brief, and keep driving the goal to done; if it is blocked on something beyond your authority, escalate with ym item add.",
+			g.ID, g.LastMovedAt.Local().Format(time.Kitchen))
 		if err := c.tell(b, m.Session, text, false); err != nil {
 			return err
 		}

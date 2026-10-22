@@ -24,6 +24,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var once bool
 	var interval time.Duration
 	var discover bool
+	var briefs string
 	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		if interval <= 0 {
 			return fmt.Errorf("interval must be positive")
@@ -57,6 +58,14 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
 		}
 		last := time.Now()
+		site := &briefSite{core: e.core}
+		if briefs != "" && !once {
+			go func() {
+				if err := site.listen(ctx, briefs); err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), err)
+				}
+			}()
+		}
 		for {
 			if at := time.Now(); at.Round(0).Sub(last.Round(0))-at.Sub(last) > time.Minute {
 				e.core.Woke = at
@@ -67,7 +76,8 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 					return err
 				}
 			}
-			err := serveCycle(e.core)
+			b, err := serveCycle(e.core)
+			site.observe(b)
 			if discover {
 				err = errors.Join(err, reviews.poll(ctx, e.core), docSweepErrors(e.core.Store))
 			}
@@ -107,16 +117,17 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	cmd.Flags().BoolVar(&once, "once", false, "reconcile once and exit")
 	cmd.Flags().BoolVar(&discover, "discover", true, "discover native sessions on this host")
 	cmd.Flags().DurationVar(&interval, "interval", 5*time.Second, "background reconciliation cadence")
+	cmd.Flags().StringVar(&briefs, "briefs", core.BriefsAddr(), "address to serve goal and chief briefs on; empty serves none")
 	return cmd
 }
 
-func serveCycle(c *core.Core) error {
+func serveCycle(c *core.Core) (core.Board, error) {
 	b, err := c.Board()
 	if err != nil {
-		return err
+		return b, err
 	}
 	if _, err = c.Redeliver(b); err != nil {
-		return err
+		return b, err
 	}
 	var failures []error
 	if _, err = c.RefreshPRs(b); err != nil {
@@ -126,7 +137,7 @@ func serveCycle(c *core.Core) error {
 		failures = append(failures, err)
 	}
 	failures = append(failures, c.Loop(b))
-	return errors.Join(append(failures, c.Brief(b))...)
+	return b, errors.Join(append(failures, c.Brief(b))...)
 }
 
 // reviewPoll asks GitHub for the owner's personal review requests at most once per every.

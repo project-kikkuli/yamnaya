@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -23,6 +24,8 @@ func (m Model) nodeOf(r row) (core.Node, bool) {
 		return *r.node, true
 	case r.need != nil && r.need.Goal != nil:
 		return m.board.Node(r.need.Goal.ManagerID)
+	case r.need != nil && r.need.Steer != nil:
+		return m.board.Node(r.need.Manager)
 	}
 	switch m.mode {
 	case modeGoal:
@@ -164,7 +167,7 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	if n.Feed.Latest != nil {
 		what += pal.dim.Render("  " + n.Feed.Latest.Payload)
 	}
-	line := mark + head + " " + stand + " " + agents + " "
+	line := mark + head + " " + stand + " " + agents + " " + planTags(n)
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {
 		return b
@@ -181,7 +184,8 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	if n.Manager.LastError != "" {
 		meta = append(meta, "launch: "+n.Manager.LastError)
 	}
-	keys := "enter open   B brief   o session   s send   space select   R relaunch"
+	meta = append(meta, briefMeta(m.board.At, n))
+	keys := "enter open   B brief   W brief page   o session   s send   S steer plan   space select   R relaunch"
 	if n.Goal != nil {
 		keys += "   K drop"
 	}
@@ -189,6 +193,49 @@ func (m Model) nodeLines(i int, n core.Node) string {
 		keys += "   V artifact"
 	}
 	return b + pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n" + pal.dim.Render("         "+keys) + "\n"
+}
+
+// planTags flag a steer the manager has not adopted and a brief that fell behind, so both show at a glance.
+func planTags(n core.Node) string {
+	var tags []string
+	if n.Steer != nil && !n.Steer.Adopted() {
+		tags = append(tags, pal.yellow.Render(fmt.Sprintf("steer r%d not adopted", n.Steer.Revision)))
+	}
+	if n.Goal == nil || n.Goal.State != core.GoalDone {
+		switch {
+		case n.Fresh.Brief == nil:
+			tags = append(tags, pal.yellow.Render("no brief"))
+		case n.Fresh.Stale():
+			tags = append(tags, pal.yellow.Render("brief stale"))
+		}
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	return strings.Join(tags, " ") + "  "
+}
+
+func briefMeta(at time.Time, n core.Node) string {
+	f := n.Fresh
+	switch {
+	case f.Brief == nil:
+		return "no brief yet"
+	case f.Stale():
+		return fmt.Sprintf("brief v%d %s, predates %s", f.Brief.Version, age(at, f.Brief.CreatedAt), f.BehindWhat)
+	}
+	return fmt.Sprintf("brief v%d %s", f.Brief.Version, age(at, f.Brief.CreatedAt))
+}
+
+func planField(n core.Node) string {
+	st := n.Steer
+	if st == nil {
+		return ""
+	}
+	state := "adopted " + st.AdoptedAt.Local().Format(time.Kitchen)
+	if !st.Adopted() {
+		state = pal.yellow.Render("not adopted")
+	}
+	return fmt.Sprintf("r%d by %s, %s: %s", st.Revision, st.By(), state, oneLine(st.Text))
 }
 
 func (m Model) artifact(n core.Node) (string, bool) {
@@ -219,6 +266,10 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	case n.Goal != nil:
 		head, what = pal.red.Render(pad("stuck", 8)), n.Goal.ID+" "+n.Goal.Ask
 		keys = "enter open   B brief   o manager   R relaunch   s send   x clear"
+	case n.Steer != nil:
+		head = pal.yellow.Render(pad("steer", 8))
+		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", n.Manager, n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
+		keys = "enter open   o manager   S steer again   R relaunch   x dismiss"
 	case n.PR != nil:
 		head, what = pal.yellow.Render(pad("merge", 8)), n.PR.URL
 		if n.PR.Status != nil && n.PR.Status.Title != "" {
@@ -267,7 +318,8 @@ func (m Model) goalView() viewPage {
 	b.WriteString(fmt.Sprintf(" %s  %s  %s  %s\n", pal.bold.Render("GOAL "+g.ID), standStyle[n.Standing](n.Standing), filepath.Base(g.Repo), pal.dim.Render("moved "+age(m.board.At, g.LastMovedAt))))
 	b.WriteString(" " + ansi.Wrap(g.Ask, max(20, m.width-2), " ") + "\n")
 	m.field(&b, "manager", n.Manager.ID+" "+managerState(m.board, n))
-	m.field(&b, "brief", g.BriefPath+pal.dim.Render("  B shows it"))
+	m.field(&b, "plan", planField(n))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  B shows it, W opens the page"))
 	if url, ok := m.artifact(n); ok {
 		m.field(&b, "artifact", url+pal.dim.Render("  V opens it"))
 	}
@@ -322,7 +374,8 @@ func (m Model) chiefView() viewPage {
 	b := viewPage{}
 	b.WriteString(fmt.Sprintf(" %s  %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Name), standStyle[n.Standing](n.Standing), pal.dim.Render(n.Manager.ID)))
 	m.field(&b, "session", managerState(m.board, n))
-	m.field(&b, "brief", n.Manager.BriefPath+pal.dim.Render("  B shows it"))
+	m.field(&b, "plan", planField(n))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  B shows it, W opens the page with its reports' briefs"))
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" REPORTS (%d)", len(n.Children))) + "\n")
 	if len(n.Children) == 0 {
 		b.WriteString(pal.dim.Render("   none; c on a goal row puts it under a chief") + "\n")
@@ -421,6 +474,10 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		return m, nil, false
 	}
+	if r.need != nil && r.need.Steer != nil && key == "x" {
+		id := r.need.Key()
+		return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(id) }), true
+	}
 	if r.need != nil && r.need.Goal != nil && key == "x" {
 		id := r.need.Goal.ID
 		return m, m.do(func() (string, error) { return id + " cleared", m.core.AckGoal(id) }), true
@@ -438,7 +495,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	}
 	switch key {
 	case "enter":
-		if r.node == nil && (r.need == nil || r.need.Goal == nil) {
+		if r.node == nil && (r.need == nil || (r.need.Goal == nil && r.need.Steer == nil)) {
 			return m, nil, false
 		}
 		if n.Goal != nil {
@@ -474,6 +531,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		m.show("B", " "+pal.bold.Render(n.Manager.Label())+pal.dim.Render("  "+briefOf(n))+"\n\n"+string(text))
 		return m, nil, true
+	case "W":
+		url, open := core.BriefURL(n.Manager.ID), m.openURL
+		return m, m.do(func() (string, error) { return "opened " + url, open(url) }), true
+	case "S":
+		return m, m.steerPlan(n.Manager.ID), true
 	case "V":
 		url, ok := m.artifact(n)
 		if !ok {
@@ -543,6 +605,40 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	return m, nil, false
+}
+
+// steerPlan opens the owner's editor on the plan of the goal or chief id and records what they save as its next revision.
+func (m Model) steerPlan(id string) tea.Cmd {
+	mg, was, rev, err := m.core.Context(id)
+	if err != nil {
+		return m.do(func() (string, error) { return "", err })
+	}
+	f, err := os.CreateTemp("", "ym-steer-"+mg.ID+"-*.md")
+	if err != nil {
+		return m.do(func() (string, error) { return "", err })
+	}
+	path := f.Name()
+	f.Close()
+	if err := core.EditPlan(path, mg, was, rev); err != nil {
+		return m.do(func() (string, error) { return "", err })
+	}
+	c := m.core
+	return tea.ExecProcess(core.EditorCommand(path), func(err error) tea.Msg {
+		defer os.Remove(path)
+		if err != nil {
+			return doneMsg{"", fmt.Errorf("editor: %w", err)}
+		}
+		text, err := core.ReadPlan(path, was)
+		if err != nil || text == "" {
+			return doneMsg{fmt.Sprintf("%s unchanged at revision %d", mg.ID, rev), err}
+		}
+		b, err := c.Board()
+		if err != nil {
+			return doneMsg{"", err}
+		}
+		st, err := c.SteerContext(b, mg.ID, text, core.Owner)
+		return doneMsg{fmt.Sprintf("%s steered to revision %d; it shows unadopted until its manager adopts it", mg.ID, st.Revision), err}
+	})
 }
 
 // goalInput runs what a goal, chief, steer or attach input line asked for.

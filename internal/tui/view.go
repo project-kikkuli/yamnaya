@@ -251,9 +251,9 @@ func (m Model) hints() string {
 	case modeAgent:
 		return controls + "   ↑↓ scroll   space/b page   o go to its session   O beside   esc back"
 	case modeGoal:
-		return controls + "   ↑↓ move   enter open session   o go to session   B brief   V artifact   s send   R relaunch   esc back   ? help"
+		return controls + "   ↑↓ move   enter open session   o go to session   B brief   W brief page   V artifact   s send   S steer plan   R relaunch   esc back   ? help"
 	case modeChief:
-		return "↑↓ move   enter open   space select   s send   B brief   R relaunch   c chief   C new chief   esc back   ? help"
+		return "↑↓ move   enter open   space select   s send   S steer plan   B brief   W brief page   R relaunch   c chief   C new chief   esc back   ? help"
 	}
 	return controls + "   ↑↓ move   enter open   n goal   N goal in any repo   + session   space select   B brief   a answer   g go ahead   x dismiss   w reply   o go to session   / filter   I items   U usage   h health   A mountains   ? help   q quit"
 }
@@ -1283,7 +1283,10 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    space        select a goal or chief row; s and c then act on every selected one
    s            on a goal or chief: send it your message (every selected one); tab widens a chief's to its
                 whole subtree. On a session: send it a follow-up, typed in on ym's server even mid-turn
-   B            show the goal's or chief's brief, the markdown page its manager keeps
+   S            on a goal or chief: edit what it is about in $EDITOR; saving makes the next numbered
+                revision, which shows "steer rN not adopted" until its manager runs ym goal adopt
+   B            show the goal's or chief's brief, the newest version its manager recorded
+   W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
    V            open the artifact a manager registered as its richer brief
    R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
    C            new chief over the selected goals and chiefs

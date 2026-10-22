@@ -40,7 +40,8 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
 	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(with),
-		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(with))
+		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(with), goalSteerCmd(with), goalAdoptCmd(with),
+		goalContextCmd(with), goalBriefCmd(with))
 	return cmd
 }
 
@@ -78,7 +79,14 @@ type goalRow struct {
 	Brief    string `json:"brief"`
 	Artifact string `json:"artifact,omitempty"`
 	Agents   int    `json:"agents"`
-	Depth    int    `json:"-"`
+	BriefURL string `json:"brief_url"`
+	// BriefVersion is 0 when no brief was recorded.
+	BriefVersion int  `json:"brief_version"`
+	BriefStale   bool `json:"brief_stale"`
+	Revision     int  `json:"revision"`
+	Adopted      bool `json:"adopted"`
+	Depth        int  `json:"-"`
+	fresh        core.Freshness
 }
 
 func treeRows(b core.Board, under string) []goalRow {
@@ -86,7 +94,14 @@ func treeRows(b core.Board, under string) []goalRow {
 	var walk func(core.Node, int)
 	walk = func(n core.Node, depth int) {
 		m := n.Manager
-		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Agents: len(n.Agents), Depth: depth}
+		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Agents: len(n.Agents), Depth: depth,
+			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh}
+		if n.Fresh.Brief != nil {
+			r.BriefVersion = n.Fresh.Brief.Version
+		}
+		if n.Steer != nil {
+			r.Revision, r.Adopted = n.Steer.Revision, n.Steer.Adopted()
+		}
 		if n.Goal != nil {
 			r.Goal, r.Ask, r.Brief, r.Artifact = n.Goal.ID, n.Goal.Ask, n.Goal.BriefPath, n.Goal.ArtifactURL
 		}
@@ -148,7 +163,12 @@ func printGoalRow(w io.Writer, r goalRow) {
 	if r.Goal != "" {
 		id = r.Goal + "/" + r.ID
 	}
-	fmt.Fprintf(w, "%s%-14s %-7s %d agents  %s\n%s  brief %s\n", strings.Repeat("  ", r.Depth), id, r.State, r.Agents, oneLine(what), strings.Repeat("  ", r.Depth), r.Brief)
+	indent := strings.Repeat("  ", r.Depth)
+	status := []string{r.fresh.String()}
+	if r.Revision > 0 && !r.Adopted {
+		status = append(status, fmt.Sprintf("steer r%d not adopted", r.Revision))
+	}
+	fmt.Fprintf(w, "%s%-14s %-7s %d agents  %s\n%s  %s  %s\n", indent, id, r.State, r.Agents, oneLine(what), indent, strings.Join(status, ", "), r.BriefURL)
 }
 
 func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -173,9 +193,15 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 							return err
 						}
 					}
-					if brief, err := os.ReadFile(r.Brief); err == nil {
-						fmt.Fprintf(cmd.OutOrStdout(), "\n%s", brief)
+					if r.Revision > 0 {
+						fmt.Fprintf(cmd.OutOrStdout(), "  plan revision %d, %s; ym goal context %s prints it\n", r.Revision, map[bool]string{true: "adopted", false: "not adopted"}[r.Adopted], r.ID)
 					}
+					if r.fresh.Brief == nil {
+						if brief, err := os.ReadFile(r.Brief); err == nil {
+							fmt.Fprintf(cmd.OutOrStdout(), "\n%s", brief)
+						}
+					}
+					briefLines(cmd.OutOrStdout(), r.fresh)
 					return nil
 				}
 			}

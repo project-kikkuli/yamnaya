@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -32,6 +33,9 @@ type Node struct {
 	Standing string
 	// Feed is the goal's news for the owner.
 	Feed Feed
+	// Steer is the newest revision of what the goal or chief is about, nil when it was never steered.
+	Steer *Steer
+	Fresh Freshness
 }
 
 // Unread is how much news the owner has not read on the node's goal, or on every goal below a chief.
@@ -80,7 +84,7 @@ func (b Board) Node(id string) (Node, bool) {
 
 // tree builds the goal tree: chiefs over managers, each manager with its goal, session and agents. A goal that ended and was
 // cleared from the owner's queue leaves the tree.
-func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
+func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	agents := map[string][]Live{}
 	for _, s := range b.Sessions {
 		if m, ok := o.Managed(s.Key(), b.parents); ok && m.Session != s.Key() {
@@ -95,6 +99,14 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
 			}
 		}
 	}
+	steers, err := c.Store.LatestSteers()
+	if err != nil {
+		return err
+	}
+	fresh, err := c.Freshness(o)
+	if err != nil {
+		return err
+	}
 	shown := map[string]bool{}
 	for _, m := range o.Ordered() {
 		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || (g.State == GoalDone && !g.AckedAt.IsZero())) {
@@ -105,7 +117,10 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
 	var build func(Manager, map[string]bool) Node
 	build = func(m Manager, seen map[string]bool) Node {
 		seen[m.ID] = true
-		n := Node{Manager: m, Agents: agents[m.ID]}
+		n := Node{Manager: m, Agents: agents[m.ID], Fresh: fresh[m.ID]}
+		if st, ok := steers[m.ID]; ok {
+			n.Steer = &st
+		}
 		if g, ok := o.Goals[m.GoalID]; ok {
 			n.Goal = &g
 			n.Feed = feeds[g.ID]
@@ -131,6 +146,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) {
 		}
 		b.Tree = append(b.Tree, build(m, seen))
 	}
+	return nil
 }
 
 func (c *Core) standing(b Board, n Node) string {
@@ -174,6 +190,20 @@ func (c *Core) queue(b *Board, o Org) error {
 			continue
 		}
 		extra = append(extra, Need{Goal: &g})
+	}
+	steers, err := c.Store.LatestSteers()
+	if err != nil {
+		return err
+	}
+	for _, m := range o.Ordered() {
+		st, ok := steers[m.ID]
+		if !ok || st.Adopted() || st.RaisedAt.IsZero() || !o.Active(m) || raisedTo(o, st) != Owner {
+			continue
+		}
+		n := Need{Steer: &st, Manager: m.ID}
+		if !dismissed[n.Key()] {
+			extra = append(extra, n)
+		}
 	}
 	statuses, err := c.Store.PRStatuses()
 	if err != nil {
@@ -243,6 +273,8 @@ func (n Need) Key() string {
 	switch {
 	case n.Goal != nil:
 		return "goal:" + n.Goal.ID
+	case n.Steer != nil:
+		return fmt.Sprintf("steer:%s#%d", n.Steer.Manager, n.Steer.Revision)
 	case n.PR != nil:
 		head := ""
 		if n.PR.Status != nil {
