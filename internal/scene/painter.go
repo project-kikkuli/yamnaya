@@ -74,8 +74,6 @@ func (p *painter) paint() {
 	p.sprites()
 }
 
-func (p *painter) at(x, y int) rgb { return p.px[y*p.w+x] }
-
 func (p *painter) set(x, y int, c rgb) {
 	if x >= 0 && x < p.w && y >= 0 && y < p.p {
 		p.px[y*p.w+x] = c
