@@ -13,7 +13,8 @@ import (
 const landingQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   state
   mergeCommit { oid statusCheckRollup { contexts {
-    checkRunCountsByState { state count } statusContextCountsByState { state count } } } }
+    checkRunCountsByState { state count } statusContextCountsByState { state count } } }
+    parents(first: 1) { nodes { statusCheckRollup { state } } } }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
 } } }`
 
@@ -48,6 +49,13 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 							Statuses []count `json:"statusContextCountsByState"`
 						} `json:"contexts"`
 					} `json:"statusCheckRollup"`
+					Parents struct {
+						Nodes []struct {
+							Rollup *struct {
+								State string `json:"state"`
+							} `json:"statusCheckRollup"`
+						} `json:"nodes"`
+					} `json:"parents"`
 				} `json:"mergeCommit"`
 				ReviewThreads struct {
 					TotalCount int `json:"totalCount"`
@@ -85,6 +93,10 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 					l.Pending += c.Count
 				}
 			}
+		}
+		// A merge commit with no checks yet, after a parent that ran them, is waiting for its checks to register.
+		if l.Passed+l.Failed+l.Pending == 0 && len(mc.Parents.Nodes) > 0 && mc.Parents.Nodes[0].Rollup != nil {
+			l.Pending = 1
 		}
 	}
 	return l, nil
