@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -121,6 +124,52 @@ func serviceCmd() *cobra.Command {
 			case <-ticker.C:
 			}
 		}
+	}}, &cobra.Command{Use: "ensure", Short: "Start background reconciliation unless it already runs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		return ensureWorkService()
+	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		dir, err := keepWorkService()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s/ym-serve.timer\n", dir)
+		return nil
 	}})
 	return root
+}
+
+// keepWorkService installs and starts a systemd user timer that starts ym serve at boot and every minute it is not running, so a
+// host's goals keep moving with no board open anywhere.
+func keepWorkService() (string, error) {
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return "", fmt.Errorf("keeping ym serve running needs systemd: %w", err)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(config, "systemd", "user")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := "PATH=" + filepath.Dir(self) + ":" + os.Getenv("PATH")
+	units := map[string]string{
+		"ym-serve.service": "[Unit]\nDescription=Start ym serve unless it runs\n\n[Service]\nType=oneshot\nKillMode=process\nEnvironment=" +
+			strconv.Quote(path) + "\nExecStart=" + self + " service ensure\n",
+		"ym-serve.timer": "[Unit]\nDescription=Keep ym serve running\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n",
+	}
+	for name, text := range units {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			return "", err
+		}
+	}
+	for _, args := range [][]string{{"--user", "daemon-reload"}, {"--user", "enable", "--now", "ym-serve.timer"}, {"--user", "start", "ym-serve.service"}} {
+		if out, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return dir, nil
 }

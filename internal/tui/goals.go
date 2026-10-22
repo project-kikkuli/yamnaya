@@ -151,15 +151,17 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	}
 	stand := standStyle[n.Standing](pad(n.Standing, 7))
 	var head, what string
+	host := n.Manager.Host
 	if n.Goal != nil {
-		head = pad(n.Goal.ID, 8)
-		what = n.Goal.Ask
+		_, id, _ := core.SplitRemote(n.Goal.ID)
+		head = pad(id, 8)
+		what = m.tagged(host, n.Goal.Ask)
 		if m.byRepo {
 			what = core.RepoLabel(n.Repo) + "  " + what
 		}
 	} else {
 		head = pad("chief", 8)
-		what = pal.bold.Render(n.Manager.Name) + pal.dim.Render(fmt.Sprintf("  %d goals", n.Count()))
+		what = m.tagged(host, pal.bold.Render(n.Manager.Name)+pal.dim.Render(fmt.Sprintf("  %d goals", n.Count())))
 	}
 	agents := pal.dim.Render(pad(plural(agentCount(n), "agent"), 9))
 	if u := n.Unread(); u > 0 {
@@ -191,6 +193,9 @@ func (m Model) nodeLines(i int, n core.Node) string {
 		} else {
 			meta = append(meta, briefMeta(m.board.At, n))
 		}
+	}
+	if state := m.hostState(host); state != "" {
+		meta = append(meta, "on "+host+": "+state)
 	}
 	keys := "enter open   B brief   W brief page   o session   s send   S steer plan   space select   R relaunch"
 	if n.Goal != nil {
@@ -519,6 +524,15 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		return m, nil, true
 	case "B":
+		if host, rest, ok := core.SplitRemote(n.Manager.ID); ok && n.Manager.Host != "" {
+			head := " " + pal.bold.Render(m.tagged(host, n.Manager.Label())) + pal.dim.Render("  "+briefOf(n)) + "\n\n"
+			m.show("B", head+pal.dim.Render("reading it from "+m.hostTag(host)+"…"))
+			c := m.core
+			return m, func() tea.Msg {
+				out, err := c.RunRemote(host, "goal", "show", rest)
+				return screenMsg{head + out, err}
+			}, true
+		}
 		text, err := os.ReadFile(briefOf(n))
 		if err != nil {
 			m.message = "error: " + err.Error()

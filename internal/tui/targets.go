@@ -1,12 +1,13 @@
 package tui
 
 import (
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 // launchTargets are where a new session can start: this host, then every remembered host.
@@ -68,10 +69,21 @@ func (m Model) remoteArgs(text string) ([]string, error) {
 	case inGoal:
 		args = []string{"goal"}
 	case inChief:
-		if len(m.inPicks) > 0 {
-			return nil, fmt.Errorf("a chief on %s can only start over that host's managers; start it here or clear the selection", m.hostTag(m.launchOn))
-		}
 		args = []string{"chief"}
+		if len(m.inPicks) > 0 {
+			var over []string
+			for _, id := range m.inPicks {
+				switch host, rest, ok := core.SplitRemote(id); {
+				case ok && host == m.launchOn:
+					over = append(over, rest)
+				case ok:
+					over = append(over, id)
+				default:
+					over = append(over, core.RemoteKey(m.core.SelfName(), id))
+				}
+			}
+			args = append(args, "--over", strings.Join(over, ","))
+		}
 	}
 	if m.newL.Repo != "" {
 		args = append(args, "--repo", filepath.Base(m.newL.Repo))

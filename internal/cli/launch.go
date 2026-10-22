@@ -237,6 +237,9 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			if e.core.Launches == nil {
 				return errors.New("ym's launcher is unavailable")
 			}
+			if err := ensureWorkService(); err != nil {
+				return err
+			}
 			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug}
 			if useCodex {
 				n.Harness = codex.Name

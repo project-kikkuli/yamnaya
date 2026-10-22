@@ -2,6 +2,7 @@ package cli
 
 import (
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,6 +17,12 @@ type boardJSON struct {
 	Launched []launchedJSON `json:"launched"`
 	Dormant  []dormantJSON  `json:"dormant"`
 	Waiting  []waitingJSON  `json:"waiting"`
+	// Self is what this host calls itself; the rest is its goal tree and how each manager and chief stands by this host's reading.
+	Self            string            `json:"self,omitempty"`
+	Managers        []core.Manager    `json:"managers,omitempty"`
+	Goals           []core.Goal       `json:"goals,omitempty"`
+	ManagerSessions map[string]string `json:"manager_sessions,omitempty"`
+	Standing        map[string]string `json:"standing,omitempty"`
 }
 
 type launchedJSON struct {
@@ -44,9 +51,12 @@ type dormantJSON struct {
 func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "board",
-		Short: "Print this host's sessions, open items, launches and waiting sessions as JSON, for another host's ym to show",
+		Short: "Print this host's sessions, open items, launches, waiting sessions and goal tree as JSON, for another host's ym to show",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if err := ensureWorkService(); err != nil {
+				return err
+			}
 			e.core.Remotes = nil
 			b, err := e.core.Board()
 			if err != nil {
@@ -68,6 +78,25 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 					out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 						RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
 				}
+			}
+			out.Self, out.ManagerSessions, out.Standing = e.core.SelfName(), b.Org.Sessions, map[string]string{}
+			for _, m := range b.Org.Managers {
+				out.Managers = append(out.Managers, m)
+			}
+			sort.Slice(out.Managers, func(i, j int) bool { return out.Managers[i].ID < out.Managers[j].ID })
+			for _, g := range b.Org.Goals {
+				out.Goals = append(out.Goals, g)
+			}
+			sort.Slice(out.Goals, func(i, j int) bool { return out.Goals[i].ID < out.Goals[j].ID })
+			var stand func(core.Node)
+			stand = func(n core.Node) {
+				out.Standing[n.Manager.ID] = n.Standing
+				for _, c := range n.Children {
+					stand(c)
+				}
+			}
+			for _, n := range b.Tree {
+				stand(n)
 			}
 			return writeJSON(cmd.OutOrStdout(), out)
 		}),
@@ -117,6 +146,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
+	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing
 	return r
 }
 

@@ -142,6 +142,9 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 	if l, ok := c.Launches.(launcher); ok {
 		failures = append(failures, l.unstall(time.Now()))
 	}
+	if err = relayHosts(c); err != nil {
+		failures = append(failures, err)
+	}
 	failures = append(failures, c.Loop(b))
 	return errors.Join(append(failures, c.Brief(b))...)
 }
@@ -153,9 +156,13 @@ type reviewPoll struct {
 	last  time.Time
 }
 
+// poll reads the owner's review requests on the owner's own host only: a host whose relays another host carries leaves them to it.
 func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
 	if time.Since(r.last) < r.every {
 		return nil
+	}
+	if self, err := c.Store.RelaySelf(); err != nil || self.Courier != "" {
+		return err
 	}
 	r.last = time.Now()
 	reqs, err := r.fetch(ctx)

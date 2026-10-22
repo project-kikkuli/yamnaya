@@ -15,7 +15,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var repo string
 	cmd := &cobra.Command{
 		Use:   "goal [--repo NAME|PATH] <ask>",
@@ -30,6 +30,9 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if err != nil {
 				return err
 			}
+			if err := ensureWorkService(); err != nil {
+				return err
+			}
 			if m.LastError != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but its manager %s did not start: %s; ym serve retries with backoff\n", g.ID, m.ID, m.LastError)
 				return nil
@@ -39,9 +42,9 @@ func goalCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		}),
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
-	cmd.AddCommand(goalListCmd(with), goalShowCmd(with), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(with),
-		goalRelaunchCmd(with), goalDropCmd(with), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(with), goalSteerCmd(with), goalAdoptCmd(with),
-		goalContextCmd(with), goalBriefCmd(with))
+	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
+		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts),
+		goalSteerCmd(with), goalAdoptCmd(with), goalContextCmd(with), goalBriefCmd(with))
 	return cmd
 }
 
@@ -81,11 +84,12 @@ type goalRow struct {
 	Agents   int    `json:"agents"`
 	BriefURL string `json:"brief_url"`
 	// BriefVersion is 0 when no brief was recorded.
-	BriefVersion int  `json:"brief_version"`
-	BriefStale   bool `json:"brief_stale"`
-	Revision     int  `json:"revision"`
-	Adopted      bool `json:"adopted"`
-	Depth        int  `json:"-"`
+	BriefVersion int    `json:"brief_version"`
+	BriefStale   bool   `json:"brief_stale"`
+	Revision     int    `json:"revision"`
+	Adopted      bool   `json:"adopted"`
+	Host         string `json:"host,omitempty"`
+	Depth        int    `json:"-"`
 	fresh        core.Freshness
 }
 
@@ -95,7 +99,10 @@ func treeRows(b core.Board, under string) []goalRow {
 	walk = func(n core.Node, depth int) {
 		m := n.Manager
 		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Agents: len(n.Agents), Depth: depth,
-			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh}
+			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host}
+		if m.Host != "" {
+			r.BriefURL = ""
+		}
 		if n.Fresh.Brief != nil {
 			r.BriefVersion = n.Fresh.Brief.Version
 		}
@@ -161,10 +168,13 @@ func printGoalRow(w io.Writer, r goalRow) {
 	}
 	id := r.ID
 	if r.Goal != "" {
-		id = r.Goal + "/" + r.ID
+		id = r.Goal + " " + r.ID
 	}
 	indent := strings.Repeat("  ", r.Depth)
 	status := []string{r.fresh.String()}
+	if r.Host != "" {
+		status = []string{"on " + r.Host}
+	}
 	if r.Revision > 0 && !r.Adopted {
 		status = append(status, fmt.Sprintf("steer r%d not adopted", r.Revision))
 	}
@@ -180,6 +190,14 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			b, err := e.core.Board()
 			if err != nil {
 				return err
+			}
+			if host, rest, ok := core.SplitRemote(args[0]); ok && e.core.Remotes != nil {
+				out, err := e.core.RunRemote(host, "goal", "show", rest)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), out)
+				return nil
 			}
 			for _, r := range treeRows(b, "") {
 				if strings.EqualFold(r.ID, args[0]) || strings.EqualFold(r.Goal, args[0]) {
@@ -317,7 +335,7 @@ func goalArtifactCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 }
 
 func goalSendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var subtree bool
+	var subtree, relayed bool
 	cmd := &cobra.Command{
 		Use:   "send [--subtree] <id>[,<id>...] <message>",
 		Short: "Send managers or chiefs a message; --subtree also reaches everyone below a chief",
@@ -328,13 +346,15 @@ func goalSendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return err
 			}
 			_, callErr := e.core.Calling(os.Getpid(), os.Getenv)
-			owner := errors.Is(callErr, core.ErrNotFound)
+			owner := errors.Is(callErr, core.ErrNotFound) && !relayed
 			n, err := e.core.Steer(b, strings.Split(args[0], ","), subtree, owner, strings.Join(args[1:], " "))
 			fmt.Fprintf(cmd.OutOrStdout(), "sent to %d\n", n)
 			return err
 		}),
 	}
 	cmd.Flags().BoolVar(&subtree, "subtree", false, "also send to every manager and chief below each chief named")
+	cmd.Flags().BoolVar(&relayed, "relayed", false, "the message comes from a chief on another host, not the owner")
+	cmd.Flags().MarkHidden("relayed")
 	return cmd
 }
 
@@ -351,6 +371,10 @@ func goalRelaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 			m, err := e.core.ReplaceManager(b, args[0])
 			if err != nil {
 				return err
+			}
+			if m.Host != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched on %s\n", m.ID, m.Host)
+				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched as %s\n", m.ID, core.Short(m.Session))
 			return nil
@@ -373,6 +397,21 @@ func goalDropCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), g.ID+" dropped")
 			}
+			return nil
+		}),
+	}
+}
+
+func goalAckCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ack <goal>",
+		Short: "Clear a done or stuck goal from your queue, as c does on the board",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if err := e.core.AckGoal(args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), args[0]+" cleared")
 			return nil
 		}),
 	}
@@ -417,13 +456,13 @@ func goalAuthorityCmd(with func(runFunc) func(*cobra.Command, []string) error) *
 	return cmd
 }
 
-func chiefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var repo, remit, over string
 	cmd := &cobra.Command{
 		Use:   "chief [--repo R] [--remit TEXT] [--over ID,ID] <name>",
 		Short: "Start a chief that oversees managers and other chiefs, reads their briefs and steers them",
 		Args:  cobra.MinimumNArgs(1),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
 			dir, err := e.repoArg(repo)
 			if err != nil {
 				return err
@@ -434,6 +473,9 @@ func chiefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, children)
 			if err != nil {
+				return err
+			}
+			if err := ensureWorkService(); err != nil {
 				return err
 			}
 			if m.LastError != "" {
@@ -449,16 +491,16 @@ func chiefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	cmd.Flags().StringVar(&over, "over", "", "managers, goals or chiefs it starts over, comma separated")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "attach <child> <chief>",
-		Short: "Put a manager or chief under a chief",
+		Short: "Put a manager or chief under a chief; either may run on another host, named host/id",
 		Args:  cobra.ExactArgs(2),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
 			return e.core.Attach(args[0], args[1])
 		}),
 	}, &cobra.Command{
 		Use:   "detach <child>",
 		Short: "Make a manager or chief report to you again",
 		Args:  cobra.ExactArgs(1),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
 			return e.core.Attach(args[0], "")
 		}),
 	})

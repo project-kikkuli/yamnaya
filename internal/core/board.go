@@ -51,6 +51,8 @@ type Core struct {
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
 	Remotes     Remotes
 	ShowRemotes bool
+	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
+	RunSelf func(args ...string) (string, error)
 
 	gc gitCache
 }
@@ -177,6 +179,8 @@ type Board struct {
 	Stale []Need
 	// Remotes are the other hosts the board reads, reachable or not.
 	Remotes []RemoteBoard
+	// remoteStanding is how each manager and chief on another host stands by that host's reading.
+	remoteStanding map[string]string
 
 	parents map[string]string
 	lin     Lineage
@@ -422,6 +426,9 @@ func (c *Core) Board() (Board, error) {
 	feeds, err := c.Store.Feeds()
 	if err != nil {
 		return b, err
+	}
+	if c.ShowRemotes {
+		b.remoteStanding = c.mergeRemoteOrg(&b.Org, b.Remotes)
 	}
 	if err := c.tree(&b, b.Org, feeds); err != nil {
 		return b, err

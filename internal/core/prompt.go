@@ -111,6 +111,9 @@ func (c *Core) planNow(sb *strings.Builder, m Manager) {
 // boss names who m's own escalations reach.
 func (c *Core) boss(o Org, m Manager) string {
 	if up := o.Above(m.ParentID); up != Owner {
+		if host, rest, remote := SplitRemote(up); remote {
+			return "your chief " + rest + " on " + host
+		}
 		return "your chief " + o.Managers[up].Label()
 	}
 	return "the owner"

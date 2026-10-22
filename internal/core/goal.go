@@ -84,8 +84,24 @@ func (c *Core) NewChief(name, remit, repo string, children []string) (Manager, e
 	return c.launch(b, o, m), nil
 }
 
-// Attach puts child, a manager or chief, under chief; an empty chief reports child to the owner again.
+// Attach puts child, a manager or chief, under chief; an empty chief reports child to the owner again. Either may run on another
+// host, named host/id: a child there is attached on its host, and a chief there is recorded as the child's parent here.
 func (c *Core) Attach(child, chief string) error {
+	if host, rest, ok := c.remoteHost(child); ok {
+		args := []string{"chief", "detach", rest}
+		if chief != "" {
+			to := RemoteKey(c.SelfName(), chief)
+			if h, r, remote := SplitRemote(chief); remote {
+				to = chief
+				if h == host {
+					to = r
+				}
+			}
+			args = []string{"chief", "attach", rest, to}
+		}
+		_, err := c.RunOrRelay(host, args...)
+		return err
+	}
 	o, err := c.LoadOrg()
 	if err != nil {
 		return err
@@ -93,6 +109,13 @@ func (c *Core) Attach(child, chief string) error {
 	m, err := o.lookup(child)
 	if err != nil {
 		return err
+	}
+	if _, _, remote := SplitRemote(chief); remote {
+		if err := c.checkRemoteChief(m, chief); err != nil {
+			return err
+		}
+		m.ParentID = strings.ToLower(chief)
+		return c.Store.SaveManager(m)
 	}
 	if chief != "" {
 		boss, err := o.lookup(chief)
@@ -111,6 +134,33 @@ func (c *Core) Attach(child, chief string) error {
 	}
 	m.ParentID = chief
 	return c.Store.SaveManager(m)
+}
+
+// checkRemoteChief refuses a chief on another host that the board shows is not a chief or reports to child already.
+func (c *Core) checkRemoteChief(child Manager, chief string) error {
+	if c.Remotes == nil {
+		return nil
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return err
+	}
+	c.mergeRemoteOrg(&o, c.Remotes.Boards())
+	boss, ok := o.Managers[strings.ToLower(chief)]
+	if !ok {
+		return nil
+	}
+	if boss.Role != RoleChief {
+		return fmt.Errorf("%s is a manager; only a chief has reports", chief)
+	}
+	seen := map[string]bool{}
+	for at := boss.ID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
+		seen[at] = true
+		if at == child.ID {
+			return fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.ID)
+		}
+	}
+	return nil
 }
 
 // lookup finds a manager or chief by its id or the id of its goal.
@@ -141,7 +191,27 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 	}
 	sent := map[string]bool{}
 	var errs []error
+	remote := func(host, id string, below bool) {
+		if sent[RemoteKey(host, id)] {
+			return
+		}
+		sent[RemoteKey(host, id)] = true
+		args := []string{"goal", "send"}
+		if below {
+			args = append(args, "--subtree")
+		}
+		if !owner {
+			args = append(args, "--relayed")
+		}
+		if _, err := c.RunOrRelay(host, append(args, id, text)...); err != nil {
+			errs = append(errs, fmt.Errorf("%s/%s: %w", host, id, err))
+		}
+	}
 	for _, ref := range refs {
+		if host, rest, ok := c.remoteHost(ref); ok {
+			remote(host, rest, subtree)
+			continue
+		}
 		m, err := o.lookup(ref)
 		if err != nil {
 			errs = append(errs, err)
@@ -152,6 +222,14 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 			targets = o.Subtree(m.ID)
 		}
 		for _, t := range targets {
+			if subtree {
+				for _, r := range b.Org.Managers {
+					if r.Host != "" && r.ParentID == t.ID && !r.Retired {
+						_, id, _ := SplitRemote(r.ID)
+						remote(r.Host, id, true)
+					}
+				}
+			}
 			if sent[t.ID] || t.Session == "" {
 				continue
 			}
@@ -184,6 +262,13 @@ func (c *Core) SetArtifact(session, url string) error {
 
 // DropGoal ends a goal the owner no longer wants; its manager stops being supervised.
 func (c *Core) DropGoal(ref string) (Goal, error) {
+	if host, rest, ok := c.remoteHost(ref); ok {
+		out, err := c.RunOrRelay(host, "goal", "drop", rest)
+		if err != nil || strings.HasSuffix(out, "retired") {
+			return Goal{}, err
+		}
+		return Goal{ID: ref, Host: host, State: GoalDropped}, nil
+	}
 	o, err := c.LoadOrg()
 	if err != nil {
 		return Goal{}, err
@@ -207,6 +292,10 @@ func (c *Core) DropGoal(ref string) (Goal, error) {
 
 // ReplaceManager ends the session of the manager or chief ref names, if it runs, and starts a fresh one with its prompt and brief.
 func (c *Core) ReplaceManager(b Board, ref string) (Manager, error) {
+	if host, rest, ok := c.remoteHost(ref); ok {
+		_, err := c.RunOrRelay(host, "goal", "relaunch", rest)
+		return Manager{ID: ref, Host: host}, err
+	}
 	o, err := c.LoadOrg()
 	if err != nil {
 		return Manager{}, err
@@ -230,6 +319,10 @@ func (c *Core) ReplaceManager(b Board, ref string) (Manager, error) {
 
 // AckGoal clears a done or stuck goal's row from the owner's queue.
 func (c *Core) AckGoal(id string) error {
+	if host, rest, ok := c.remoteHost(id); ok {
+		_, err := c.RunOrRelay(host, "goal", "ack", rest)
+		return err
+	}
 	g, err := c.Store.Goal(id)
 	if err != nil {
 		return err

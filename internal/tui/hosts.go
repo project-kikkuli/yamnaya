@@ -140,3 +140,13 @@ func (m Model) whereWidth(sessions []core.Live) int {
 	}
 	return w
 }
+
+// hostState is how a host whose rows the board shows stands when that is worth saying: unreachable or not yet read.
+func (m Model) hostState(host string) string {
+	for _, r := range m.board.Remotes {
+		if r.Host == host && (r.Err != nil || r.Stale) {
+			return r.State()
+		}
+	}
+	return ""
+}

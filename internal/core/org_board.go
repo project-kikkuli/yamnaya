@@ -154,7 +154,10 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 func (c *Core) standing(b Board, n Node) string {
 	own := StandMoving
 	m := n.Manager
+	st, remote := b.remoteStanding[m.ID]
 	switch {
+	case remote:
+		own = st
 	case n.Goal != nil && n.Goal.State == GoalDone:
 		own = StandDone
 	case n.Goal != nil && n.Goal.State == GoalVerifying:

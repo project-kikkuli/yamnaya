@@ -1,8 +1,10 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -30,6 +32,15 @@ type RemoteBoard struct {
 	Launched []Launched
 	Dormant  []Dormant
 	Waiting  []RemoteWaiting
+	// Self is what the host calls itself; Managers, Goals and ManagerSessions are its goal tree, Standing how each of its managers
+	// and chiefs stands by its own reading.
+	Self            string
+	Managers        []Manager
+	Goals           []Goal
+	ManagerSessions map[string]string
+	Standing        map[string]string
+	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
+	Stale bool
 }
 
 // RemoteWaiting is a session on another host whose last reply asks the owner.
@@ -40,10 +51,14 @@ type RemoteWaiting struct {
 // State is how the host stands for display: its session count, "checking", or why it cannot be reached.
 func (r RemoteBoard) State() string {
 	switch {
+	case r.Err != nil && !r.At.IsZero():
+		return fmt.Sprintf("unreachable since %s: %s", r.At.Local().Format(time.Kitchen), r.Err.Error())
 	case r.Err != nil:
 		return "unreachable: " + r.Err.Error()
 	case r.At.IsZero():
 		return "checking"
+	case r.Stale:
+		return fmt.Sprintf("checking, last answered %s", r.At.Local().Format(time.Kitchen))
 	}
 	return fmt.Sprintf("%d sessions", len(r.Sessions))
 }
@@ -70,10 +85,11 @@ func (c *Core) remoteBoards() []RemoteBoard {
 
 // RemoteRef splits a host-qualified key into its host and the ref that host knows it by, reading no host.
 func (c *Core) RemoteRef(ref string) (host, rest string, ok bool) {
-	if c.Remotes == nil {
-		return "", "", false
+	var hosts []string
+	if c.Remotes != nil {
+		hosts = c.Remotes.Hosts()
 	}
-	for _, h := range c.Remotes.Hosts() {
+	for _, h := range append(hosts, c.peerHosts()...) {
 		if after, found := strings.CutPrefix(strings.TrimPrefix(ref, "launch:"), h+"/"); found {
 			return h, after, true
 		}
@@ -96,12 +112,83 @@ func (c *Core) RemoteSession(ref string) (host, rest string, ok bool) {
 	return "", "", false
 }
 
+// ErrUnreachable is a host ssh could not reach, as against a ym command that failed there.
+var ErrUnreachable = errors.New("host unreachable")
+
 // RunRemote runs ym args on host.
 func (c *Core) RunRemote(host string, args ...string) (string, error) {
-	if c.Remotes == nil {
+	if c.Remotes == nil || !slices.Contains(c.Remotes.Hosts(), host) {
 		return "", fmt.Errorf("%s: no remote hosts are wired", host)
 	}
 	return c.Remotes.Run(host, args...)
+}
+
+// RunOrRelay runs ym args on host now, or, when host cannot be reached now or is reached only through the host that carries this
+// one's relays, queues them for ym serve to carry there.
+func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
+	if c.Remotes != nil && slices.Contains(c.Remotes.Hosts(), host) {
+		out, err := c.Remotes.Run(host, args...)
+		if !errors.Is(err, ErrUnreachable) {
+			return out, err
+		}
+	} else if !slices.Contains(c.peerHosts(), host) {
+		return "", fmt.Errorf("%s: ym has not reached that host: %w", host, ErrNotFound)
+	}
+	if err := c.Relay(host, RelayYM, relayYM{Args: args}); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("queued for %s; ym serve carries it there when it next reaches %s", host, host), nil
+}
+
+// remoteHost is the host a host-qualified id names when ym reaches that host directly or through relays.
+func (c *Core) remoteHost(ref string) (host, rest string, ok bool) {
+	host, rest, ok = SplitRemote(ref)
+	if !ok {
+		return "", ref, false
+	}
+	if c.Remotes != nil && slices.Contains(c.Remotes.Hosts(), host) || slices.Contains(c.peerHosts(), host) {
+		return host, rest, true
+	}
+	return "", ref, false
+}
+
+// mergeRemoteOrg adds every remote host's managers, chiefs and goals to o under host-qualified ids, so chiefs and their reports
+// meet in one tree across hosts, and returns how each remote one stands by its own host's reading.
+func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard) map[string]string {
+	self := c.SelfName()
+	q := func(host, ref string) string {
+		if ref == "" {
+			return ""
+		}
+		if h, rest, ok := SplitRemote(ref); ok {
+			if h == self {
+				return rest
+			}
+			return ref
+		}
+		return RemoteKey(host, ref)
+	}
+	standing := map[string]string{}
+	for _, r := range boards {
+		for _, m := range r.Managers {
+			m.ID, m.ParentID, m.GoalID, m.Host = q(r.Host, m.ID), q(r.Host, m.ParentID), q(r.Host, m.GoalID), r.Host
+			o.Managers[m.ID] = m
+			if !m.Retired {
+				o.order = append(o.order, m.ID)
+			}
+		}
+		for session, id := range r.ManagerSessions {
+			o.Sessions[session] = q(r.Host, id)
+		}
+		for _, g := range r.Goals {
+			g.ID, g.ManagerID, g.Host = q(r.Host, g.ID), q(r.Host, g.ManagerID), r.Host
+			o.Goals[g.ID] = g
+		}
+		for id, st := range r.Standing {
+			standing[q(r.Host, id)] = st
+		}
+	}
+	return standing
 }
 
 // remoteFind is the live session on another host that ref names.
@@ -133,7 +220,7 @@ func (c *Core) remoteItem(id string, args ...string) (Item, Delivery, bool, erro
 	if it.ID == "" {
 		it = Item{ID: id, Host: host}
 	}
-	out, err := c.RunRemote(host, append([]string{"item", args[0], rest}, args[1:]...)...)
+	out, err := c.RunOrRelay(host, append([]string{"item", args[0], rest}, args[1:]...)...)
 	if err != nil {
 		return it, Queued, true, err
 	}

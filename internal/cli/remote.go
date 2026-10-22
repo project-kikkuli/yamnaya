@@ -41,7 +41,7 @@ func remoteCmd() *cobra.Command {
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
 				flags = append([]string{"-t"}, flags...)
 			}
-			c := exec.Command("ssh", flags...)
+			c := exec.Command(sshBin(), flags...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := c.Run(); err != nil {
 				if exit, ok := err.(*exec.ExitError); ok {
@@ -118,7 +118,7 @@ func remoteInstallCmd() *cobra.Command {
 			if err := rememberHost(host); err != nil {
 				return err
 			}
-			probe, err := exec.Command("ssh", host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
+			probe, err := exec.Command(sshBin(), host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
 			if exit, ok := err.(*exec.ExitError); ok {
 				return fmt.Errorf("ssh %s: %w: %s", host, err, bytes.TrimSpace(exit.Stderr))
 			} else if err != nil {
@@ -140,7 +140,7 @@ func remoteInstallCmd() *cobra.Command {
 			current := len(lines) > 1 && lines[1] == hex.EncodeToString(sum[:])
 			setup := `mkdir -p ~/.local/bin && ` +
 				`{ bash -lc 'command -v ym' >/dev/null 2>&1 || { f=~/.profile; [ -f ~/.bash_profile ] && f=~/.bash_profile; printf '\n[ -d "$HOME/.local/bin" ] && PATH="$HOME/.local/bin:$PATH"\n' >> "$f"; }; } && ` +
-				remoteBin + ` install --statusline`
+				remoteBin + ` install --statusline && { ` + remoteBin + ` service keep || ` + remoteBin + ` service ensure; }`
 			var stdin io.Reader
 			if !current {
 				var gz bytes.Buffer
@@ -150,7 +150,7 @@ func remoteInstallCmd() *cobra.Command {
 				stdin = &gz
 				setup = `mkdir -p ~/.local/bin && gzip -dc > ~/.local/bin/ym.new && chmod 755 ~/.local/bin/ym.new && mv ~/.local/bin/ym.new ` + remoteBin + ` && ` + setup
 			}
-			c := exec.Command("ssh", host, setup)
+			c := exec.Command(sshBin(), host, setup)
 			c.Stdin, c.Stdout, c.Stderr = stdin, out, cmd.ErrOrStderr()
 			if err := c.Run(); err != nil {
 				return fmt.Errorf("install on %s: %w", host, err)

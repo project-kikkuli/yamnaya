@@ -68,12 +68,16 @@ func (o Org) Active(m Manager) bool {
 }
 
 // Above is the first working manager or chief at or above id: one that is retired, stuck, never launched, or whose goal ended
-// is passed over, so work never waits on it. Owner when the climb runs out.
+// is passed over, so work never waits on it. Owner when the climb runs out. A chief on another host ends the climb here; that
+// host climbs on if it cannot answer.
 func (o Org) Above(id string) string {
 	seen := map[string]bool{}
 	for id != "" && !seen[id] {
 		seen[id] = true
 		m, ok := o.Managers[id]
+		if _, _, remote := SplitRemote(id); remote && !ok {
+			return id
+		}
 		if !ok {
 			return Owner
 		}
@@ -180,7 +184,7 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 		if g, ok := o.Goals[m.GoalID]; ok {
 			to := "the owner"
 			if added.Recipient != Owner {
-				to = o.Managers[added.Recipient].ID
+				to = added.Recipient
 			}
 			now := c.now()
 			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAsked, Created: now, Delivered: now,
@@ -192,7 +196,15 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 	if added.Recipient == Owner {
 		return added, nil
 	}
-	return added, c.tell(b, o.Managers[added.Recipient].Session, askText(b, o, added), false)
+	return added, c.askManager(b, o, added)
+}
+
+// askManager hands the item to the manager or chief it is routed to, on this host or another.
+func (c *Core) askManager(b Board, o Org, it Item) error {
+	if _, _, remote := SplitRemote(it.Recipient); remote {
+		return c.relayAsk(b, o, it)
+	}
+	return c.tell(b, o.Managers[it.Recipient].Session, askText(b, o, it), false)
 }
 
 func askerOf(o Org, session string) string {
@@ -290,7 +302,7 @@ func (c *Core) reroute(b Board, o Org) error {
 			}
 		}
 		if up != Owner {
-			if err := c.tell(b, o.Managers[up].Session, askText(b, o, it), false); err != nil {
+			if err := c.askManager(b, o, it); err != nil {
 				return err
 			}
 		}

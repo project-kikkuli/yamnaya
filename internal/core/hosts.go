@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS ym_hosts (
 	first_used INTEGER NOT NULL,
 	last_seen INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_host_boards (
+	host TEXT PRIMARY KEY,
+	at INTEGER NOT NULL,
+	board BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ym_launch_target (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	host TEXT NOT NULL
@@ -42,6 +47,9 @@ func (s *Store) SeeHost(host string, at time.Time) error {
 func (s *Store) ForgetHost(host string) (bool, error) {
 	res, err := s.db.Exec(`DELETE FROM ym_hosts WHERE name=?`, host)
 	if err != nil {
+		return false, err
+	}
+	if _, err := s.db.Exec(`DELETE FROM ym_host_boards WHERE host=?`, host); err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
@@ -82,4 +90,21 @@ func (s *Store) LaunchTarget() (string, error) {
 func (s *Store) SetLaunchTarget(host string) error {
 	_, err := s.db.Exec(`INSERT INTO ym_launch_target(id,host) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET host=excluded.host`, host)
 	return err
+}
+
+// KeepBoard stores the board host printed at at, so a later board shows it while host cannot be reached.
+func (s *Store) KeepBoard(host string, at time.Time, board []byte) error {
+	_, err := s.db.Exec(`INSERT INTO ym_host_boards(host,at,board) VALUES(?,?,?)
+		ON CONFLICT(host) DO UPDATE SET at=excluded.at, board=excluded.board`, host, at.UnixNano(), board)
+	return err
+}
+
+// KeptBoard is the last board host printed and when; ok is false when ym never kept one.
+func (s *Store) KeptBoard(host string) (at time.Time, board []byte, ok bool, err error) {
+	var n int64
+	err = s.db.QueryRow(`SELECT at, board FROM ym_host_boards WHERE host=?`, host).Scan(&n, &board)
+	if errors.Is(err, sql.ErrNoRows) {
+		return at, nil, false, nil
+	}
+	return time.Unix(0, n), board, err == nil, err
 }

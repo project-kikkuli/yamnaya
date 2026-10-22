@@ -1,0 +1,250 @@
+package core
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// hostNet carries relay round trips between in-process hosts, and drops every one to a host that is down.
+type hostNet struct {
+	hosts map[string]*orgWorld
+	down  map[string]bool
+	// loseAcks drops that many round trips that confirm relays, as a link that fails mid-cycle does.
+	loseAcks int
+}
+
+func (n *hostNet) Sync(host string, req RelaySync) (RelayReply, error) {
+	if n.down[host] {
+		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
+	}
+	if len(req.Ack) > 0 && n.loseAcks > 0 {
+		n.loseAcks--
+		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
+	}
+	return n.hosts[host].core.ServeSync(req)
+}
+
+// fleet is an owner's host "a" that reaches hosts "b" and "c" over the net.
+type fleet struct {
+	net     *hostNet
+	a, b, c *orgWorld
+}
+
+func newFleet(t *testing.T) *fleet {
+	t.Helper()
+	f := &fleet{net: &hostNet{hosts: map[string]*orgWorld{}, down: map[string]bool{}}}
+	f.a, f.b, f.c = newOrgWorld(t), newOrgWorld(t), newOrgWorld(t)
+	if err := f.a.core.Store.setRelaySelf(RelaySelf{Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	f.net.hosts["b"], f.net.hosts["c"] = f.b, f.c
+	f.sync(t)
+	return f
+}
+
+// sync runs one relay cycle on the owner's host.
+func (f *fleet) sync(t *testing.T) {
+	t.Helper()
+	if err := f.a.core.SyncRelays([]string{"b", "c"}, f.net); err != nil && !errors.Is(err, ErrUnreachable) {
+		t.Fatal(err)
+	}
+}
+
+func lastHanded(w *orgWorld, session string) string {
+	got := w.handedTo(session)
+	if len(got) == 0 {
+		return ""
+	}
+	return got[len(got)-1]
+}
+
+func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// chiefOn is where the chief runs and managerOn where the goal's manager runs.
+		chiefOn, managerOn string
+		// chiefGone retires the chief before the ask, so it climbs past it to the owner.
+		chiefGone bool
+	}{
+		{name: "manager on b reports to a chief on a", chiefOn: "a", managerOn: "b"},
+		{name: "manager on a reports to a chief on b", chiefOn: "b", managerOn: "a"},
+		{name: "manager on b reports to a chief on c, two hops through a", chiefOn: "c", managerOn: "b"},
+		{name: "chief on a is retired, so the ask reaches the owner on b", chiefOn: "a", managerOn: "b", chiefGone: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			on := map[string]*orgWorld{"a": f.a, "b": f.b, "c": f.c}
+			cw, mw := on[tc.chiefOn], on[tc.managerOn]
+			chief := cw.chief(t, "platform")
+			_, mgr := mw.goal(t, "ship the fix", "/repo/app")
+			parent := RemoteKey(tc.chiefOn, chief.ID)
+			if err := mw.core.Attach(mgr.ID, parent); err != nil {
+				t.Fatal(err)
+			}
+			if tc.chiefGone {
+				if _, err := cw.core.DropGoal(chief.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			agent := "agent-" + tc.managerOn
+			mw.spawn(agent, mgr.Session)
+			it := mw.ask(t, agent, "which flag?")
+			if it.Recipient != mgr.ID {
+				t.Fatalf("an agent's ask goes to its manager first, got %q", it.Recipient)
+			}
+			esc := mw.ask(t, mgr.Session, "may I drop the old API?")
+			if esc.Recipient != parent {
+				t.Fatalf("the manager's escalation is routed to %q, want the chief on the other host %q", esc.Recipient, parent)
+			}
+			for range 3 {
+				f.sync(t)
+			}
+			got := lastHanded(cw, chief.Session)
+			key := RemoteKey(tc.managerOn, esc.Key())
+			if tc.chiefGone {
+				if strings.Contains(got, "drop the old API") {
+					t.Errorf("a retired chief was handed the ask: %q", got)
+				}
+				back, err := mw.core.Store.Item(esc.Key())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if back.Recipient != Owner {
+					t.Errorf("an ask no chief can answer goes to the owner on its own host, recipient %q", back.Recipient)
+				}
+				return
+			}
+			if !strings.Contains(got, "drop the old API") || !strings.Contains(got, "ym item answer '"+key+"'") {
+				t.Errorf("chief on %s was handed %q; want the ask with its key %s as that host names it", tc.chiefOn, got, key)
+			}
+		})
+	}
+}
+
+func TestRelaysWaitOutAHostThatIsDownAndTakeEffectOnceWhenItIsBack(t *testing.T) {
+	f := newFleet(t)
+	chief := f.a.chief(t, "platform")
+	_, mgr := f.b.goal(t, "ship the fix", "/repo/app")
+	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
+		t.Fatal(err)
+	}
+	f.net.down["b"] = true
+	esc := f.b.ask(t, mgr.Session, "may I drop the old API?")
+	for range 3 {
+		f.sync(t)
+	}
+	if got := f.a.handedTo(chief.Session); len(got) != 0 {
+		t.Fatalf("chief heard %q while b was down", got)
+	}
+	pending, err := f.b.core.Store.PendingRelays()
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("b holds %d relays (%v), want the ask kept while a cannot reach it", len(pending), err)
+	}
+	f.net.down["b"], f.net.loseAcks = false, 1
+	for range 3 {
+		f.sync(t)
+	}
+	want := RemoteKey("b", esc.Key())
+	var heard int
+	for _, h := range f.a.handedTo(chief.Session) {
+		if strings.Contains(h, want) {
+			heard++
+		}
+	}
+	if heard != 1 {
+		t.Errorf("chief heard the ask %d times after b came back, want once: %q", heard, f.a.handedTo(chief.Session))
+	}
+	if pending, _ := f.b.core.Store.PendingRelays(); len(pending) != 0 {
+		t.Errorf("b still holds %d relays after a carried them", len(pending))
+	}
+}
+
+func TestARelayedCommandRunsOnTheHostItNames(t *testing.T) {
+	f := newFleet(t)
+	var ran [][]string
+	f.b.core.RunSelf = func(args ...string) (string, error) {
+		ran = append(ran, args)
+		return "", nil
+	}
+	if self, _ := f.b.core.Store.RelaySelf(); self.Courier != "a" || self.Name != "b" {
+		t.Fatalf("b learned %+v from a's sync, want to be named b by courier a", self)
+	}
+	out, err := f.b.core.RunOrRelay("c", "item", "answer", "#3", "yes")
+	if err != nil || !strings.Contains(out, "queued for c") {
+		t.Fatalf("RunOrRelay = %q, %v", out, err)
+	}
+	f.c.core.RunSelf = func(args ...string) (string, error) {
+		ran = append(ran, append([]string{"c"}, args...))
+		return "", nil
+	}
+	for range 3 {
+		f.sync(t)
+	}
+	if len(ran) != 1 || strings.Join(ran[0], " ") != "c item answer #3 yes" {
+		t.Errorf("ran %q, want b's answer run once on c", ran)
+	}
+}
+
+func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing.T) {
+	w := newOrgWorld(t)
+	if err := w.core.Store.setRelaySelf(RelaySelf{Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	chief := w.chief(t, "platform")
+	r := &fakeRemotes{boards: []RemoteBoard{{Host: "box", At: w.clock, Self: "box",
+		Sessions: []Live{{Session: Session{Harness: "claude", ID: "box-mgr-session", Status: Busy}, Project: "box-mgr-session", Remote: "box"}},
+		Managers: []Manager{
+			{ID: "mgr1", Role: RoleManager, Name: "ship it", GoalID: "goal1", ParentID: RemoteKey("a", chief.ID), Session: "box-mgr-session"},
+			{ID: "mgr2", Role: RoleManager, Name: "port it", GoalID: "goal2"},
+		},
+		Goals: []Goal{
+			{ID: "goal1", Ask: "ship it", ManagerID: "mgr1", State: GoalActive, LastMovedAt: w.clock},
+			{ID: "goal2", Ask: "port it", ManagerID: "mgr2", State: GoalStuck, Evidence: "nothing moved"},
+		},
+		ManagerSessions: map[string]string{"box-mgr-session": "mgr1"},
+		Standing:        map[string]string{"mgr1": StandMoving, "mgr2": StandStuck},
+	}}}
+	w.core.Remotes, w.core.ShowRemotes = r, true
+	b := w.board(t)
+	top, ok := b.Node(chief.ID)
+	if !ok || len(top.Children) != 1 || top.Children[0].Manager.ID != "box/mgr1" || top.Children[0].Manager.Host != "box" {
+		t.Fatalf("chief %s's reports = %+v, want box's manager under it", chief.ID, top.Children)
+	}
+	if top.Children[0].Live == nil || top.Children[0].Standing != StandMoving {
+		t.Errorf("box/mgr1 live %v standing %q, want its session and box's own reading", top.Children[0].Live, top.Children[0].Standing)
+	}
+	if n, ok := b.Node("box/mgr2"); !ok || n.Standing != StandStuck {
+		t.Errorf("box's unattached goal = %+v, want a root stuck by box's reading", n)
+	}
+	var queued []string
+	for _, n := range b.Needs {
+		if n.Goal != nil {
+			queued = append(queued, n.Goal.ID)
+		}
+	}
+	if !slices.Contains(queued, "box/goal2") {
+		t.Errorf("owner's queue has goals %v, want box's stuck goal", queued)
+	}
+	for _, act := range []struct {
+		do   func() error
+		want string
+	}{
+		{func() error { return w.core.AckGoal("box/goal2") }, "box goal ack goal2"},
+		{func() error { _, err := w.core.DropGoal("box/goal2"); return err }, "box goal drop goal2"},
+		{func() error { _, err := w.core.ReplaceManager(b, "box/mgr1"); return err }, "box goal relaunch mgr1"},
+		{func() error { _, err := w.core.Steer(b, []string{chief.ID}, true, true, "focus"); return err }, "box goal send --subtree mgr1 focus"},
+		{func() error { return w.core.Attach("box/mgr2", chief.ID) }, "box chief attach mgr2 a/" + chief.ID},
+		{func() error { return w.core.Attach("box/mgr1", "") }, "box chief detach mgr1"},
+	} {
+		r.ran = nil
+		if err := act.do(); err != nil {
+			t.Fatalf("%s: %v", act.want, err)
+		}
+		if len(r.ran) != 1 || strings.Join(r.ran[0], " ") != act.want {
+			t.Errorf("ran %q, want %q", r.ran, act.want)
+		}
+	}
+}

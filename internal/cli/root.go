@@ -43,6 +43,7 @@ func Wire(path string) (*core.Core, error) {
 		Ask:       health.Addressed,
 		StateDir:  filepath.Dir(path),
 		Notify:    desktopNotify,
+		RunSelf:   runSelf,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core, l.srv = c, srv
@@ -123,8 +124,8 @@ func NewRoot() *cobra.Command {
 		serveCmd(with),
 		docsCmd(with),
 		serviceCmd(),
-		goalCmd(with),
-		chiefCmd(with),
+		goalCmd(with, withHosts),
+		chiefCmd(with, withHosts),
 		itemCmd(with, routed),
 		phaseCmd(with),
 		vibeCmd(with),
@@ -152,6 +153,7 @@ func NewRoot() *cobra.Command {
 		healthCmd(),
 		limitsCmd(),
 		remoteCmd(),
+		relayCmd(with),
 	)
 	return root
 }

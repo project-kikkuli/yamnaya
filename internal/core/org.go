@@ -40,6 +40,8 @@ type Goal struct {
 	DoneAt      time.Time
 	// AckedAt is when the owner cleared the goal's done or stuck row from the queue.
 	AckedAt time.Time
+	// Host is the host the goal runs on when that is not this one.
+	Host string
 }
 
 // Manager is a long-lived session's persistent identity: the session it runs as changes when ym relaunches it, the manager does not.
@@ -63,6 +65,8 @@ type Manager struct {
 	LastError   string
 	Nudges      int
 	NudgedAt    time.Time
+	// Host is the host the manager runs on when that is not this one.
+	Host string
 }
 
 const orgSchema = `

@@ -41,7 +41,7 @@ func (c *Core) ForwardIdle(b Board) error {
 				return err
 			}
 		} else if to := b.Org.Recipient(key, b.parents); to != Owner {
-			if err := c.tell(b, b.Org.Managers[to].Session, idleText(*s), false); err != nil {
+			if err := c.tellManager(b, b.Org, to, idleText(*s)); err != nil {
 				return err
 			}
 		}
