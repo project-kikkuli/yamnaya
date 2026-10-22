@@ -32,6 +32,9 @@ const (
 	modeScreen
 	modeConfirm
 	modeItems
+	// modeGoal shows one goal: its manager, brief and agents; modeChief one chief and its reports.
+	modeGoal
+	modeChief
 )
 
 type inputKind int
@@ -49,10 +52,16 @@ const (
 	inPhases
 	inVibe
 	inWaitAnswer
+	inGoal
+	inChief
+	inAttach
+	inSteer
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
+	// node is a goal's manager or a chief.
+	node    *core.Node
 	need    *core.Need
 	repo    *core.Repo
 	project *core.Project
@@ -69,11 +78,25 @@ type frame struct {
 	mode                      mode
 	cursor                    int
 	detail, sess, agent, repo string
+	goal, chief               string
 	scroll                    int
 }
 
 type Model struct {
-	alpine    alpine
+	peaks mountains
+	// goal and chief are the manager ids the goal and chief views show.
+	goal, chief string
+	// picked are the managers and chiefs space selected; s sends to all of them.
+	picked map[string]bool
+	// unfolded are the queue rows of sessions whose folded asks are listed.
+	unfolded map[string]bool
+	byRepo   bool
+	// forGoal sends the repository picker on to a goal instead of a session.
+	forGoal   bool
+	inPicks   []string
+	steer     []string
+	subtree   bool
+	openURL   func(string) error
 	page      *viewPage
 	core      *core.Core
 	host      string
@@ -130,7 +153,7 @@ type Model struct {
 }
 
 func New(c *core.Core) Model {
-	m := Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second}
+	m := Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -197,12 +220,12 @@ func (m Model) tick() tea.Cmd {
 	return tea.Tick(m.interval, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(true), alpineTick()) }
+func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(true), mountainTick()) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(alpineFrame); ok {
-		m.alpine.advance()
-		return m, alpineTick()
+	if _, ok := msg.(mountainFrame); ok {
+		m.peaks.frame++
+		return m, mountainTick()
 	}
 	m.page = nil
 	next, cmd := m.update(msg)
@@ -237,7 +260,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			m.alpine.observe(msg.board)
 			m.board, m.loaded, m.err = msg.board, true, nil
 		}
 		if m.listMode() == modeItems {
@@ -295,6 +317,10 @@ func (m *Model) follow(key string) {
 
 func rowKey(r row) string {
 	switch {
+	case r.node != nil && r.session != nil:
+		return "node:" + r.node.Manager.ID + "/" + r.session.Key()
+	case r.node != nil:
+		return "node:" + r.node.Manager.ID
 	case r.item != nil:
 		return "item:" + r.item.Key()
 	case r.member != nil:
@@ -328,6 +354,10 @@ func (m Model) rows() []row {
 	switch m.listMode() {
 	case modeAgent:
 		return nil
+	case modeGoal:
+		return m.goalRows()
+	case modeChief:
+		return m.chiefRows()
 	case modeItems:
 		for i := range m.items {
 			out = append(out, row{item: &m.items[i]})
@@ -373,12 +403,7 @@ func (m Model) rows() []row {
 			out = append(out, row{project: &r.Missions[i], repo: &r})
 		}
 	default:
-		for i := range m.board.Needs {
-			n := &m.board.Needs[i]
-			if m.matches(m.projectName(n.Project), needText(*n)) {
-				out = append(out, row{need: n, item: n.Item, session: n.Session})
-			}
-		}
+		out = append(out, m.queueRows()...)
 		if len(m.board.Stale) > 0 {
 			out = append(out, row{stale: true})
 			for i := range m.board.Stale {
@@ -388,11 +413,15 @@ func (m Model) rows() []row {
 				}
 			}
 		}
+		out = append(out, m.treeRows()...)
 		for i := range m.board.Repos {
 			r := &m.board.Repos[i]
 			all := m.matches(r.Name)
 			var missions []row
 			for j := range r.Missions {
+				if r.Missions[j].Manager != "" {
+					continue
+				}
 				if all || m.matches(r.Missions[j].Name) {
 					missions = append(missions, row{project: &r.Missions[j], repo: r})
 				}
@@ -547,9 +576,12 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.message = ""
+	if next, cmd, handled := m.goalKey(k); handled {
+		return next, cmd
+	}
 	switch k.String() {
 	case "A":
-		m.alpine.hidden = !m.alpine.hidden
+		m.peaks.hidden = !m.peaks.hidden
 		return m, nil
 	case "q":
 		if m.mode == modeList {
@@ -623,23 +655,6 @@ func (m Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.push(modeItems)
 		m.loadItems()
 		return m, nil
-	case "n":
-		if m.core.Launches == nil {
-			m.message = "ym's launcher is unavailable"
-			return m, nil
-		}
-		r, _ := m.selected()
-		m.newL = core.NewLaunch{Harness: "claude", Repo: core.MainCheckout(m.repoOf(r))}
-		m.startInput(inNew, "", "", "", false)
-		return m, nil
-	case "N":
-		if m.core.Launches == nil {
-			m.message = "ym's launcher is unavailable"
-			return m, nil
-		}
-		m.newL = core.NewLaunch{Harness: "claude"}
-		m.openRepoPicker()
-		return m, m.scanRepos()
 	case "/":
 		if m.mode == modeList {
 			m.startInput(inFilter, "", "", m.filter, false)
@@ -911,6 +926,10 @@ func (m Model) killable(r row) *core.Live {
 func (m Model) repoOf(r row) string {
 	key := ""
 	switch {
+	case r.node != nil:
+		key = r.node.Manager.Repo
+	case r.need != nil && r.need.Goal != nil:
+		key = r.need.Goal.Repo
 	case r.dormant != nil:
 		key = r.dormant.RepoKey
 	case r.session != nil:
@@ -967,7 +986,7 @@ func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
-	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, scroll: m.scrollY})
+	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, goal: m.goal, chief: m.chief, scroll: m.scrollY})
 	m.mode, m.cursor = to, 0
 }
 
@@ -975,7 +994,7 @@ func (m *Model) pop() {
 	f := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
 	m.mode, m.cursor = f.mode, f.cursor
-	m.detail, m.sess, m.agent, m.repo = f.detail, f.sess, f.agent, f.repo
+	m.detail, m.sess, m.agent, m.repo, m.goal, m.chief = f.detail, f.sess, f.agent, f.repo, f.goal, f.chief
 	m.scrollY = f.scroll
 	m.clamp()
 }
@@ -1044,8 +1063,11 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyTab:
-		if m.inKind == inNew || m.inKind == inNewRepo {
+		if (m.inKind == inNew || m.inKind == inNewRepo) && !m.forGoal {
 			m.newL.Harness = core.Other(m.newL.Harness)
+		}
+		if m.inKind == inSteer && m.steerHasChief() {
+			m.subtree = !m.subtree
 		}
 		return m, nil
 	case tea.KeyEnter:
@@ -1054,6 +1076,8 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.inKind {
 		case inAdopt:
 			return m.adopt(m.inItem)
+		case inGoal, inChief, inAttach, inSteer:
+			return m.goalInput(text)
 		case inSend:
 			if text == "" {
 				return m, nil
@@ -1126,7 +1150,11 @@ func (m Model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.newL.Repo = repo
-			m.startInput(inNew, "", "", "", false)
+			if m.forGoal {
+				m.startInput(inGoal, "", "", "", false)
+			} else {
+				m.startInput(inNew, "", "", "", false)
+			}
 		case inPhases:
 			var names []string
 			for _, n := range strings.Split(text, ",") {

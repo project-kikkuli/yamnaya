@@ -19,16 +19,12 @@ func (m Model) View() string {
 		prepared := m.prepareView()
 		page = &prepared
 	}
-	return m.paintView(*page)
+	return m.paint(*page)
 }
 
 func (m Model) prepareView() viewPage {
-	right := m.sceneWidth()
-	if right > 0 {
-		right += sceneGap
-	}
 	bodyModel := m
-	bodyModel.width = max(20, m.width-right)
+	bodyModel.width = m.tableWidth()
 	var body viewPage
 	switch m.mode {
 	case modeHelp:
@@ -57,52 +53,47 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.agentView()
 		case modeItems:
 			body = bodyModel.itemsView()
+		case modeGoal:
+			body = bodyModel.goalView()
+		case modeChief:
+			body = bodyModel.chiefView()
 		default:
 			body = bodyModel.listView()
 		}
 	}
-	sky := m.skylineHeight()
-	var lines []viewLine
-	for y := range sky {
-		lines = append(lines, viewLine{scenery: 1, world: y})
-	}
-	if sky > 0 {
-		lines = append(lines, viewLine{})
-	}
-	lines = append(lines, textPage(m.header()+"\n", "").lines...)
+	lines := textPage(bodyModel.header()+"\n", "").lines
 	top := len(lines)
 	for len(body.lines) > 0 && body.lines[len(body.lines)-1].text == "" {
 		body.lines = body.lines[:len(body.lines)-1]
 	}
 	lines = append(lines, body.lines...)
 	var foot []viewLine
-	for _, line := range m.footer() {
-		foot = append(foot, textPage(ansi.Wrap(line, max(20, m.width-1), " "), "").lines...)
+	for _, line := range bodyModel.footer() {
+		foot = append(foot, textPage(ansi.Wrap(line, max(20, bodyModel.width-1), " "), "").lines...)
 	}
-	room := max(1, m.height-len(foot))
+	height := m.height
+	if m.shown() {
+		height = max(12, m.height-m.height/4)
+	}
+	room := max(1, height-len(foot))
 	if (m.mode == modeScreen || m.mode == modeAgent) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
 		lines = m.scroll(lines, room, top)
 	}
-	layout := m.sceneLayout(top, room, len(lines))
-	for len(lines) < room {
+	if !m.shown() {
+		for len(lines) < room {
+			lines = append(lines, viewLine{})
+		}
+	} else {
 		lines = append(lines, viewLine{})
-	}
-	for y := range layout.lakeHeight {
-		lines[layout.lakeStart+y].scenery = 2
-		lines[layout.lakeStart+y].world = y
 	}
 	lines = append(lines, foot...)
 	for i := range lines {
-		width := m.width
-		if i >= top && i < len(lines)-len(foot) {
-			width -= right
-		}
-		lines[i].text = ansi.Truncate(lines[i].text, max(1, width), "…")
+		lines[i].text = ansi.Truncate(lines[i].text, max(1, bodyModel.width), "…")
 	}
-	return viewPage{lines: lines, layout: layout}
+	return viewPage{lines: lines}
 }
 
 func (m Model) scroll(lines []viewLine, room, top int) []viewLine {
@@ -162,9 +153,18 @@ func (m Model) footer() []string {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
-			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: "new " + m.newL.Harness + " session, repository",
-			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)"}[m.inKind]
-		if m.inKind == inNew || m.inKind == inNewRepo {
+			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
+			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
+			inGoal: "new goal in " + repo + ", in your words", inChief: m.inLabel + ", its name", inAttach: "put " + m.inLabel + " under chief (empty: you)",
+			inSteer: "send to " + m.inLabel}[m.inKind]
+		if m.inKind == inSteer && m.steerHasChief() {
+			if m.subtree {
+				label += pal.dim.Render(" and everyone below [tab: just them]")
+			} else {
+				label += pal.dim.Render(" [tab: whole subtree]")
+			}
+		}
+		if m.inKind == inNew || (m.inKind == inNewRepo && !m.forGoal) {
 			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
 		}
 		if m.fresh {
@@ -219,15 +219,19 @@ func (m Model) hints() string {
 	case modeMerge:
 		return "↑↓ choose mission   enter merge into it   esc cancel"
 	case modeRepo:
-		return controls + "   ↑↓ move   enter open mission   o go to session   O beside   n new   N new in any repo   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
+		return controls + "   ↑↓ move   enter open mission   o go to session   O beside   n goal   + session   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
 	case modeDetail:
-		return controls + "   ↑↓ move   enter open session, agent or item   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return controls + "   ↑↓ move   enter open session, agent or item   o go to session   O beside   n goal   + session   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
 	case modeSession:
-		return controls + "   ↑↓ move   enter open agent or item   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return controls + "   ↑↓ move   enter open agent or item   o go to session   O beside   n goal   + session   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
 	case modeAgent:
 		return controls + "   ↑↓ scroll   space/b page   o go to its session   O beside   esc back"
+	case modeGoal:
+		return controls + "   ↑↓ move   enter open session   o go to session   B brief   V artifact   s send   R relaunch   esc back   ? help"
+	case modeChief:
+		return "↑↓ move   enter open   space select   s send   B brief   R relaunch   c chief   C new chief   esc back   ? help"
 	}
-	return controls + "   ↑↓ move   enter expand   w reply   o go to session   O beside   n new   N new in any repo   a answer   g go ahead   l later   x dismiss   p/P phase   v vibe   / filter   I items   U usage   E launched   h health   A scenery   ? help   q quit"
+	return controls + "   ↑↓ move   enter open   n goal   N goal in any repo   + session   space select   B brief   a answer   g go ahead   x dismiss   w reply   o go to session   / filter   I items   U usage   h health   A mountains   ? help   q quit"
 }
 
 func (m Model) mark(i int) string {
@@ -241,7 +245,7 @@ func (m Model) listView() viewPage {
 	if !m.loaded {
 		return viewPage{}
 	}
-	b := viewPage{place: ""}
+	b := viewPage{}
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
@@ -253,12 +257,24 @@ func (m Model) listView() viewPage {
 	if needs == 0 {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
-	repos := false
+	goals, repos := false, false
 	cols := m.missionCols(2)
 	for i, r := range rows {
+		if r.node != nil && !goals {
+			goals = true
+			title := " GOALS"
+			if m.byRepo {
+				title += pal.dim.Render("  by repo, t for the tree")
+			}
+			b.WriteString("\n" + pal.bold.Render(title) + "\n")
+		}
 		if (r.repo != nil || r.project != nil) && !repos {
 			repos = true
-			b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n")
+			if !goals {
+				goals = true
+				b.WriteString("\n" + pal.bold.Render(" GOALS") + "\n" + pal.dim.Render("   none; n hands a goal to a new manager") + "\n")
+			}
+			b.WriteString("\n" + pal.bold.Render(" SESSIONS YOU STARTED") + "\n")
 			if cols.bar > 0 {
 				b.WriteString(pal.dim.Render("   "+progressLegend) + "\n")
 			}
@@ -270,19 +286,27 @@ func (m Model) listView() viewPage {
 				line += pal.dim.Render("   enter expand   x dismiss all")
 			}
 			b.WriteString(line + "\n")
+		case r.node != nil:
+			b.WriteString(m.nodeLines(i, *r.node))
 		case r.need != nil:
-			b.place = "m:" + r.need.Project
-			b.WriteString(m.needLines(i, *r.need))
+			if text, ok := m.queueLines(i, *r.need); ok {
+				b.WriteString(text)
+			} else {
+				b.WriteString(m.needLines(i, *r.need))
+			}
+		case r.item != nil:
+			b.WriteString(m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)}))
 		case r.project == nil:
-			b.place = "r:" + r.repo.Key
 			b.WriteString(m.repoLine(i, *r.repo, cols))
 		default:
-			b.place = "m:" + r.project.Key
 			b.WriteString(m.missionLine(i, *r.project, cols))
 		}
 	}
+	if !goals {
+		b.WriteString("\n" + pal.bold.Render(" GOALS") + "\n" + pal.dim.Render("   none; n hands a goal to a new manager") + "\n")
+	}
 	if !repos {
-		b.WriteString("\n" + pal.bold.Render(" REPOS AND MISSIONS") + "\n" + pal.dim.Render("   no sessions found") + "\n")
+		b.WriteString("\n" + pal.bold.Render(" SESSIONS YOU STARTED") + "\n" + pal.dim.Render("   none") + "\n")
 	}
 	return b
 }
@@ -554,6 +578,10 @@ func (m Model) needLines(i int, n core.Need) string {
 	}
 	if it.Kind == core.KindGo {
 		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
+	}
+	if more := len(n.Asks) - 1; more > 0 {
+		q += pal.dim.Render(fmt.Sprintf("  +%d more", more))
+		keys = "enter list all   " + strings.TrimPrefix(keys, "enter expand   ")
 	}
 	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + q + "\n")
 	var meta []string
@@ -1111,16 +1139,34 @@ func (m Model) pickView() string {
 	return b.String()
 }
 
-const Help = ` ym shows every Claude Code and Codex session and what needs you.
+const Help = ` ym runs your work like a company: you hand a goal to a manager, the manager runs agents for it, and
+ only what truly needs you reaches you.
 
- NEEDS YOU lists permission prompts first, then open items, most blocking first, then idle sessions
- whose last reply asks you with no item filed ("waiting:", the first question it asks).
- REPOS AND MISSIONS groups missions by repository; every worktree of a repo counts as the repo.
- A mission is a session plus the sessions it spawned. enter drills down:
+ NEEDS YOU is your queue: goals that finished or got stuck, escalations no manager or chief could settle,
+ pull requests ready to merge in repos where managers may not merge, reviews GitHub asks of you
+ personally, permission prompts, and one row per session you started that asks you something.
+ GOALS is the goal tree: a chief collapses to one row with its reports' worst state; enter drills in.
+ A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), down (its manager's
+ session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), or done.
+ SESSIONS YOU STARTED groups the sessions no manager runs by repository. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
+ Agents a manager starts report to it: their ym item add reaches the manager's session, not you.
 
    ↑ ↓ or k j   move
-   A            hide or show scenery
+   A            hide or show the mountains
+   n            new goal in the selected row's repository: type it in your words; a manager starts on it
+   N            new goal in any repository: pick it first, then the goal
+   +            new session in the selected row's repository, run by you, no manager: type the prompt;
+                the worktree is named from it; tab switches claude and codex
+   space        select a goal or chief row; s and c then act on every selected one
+   s            on a goal or chief: send it your message (every selected one); tab widens a chief's to its
+                whole subtree. On a session: send it a follow-up, typed in on ym's server even mid-turn
+   B            show the goal's or chief's brief, the markdown page its manager keeps
+   V            open the artifact a manager registered as its richer brief
+   R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
+   C            new chief over the selected goals and chiefs
+   c            put the goal or chief (and every selected one) under a chief: type its id, empty for you
+   t            show goals as the chief tree or by repository
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
@@ -1128,24 +1174,19 @@ const Help = ` ym shows every Claude Code and Codex session and what needs you.
                 it there and resumes it on its own server
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
                 view; needs ym running inside tmux
-   s            send the session a follow-up: typed in on ym's server even mid-turn, held while a
-                permission prompt shows; other sessions read it from ym item inbox
    a            answer an item; an idle agent in tmux gets it typed in, others on their next turn;
                 on a waiting session, send the answer as your message, the same way s does, and clear the row
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    l            later: snooze the item
    u            reopen a snoozed item (detail)
-   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again
+   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again;
+                on a done or stuck goal, a merge or a review, clear it from the queue
    w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
    S            split a merged mission back out
-   n            new session in the selected row's repository (else ym's own directory): type the
-                prompt; the worktree is named from it; tab switches claude and codex
-   N            new session in any repository: pick it first, then the prompt; the picker lists
-                recently picked repos, then every repo under ~/.config/wt-reap/roots (or ~/dev); typing
-                filters by name or path, ↑↓ and enter pick, and a path starting with / or ~ is used as typed
-   K            kill the session's claude or codex process with SIGTERM (asks y/n); its terminal,
+   K            on a goal: drop it, so ym stops supervising it; on a chief: retire it (asks y/n)
+                on a session: kill its claude or codex process with SIGTERM (asks y/n); its terminal,
                 worktree and transcript stay, and a session ym launched shows exited, ready to revive
    L            land a session ym launched: end it and remove its worktree once its branch is clean
                 and merged or pushed, deleting the branch when merged into origin (asks y/n); on an exited

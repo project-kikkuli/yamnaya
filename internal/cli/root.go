@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -37,6 +38,7 @@ func Wire(path string) (*core.Core, error) {
 		Port:      port,
 		Roots:     core.RepoRoots,
 		Ask:       health.Ask,
+		StateDir:  filepath.Dir(path),
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core = c
@@ -101,6 +103,8 @@ func NewRoot() *cobra.Command {
 		handoffRunCmd(with),
 		serveCmd(with),
 		serviceCmd(),
+		goalCmd(with),
+		chiefCmd(with),
 		itemCmd(with),
 		phaseCmd(with),
 		vibeCmd(with),

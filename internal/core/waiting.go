@@ -86,6 +86,9 @@ func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
 		key := s.Key()
+		if _, managed := b.Org.Managed(key, b.parents); managed {
+			continue
+		}
 		if covered[key] || s.Status != Idle || s.Prompt != nil || s.Result == "" || dismissed[key+"\x00"+replyKey(s.Result)] {
 			continue
 		}

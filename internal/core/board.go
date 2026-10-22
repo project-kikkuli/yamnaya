@@ -38,6 +38,8 @@ type Core struct {
 	KillGrace      time.Duration
 	BackgroundSend func(Live, string) error
 	KeepAlive      func() error
+	// StateDir holds ym's files beside its database, such as goal briefs.
+	StateDir string
 
 	gc gitCache
 }
@@ -89,6 +91,8 @@ type Project struct {
 	Dormant []Dormant
 	// Vibes are the agents' reads of the mission, newest first.
 	Vibes []Vibe
+	// Manager is the manager whose tree the mission's sessions belong to; empty for a mission the owner started.
+	Manager string
 }
 
 // Shown reports whether the mission has a session running or one ym can revive.
@@ -113,6 +117,15 @@ type Need struct {
 	Project string
 	// Reply is the waiting session's last reply and Line the first question it asks.
 	Reply, Line string
+	// Asks are every open owner item of a session no manager runs, folded into this one row; Item is the oldest.
+	Asks []Item
+	// Goal is a goal that finished or got stuck.
+	Goal *Goal
+	// PR is a pull request ready to merge that no manager may merge; Manager is the manager whose agent opened it, if any.
+	PR      *PR
+	Manager string
+	// Review is a pull request GitHub asks the owner to review.
+	Review *ReviewRequest
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -123,6 +136,9 @@ type Repo struct {
 }
 
 type Board struct {
+	// Org is every manager, chief and goal; Tree arranges them chiefs over managers.
+	Org      Org
+	Tree     []Node
 	Launched []Launched
 	At       time.Time
 	Sessions []Live
@@ -348,14 +364,18 @@ func (c *Core) Board() (Board, error) {
 	if err := c.projectSessionStops(&b); err != nil {
 		return b, err
 	}
+	if b.Org, err = c.LoadOrg(); err != nil {
+		return b, err
+	}
+	c.tree(&b, b.Org)
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Stale = needs(b)
 	wait, err := c.waiting(b, b.Needs)
 	if err != nil {
 		return b, err
 	}
-	b.Needs = append(b.Needs, wait...)
-	return b, nil
+	b.Needs = collapse(append(b.Needs, wait...), b.Org, b)
+	return b, c.queue(&b, b.Org)
 }
 
 // place fills each session's repository and its crew's worktrees, asking git once per directory at a time.
@@ -742,7 +762,7 @@ func needs(b Board) (live, stale []Need) {
 	for i := range b.Projects {
 		p := &b.Projects[i]
 		for j := range p.Items {
-			if p.Items[j].State == ItemOpen {
+			if p.Items[j].State == ItemOpen && p.Items[j].Recipient == Owner {
 				n := Need{Item: &p.Items[j], Project: p.Key}
 				if len(p.Sessions) > 0 {
 					items = append(items, n)

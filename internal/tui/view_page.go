@@ -3,9 +3,8 @@ package tui
 import "strings"
 
 type viewPage struct {
-	lines  []viewLine
-	place  string
-	layout alpineLayout
+	lines []viewLine
+	place string
 }
 
 func (p *viewPage) WriteString(text string) (int, error) {

@@ -183,7 +183,10 @@ func (l launcher) Start(n core.NewLaunch) (string, error) {
 	case codex.Name:
 		rec.Harness = codex.Name
 	case "", claude.Name:
-		rec.Session = uuid.NewString()
+		rec.Session = n.Session
+		if rec.Session == "" {
+			rec.Session = uuid.NewString()
+		}
 	default:
 		return "", fmt.Errorf("unknown harness %q", n.Harness)
 	}

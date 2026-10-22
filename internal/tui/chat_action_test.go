@@ -14,6 +14,7 @@ func TestCapturedChatActionShowsWhereToActAndOpensItsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = refresh(t, m)
+	m = press(t, to(t, m, func(r row) bool { return r.need != nil && r.need.Item != nil && r.need.Item.Session == "lead" }), "enter")
 	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Key() == it.Key() })
 	if !strings.Contains(m.View(), "action in chat") || !strings.Contains(strings.Join(m.footer(), "\n"), "o open chat") {
 		t.Fatalf("native destination unclear: %s", m.View())

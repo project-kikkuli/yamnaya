@@ -120,14 +120,14 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 		keys  []string
 		check func(t *testing.T, f fixture) string
 	}{
-		{"n starts a session once the prompt is typed, tab picks codex", nil, []string{"n", "fix", " ", "login", "tab", "enter"}, func(t *testing.T, f fixture) string {
+		{"+ starts a session once the prompt is typed, tab picks codex", nil, []string{"+", "fix", " ", "login", "tab", "enter"}, func(t *testing.T, f fixture) string {
 			want := core.NewLaunch{Prompt: "fix login", Harness: "codex", Repo: core.MainCheckout(cwd)}
 			if len(f.l.started) != 1 || f.l.started[0] != want || !strings.HasPrefix(f.m.message, "started codex") {
 				return "started " + fmtLaunches(f.l.started) + " message " + f.m.message
 			}
 			return ""
 		}},
-		{"n with esc starts nothing", nil, []string{"n", "fix", "esc"}, func(t *testing.T, f fixture) string {
+		{"+ with esc starts nothing", nil, []string{"+", "fix", "esc"}, func(t *testing.T, f fixture) string {
 			if len(f.l.started) != 0 {
 				return "started " + fmtLaunches(f.l.started)
 			}
@@ -304,12 +304,11 @@ func TestNewStartsInTheSelectedRowsRepoAndShowsFailuresInline(t *testing.T) {
 		repo    string
 		message string
 	}{
-		{"mission row", mission("lead"), []string{"n", "go", "enter"}, nil, "/src/app", "started claude "},
-		{"repo row", func(r row) bool { return r.repo != nil && r.project == nil }, []string{"n", "go", "enter"}, nil, "/src/app", "started claude "},
-		{"N with a typed repo", mission("lead"), []string{"N", "/tmp", "enter", "go", "enter"}, nil, "/tmp", "started claude "},
-		{"permission prompt", func(r row) bool { return r.need != nil && r.item == nil }, []string{"n", "go", "enter"}, nil, "/src/app", "started claude "},
-		{"item with no repo", func(r row) bool { return r.need != nil && r.item != nil }, []string{"n", "go", "enter"}, nil, core.MainCheckout(cwd), "started claude "},
-		{"not a git repo", mission("lead"), []string{"n", "go", "enter"}, errors.New("/src/app is not a git repository"), "/src/app", "error: /src/app is not a git repository"},
+		{"mission row", mission("lead"), []string{"+", "go", "enter"}, nil, "/src/app", "started claude "},
+		{"repo row", func(r row) bool { return r.repo != nil && r.project == nil }, []string{"+", "go", "enter"}, nil, "/src/app", "started claude "},
+		{"permission prompt", func(r row) bool { return r.need != nil && r.item == nil }, []string{"+", "go", "enter"}, nil, "/src/app", "started claude "},
+		{"item with no repo", func(r row) bool { return r.need != nil && r.item != nil }, []string{"+", "go", "enter"}, nil, core.MainCheckout(cwd), "started claude "},
+		{"not a git repo", mission("lead"), []string{"+", "go", "enter"}, errors.New("/src/app is not a git repository"), "/src/app", "error: /src/app is not a git repository"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, _ := setup(t)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/intake"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 	"github.com/spf13/cobra"
@@ -48,8 +50,12 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if !once {
 			go monitorWorkService(ctx, cancel, dir, upgraded)
 		}
+		reviews := reviewPoll{fetch: intake.New().Requests, every: 5 * time.Minute}
 		for {
 			err := serveCycle(e.core)
+			if discover {
+				err = errors.Join(err, reviews.poll(ctx, e.core))
+			}
 			message := ""
 			if err != nil {
 				message = err.Error()
@@ -104,7 +110,33 @@ func serveCycle(c *core.Core) error {
 	if err = reconcileHandoffs(c, b); err != nil {
 		failures = append(failures, err)
 	}
+	if err = c.Supervise(b); err != nil {
+		failures = append(failures, err)
+	}
 	return errors.Join(failures...)
+}
+
+// reviewPoll asks GitHub for the owner's personal review requests at most once per every.
+type reviewPoll struct {
+	fetch func(context.Context) ([]intake.Request, error)
+	every time.Duration
+	last  time.Time
+}
+
+func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
+	if time.Since(r.last) < r.every {
+		return nil
+	}
+	r.last = time.Now()
+	reqs, err := r.fetch(ctx)
+	if err != nil {
+		return err
+	}
+	out := make([]core.ReviewRequest, len(reqs))
+	for i, q := range reqs {
+		out[i] = core.ReviewRequest{URL: q.URL, Updated: q.Updated}
+	}
+	return c.Store.SyncReviews(out)
 }
 
 func ensureWorkService() error {

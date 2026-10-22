@@ -204,15 +204,6 @@ func (c *Core) Focus(t Target) error {
 	return err
 }
 
-// AddItem files an item against a session, in the session's scope unless it names one.
-func (c *Core) AddItem(it Item) (Item, error) {
-	if it.Scope == "" {
-		b, _ := c.Board()
-		it.Scope = c.ScopeOf(b, it.Session)
-	}
-	return c.Store.AddItem(it)
-}
-
 // Delivery says how an answer reached, or will reach, its agent.
 type Delivery int
 
@@ -275,10 +266,14 @@ func (c *Core) Redeliver(b Board) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return 0, err
+	}
 	bySession := map[string][]Item{}
 	var order []string
 	for _, it := range items {
-		s, ok := b.Session(c.Resolve(it.Session))
+		s, ok := b.Session(c.carrier(o, it.Session))
 		if !ok {
 			continue
 		}
@@ -302,6 +297,9 @@ func (c *Core) Reopen(id string) (Item, error) { return c.Store.Transition(id, I
 
 // deliver hands the items' notices to session as one message, claiming each first so no other delivery repeats them.
 func (c *Core) deliver(b Board, session string, items []Item) Delivery {
+	if o, err := c.LoadOrg(); err == nil {
+		session = c.carrier(o, session)
+	}
 	s, ok := b.Session(c.Resolve(session))
 	if !ok || len(s.Copies) > 1 {
 		return Queued

@@ -30,7 +30,7 @@ func TestNewSkipsThePickerAndBigNOpensIt(t *testing.T) {
 	}
 }
 
-func TestBigNPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
+func TestBigNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	for _, c := range []struct {
 		name   string
@@ -96,7 +96,7 @@ func TestBigNPicksItsRepositoryFromTheScannedRoots(t *testing.T) {
 			if !filepath.IsAbs(want) {
 				want = filepath.Join(root, want)
 			}
-			if len(l.started) != 1 || l.started[0].Repo != want || l.started[0].Prompt != "go" {
+			if len(l.started) != 1 || l.started[0].Repo != want || !strings.Contains(l.started[0].Prompt, "\ngo\n") {
 				t.Fatalf("started %s, want %s", fmtLaunches(l.started), want)
 			}
 			recent, _ := k.Store.RecentRepos()
@@ -122,7 +122,7 @@ func TestPickerScansOnceAndShowsWhatItFoundSoFar(t *testing.T) {
 	}
 }
 
-func TestBigNPicksTheRepositoryFirst(t *testing.T) {
+func TestBigNPicksTheGoalsRepositoryFirst(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		keys   []string
@@ -133,7 +133,6 @@ func TestBigNPicksTheRepositoryFirst(t *testing.T) {
 	}{
 		{"pick then prompt launches", []string{"enter", "go", "enter"}, "api", "go", "claude", true},
 		{"filter picks another repo", []string{"we", "enter", "go", "enter"}, "web", "go", "claude", true},
-		{"tab toggles at the prompt", []string{"enter", "go", "tab", "enter"}, "api", "go", "codex", true},
 		{"esc at the picker", []string{"esc"}, "", "", "", false},
 		{"esc at the prompt", []string{"enter", "go", "esc"}, "", "", "", false},
 	} {
@@ -175,7 +174,7 @@ func TestBigNPicksTheRepositoryFirst(t *testing.T) {
 			}
 			got := l.started[0]
 			real, _ := filepath.EvalSymlinks(root)
-			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || got.Prompt != c.prompt || got.Harness != c.harn || got.Slug != "" {
+			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || !strings.Contains(got.Prompt, "\n"+c.prompt+"\n") || got.Harness != c.harn || !strings.HasPrefix(got.Slug, "mgr1-") {
 				t.Fatalf("started %s", fmtLaunches(l.started))
 			}
 		})

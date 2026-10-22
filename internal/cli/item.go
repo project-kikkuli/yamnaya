@@ -139,6 +139,11 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), added.ID)
+			if added.Recipient != core.Owner {
+				if o, err := e.core.LoadOrg(); err == nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s, who owns the answer; it comes back through ym item inbox\n", o.Managers[added.Recipient].Label())
+				}
+			}
 			return nil
 		}),
 	}
@@ -155,15 +160,36 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 }
 
 func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var all, asJSON, everywhere bool
+	var all, asJSON, everywhere, toMe bool
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List open items of the calling session's project (--all for every state, --everywhere for every project)",
+		Short: "List open items of the calling session's project (--all for every state, --everywhere for every project, --to-me for the asks routed to the calling manager)",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			b, err := e.core.Board()
 			if err != nil {
 				return err
+			}
+			if toMe {
+				c, err := e.caller()
+				if err != nil {
+					return err
+				}
+				m, ok := b.Org.ManagerOf(e.core.Resolve(c.Session))
+				if !ok {
+					return fmt.Errorf("session %s is not a manager or chief", core.Short(c.Session))
+				}
+				items, err := e.core.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
+				if err != nil {
+					return err
+				}
+				mine := []core.Item{}
+				for _, it := range items {
+					if it.Recipient == m.ID {
+						mine = append(mine, it)
+					}
+				}
+				return printItems(cmd.OutOrStdout(), mine, asJSON)
 			}
 			key := ""
 			if !everywhere {
@@ -180,6 +206,7 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "include answered, dismissed and snoozed items")
 	cmd.Flags().BoolVar(&everywhere, "everywhere", false, "items of every project")
+	cmd.Flags().BoolVar(&toMe, "to-me", false, "open items routed to the calling manager or chief")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }

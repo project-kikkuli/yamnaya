@@ -62,8 +62,3 @@ func (c *Core) captureFile(file handoff.File) error {
 	}
 	return c.Store.Handoffs.Ingest(file.Path, identity, next, events)
 }
-
-// AddHandoffItem files the owner item a captured handoff asks for, once per key.
-func (c *Core) AddHandoffItem(key string, it Item) (Item, error) {
-	return c.Store.addItem(it, key)
-}

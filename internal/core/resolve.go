@@ -32,6 +32,15 @@ func (c *Core) successor(id, near string) string {
 func (c *Core) carries(session string) func(id string) bool {
 	now := c.resolve(session, session)
 	known := map[string]bool{session: true, now: true}
+	if o, err := c.LoadOrg(); err == nil {
+		if m, ok := o.ManagerOf(now); ok {
+			for past, id := range o.Sessions {
+				if id == m.ID {
+					known[past] = true
+				}
+			}
+		}
+	}
 	return func(id string) bool {
 		got, ok := known[id]
 		if !ok {

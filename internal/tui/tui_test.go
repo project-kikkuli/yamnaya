@@ -99,9 +99,9 @@ func setup(t *testing.T) (Model, *core.Core, *host) {
 		{PID: 3, PPID: 0, TTY: "/dev/c", Args: []string{"claude"}},
 	}
 	c := &core.Core{Store: st, Harnesses: []core.Harness{harness{sessions}}, Hosts: []core.Host{h},
-		Procs: func() ([]proc.Proc, error) { return procs, nil }}
-	for _, q := range []string{"Ship it?", "Rename the flag?"} {
-		if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: q, Rec: "yes", Session: "lead"}); err != nil {
+		Procs: func() ([]proc.Proc, error) { return procs, nil }, StateDir: t.TempDir()}
+	for _, it := range []struct{ q, session string }{{"Ship it?", "lead"}, {"Rename the flag?", "twin"}} {
+		if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: it.q, Rec: "yes", Session: it.session}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -559,7 +559,7 @@ func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 	if _, err := c.AddItem(core.Item{Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
 		t.Fatal(err)
 	}
-	m = press(t, refresh(t, m), "down", "down", "down", "enter", "enter")
+	m = press(t, refresh(t, m), "down", "down", "enter", "enter")
 	v := m.View()
 	if m.mode != modeDetail || !strings.Contains(v, "other:D1") || strings.Count(v, " D1 ") != 1 {
 		t.Fatalf("mission items from two projects should name the project where IDs repeat:\n%s", v)

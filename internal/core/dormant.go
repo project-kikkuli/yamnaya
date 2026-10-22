@@ -77,6 +77,8 @@ type NewLaunch struct {
 	Slug string
 	// Parent is the session that spawned this one, or empty.
 	Parent string
+	// Session is the id a Claude session starts with; empty picks a fresh one.
+	Session string
 }
 
 // Launched is one session ym launched and how its pane stands: running, exited with a status, or gone.

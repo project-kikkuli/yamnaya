@@ -22,7 +22,7 @@ func TestOpeningAStoreWithTheWorkLayerRetiresItOnce(t *testing.T) {
 		if f.handoff {
 			key = "claim-" + string(rune('a'+i))
 		}
-		it, err := s.addItem(Item{Scope: "repo", Session: "lead", Kind: KindDecision, Question: "Ship it?"}, key)
+		it, _, err := s.addItem(Item{Scope: "repo", Session: "lead", Kind: KindDecision, Question: "Ship it?"}, key)
 		if err != nil {
 			t.Fatal(err)
 		}

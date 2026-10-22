@@ -65,8 +65,10 @@ type Item struct {
 	// Delivered is when the agent received the answer or dismissal.
 	Delivered time.Time
 	// Held is when the agent's session took the answer but held it for the owner's approval.
-	Held    time.Time
-	History []Event
+	Held time.Time
+	// Recipient is who the item waits on: Owner, or the id of the manager or chief it was routed to.
+	Recipient string
+	History   []Event
 }
 
 type Event struct {
@@ -192,7 +194,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + orgSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
@@ -219,6 +221,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := itemActions(db); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if err := itemRecipients(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate item recipients: %w", err)
 	}
 	h, err := handoff.New(db)
 	if err != nil {

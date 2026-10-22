@@ -9,14 +9,15 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// palette keeps board colors in the terminal theme and the landscape in alpine shades.
+// palette keeps board colors in the terminal theme.
 // red is what needs you or fails, yellow what waits, green what runs or passes, faint what is stale or exited.
 type palette struct {
 	plain, bold, dim   lipgloss.Style
 	red, yellow, green lipgloss.Style
 	// hues are the colors no state uses, one per project.
-	hues   []lipgloss.Style
-	alpine []lipgloss.Style
+	hues []lipgloss.Style
+	// color is false under NO_COLOR, which also leaves the mountains out.
+	color bool
 }
 
 var hueColors = []string{"4", "5", "6", "12", "13", "14"}
@@ -44,22 +45,9 @@ func newPalette(r *lipgloss.Renderer, color bool) palette {
 		}
 		return s
 	}
-	p := palette{plain: r.NewStyle(), bold: r.NewStyle().Bold(true), dim: r.NewStyle().Faint(true), red: fg("1"), yellow: fg("3"), green: fg("2")}
+	p := palette{plain: r.NewStyle(), bold: r.NewStyle().Bold(true), dim: r.NewStyle().Faint(true), red: fg("1"), yellow: fg("3"), green: fg("2"), color: color}
 	for _, c := range hueColors {
 		p.hues = append(p.hues, fg(c))
-	}
-	for _, c := range []string{"#0d1926", "#243b50", "#355568", "#467083", "#96b7c4", "#e6c3b5", "#c5dce1", "#4a929d", "#295563", "#e6b76c", "#f07a65", "#eff5e8", "#768c9c", "#b3a7c9", "#376b63", "#657a59"} {
-		s := fg(c)
-		if color {
-			s = s.Background(lipgloss.Color("#0d1926"))
-		}
-		p.alpine = append(p.alpine, s)
-	}
-	for _, s := range p.hues {
-		if color {
-			s = s.Background(lipgloss.Color("#0d1926"))
-		}
-		p.alpine = append(p.alpine, s)
 	}
 	return p
 }

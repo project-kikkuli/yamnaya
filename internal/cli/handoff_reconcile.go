@@ -184,7 +184,7 @@ func applyHandoff(c *core.Core, b core.Board, claim handoff.Claim) (string, erro
 		it.Scope = claim.Event.Dir
 	}
 	key := handoff.Key(claim.Event.Work, claim.Kind, strings.ToLower(strings.Join(strings.Fields(claim.Topic), " ")))
-	if it, err = c.AddHandoffItem(key, it); err != nil {
+	if it, err = c.AddHandoffItemOn(b, key, it); err != nil {
 		return "", err
 	}
 	return "item:" + it.Key(), nil
