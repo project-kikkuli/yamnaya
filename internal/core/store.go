@@ -57,7 +57,9 @@ type Item struct {
 	Evidence []string
 	Tried    string
 	// Dossier is the evidence ym attached on its own.
-	Dossier    Dossier
+	Dossier Dossier
+	// Preparer is the manager or chief told to prepare an ask that reached the owner unprepared.
+	Preparer   string
 	Blocks     int
 	Session    string
 	Harness    string

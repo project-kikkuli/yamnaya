@@ -133,3 +133,66 @@ func TestAsksReportOnlyWhatChangedSinceTheOwnerLastLooked(t *testing.T) {
 		t.Fatalf("after ym serve refreshed, dossier = %+v; want the PR's CI now passing", got.Dossier)
 	}
 }
+
+func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheManagerPreparesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		it          Item
+		wantMissing []string
+	}{
+		{name: "thin decision", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}},
+		{name: "chore without rec", it: Item{Kind: KindChore, Question: "approve CHG-77"}, wantMissing: []string{"a recommendation"}},
+		{name: "ready decision", it: Item{Kind: KindDecision, Question: "v2 key ids?", Rec: "v2", Options: picks}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "rotate the signing keys", "/repo/auth-plane")
+			w.spawn("agent", m.Session)
+			tc.it.Session, tc.it.Harness = "agent", "claude"
+			it, err := w.core.AddItem(tc.it)
+			if err != nil || it.Recipient != m.ID {
+				t.Fatalf("filed to %q, %v; want the manager", it.Recipient, err)
+			}
+			m, _ = w.core.Store.Manager(m.ID)
+			m.Failures = stuckFailures
+			if err := w.core.Store.SaveManager(m); err != nil {
+				t.Fatal(err)
+			}
+			w.stop(m.Session)
+			before := len(w.handedTo(m.Session))
+			w.supervise(t)
+			got, _ := w.core.Store.Item(it.Key())
+			if got.Recipient != Owner || !slices.Equal(Missing(got), tc.wantMissing) {
+				t.Fatalf("recipient %q missing %q; want the owner and %q", got.Recipient, Missing(got), tc.wantMissing)
+			}
+			if got.Dossier.Goal == "" {
+				t.Fatalf("the climbed ask carries no evidence: %+v", got.Dossier)
+			}
+			pending, _ := w.core.Store.PendingMessages()
+			told := slices.ContainsFunc(append(w.handedTo(m.Session)[before:], texts(pending)...), func(s string) bool {
+				return strings.Contains(s, "ym item prepare '"+it.Key()+"'")
+			})
+			if told != (tc.wantMissing != nil) || (got.Preparer == m.ID) != told {
+				t.Fatalf("manager told to prepare %v, preparer %q; want told %v", told, got.Preparer, tc.wantMissing != nil)
+			}
+			if tc.wantMissing == nil {
+				return
+			}
+			if _, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Rec: "v2"}); tc.it.Kind == KindDecision && !errors.Is(err, ErrNotReady) {
+				t.Fatalf("a decision prepared without options: err %v, want it refused", err)
+			}
+			prepared, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Rec: "v2", Options: picks, Evidence: []string{"https://ci.example/run/7"}})
+			if err != nil || len(Missing(prepared)) != 0 || prepared.Preparer != "" || !slices.Contains(prepared.Evidence, "https://ci.example/run/7") {
+				t.Fatalf("prepared = %+v, %v; want it ready with its evidence and no preparer left", prepared, err)
+			}
+		})
+	}
+}
+
+func texts(ms []Message) []string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, m.Text)
+	}
+	return out
+}

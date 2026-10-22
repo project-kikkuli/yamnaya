@@ -152,14 +152,14 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier, preparer`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
 	var opts, evidence, dossier string
 	var created, answered, delivered, held sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier, &it.Preparer); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {

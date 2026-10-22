@@ -613,6 +613,9 @@ func (m Model) needLines(i int, n core.Need) string {
 	if it.Kind == core.KindGo {
 		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
 	}
+	if missing := core.Missing(*it); len(missing) > 0 {
+		q = pal.yellow.Render("unprepared · ") + q
+	}
 	if more := len(n.Asks) - 1; more > 0 {
 		q += pal.dim.Render(fmt.Sprintf("  +%d more", more))
 		keys = "enter list all   " + strings.TrimPrefix(keys, "enter expand   ")
@@ -625,6 +628,9 @@ func (m Model) needLines(i int, n core.Need) string {
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
 		b.WriteString(pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n")
+		if line := m.unprepared(*it); line != "" {
+			b.WriteString(pal.yellow.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
+		}
 		if line := evidenceLine(*it); line != "" {
 			b.WriteString(pal.dim.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
 		}
@@ -1125,6 +1131,19 @@ func toolCounts(tools map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
+// unprepared says what an ask that reached the owner lacks, and who was told to prepare it.
+func (m Model) unprepared(it core.Item) string {
+	missing := core.Missing(it)
+	if len(missing) == 0 {
+		return ""
+	}
+	out := "unprepared: missing " + strings.Join(missing, " and ")
+	if mg, ok := m.board.Org.Managers[it.Preparer]; ok {
+		out += "; " + mg.Label() + " was told to prepare it"
+	}
+	return out
+}
+
 // evidenceLine sums up an item's evidence in one line: its goal, pull requests with CI, and what changed since the owner looked.
 func evidenceLine(it core.Item) string {
 	var parts []string
@@ -1190,6 +1209,9 @@ func (m Model) whyView() string {
 		field("option", o.Label+" = "+o.Effect)
 	}
 	field("assumption", it.Assumption)
+	if it.State == core.ItemOpen && it.Recipient == core.Owner {
+		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))
+	}
 	field("tried", it.Tried)
 	for _, ev := range it.Evidence {
 		field("evidence", ev)

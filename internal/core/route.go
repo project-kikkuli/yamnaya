@@ -283,7 +283,16 @@ func (c *Core) reroute(b Board, o Org) error {
 		if err := c.Store.SetRecipient(it.Seq, up); err != nil {
 			return err
 		}
+		was := it.Recipient
 		it.Recipient = up
+		if missing := Missing(it); up == Owner && len(missing) > 0 {
+			if err := c.Store.SetPreparer(it.Seq, was); err != nil {
+				return err
+			}
+			if err := c.tell(b, o.Managers[was].Session, prepareText(it, missing), false); err != nil {
+				return err
+			}
+		}
 		if up != Owner {
 			if err := c.tell(b, o.Managers[up].Session, askText(b, o, it), false); err != nil {
 				return err

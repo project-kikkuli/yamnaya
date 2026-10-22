@@ -741,3 +741,23 @@ func TestAnAsksEvidenceShowsOnItsRowAndInFullWhenExpanded(t *testing.T) {
 		}
 	}
 }
+
+func TestAnUnpreparedAskIsMarkedOnItsRowAndWhenExpanded(t *testing.T) {
+	m, c, _ := setup(t)
+	if _, err := c.Store.AddItem(core.Item{Kind: core.KindDecision, Question: "Use v2 key ids?", Session: "lead", Blocks: 9}); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Question == "Use v2 key ids?" })
+	want := "unprepared: missing a recommendation and two options with their effects"
+	if v := m.View(); !strings.Contains(v, "unprepared · Use v2 key ids?") || !strings.Contains(v, want) {
+		t.Fatalf("row does not mark the ask unprepared:\n%s", v)
+	}
+	if r, _ := m.selected(); r.need != nil && len(r.need.Asks) > 1 {
+		m = press(t, m, "enter")
+		m = to(t, m, func(r row) bool { return r.need == nil && r.item != nil && r.item.Question == "Use v2 key ids?" })
+	}
+	if v := press(t, m, "enter").View(); !strings.Contains(v, "unprepared  "+strings.TrimPrefix(want, "unprepared: ")) {
+		t.Fatalf("expanded view does not mark the ask unprepared:\n%s", v)
+	}
+}

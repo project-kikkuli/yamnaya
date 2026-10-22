@@ -15,7 +15,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemListCmd(with), itemShowCmd(with), itemInboxCmd(with))
+	cmd.AddCommand(itemAddCmd(with), itemListCmd(with), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
@@ -163,6 +163,42 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	return cmd
 }
 
+func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var p core.Prepared
+	var options []string
+	cmd := &cobra.Command{
+		Use:   "prepare <id>",
+		Short: "Add a recommendation, options, evidence or what was tried to an open ask, so the owner can decide it; an ask bound for the owner must end up with --rec and, for a decision, two --option",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			found, err := e.item(b, args[0])
+			if err != nil {
+				return err
+			}
+			for _, o := range options {
+				label, effect, _ := strings.Cut(o, "=")
+				p.Options = append(p.Options, core.Option{Label: strings.TrimSpace(label), Effect: strings.TrimSpace(effect)})
+			}
+			it, err := e.core.Prepare(b, found.Key(), p)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s prepared\n", it.ID)
+			return nil
+		}),
+	}
+	cmd.Flags().StringVar(&p.Rec, "rec", "", "what you recommend and why")
+	cmd.Flags().StringArrayVar(&options, "option", nil, "option as label=effect (repeatable; replaces the ask's options)")
+	cmd.Flags().StringArrayVar(&p.Evidence, "evidence", nil, "a PR, CI run, commit, file or other link the call rests on (repeatable)")
+	cmd.Flags().StringVar(&p.Tried, "tried", "", "what was tried before asking")
+	cmd.Flags().StringVar(&p.Assumption, "assumption", "", "what is assumed meanwhile")
+	return cmd
+}
+
 func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var all, asJSON, everywhere, toMe bool
 	cmd := &cobra.Command{
@@ -300,6 +336,9 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				line("option", o.Label+" = "+o.Effect)
 			}
 			line("assumption", it.Assumption)
+			if m := core.Missing(it); it.State == core.ItemOpen && it.Recipient == core.Owner && len(m) > 0 {
+				line("unprepared", "missing "+strings.Join(m, " and ")+preparedBy(e, it))
+			}
 			line("tried", it.Tried)
 			for _, ev := range it.Evidence {
 				line("evidence", ev)
@@ -325,6 +364,18 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	return cmd
 }
 
+func preparedBy(e *env, it core.Item) string {
+	if it.Preparer == "" {
+		return ""
+	}
+	if o, err := e.core.LoadOrg(); err == nil {
+		if m, ok := o.Managers[it.Preparer]; ok {
+			return "; " + m.Label() + " was told to prepare it"
+		}
+	}
+	return "; " + it.Preparer + " was told to prepare it"
+}
+
 type itemJSON struct {
 	Seq        int64         `json:"seq"`
 	Action     string        `json:"action,omitempty"`
@@ -341,6 +392,8 @@ type itemJSON struct {
 	Evidence   []string      `json:"evidence"`
 	Tried      string        `json:"tried,omitempty"`
 	Dossier    *core.Dossier `json:"dossier,omitempty"`
+	Missing    []string      `json:"missing,omitempty"`
+	Preparer   string        `json:"preparer,omitempty"`
 	Blocks     int           `json:"blocks"`
 	Session    string        `json:"session"`
 	Harness    string        `json:"harness"`
@@ -369,7 +422,11 @@ func toJSON(it core.Item) itemJSON {
 	if ev == nil {
 		ev = []string{}
 	}
-	return itemJSON{Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	var missing []string
+	if it.State == core.ItemOpen && it.Recipient == core.Owner {
+		missing = core.Missing(it)
+	}
+	return itemJSON{Missing: missing, Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
 }

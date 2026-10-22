@@ -48,6 +48,8 @@ Decision and default items always get `--rec`, options with their effects, and `
 
 ym attaches the rest itself: the goal and manager the ask comes from, the pull requests of that work with their CI state, its agents' latest activity, and what changed in the goal since the owner last looked. A decision or default that would reach the owner without `--rec`, or a decision without two `--option`s that each state an effect, is refused with the reason; refile it ready to decide, or make the call yourself if it is within your authority. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
 
+An ask that climbed to the owner past a manager or chief that was stuck or retired arrives with its evidence but marked unprepared when it lacks those, and that manager or chief is told, by message or in its relaunch prompt, to prepare it: `ym item prepare '<#key>' --rec "..." --option "<label>=<effect>" --option "<label>=<effect>" --evidence <link> --tried "..."`. `--option` replaces the ask's options; `--evidence` adds to them. The command prints an id; in chat say only that id, e.g. "filed D4". Subagents and teammates file through their lead, or directly; either way the item lands on the lead's session.
+
 ## Who your questions reach
 
 `ym item add` routes the question for you; you file it the same way either way:

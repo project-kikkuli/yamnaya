@@ -129,9 +129,10 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal done --summary "<line>" [--evidence "<line>"]...` | hand the goal to verification |
 | | `ym goal artifact <url>` | register a richer brief |
 | | `ym goal verdict <goal> --pass\|--fail [--finding "<line>"]...` | (verifier) record the verdict, only from inside the verifier session; `--session` is refused |
-| Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]...` | ask your manager, or the owner when you have none |
+| Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."]` | ask your manager, or the owner when you have none; ym attaches the evidence it can find |
 | | `ym item list [--all] [--everywhere] [--to-me]` | open items; `--to-me` is what is routed to the calling manager |
 | | `ym item show\|answer\|dismiss\|snooze\|reopen\|go <id>` | act on one item |
+| | `ym item prepare <id> [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."]` | make an open ask ready to decide; an ask that climbed to you past a stuck or retired manager shows unprepared until that manager runs this |
 | | `ym item inbox` | answers and messages the calling session has not received |
 | Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
 | | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |

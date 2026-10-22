@@ -80,11 +80,11 @@ const (
 // ErrNotReady rejects an ask that would reach the owner without what the owner needs to decide it.
 var ErrNotReady = errors.New("not ready for the owner")
 
-// ready checks that a decision or default bound for the owner carries a recommendation, and a decision at least two options with their effects.
-func ready(it Item) error {
-	var missing []string
+// Missing names what an ask bound for the owner lacks to be decided: a recommendation for a decision or default, and for a decision two options with effects.
+func Missing(it Item) []string {
+	var out []string
 	if (it.Kind == KindDecision || it.Kind == KindDefault) && strings.TrimSpace(it.Rec) == "" {
-		missing = append(missing, "--rec \"<what you recommend and why>\"")
+		out = append(out, "a recommendation")
 	}
 	if it.Kind == KindDecision {
 		n := 0
@@ -94,14 +94,29 @@ func ready(it Item) error {
 			}
 		}
 		if n < 2 {
-			missing = append(missing, "at least two --option \"<label>=<what happens if picked>\"")
+			out = append(out, "two options with their effects")
 		}
 	}
+	return out
+}
+
+var missingFlag = map[string]string{
+	"a recommendation":               "--rec \"<what you recommend and why>\"",
+	"two options with their effects": "at least two --option \"<label>=<what happens if picked>\"",
+}
+
+// ready refuses an ask bound for the owner that is missing anything the owner needs to decide it.
+func ready(it Item) error {
+	missing := Missing(it)
 	if len(missing) == 0 {
 		return nil
 	}
+	var flags []string
+	for _, m := range missing {
+		flags = append(flags, missingFlag[m])
+	}
 	return fmt.Errorf("%w: this ask goes to the owner, who takes only calls ready to decide; refile it with %s, and --evidence <PR, CI run, commit or file> and --tried \"<what you tried>\" where they apply. If the call is within your authority, make it yourself instead",
-		ErrNotReady, strings.Join(missing, " and "))
+		ErrNotReady, strings.Join(flags, " and "))
 }
 
 // itemDossiers adds the columns for an item's evidence, what was tried and ym's dossier, and the owner's last look at each goal.
@@ -110,6 +125,7 @@ func itemDossiers(db *sql.DB) error {
 		"evidence": `TEXT NOT NULL DEFAULT '[]'`,
 		"tried":    `TEXT NOT NULL DEFAULT ''`,
 		"dossier":  `TEXT NOT NULL DEFAULT ''`,
+		"preparer": `TEXT NOT NULL DEFAULT ''`,
 	} {
 		var has int
 		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name = ?`, col).Scan(&has); err != nil {
@@ -497,4 +513,97 @@ func (a ActivityNote) String() string {
 		out += ": " + a.What
 	}
 	return out
+}
+
+// Prepared is what a manager adds to an ask so the owner can decide it; empty fields keep what the ask has.
+type Prepared struct {
+	Rec, Tried, Assumption string
+	Options                []Option
+	Evidence               []string
+}
+
+// Prepare adds p to the open ask ref names and refreshes its dossier.
+func (c *Core) Prepare(b Board, ref string, p Prepared) (Item, error) {
+	it, err := c.Store.Item(ref)
+	if err != nil {
+		return it, err
+	}
+	if it.State != ItemOpen {
+		return it, fmt.Errorf("item %s is %s; only an open ask can be prepared", it.ID, it.State)
+	}
+	if p.Rec != "" {
+		it.Rec = p.Rec
+	}
+	if p.Tried != "" {
+		it.Tried = p.Tried
+	}
+	if p.Assumption != "" {
+		it.Assumption = p.Assumption
+	}
+	if len(p.Options) > 0 {
+		it.Options = p.Options
+	}
+	it.Evidence = append(it.Evidence, p.Evidence...)
+	if it.Recipient == Owner {
+		if err := ready(it); err != nil {
+			return it, err
+		}
+	}
+	if err := c.Store.prepare(it); err != nil {
+		return it, err
+	}
+	items, err := c.Store.Items(ItemFilter{})
+	if err != nil {
+		return it, err
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return it, err
+	}
+	d, err := c.dossier(b, o, it, items)
+	if err != nil {
+		return it, err
+	}
+	if err := c.Store.SaveDossier(it.Seq, d); err != nil {
+		return it, err
+	}
+	return c.Store.Item(it.Key())
+}
+
+func (s *Store) prepare(it Item) error {
+	opts, err := json.Marshal(it.Options)
+	if err != nil {
+		return err
+	}
+	evidence, err := json.Marshal(it.Evidence)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE ym_items SET rec = ?, options = ?, tried = ?, assumption = ?, evidence = ?, preparer = '' WHERE seq = ?`,
+		it.Rec, string(opts), it.Tried, it.Assumption, string(evidence), it.Seq); err != nil {
+		return err
+	}
+	if err := addEvent(tx, it.Key(), ItemOpen, ItemOpen, "prepared"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SetPreparer records the manager or chief told to prepare an ask that reached the owner unprepared.
+func (s *Store) SetPreparer(seq int64, who string) error {
+	_, err := s.db.Exec(`UPDATE ym_items SET preparer = ? WHERE seq = ?`, who, seq)
+	return err
+}
+
+// prepareText tells the manager or chief an ask climbed past it, while it was down, to the owner without what the owner needs.
+func prepareText(it Item, missing []string) string {
+	return fmt.Sprintf("ym: %s %s (%q) reached the owner while you were down, without %s. Prepare it now so the owner can decide: "+
+		"ym item prepare '%s' --rec \"<what you recommend and why>\" --option \"<label>=<effect>\" --option \"<label>=<effect>\" --evidence <PR, CI run, commit or file> --tried \"<what was tried>\". "+
+		"If you can settle it yourself, tell the owner your call in --rec.",
+		it.Key(), it.ID, oneLine(it.Question), strings.Join(missing, " and "), it.Key())
 }
