@@ -30,6 +30,8 @@ Press `o` on the goal to open the manager and talk to it like any session.
 - **Manager**: an interactive Claude session with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
 - **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message reaches the manager once.
 - **Chiefs**: `ym chief "<name>" --over <id>,<id>` groups managers and other chiefs. A chief reads their briefs, steers them and hears their state changes. Work never waits on a chief.
+- **Steering**: to change what a goal or chief is about, `S` on the board (or `ym goal steer <id>`, which opens `$EDITOR`, or reads `--file` or piped stdin) saves the new plan as its next numbered revision. The manager is woken with it, its chiefs hear it, and it records taking it on with `ym goal adopt <id> --revision N`. Until then the row shows `steer rN not adopted`; ym nudges the manager every 10 minutes, twice, then tells whoever steered: a row in your queue for your steer, a message to the chief for a chief's. A chief steers only goals and chiefs below it. Steering a verifying goal calls its verification off, and the next verifier judges against the new plan. `ym goal context <id> [--all]` prints the revisions.
+- **Briefs**: each manager and chief records where it stands with `ym goal brief`, five required sections (assessment, what changed, uncertainty, next, waiting on), each call a new version. `ym serve` serves every brief at `http://127.0.0.1:7477/b/<id>` (`/` lists them all; `--briefs` or `YAMNAYA_BRIEFS_ADDR` moves it) with its versions, its plan revision and, for a chief, its reports' briefs rolled up beneath. A brief older than its goal's latest meaningful event (an agent finishing, a PR opened, CI, a review, a merge, stuck, a failed verification, an adopted steer; for a chief, a report's newer brief) is stale: the wake carrying that event asks for a fresh one, the selected row says so, and a manager still behind five minutes later is nudged once per event, never mid-turn.
 - **Authority**: a manager decides everything about its goal. It merges its own pull requests only in repositories cleared by `ym goal authority`; elsewhere a green pull request lands in your merge queue. It writes to other people only with a model-name prefix.
 
 The loop is code in `ym serve`, not instructions in a prompt:
@@ -67,7 +69,8 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `o` / `O` | go to the session's tmux pane / open it in a pane beside the board |
 | `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
 | `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item |
-| `B` / `V` | show the manager's brief / open its registered artifact |
+| `B` / `W` / `V` | show the manager's brief / open its served brief page / open its registered artifact |
+| `S` | steer: edit what the goal or chief is about in `$EDITOR`, saved as its next revision |
 | `C` / `c` | new chief over the selection / put the selection under a chief |
 | `R` | relaunch a manager or chief |
 | `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
@@ -121,12 +124,15 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs |
 | | `ym goal show <id>` / `feed <id>` | one goal with its verifications / its event feed |
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
+| | `ym goal steer [--file F\|-] <id>` / `context [--all] <id>` | change what a goal or chief is about / print its plan revisions |
 | | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
 | | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
 | | `ym chief [--over ID,ID] [--remit T] "<name>"` | start a chief; `attach <child> <chief>`, `detach <child>` |
 | Manager | `ym goal update "<line>"` | post where the goal stands |
 | | `ym goal wake <when> <why>` | wake me at `30m`, `2h`, `15:04` |
 | | `ym goal done --summary "<line>" [--evidence "<line>"]...` | hand the goal to verification |
+| | `ym goal brief --assessment A --changed C --uncertainty U --next N --waiting-on W` | record the next brief version |
+| | `ym goal adopt [<id>] --revision N` | record taking a steered revision on |
 | | `ym goal artifact <url>` | register a richer brief |
 | | `ym goal verdict <goal> --pass\|--fail [--finding "<line>"]...` | (verifier) record the verdict, only from inside the verifier session; `--session` is refused |
 | Items | `ym item add --kind decision\|default\|chore\|go --question "..." [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."]` | ask your manager, or the owner when you have none; ym attaches the evidence it can find |
