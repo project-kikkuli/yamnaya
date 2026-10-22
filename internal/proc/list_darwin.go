@@ -26,11 +26,12 @@ func List() ([]Proc, error) {
 	for _, k := range ks {
 		pid := int(k.Proc.P_pid)
 		started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*1000)
+		comm := unix.ByteSliceToString(k.Proc.P_comm[:])
 		e, ok := argsCache[pid]
-		if !ok || !e.started.Equal(started) || now.Sub(started) < argsSettle {
-			e = argsEntry{started: started, args: procArgs(pid)}
+		if !ok || !e.started.Equal(started) || e.comm != comm || now.Sub(started) < argsSettle {
+			e = argsEntry{started: started, comm: comm, args: procArgs(pid)}
 			if len(e.args) == 0 {
-				e.args = []string{unix.ByteSliceToString(k.Proc.P_comm[:])}
+				e.args = []string{comm}
 			}
 		}
 		seen[pid] = e
@@ -40,11 +41,13 @@ func List() ([]Proc, error) {
 	return procs, nil
 }
 
-// argsSettle is how long a new process may still retitle itself; its arguments are read again until it is that old.
-const argsSettle = time.Minute
+// argsSettle is how long a new process may still retitle itself; its arguments are read again until it is that old,
+// or after it execs another program.
+var argsSettle = time.Minute
 
 type argsEntry struct {
 	started time.Time
+	comm    string
 	args    []string
 }
 

@@ -22,7 +22,7 @@ func TestListSeesProcessesStartAndExitBetweenReads(t *testing.T) {
 	if _, err := List(); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sleep", "30", "list-test-marker")
+	cmd := exec.Command("sh", "-c", "sleep 30; :", "list-test-marker")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
