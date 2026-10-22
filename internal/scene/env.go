@@ -1,6 +1,10 @@
 package scene
 
-import "os"
+import (
+	"os"
+
+	"github.com/charmbracelet/colorprofile"
+)
 
 type colorProfile int
 
@@ -25,4 +29,15 @@ func detectProfile() colorProfile {
 		return ansi256
 	}
 	return trueColor
+}
+
+// ColorProfile is the color depth the mountains are drawn in, for the terminal renderer to keep.
+func ColorProfile() colorprofile.Profile {
+	switch profile {
+	case noColor:
+		return colorprofile.Ascii
+	case ansi256:
+		return colorprofile.ANSI256
+	}
+	return colorprofile.TrueColor
 }

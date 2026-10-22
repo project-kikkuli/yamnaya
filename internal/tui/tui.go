@@ -174,7 +174,7 @@ var ErrRestart = errors.New("ym executable changed")
 func Run(c *core.Core) error {
 	m := New(c)
 	m.out = newOutput(os.Stdout)
-	final, err := tea.NewProgram(m, tea.WithOutput(m.out)).Run()
+	final, err := tea.NewProgram(m, tea.WithOutput(m.out), tea.WithColorProfile(scene.ColorProfile())).Run()
 	m.out.drain()
 	if m, ok := final.(Model); ok && err == nil && m.restart {
 		return ErrRestart
@@ -344,6 +344,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.key(msg)
+	case tea.PasteMsg:
+		if m.mode == modeInput {
+			return m.typed(msg.Content), nil
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -1260,20 +1265,25 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if k.Text == "" || k.Mod.Contains(tea.ModCtrl) || k.Mod.Contains(tea.ModAlt) {
 			return m, nil
 		}
-		if m.inKind == inAdopt {
-			return m, nil
-		}
-		if m.fresh {
-			m.input, m.fresh = nil, false
-		}
-		m.input = append(m.input, []rune(k.Text)...)
-		if m.inKind == inFilter {
-			m.filter = string(m.input)
-			m.cursor = 0
-		}
-		m.repoCur, m.pickErr = 0, ""
+		return m.typed(k.Text), nil
 	}
-	return m, nil
+}
+
+// typed adds text typed or pasted into the input.
+func (m Model) typed(text string) Model {
+	if m.inKind == inAdopt {
+		return m
+	}
+	if m.fresh {
+		m.input, m.fresh = nil, false
+	}
+	m.input = append(m.input, []rune(text)...)
+	if m.inKind == inFilter {
+		m.filter = string(m.input)
+		m.cursor = 0
+	}
+	m.repoCur, m.pickErr = 0, ""
+	return m
 }
 
 func (m Model) startNew() (tea.Model, tea.Cmd) {

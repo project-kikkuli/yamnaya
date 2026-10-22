@@ -144,7 +144,10 @@ func keyOf(k string) tea.KeyPressMsg {
 func press(t *testing.T, m Model, keys ...string) Model {
 	t.Helper()
 	for _, k := range keys {
-		msg := keyOf(k)
+		var msg tea.Msg = keyOf(k)
+		if text, ok := strings.CutPrefix(k, "paste:"); ok {
+			msg = tea.PasteMsg{Content: text}
+		}
 		next, cmd := m.Update(msg)
 		m = next.(Model)
 		for cmd != nil {
@@ -179,6 +182,27 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	}
 	if !strings.Contains(m.message, "typed into the agent's terminal") || strings.Contains(m.View().Content, "NEEDS YOU (2)") {
 		t.Fatalf("message %q\n%s", m.message, m.View().Content)
+	}
+}
+
+func TestPastedTextLandsInTheInputLikeTypedText(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		keys   []string
+		answer string
+	}{
+		{"typed", []string{"a", "ctrl+u", "ship", " ", "it", "enter"}, "ship it"},
+		{"pasted", []string{"a", "ctrl+u", "paste:ship it", "enter"}, "ship it"},
+		{"pasted after typing", []string{"a", "ctrl+u", "go ", "paste:ship it", "enter"}, "go ship it"},
+		{"pasted on the board before answering", []string{"paste:junk", "a", "ctrl+u", "ok", "enter"}, "ok"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			press(t, m, c.keys...)
+			if it, _ := k.Store.Item("D1"); it.Answer != c.answer {
+				t.Fatalf("answer %q, want %q", it.Answer, c.answer)
+			}
+		})
 	}
 }
 
