@@ -245,6 +245,12 @@ func (m Model) artifact(n core.Node) (string, bool) {
 	return n.Manager.ArtifactURL, n.Manager.ArtifactURL != ""
 }
 
+// goalName is the goal's id, tagged with its host's short name when it runs on another host.
+func (m Model) goalName(g core.Goal) string {
+	_, id, _ := core.SplitRemote(g.ID)
+	return m.tagged(g.Host, id)
+}
+
 func briefOf(n core.Node) string {
 	if n.Goal != nil {
 		return n.Goal.BriefPath
@@ -258,13 +264,13 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	var head, what, keys string
 	switch {
 	case n.Goal != nil && n.Goal.State == core.GoalDone:
-		head, what = pal.green.Render(pad("done", 8)), n.Goal.ID+" "+n.Goal.Ask
+		head, what = pal.green.Render(pad("done", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
 		if n.Goal.Summary != "" {
 			what += pal.dim.Render("  " + n.Goal.Summary)
 		}
 		keys = "B brief   o manager   x clear"
 	case n.Goal != nil:
-		head, what = pal.red.Render(pad("stuck", 8)), n.Goal.ID+" "+n.Goal.Ask
+		head, what = pal.red.Render(pad("stuck", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
 		keys = "enter open   B brief   o manager   R relaunch   s send   x clear"
 	case n.Steer != nil:
 		head = pal.yellow.Render(pad("steer", 8))

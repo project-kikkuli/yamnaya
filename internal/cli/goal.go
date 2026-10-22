@@ -89,17 +89,25 @@ type goalRow struct {
 	Revision     int    `json:"revision"`
 	Adopted      bool   `json:"adopted"`
 	Host         string `json:"host,omitempty"`
-	Depth        int    `json:"-"`
-	fresh        core.Freshness
+	// HostState says why another host's row may be out of date: it is unreachable, or not read yet.
+	HostState string `json:"host_state,omitempty"`
+	Depth     int    `json:"-"`
+	fresh     core.Freshness
 }
 
 func treeRows(b core.Board, under string) []goalRow {
+	away := map[string]string{}
+	for _, r := range b.Remotes {
+		if r.Err != nil || r.Stale {
+			away[r.Host] = r.State()
+		}
+	}
 	var out []goalRow
 	var walk func(core.Node, int)
 	walk = func(n core.Node, depth int) {
 		m := n.Manager
 		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Agents: len(n.Agents), Depth: depth,
-			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host}
+			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host, HostState: away[m.Host]}
 		if m.Host != "" {
 			r.BriefURL = ""
 		}
@@ -174,6 +182,9 @@ func printGoalRow(w io.Writer, r goalRow) {
 	status := []string{r.fresh.String()}
 	if r.Host != "" {
 		status = []string{"on " + r.Host}
+	}
+	if r.HostState != "" {
+		status = []string{"on " + r.Host + " (" + r.HostState + ")"}
 	}
 	if r.Revision > 0 && !r.Adopted {
 		status = append(status, fmt.Sprintf("steer r%d not adopted", r.Revision))

@@ -142,7 +142,9 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), added.ID)
 			if added.Recipient != core.Owner {
-				if o, err := e.core.LoadOrg(); err == nil {
+				if host, id, remote := core.SplitRemote(added.Recipient); remote {
+					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s on %s, who owns the answer; it comes back through ym item inbox\n", id, host)
+				} else if o, err := e.core.LoadOrg(); err == nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s, who owns the answer; it comes back through ym item inbox\n", o.Managers[added.Recipient].Label())
 				}
 			}
