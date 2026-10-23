@@ -106,7 +106,11 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 					return err
 				}
 			}
-			err := serveCycle(e.core, site.observe)
+			err := serveCycle(e.core, site.observe, func(b core.Board) {
+				if err := writeSnapshot(e.core, dir, b); err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), "board snapshot:", err)
+				}
+			})
 			if discover {
 				err = errors.Join(err, reviews.poll(ctx, e.core), docSweepErrors(e.core.Store))
 			}

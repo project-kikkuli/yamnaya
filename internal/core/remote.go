@@ -45,6 +45,8 @@ type RemoteBoard struct {
 	Feeds map[string]Feed
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
 	Stale bool
+	// FailingSince is when reads of the host started failing, zero while the last read answered.
+	FailingSince time.Time
 }
 
 // RemoteWaiting is a session on another host whose last reply asks the owner.
@@ -53,16 +55,33 @@ type RemoteWaiting struct {
 }
 
 // State is how the host stands for display: its session count, "checking", or why it cannot be reached.
-func (r RemoteBoard) State() string {
+func (r RemoteBoard) State() string { return r.StateAt(time.Now()) }
+
+// SnapshotLate is how old a host's board may get before the board says its ym serve has fallen behind; that serve writes one
+// every few seconds.
+const SnapshotLate = 2 * time.Minute
+
+// Late reports whether the host answers with a board its ym serve took longer than SnapshotLate before now.
+func (r RemoteBoard) Late(now time.Time) bool {
+	return r.Err == nil && !r.Stale && !r.At.IsZero() && now.Sub(r.At) > SnapshotLate
+}
+
+// StateAt is State as of now: how long a failing host has gone without an answer and when it last gave a good one, or how
+// old an answering host's board is once its ym serve falls behind.
+func (r RemoteBoard) StateAt(now time.Time) string {
 	switch {
+	case r.Err != nil && !r.At.IsZero() && !r.FailingSince.IsZero():
+		return fmt.Sprintf("no answer for %s (last good %s): %s", Span(now.Sub(r.FailingSince)), r.At.Local().Format(time.Kitchen), r.Err.Error())
 	case r.Err != nil && !r.At.IsZero():
-		return fmt.Sprintf("unreachable since %s: %s", r.At.Local().Format(time.Kitchen), r.Err.Error())
+		return fmt.Sprintf("no answer (last good %s): %s", r.At.Local().Format(time.Kitchen), r.Err.Error())
 	case r.Err != nil:
 		return "unreachable: " + r.Err.Error()
 	case r.At.IsZero():
 		return "checking"
 	case r.Stale:
 		return fmt.Sprintf("checking, last answered %s", r.At.Local().Format(time.Kitchen))
+	case r.Late(now):
+		return fmt.Sprintf("%d sessions, board %s old: its ym serve is behind", len(r.Sessions), Span(now.Sub(r.At)))
 	}
 	return fmt.Sprintf("%d sessions", len(r.Sessions))
 }

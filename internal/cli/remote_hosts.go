@@ -124,9 +124,14 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 			b = prev
 		}
 		b.Err = err
+		if b.FailingSince.IsZero() {
+			b.FailingSince = time.Now()
+		}
 	} else {
 		b = remoteBoard(host, j)
-		b.At = time.Now()
+		if b.At = parseTS(j.At); b.At.IsZero() {
+			b.At = time.Now()
+		}
 	}
 	r.mu.Unlock()
 	if err == nil && r.seen != nil {

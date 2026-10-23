@@ -180,9 +180,12 @@ func (m Model) header() string {
 	if len(m.board.Remotes) > 0 {
 		var hosts []string
 		for _, r := range m.board.Remotes {
-			line := m.hostTag(r.Host) + " " + r.Host + " " + r.State()
-			if r.Err != nil {
+			line := m.hostTag(r.Host) + " " + r.Host + " " + r.StateAt(m.board.At)
+			switch {
+			case r.Err != nil:
 				line = pal.red.Render(line)
+			case r.Late(m.board.At):
+				line = pal.yellow.Render(line)
 			}
 			hosts = append(hosts, line)
 		}

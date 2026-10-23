@@ -135,3 +135,72 @@ func TestABoardCarriesLatelyClosedItemsWithTheirHistoryToAnotherHost(t *testing.
 		t.Errorf("open items = %+v", r.Items)
 	}
 }
+
+func TestAHostReadsAsHowOldItsBoardIsAndHowLongItHasGoneWithoutAnswering(t *testing.T) {
+	dir := t.TempDir()
+	board := filepath.Join(dir, "board.json")
+	script := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec cat "+board+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withAt := func(at time.Time) string { return `{"at":"` + at.UTC().Format(time.RFC3339) + `",` + fakeBoard[1:] }
+	for _, c := range []struct {
+		name    string
+		answers []string
+		want    string
+	}{
+		{"fresh snapshot", []string{withAt(time.Now())}, "1 sessions"},
+		{"snapshot from before its serve stalled", []string{withAt(time.Now().Add(-9 * time.Minute))}, "1 sessions, board 9m old: its ym serve is behind"},
+		{"answered, then stopped answering", []string{withAt(time.Now().Add(-time.Minute)), ""}, "no answer for 0s (last good "},
+		{"never answered", []string{""}, "unreachable: "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRemoteHosts([]string{"box"}, 5*time.Second, nil)
+			r.ssh, r.every = script, 0
+			var got core.RemoteBoard
+			for i, a := range c.answers {
+				if err := os.WriteFile(board, []byte(a), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				got = r.Boards()[0]
+				for deadline := time.Now().Add(3 * time.Second); i > 0 && got.Err == nil && time.Now().Before(deadline); {
+					time.Sleep(20 * time.Millisecond)
+					got = r.Boards()[0]
+				}
+			}
+			if !strings.HasPrefix(got.State(), c.want) {
+				t.Errorf("state %q, want it to start %q", got.State(), c.want)
+			}
+		})
+	}
+}
+
+func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("YAMNAYA_STATE_DIR", dir)
+	t.Setenv("YAMNAYA_NO_SERVE", "1")
+	c, err := Wire(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Store.Close()
+	run := func() (string, error) {
+		var out strings.Builder
+		root := NewRoot()
+		root.SetArgs([]string{"board"})
+		root.SetOut(&out)
+		err := root.Execute()
+		return out.String(), err
+	}
+	if _, err := run(); err == nil || !strings.Contains(err.Error(), "no board snapshot yet") {
+		t.Fatalf("before any snapshot: %v, want it to say there is none yet", err)
+	}
+	if err := writeSnapshot(c, dir, core.Board{}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run()
+	var j boardJSON
+	if err != nil || json.Unmarshal([]byte(out), &j) != nil || time.Since(parseTS(j.At)) > time.Minute {
+		t.Fatalf("board printed %q, %v; want the snapshot stamped with when it was taken", out, err)
+	}
+}

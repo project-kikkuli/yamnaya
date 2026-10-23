@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -12,6 +16,8 @@ import (
 
 // boardJSON is this host's board as another host's ym reads it.
 type boardJSON struct {
+	// At is when ym serve took the snapshot.
+	At       string         `json:"at,omitempty"`
 	Sessions []sessionJSON  `json:"sessions"`
 	Items    []itemJSON     `json:"items"`
 	Launched []launchedJSON `json:"launched"`
@@ -52,12 +58,30 @@ type dormantJSON struct {
 }
 
 func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	return &cobra.Command{
+	var build bool
+	cmd := &cobra.Command{
 		Use:   "board",
 		Short: "Print this host's sessions, open items, launches, waiting sessions and goal tree as JSON, for another host's ym to show",
-		Args:  cobra.NoArgs,
+		Long: "board prints the snapshot this host's ym serve writes every cycle, with the time it was taken, and builds nothing, " +
+			"so another host's read stays quick however loaded this one is. --build builds the board instead.",
+		Args: cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if err := ensureWorkService(); err != nil {
+				return err
+			}
+			if !build {
+				dir, err := stateDir()
+				if err != nil {
+					return err
+				}
+				raw, err := os.ReadFile(snapshotPath(dir))
+				if errors.Is(err, fs.ErrNotExist) {
+					return errors.New("no board snapshot yet: this host's ym serve writes one every cycle")
+				}
+				if err != nil {
+					return err
+				}
+				_, err = cmd.OutOrStdout().Write(raw)
 				return err
 			}
 			e.core.Remotes = nil
@@ -65,51 +89,83 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			if err != nil {
 				return err
 			}
-			items, err := e.core.ItemsIn(b, "", false)
+			out, err := hostBoard(e.core, b)
 			if err != nil {
 				return err
-			}
-			out := boardJSON{Sessions: sessionsJSON(e.core, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
-			if out.Closed, err = closedItems(e.core); err != nil {
-				return err
-			}
-			for _, it := range items {
-				out.Items = append(out.Items, withHistory(e.core, it))
-			}
-			for _, l := range b.Launched {
-				out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
-			}
-			for _, p := range b.Projects {
-				for _, d := range p.Dormant {
-					out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
-						RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
-				}
-			}
-			out.Self, out.ManagerSessions, out.Standing = e.core.SelfName(), b.Org.Sessions, map[string]string{}
-			if out.Feeds, err = e.core.Store.Feeds(); err != nil {
-				return err
-			}
-			for _, m := range b.Org.Managers {
-				out.Managers = append(out.Managers, m)
-			}
-			sort.Slice(out.Managers, func(i, j int) bool { return out.Managers[i].ID < out.Managers[j].ID })
-			for _, g := range b.Org.Goals {
-				out.Goals = append(out.Goals, g)
-			}
-			sort.Slice(out.Goals, func(i, j int) bool { return out.Goals[i].ID < out.Goals[j].ID })
-			var stand func(core.Node)
-			stand = func(n core.Node) {
-				out.Standing[n.Manager.ID] = n.Standing
-				for _, c := range n.Children {
-					stand(c)
-				}
-			}
-			for _, n := range b.Tree {
-				stand(n)
 			}
 			return writeJSON(cmd.OutOrStdout(), out)
 		}),
 	}
+	cmd.Flags().BoolVar(&build, "build", false, "build the board now instead of printing ym serve's latest snapshot")
+	return cmd
+}
+
+// snapshotPath is where ym serve keeps the board it last worked from, for other hosts to read.
+func snapshotPath(dir string) string { return filepath.Join(dir, "board.json") }
+
+// writeSnapshot keeps b as this host's board snapshot, stamped with when it was taken.
+func writeSnapshot(c *core.Core, dir string, b core.Board) error {
+	out, err := hostBoard(c, b)
+	if err != nil {
+		return err
+	}
+	out.At = ts(time.Now())
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	path := snapshotPath(dir)
+	if err := os.WriteFile(path+".new", raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(path+".new", path)
+}
+
+// hostBoard is b as another host's ym reads it: this host's own sessions, items, launches and goal tree.
+func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
+	items, err := c.ItemsIn(b, "", false)
+	if err != nil {
+		return boardJSON{}, err
+	}
+	out := boardJSON{Sessions: sessionsJSON(c, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+	if out.Closed, err = closedItems(c); err != nil {
+		return out, err
+	}
+	for _, it := range items {
+		out.Items = append(out.Items, withHistory(c, it))
+	}
+	for _, l := range b.Launched {
+		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
+	}
+	for _, p := range b.Projects {
+		for _, d := range p.Dormant {
+			out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
+		}
+	}
+	out.Self, out.ManagerSessions, out.Standing = c.SelfName(), b.Org.Sessions, map[string]string{}
+	if out.Feeds, err = c.Store.Feeds(); err != nil {
+		return out, err
+	}
+	for _, m := range b.Org.Managers {
+		out.Managers = append(out.Managers, m)
+	}
+	sort.Slice(out.Managers, func(i, j int) bool { return out.Managers[i].ID < out.Managers[j].ID })
+	for _, g := range b.Org.Goals {
+		out.Goals = append(out.Goals, g)
+	}
+	sort.Slice(out.Goals, func(i, j int) bool { return out.Goals[i].ID < out.Goals[j].ID })
+	var stand func(core.Node)
+	stand = func(n core.Node) {
+		out.Standing[n.Manager.ID] = n.Standing
+		for _, c := range n.Children {
+			stand(c)
+		}
+	}
+	for _, n := range b.Tree {
+		stand(n)
+	}
+	return out, nil
 }
 
 // remoteBoard turns what host printed for ym board into board entries, every key that host numbers on its own qualified with it.
