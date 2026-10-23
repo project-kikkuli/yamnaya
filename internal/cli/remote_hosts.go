@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -141,7 +142,7 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 func (r *remoteHosts) board(host string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, r.ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, remoteCommand([]string{"board"}))
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"), remoteCommand([]string{"board"}))...)
 	c.WaitDelay = time.Second
 	var errb bytes.Buffer
 	c.Stderr = &errb
@@ -167,7 +168,7 @@ func (r *remoteHosts) Run(host string, args ...string) (string, error) {
 func (r *remoteHosts) call(host string, stdin []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*r.timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, r.ssh, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, remoteCommand(args))
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"), remoteCommand(args))...)
 	c.WaitDelay = time.Second
 	if stdin != nil {
 		c.Stdin = bytes.NewReader(stdin)
@@ -205,9 +206,17 @@ func (r *remoteHosts) Sync(host string, req core.RelaySync) (core.RelayReply, er
 }
 
 func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
-	c := exec.Command(r.ssh, "-t", host, remoteCommand(args))
+	c := exec.Command(r.ssh, append(sshArgs(host, "-t"), remoteCommand(args))...)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c
+}
+
+// sshArgs are ssh's arguments up to the remote command: opts, then one connection to host shared by every ssh ym runs
+// there and kept ten minutes after the last, so a read, relay or attach skips the handshake; keepalives end it within
+// fifteen seconds of the network dropping, so a dead connection never holds the next call.
+func sshArgs(host string, opts ...string) []string {
+	return append(append(opts, "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join("/tmp", fmt.Sprintf("ym-%d-%%C", os.Getuid())),
+		"-o", "ControlPersist=10m", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"), host)
 }
 
 // sshErr is err with the last line ssh or the remote ym wrote to stderr.
