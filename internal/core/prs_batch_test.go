@@ -130,8 +130,8 @@ func (s *budgetSource) PRStatuses(urls []string) (map[string]PRStatus, error) {
 }
 
 // TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest runs an hour of ym serve's cycle at a fixed share of the account's
-// budget left: full pace above half, slower and slower below it, the board's other pull requests stopping at a quarter and
-// every read stopping at a tenth.
+// budget left: full pace above half, slower and slower below it, the board's other pull requests at the slowest pace from a
+// quarter, and every read stopping at a tenth.
 func TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest(t *testing.T) {
 	for _, c := range []struct {
 		left               float64
@@ -141,7 +141,7 @@ func TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest(t *testing.T) {
 		{0.9, 29, 31, 29, 31},
 		{0.5, 29, 31, 29, 31},
 		{0.3, 3, 5, 3, 5},
-		{0.2, 2, 4, 0, 0},
+		{0.2, 2, 4, 2, 3},
 		{0.05, 0, 0, 0, 0},
 	} {
 		t.Run(fmt.Sprintf("%.0f%% left", c.left*100), func(t *testing.T) {

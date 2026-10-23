@@ -83,7 +83,7 @@ type PRBudget interface {
 
 // How reads slow as the account's budget falls, so the owner's other tools always keep their share: at full pace down to half
 // the budget left, then stretching smoothly to PRSlowest at a tenth, where reads stop until the budget resets. Pull requests
-// no active goal tracks stop first, at a quarter, so managers keep their CI and review events longest.
+// no active goal tracks drop to PRSlowest at a quarter, so managers keep their CI and review events longest.
 const (
 	budgetFull  = 0.5
 	budgetBoard = 0.25
@@ -96,8 +96,10 @@ func prStale(left float64, goal bool) time.Duration {
 	switch {
 	case left >= budgetFull:
 		return PRStale
-	case left < budgetFloor, !goal && left < budgetBoard:
+	case left < budgetFloor:
 		return 0
+	case !goal && left < budgetBoard:
+		return PRSlowest
 	}
 	slow := (budgetFull - left) / (budgetFull - budgetFloor)
 	return PRStale + time.Duration(slow*float64(PRSlowest-PRStale))
