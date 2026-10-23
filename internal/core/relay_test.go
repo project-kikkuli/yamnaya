@@ -353,3 +353,48 @@ func TestAttachingUnderAChiefOnAnotherHostNamesThatChiefHoweverItIsReferred(t *t
 		})
 	}
 }
+
+func TestARelayWhoseActFailsStaysUnackedAndTakesEffectOnceItSucceeds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// from is the host that queues the command; it runs on c, so b's runs through a's carrying and c's through a directly.
+		from string
+	}{{name: "carried by the courier on to a third host", from: "b"}, {name: "handed straight to the host it names", from: "a"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			fails := 1
+			var ran []string
+			f.c.core.RunSelf = func(args ...string) (string, error) {
+				if fails > 0 {
+					fails--
+					return "", errors.New("ym item answer #3: database is locked")
+				}
+				ran = append(ran, strings.Join(args, " "))
+				return "", nil
+			}
+			from := map[string]*orgWorld{"a": f.a, "b": f.b}[tc.from]
+			if tc.from == "a" {
+				if err := from.core.Relay("c", RelayYM, relayYM{Args: []string{"item", "answer", "#3", "yes"}}); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := from.core.RunOrRelay("c", "item", "answer", "#3", "yes"); err != nil {
+				t.Fatal(err)
+			}
+			var errs []error
+			for range 4 {
+				errs = append(errs, f.a.core.SyncRelays([]string{"b", "c"}, f.net))
+			}
+			if !strings.Contains(fmt.Sprint(errs), "database is locked") {
+				t.Errorf("sync errors %v, want the failed run reported", errs)
+			}
+			if len(ran) != 1 || ran[0] != "item answer #3 yes" {
+				t.Errorf("ran %q after one failed run, want the command run once it can be", ran)
+			}
+			for name, w := range map[string]*orgWorld{"a": f.a, "b": f.b} {
+				if pending, _ := w.core.Store.PendingRelays(); len(pending) != 0 {
+					t.Errorf("%s still holds %d relays after c took the command", name, len(pending))
+				}
+			}
+		})
+	}
+}

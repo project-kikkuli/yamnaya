@@ -86,7 +86,20 @@ type RelaySync struct {
 // RelayReply is what the called host still has to carry, by its own seq.
 type RelayReply struct {
 	Entries []Relay `json:"entries"`
+	// Refused names the caller's entries this host could not act on or keep yet; the caller keeps them and sends them again.
+	Refused []RelayRef `json:"refused,omitempty"`
 }
+
+// RelayRef names a relay on every host it passes through.
+type RelayRef struct {
+	Origin    string `json:"origin"`
+	OriginSeq int64  `json:"origin_seq"`
+}
+
+func (r Relay) ref() RelayRef { return RelayRef{r.Origin, r.OriginSeq} }
+
+// errUnusable marks a relay that no later attempt can act on, such as one this ym cannot read; it is dropped, not sent again.
+var errUnusable = errors.New("unusable relay")
 
 // Courier carries one round trip to a host.
 type Courier interface {
@@ -169,6 +182,20 @@ func (s *Store) markRelayed(seqs []int64, at time.Time) error {
 		if _, err := s.db.Exec(`UPDATE ym_relay SET delivered = ? WHERE seq = ? AND delivered IS NULL`, at.UnixNano(), seq); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// relaySeen reports whether the relay origin numbered seq was acted on already.
+func (s *Store) relaySeen(origin string, seq int64) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM ym_relay_seen WHERE origin = ? AND origin_seq = ?`, origin, seq).Scan(&n)
+	return n > 0, err
+}
+
+func unmarshal(body string, v any) error {
+	if err := json.Unmarshal([]byte(body), v); err != nil {
+		return fmt.Errorf("%w: %w", errUnusable, err)
 	}
 	return nil
 }
@@ -276,12 +303,12 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
-	recvErr := c.Receive(req.Entries)
+	refused, recvErr := c.Receive(req.Entries)
 	out, err := c.outgoing()
 	if out == nil {
 		out = []Relay{}
 	}
-	return RelayReply{Entries: out}, errors.Join(recvErr, err)
+	return RelayReply{Entries: out, Refused: refused}, errors.Join(recvErr, err)
 }
 
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
@@ -298,10 +325,9 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 			return err
 		}
 		mine := []Relay{}
-		var sent []int64
 		for _, r := range out {
 			if r.Dest == h {
-				mine, sent = append(mine, r), append(sent, r.Seq)
+				mine = append(mine, r)
 			}
 		}
 		var peers []string
@@ -315,18 +341,38 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
 		}
+		refused := map[RelayRef]bool{}
+		for _, ref := range reply.Refused {
+			refused[ref] = true
+		}
+		var sent []int64
+		for _, r := range mine {
+			if !refused[r.ref()] {
+				sent = append(sent, r.Seq)
+			}
+		}
 		if err := c.Store.markRelayed(sent, c.now()); err != nil {
 			return err
 		}
 		if len(reply.Entries) == 0 {
 			continue
 		}
+		failed, err := c.Receive(reply.Entries)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		held := map[RelayRef]bool{}
+		for _, ref := range failed {
+			held[ref] = true
+		}
 		var ack []int64
 		for _, r := range reply.Entries {
-			ack = append(ack, r.Seq)
+			if !held[r.ref()] {
+				ack = append(ack, r.Seq)
+			}
 		}
-		if err := c.Receive(reply.Entries); err != nil {
-			errs = append(errs, err)
+		if len(ack) == 0 {
+			continue
 		}
 		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack}); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
@@ -335,10 +381,12 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 	return errors.Join(errs...)
 }
 
-// Receive acts on every relay addressed to this host and keeps the rest to carry on; one already received does nothing again.
-func (c *Core) Receive(entries []Relay) error {
+// Receive acts on every relay addressed to this host and keeps the rest to carry on; one already acted on does nothing again. It
+// returns the relays it could neither act on nor keep, which their sender holds and sends again.
+func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
 	self := c.SelfName()
 	var errs []error
+	var failed []RelayRef
 	var b Board
 	var berr error
 	loaded := false
@@ -348,16 +396,16 @@ func (c *Core) Receive(entries []Relay) error {
 		}
 		if r.Dest != self {
 			if _, _, err := c.Store.addRelay(Relay{Origin: r.Origin, OriginSeq: r.OriginSeq, Dest: r.Dest, Kind: r.Kind, Body: r.Body, Created: r.Created}); err != nil {
-				errs = append(errs, err)
+				errs, failed = append(errs, err), append(failed, r.ref())
 			}
 			continue
 		}
-		fresh, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now())
+		seen, err := c.Store.relaySeen(r.Origin, r.OriginSeq)
 		if err != nil {
-			errs = append(errs, err)
+			errs, failed = append(errs, err), append(failed, r.ref())
 			continue
 		}
-		if !fresh {
+		if seen {
 			continue
 		}
 		if !loaded {
@@ -366,9 +414,16 @@ func (c *Core) Receive(entries []Relay) error {
 		}
 		if err := c.act(b, berr, r); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s %s from %s: %w", r.Kind, r.Body, r.Origin, err))
+			if !errors.Is(err, errUnusable) {
+				failed = append(failed, r.ref())
+				continue
+			}
+		}
+		if _, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now()); err != nil {
+			errs, failed = append(errs, err), append(failed, r.ref())
 		}
 	}
-	return errors.Join(errs...)
+	return failed, errors.Join(errs...)
 }
 
 func (c *Core) act(b Board, berr error, r Relay) error {
@@ -379,7 +434,7 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 	switch r.Kind {
 	case RelayTell:
 		var t relayTell
-		if err := json.Unmarshal([]byte(r.Body), &t); err != nil {
+		if err := unmarshal(r.Body, &t); err != nil {
 			return err
 		}
 		up := o.Above(t.Manager)
@@ -389,7 +444,7 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		return c.tellManager(b, o, up, t.Text)
 	case RelayAsk:
 		var a relayAsk
-		if err := json.Unmarshal([]byte(r.Body), &a); err != nil {
+		if err := unmarshal(r.Body, &a); err != nil {
 			return err
 		}
 		if a.Hops == 0 && a.Item != r.Origin {
@@ -425,7 +480,7 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		return c.tell(b, o.Managers[up].Session, a.Text, false)
 	case RelayRoute:
 		var rt relayRoute
-		if err := json.Unmarshal([]byte(r.Body), &rt); err != nil {
+		if err := unmarshal(r.Body, &rt); err != nil {
 			return err
 		}
 		if h, rest, remote := SplitRemote(rt.Recipient); remote && h == c.SelfName() {
@@ -447,28 +502,28 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		return c.askManager(b, o, it)
 	case RelayEvents:
 		var t relayTell
-		if err := json.Unmarshal([]byte(r.Body), &t); err != nil {
+		if err := unmarshal(r.Body, &t); err != nil {
 			return err
 		}
 		return c.tellChiefs(b, o, t.Manager, t.Text)
 	case RelayNotify:
 		var n relayNotify
-		if err := json.Unmarshal([]byte(r.Body), &n); err != nil {
+		if err := unmarshal(r.Body, &n); err != nil {
 			return err
 		}
 		return c.notify(strings.Replace(n.Title, "ym: ", "ym: "+r.Origin+" ", 1), n.Body)
 	case RelayYM:
 		var y relayYM
-		if err := json.Unmarshal([]byte(r.Body), &y); err != nil {
+		if err := unmarshal(r.Body, &y); err != nil {
 			return err
 		}
 		if c.RunSelf == nil {
-			return errors.New("ym cannot run itself here")
+			return fmt.Errorf("ym cannot run itself here: %w", errUnusable)
 		}
 		_, err := c.RunSelf(y.Args...)
 		return err
 	}
-	return fmt.Errorf("unknown relay kind %q", r.Kind)
+	return fmt.Errorf("unknown relay kind %q: %w", r.Kind, errUnusable)
 }
 
 // tellManager hands text to the manager or chief id names, on this host or through a relay to the host it runs on.
