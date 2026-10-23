@@ -164,7 +164,7 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 		}
 		return p, p.DefaultConstraint()
 	}
-	limits := []core.Limit{}
+	var limits []core.Limit
 	if l.core != nil && l.core.Meter != nil {
 		limits = l.core.Meter.Fleet(time.Now()).Limits
 	} else {

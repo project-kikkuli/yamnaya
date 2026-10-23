@@ -87,7 +87,7 @@ func (l launcher) nativeLifecycle(rec launch.Record, dest profile.Profile, allow
 		}
 		if related[r.Session] {
 			if !allowSource || r.Key != rec.Key || root != physicalProfileRoot(rec.ConfigRoot) {
-				return nil, fmt.Errorf("Codex conversation lifecycle pid %d has not drained", p.PID)
+				return nil, fmt.Errorf("codex conversation lifecycle pid %d has not drained", p.PID)
 			}
 			owned = append(owned, p)
 			continue

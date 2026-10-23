@@ -122,6 +122,11 @@ func TestProfileTransfersPreservePayersThroughRoundTripsAndColdRebuild(t *testin
 			appendProfileFile(t, paths[2], profileResponse(h, stamp(3), "c1", input, output))
 			check := func(f core.Fleet) {
 				t.Helper()
+				for _, l := range f.Limits {
+					if l.Account != ps[0].Account {
+						t.Fatalf("copied historical quota charged to another account after restart: %#v", l)
+					}
+				}
 				for i, want := range []core.Tokens{{Input: 110, Output: 22}, {Input: 30, Output: 5}, {Input: 10, Output: 1}} {
 					key := profile.SessionKey(h, ps[i].ID, profileConversation)
 					got, ok := f.Sessions[key]
