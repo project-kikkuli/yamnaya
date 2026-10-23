@@ -17,17 +17,16 @@ var (
 	owners   = map[string]ownerEntry{}
 )
 
-// ownsPR reports whether a pull request with status st that a session or crew member in worktree, on branch ahead of
-// the default branch, links to is its own: always, unless the pull request's head is a same-named branch it does not own.
+// ownsPR checks the linked pull request against the session's upstream and commit history.
 func ownsPR(worktree, branch string, ahead int, st PRStatus, now time.Time) bool {
-	return worktree == "" || st.Head != branch || st.Merge.OID == "" || branchOwns(worktree, branch, st.Merge.OID, ahead, now)
+	return worktree == "" || st.Merge.OID == "" || branchOwns(worktree, branch, st.Head, st.Merge.OID, ahead, now)
 }
 
 // prPlaces is the worktree, branch and commits ahead of whoever in l links to each of its pull requests.
 func (l Live) prPlaces() map[string]Member {
 	out := map[string]Member{}
 	for _, pr := range l.PRs {
-		out[pr.URL] = Member{Worktree: l.Worktree, Branch: l.Branch, Ahead: l.Ahead}
+		out[pr.URL] = Member{Worktree: l.Worktree, Branch: l.Branch, Ahead: l.Ahead, Facts: l.Facts}
 	}
 	for _, m := range l.Crew {
 		for _, pr := range m.PRs {
@@ -39,12 +38,9 @@ func (l Live) prPlaces() map[string]Member {
 	return out
 }
 
-// branchOwns reports whether the pull request whose head is commit oid is the work of branch, checked out in worktree,
-// not of a same-named branch in another clone: the branch tracks the pull request's branch, as one rebased or amended
-// since its push still does, or one tip descends from the other, and a tip with nothing of its own past the default
-// branch owns nothing. It answers yes when the clone has never seen oid, having nothing to tell them apart by.
-func branchOwns(worktree, branch, oid string, ahead int, now time.Time) bool {
-	key := worktree + "\x00" + branch + "\x00" + oid
+// branchOwns accepts the PR's upstream or related history, including a head this clone has not fetched.
+func branchOwns(worktree, branch, head, oid string, ahead int, now time.Time) bool {
+	key := worktree + "\x00" + branch + "\x00" + head + "\x00" + oid
 	ownersMu.Lock()
 	e, ok := owners[key]
 	ownersMu.Unlock()
@@ -58,7 +54,7 @@ func branchOwns(worktree, branch, oid string, ahead int, now time.Time) bool {
 		out, _ := exec.Command("git", "-C", worktree, "config", "--get", "branch."+branch+"."+key).Output()
 		return strings.TrimSpace(string(out))
 	}
-	own := config("remote") == "origin" && config("merge") == "refs/heads/"+branch || !git("cat-file", "-e", oid+"^{commit}") || git("merge-base", "--is-ancestor", oid, "HEAD") ||
+	own := config("remote") == "origin" && config("merge") == "refs/heads/"+head || !git("cat-file", "-e", oid+"^{commit}") || git("merge-base", "--is-ancestor", oid, "HEAD") ||
 		(ahead > 0 && git("merge-base", "--is-ancestor", "HEAD", oid))
 	ownersMu.Lock()
 	owners[key] = ownerEntry{own, now}

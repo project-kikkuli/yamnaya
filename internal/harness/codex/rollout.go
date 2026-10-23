@@ -15,7 +15,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
-const scanFormat = 7
+const scanFormat = 8
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -59,7 +59,13 @@ type payload struct {
 	Input     string          `json:"input"`
 	CallID    string          `json:"call_id"`
 	Output    json.RawMessage `json:"output"`
-	Content   []struct {
+	Item      *struct {
+		Type     string   `json:"type"`
+		Command  []string `json:"command"`
+		Output   string   `json:"aggregated_output"`
+		ExitCode *int     `json:"exit_code"`
+	} `json:"item"`
+	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
@@ -104,6 +110,16 @@ func (t *scan) add(l rolloutLine, cwd string) {
 		t.Drift.Compacted(l.Timestamp)
 	case "event_msg":
 		switch p.Type {
+		case "item_completed":
+			if p.Item != nil && p.Item.Type == "CommandExecution" && p.Item.ExitCode != nil && *p.Item.ExitCode == 0 {
+				cmd := strings.Join(p.Item.Command, " ")
+				if strings.Contains(cmd, "gh pr create") {
+					for _, pr := range core.PRsIn(p.Item.Output) {
+						t.Facts.Opened(pr)
+					}
+				}
+				t.Facts.Pushed(cmd, p.Item.Output)
+			}
 		case "task_started":
 			t.Open = true
 		case "task_complete", "turn_aborted":
@@ -162,6 +178,9 @@ func (t *scan) add(l rolloutLine, cwd string) {
 				delete(t.Calls, p.CallID)
 				var sig, detail string
 				text, failed := outcome(p.Output)
+				if !failed {
+					t.Facts.Pushed(c.Command, text)
+				}
 				if failed {
 					sig, detail = drift.Failure(c.Tool, c.Command, text)
 				}

@@ -70,14 +70,15 @@ type Core struct {
 	CPU   func() (map[int]float64, error)
 	Mem   func() (map[int]float64, error)
 
-	gc       gitCache
-	fw       forwardedSet
-	prompts  promptCache
-	reuse    boardReuse
-	paced    PRPace
-	recovery recovery
-	cpu      cpuCache
-	mem      cpuCache
+	gc          gitCache
+	fw          forwardedSet
+	prompts     promptCache
+	reuse       boardReuse
+	paced       PRPace
+	recovery    recovery
+	cpu         cpuCache
+	mem         cpuCache
+	prDiscovery prDiscovery
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -602,14 +603,28 @@ func (c *Core) attachPRs(sessions []Live) {
 		return
 	}
 	now := c.now()
-	set := func(prs []PR, worktree, branch string, ahead int) []PR {
+	set := func(f Facts, worktree, branch string, ahead int) []PR {
+		prs := append([]PR(nil), f.PRs...)
+		targets := c.prBranches(worktree, branch, f)
+		for url, st := range known {
+			for _, target := range targets {
+				if target.Head == st.Head && strings.HasPrefix(strings.ToLower(url), "https://github.com/"+strings.ToLower(target.Repo)+"/pull/") {
+					f := Facts{PRs: prs}
+					for _, pr := range PRsIn(url) {
+						f.Opened(pr)
+					}
+					prs = f.PRs
+					break
+				}
+			}
+		}
 		var out []PR
 		for _, pr := range prs {
 			if st, ok := known[pr.URL]; ok {
 				if st.State == PRGone {
 					continue
 				}
-				if !ownsPR(worktree, branch, ahead, st, now) {
+				if !pushedPR(f, pr, st) && !ownsPR(worktree, branch, ahead, st, now) {
 					continue
 				}
 				pr.Status = &st
@@ -620,10 +635,10 @@ func (c *Core) attachPRs(sessions []Live) {
 	}
 	for i := range sessions {
 		s := &sessions[i]
-		s.PRs = set(s.PRs, s.Worktree, s.Branch, s.Ahead)
+		s.PRs = set(s.Facts, s.Worktree, s.Branch, s.Ahead)
 		crew := append([]Member(nil), s.Crew...)
 		for j := range crew {
-			crew[j].PRs = set(crew[j].PRs, crew[j].Worktree, crew[j].Branch, crew[j].Ahead)
+			crew[j].PRs = set(crew[j].Facts, crew[j].Worktree, crew[j].Branch, crew[j].Ahead)
 		}
 		sessions[i].Crew = crew
 	}

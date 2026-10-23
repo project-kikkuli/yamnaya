@@ -122,12 +122,16 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 	if c.PRs == nil {
 		return 0, nil
 	}
+	discoveryErr := c.discoverPRs(b)
 	known, err := c.Store.PRStatuses()
 	if err != nil {
 		return 0, err
 	}
 	now := c.now()
 	pace := PRPace{Left: 1, At: now}
+	if discoveryErr != nil {
+		pace.Failed = discoveryErr.Error()
+	}
 	if bud, ok := c.PRs.(PRBudget); ok {
 		if f, reset, ok := bud.Budget(); ok && now.Before(reset) {
 			pace.Left, pace.Reset = f, reset
@@ -182,7 +186,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		}
 	}
 	due = append(due, later...)
-	var firstErr error
+	firstErr := discoveryErr
 	n := 0
 	if batch, ok := c.PRs.(PRBatch); ok {
 		var left []string

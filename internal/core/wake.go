@@ -54,7 +54,7 @@ func (c *Core) Notice(b Board) error {
 		for _, pr := range s.AllPRs() {
 			st, fetched := statuses[pr.URL]
 			p := places[pr.URL]
-			if seen[g.ID+pr.URL] || !fetched || !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
+			if seen[g.ID+pr.URL] || !fetched || !pushedPR(p.Facts, pr, st) && !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
 				continue
 			}
 			seen[g.ID+pr.URL] = true
@@ -390,6 +390,13 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 // still running, a wake set, or an open ask one of its sessions filed.
 func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 	statuses, _ := c.Store.PRStatuses()
+	if tracked, err := c.Store.GoalPRs(); err == nil {
+		for _, url := range tracked[m.GoalID] {
+			if st, ok := statuses[url]; ok && st.State == "OPEN" && st.Pending > 0 {
+				return true
+			}
+		}
+	}
 	mine := func(key string) bool { owner, ok := o.Managed(key, b.parents); return ok && owner.ID == m.ID }
 	for _, s := range b.Sessions {
 		if !mine(s.Key()) {

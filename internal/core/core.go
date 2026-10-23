@@ -76,12 +76,13 @@ type Facts struct {
 	// ResultAt is when the agent wrote Result.
 	ResultAt time.Time
 	// Asked is the latest reply since the owner's last prompt that asks the owner something and every reply after it, "" when none.
-	Asked string
-	Model string
-	Tools map[string]int
-	Files []string
-	Trail []Action
-	PRs   []PR
+	Asked  string
+	Model  string
+	Tools  map[string]int
+	Files  []string
+	Trail  []Action
+	PRs    []PR
+	Pushes []PRBranch
 	// Drift are the ways the agent is going nowhere now, read from its transcript and where it writes.
 	Drift []drift.Sign
 }

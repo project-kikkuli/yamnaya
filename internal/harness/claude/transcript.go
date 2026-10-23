@@ -120,7 +120,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 7
+const scanFormat = 8
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -301,6 +301,9 @@ func (t *scan) user(r record) {
 			continue
 		}
 		if c, ok := t.Calls[b.ToolUseID]; ok {
+			if c.Tool == "Bash" && !b.IsError {
+				t.Facts.Pushed(c.Command, resultText(b.Content))
+			}
 			delete(t.Calls, b.ToolUseID)
 			var sig, detail string
 			if b.IsError {
