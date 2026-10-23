@@ -177,6 +177,8 @@ func TestMetersShareCommittedUsageAndOwnershipAcrossProcesses(t *testing.T) {
 
 			p.Account = "account-b"
 			ps[0] = p
+			sendA(ps)
+			check(readA(), 154, 33)
 			if h == claudeName {
 				write(t, path, suffix("fourth", 20, 4)...)
 			} else {

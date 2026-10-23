@@ -20,6 +20,17 @@ type epochHistory struct {
 	Version  int            `json:"version"`
 	Observed int64          `json:"observed"`
 	Epochs   []accountEpoch `json:"epochs"`
+	Identity *string        `json:"identity,omitempty"`
+	Pending  int64          `json:"pending_boundary,omitempty"`
+}
+
+func (e *epochHistory) begin(start int64, account string) {
+	last := &e.Epochs[len(e.Epochs)-1]
+	if last.Start == start {
+		last.Account = account
+	} else if last.Account != account {
+		e.Epochs = append(e.Epochs, accountEpoch{Start: start, Account: account})
+	}
 }
 
 func epochPath(dir, path string) string {
@@ -64,7 +75,12 @@ func (m *Meter) accountSources(s source) ([]source, error) {
 	if e.Version != 1 || len(e.Epochs) == 0 {
 		return nil, fmt.Errorf("unsupported account ownership provenance")
 	}
-	if e.Epochs[len(e.Epochs)-1].Account != s.Account {
+	if e.Identity == nil {
+		identity := e.Epochs[len(e.Epochs)-1].Account
+		e.Identity = &identity
+		changed = true
+	}
+	if *e.Identity != s.Account {
 		changed = true
 		boundary := e.Observed
 		for _, f := range m.files {
@@ -72,10 +88,34 @@ func (m *Meter) accountSources(s source) ([]source, error) {
 				boundary = max(boundary, f.Offset)
 			}
 		}
-		if boundary == e.Epochs[len(e.Epochs)-1].Start && boundary == 0 {
-			e.Epochs[len(e.Epochs)-1].Account = s.Account
+		if boundary > s.Size {
+			return nil, fmt.Errorf("account-owned history was truncated in %s", s.Path)
+		}
+		identity := s.Account
+		e.Identity = &identity
+		if boundary == s.Size {
+			e.begin(boundary, s.Account)
+			e.Pending = 0
 		} else {
-			e.Epochs = append(e.Epochs, accountEpoch{Start: boundary, Account: s.Account})
+			e.begin(boundary, "")
+			e.Pending = s.Size
+		}
+	}
+	if e.Pending > 0 {
+		position := e.Epochs[len(e.Epochs)-1].Start
+		var boundary int64
+		if _, err := readLines(s.Path, position, func(line []byte) {
+			position += int64(len(line))
+			if boundary == 0 && position >= e.Pending && position <= s.Size {
+				boundary = position
+			}
+		}); err != nil {
+			return nil, err
+		}
+		if boundary > 0 {
+			e.begin(boundary, *e.Identity)
+			e.Pending = 0
+			changed = true
 		}
 	}
 	if changed {

@@ -277,6 +277,7 @@ func TestAccountEpochsNeverRelabelHistoryAfterRelogin(t *testing.T) {
 				scanProfiles(t, m, now)
 				p.Account = h + "/user/b"
 				m.Profiles = []profile.Profile{p}
+				scanProfiles(t, m, now)
 				in, out := 30, 5
 				if h == "codex" {
 					in, out = 130, 25
