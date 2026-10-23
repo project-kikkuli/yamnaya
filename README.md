@@ -107,7 +107,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
     ym remote install <host>
     ym remote <host>
 
-`ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. `ym item list --all` also lists that host's items answered or dismissed in the last week, each with its history as that host kept it, so you see what became of an answer you sent there. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
+`ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. `ym item list --all` also lists that host's items answered or dismissed in the last week, each with its history as that host kept it, so you see what became of an answer you sent there. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. Detaching from a remote session you opened from the board (C-b d) brings you straight back to this host's board. `ym remote forget <host>` stops showing it.
 
 Goals across hosts:
 

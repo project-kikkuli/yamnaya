@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -167,7 +168,11 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			if ok, err := e.openLaunched(out, args[0]); ok || err != nil {
+			show := e.attach
+			if noBoard {
+				show = (*exec.Cmd).Run
+			}
+			if ok, err := e.openLaunched(out, args[0], show); ok || err != nil {
 				return err
 			}
 			b, err := e.core.Board()
@@ -204,10 +209,7 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				t = ts[pick-1]
 			}
 			if c := e.core.AttachCmd(t); c != nil {
-				if noBoard {
-					return c.Run()
-				}
-				return e.attach(c)
+				return show(c)
 			}
 			err = e.core.Focus(t)
 			if errors.Is(err, core.ErrNoHost) {

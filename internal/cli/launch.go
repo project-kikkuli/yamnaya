@@ -165,8 +165,8 @@ func (e *env) attach(cmd *exec.Cmd) error {
 	return tui.Run(e.core)
 }
 
-// openLaunched opens a session by its launch key; ok is false when ref names no launch.
-func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
+// openLaunched opens a session by its launch key, showing it with show; ok is false when ref names no launch.
+func (e *env) openLaunched(w io.Writer, ref string, show func(*exec.Cmd) error) (bool, error) {
 	l, err := newLauncher()
 	if err != nil {
 		return false, err
@@ -185,7 +185,7 @@ func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
 	}
 	t := core.Target{Session: core.Session{Harness: rec.Harness, ID: rec.Session}, Handle: &core.Handle{Host: l.srv.Name(), ID: pane.ID, Label: pane.Session}}
 	if c := e.core.AttachCmd(t); c != nil {
-		return true, e.attach(c)
+		return true, show(c)
 	}
 	return true, e.core.Focus(t)
 }
