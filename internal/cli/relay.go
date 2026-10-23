@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,6 +99,17 @@ func relayHosts(c *core.Core) error {
 	return c.SyncRelays(names, newRemoteHosts(names, 0, nil))
 }
 
+// exitFinal is ym's exit status for a refusal no later attempt changes, so a relay that ran the command ends instead of retrying.
+const exitFinal = 3
+
+// ExitCode is the status ym exits with for err.
+func ExitCode(err error) int {
+	if errors.Is(err, core.ErrFinal) {
+		return exitFinal
+	}
+	return 1
+}
+
 // runSelf runs this executable with args, as a relay that asks for a ym command does.
 func runSelf(args ...string) (string, error) {
 	self, err := os.Executable()
@@ -106,7 +118,12 @@ func runSelf(args ...string) (string, error) {
 	}
 	out, err := exec.Command(self, args...).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("ym %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		err = fmt.Errorf("ym %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == exitFinal {
+			err = core.Final(err)
+		}
+		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
 }

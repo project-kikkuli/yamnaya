@@ -215,6 +215,15 @@ func (c *Core) queue(b *Board, o Org) error {
 			extra = append(extra, n)
 		}
 	}
+	relays, err := c.Store.PendingRelays()
+	if err != nil {
+		return err
+	}
+	for _, r := range relays {
+		if r.Error != "" && (r.Refusals >= RefusalsBeforeOwner || !r.RefusedSince.IsZero() && b.At.Sub(r.RefusedSince) >= RefusedBeforeOwner) {
+			extra = append(extra, Need{Relay: &r})
+		}
+	}
 	statuses, err := c.Store.PRStatuses()
 	if err != nil {
 		return err
@@ -310,6 +319,8 @@ func (n Need) Key() string {
 		return "goal:" + n.Goal.ID
 	case n.Steer != nil:
 		return fmt.Sprintf("steer:%s#%d", n.Steer.Manager, n.Steer.Revision)
+	case n.Relay != nil:
+		return fmt.Sprintf("relay:%d", n.Relay.Seq)
 	case n.PR != nil:
 		head := ""
 		if n.PR.Status != nil {

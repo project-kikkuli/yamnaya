@@ -191,7 +191,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		return Steer{}, err
 	}
 	if !o.Active(m) {
-		return Steer{}, fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID)
+		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID))
 	}
 	if author != Owner {
 		reports, via := climb(o, author, m.ID)
@@ -201,7 +201,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
-			return Steer{}, fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.ID, author)
+			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.ID, author))
 		}
 	}
 	return c.applySteer(b, o, m, text, author)
@@ -212,7 +212,7 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer
 	if latest, err := c.Store.LatestSteers(); err != nil {
 		return Steer{}, err
 	} else if st, ok := latest[m.ID]; ok && st.Text == text {
-		return st, fmt.Errorf("%s is already at revision %d with that plan", m.ID, st.Revision)
+		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.ID, st.Revision))
 	}
 	st, err := c.Store.addSteer(m.ID, text, author, c.now())
 	if err != nil {
@@ -373,8 +373,16 @@ func (c *Core) watchSteers(b Board, o Org) error {
 			continue
 		}
 		if up := raisedTo(o, st); up != Owner {
+			shown, about := m, subject(o, m)
+			if _, _, remote := SplitRemote(up); remote {
+				shown.ID = RemoteKey(c.SelfName(), m.ID)
+				about = "chief " + shown.ID
+				if g, ok := o.Goals[m.GoalID]; ok {
+					about = "goal " + RemoteKey(c.SelfName(), g.ID)
+				}
+			}
 			text := fmt.Sprintf("ym: %s has not adopted revision %d of %s, which %s sent, after %d nudges. Open it, relaunch it with ym goal relaunch %s, or steer again.",
-				m.Label(), st.Revision, subject(o, m), st.By(), st.Nudges, m.ID)
+				shown.Label(), st.Revision, about, st.By(), st.Nudges, shown.ID)
 			if err := c.tellManager(b, o, up, text); err != nil {
 				errs = append(errs, err)
 				continue

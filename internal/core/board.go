@@ -158,6 +158,8 @@ type Need struct {
 	Docs []DocAsk
 	// Steer is the owner's revision of a goal's plan that its manager, Manager, left unadopted through every nudge.
 	Steer *Steer
+	// Relay is one this host carries that the host it goes to keeps refusing, RefusalsBeforeOwner times or for RefusedBeforeOwner.
+	Relay *Relay
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.

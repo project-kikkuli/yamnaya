@@ -221,3 +221,19 @@ type ScanCache interface {
 }
 
 var ErrNotFound = errors.New("not found")
+
+// ErrFinal marks a refusal no later attempt changes, such as answering an item that was answered already.
+var ErrFinal = errors.New("final")
+
+type finalError struct{ error }
+
+func (e finalError) Is(target error) bool { return target == ErrFinal }
+func (e finalError) Unwrap() error        { return e.error }
+
+// Final marks err as a refusal that trying again cannot change.
+func Final(err error) error {
+	if err == nil {
+		return nil
+	}
+	return finalError{err}
+}

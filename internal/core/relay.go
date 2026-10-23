@@ -43,6 +43,9 @@ type Relay struct {
 	Created   time.Time `json:"created"`
 	// Error is why the host it went to last refused it; it is sent again until that host acts on it or the owner drops it.
 	Error string `json:"error,omitempty"`
+	// Refusals counts the times a host refused it in a way a later try may change, the first of them at RefusedSince.
+	Refusals     int       `json:"-"`
+	RefusedSince time.Time `json:"-"`
 }
 
 type relayTell struct {
@@ -113,9 +116,17 @@ type RelayRef struct {
 	OriginSeq int64  `json:"origin_seq"`
 	// Error is why the host refused it, for ym relay to show.
 	Error string `json:"error,omitempty"`
+	// Final says no later try can change the refusal, so the relay ends with it; the receiver recorded where the owner looks.
+	Final bool `json:"final,omitempty"`
 }
 
 func (r Relay) ref() RelayRef { return RelayRef{Origin: r.Origin, OriginSeq: r.OriginSeq} }
+
+const (
+	// RefusalsBeforeOwner and RefusedBeforeOwner are how often, or how long, a relay is refused before the owner's queue shows it.
+	RefusalsBeforeOwner = 3
+	RefusedBeforeOwner  = 15 * time.Minute
+)
 
 // errUnusable marks a relay that no later attempt can act on, such as one this ym cannot read; it is dropped, not sent again.
 var errUnusable = errors.New("unusable relay")
@@ -178,7 +189,7 @@ func (s *Store) addRelay(r Relay) (Relay, bool, error) {
 
 // PendingRelays lists the relays no host has confirmed carrying yet, oldest first.
 func (s *Store) PendingRelays() ([]Relay, error) {
-	rows, err := s.db.Query(`SELECT seq, origin, origin_seq, dest, kind, body, created, last_error FROM ym_relay WHERE delivered IS NULL ORDER BY seq`)
+	rows, err := s.db.Query(`SELECT seq, origin, origin_seq, dest, kind, body, created, last_error, refusals, refused_since FROM ym_relay WHERE delivered IS NULL ORDER BY seq`)
 	if err != nil {
 		return nil, err
 	}
@@ -187,10 +198,14 @@ func (s *Store) PendingRelays() ([]Relay, error) {
 	for rows.Next() {
 		var r Relay
 		var created int64
-		if err := rows.Scan(&r.Seq, &r.Origin, &r.OriginSeq, &r.Dest, &r.Kind, &r.Body, &created, &r.Error); err != nil {
+		var since sql.NullInt64
+		if err := rows.Scan(&r.Seq, &r.Origin, &r.OriginSeq, &r.Dest, &r.Kind, &r.Body, &created, &r.Error, &r.Refusals, &since); err != nil {
 			return nil, err
 		}
 		r.Created = time.Unix(0, created)
+		if since.Valid {
+			r.RefusedSince = time.Unix(0, since.Int64)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -229,25 +244,39 @@ func (s *Store) firstSight(origin string, seq int64, at time.Time) (bool, error)
 	return n == 1, err
 }
 
-// relayErrors adds the column holding why a relay was last refused.
+// relayErrors adds the columns holding why a relay was last refused, how often and since when.
 func relayErrors(db *sql.DB) error {
-	var has int
-	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_relay') WHERE name = 'last_error'`).Scan(&has); err != nil || has > 0 {
-		return err
+	for _, col := range []struct{ name, def string }{
+		{"last_error", "TEXT NOT NULL DEFAULT ''"}, {"refusals", "INTEGER NOT NULL DEFAULT 0"}, {"refused_since", "INTEGER"},
+	} {
+		var has int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_relay') WHERE name = ?`, col.name).Scan(&has); err != nil {
+			return err
+		}
+		if has > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ym_relay ADD COLUMN ` + col.name + ` ` + col.def); err != nil {
+			return err
+		}
 	}
-	_, err := db.Exec(`ALTER TABLE ym_relay ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`)
-	return err
+	return nil
 }
 
-// noteRefused records why another host refused each of this host's relays refs name, own or carried on.
-func (s *Store) noteRefused(self string, refs []RelayRef) error {
+// noteRefused records why another host refused each of this host's relays refs name, own or carried on: a final refusal ends the
+// relay, any other counts toward the owner hearing of it.
+func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) error {
 	for _, r := range refs {
-		q := `UPDATE ym_relay SET last_error = ? WHERE delivered IS NULL AND origin = ? AND origin_seq = ?`
-		args := []any{r.Error, r.Origin, r.OriginSeq}
-		if r.Origin == self {
-			q, args = `UPDATE ym_relay SET last_error = ? WHERE delivered IS NULL AND origin = '' AND seq = ?`, []any{r.Error, r.OriginSeq}
+		set := `last_error = ?, refusals = refusals + 1, refused_since = COALESCE(refused_since, ?)`
+		args := []any{r.Error, at.UnixNano()}
+		if r.Final {
+			set = `last_error = ?, delivered = ?`
 		}
-		if _, err := s.db.Exec(q, args...); err != nil {
+		where, key := ` WHERE delivered IS NULL AND origin = ? AND origin_seq = ?`, []any{r.Origin, r.OriginSeq}
+		if r.Origin == self {
+			where, key = ` WHERE delivered IS NULL AND origin = '' AND seq = ?`, []any{r.OriginSeq}
+		}
+		if _, err := s.db.Exec(`UPDATE ym_relay SET `+set+where, append(args, key...)...); err != nil {
 			return err
 		}
 	}
@@ -357,7 +386,7 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
-	if err := c.Store.noteRefused(c.SelfName(), req.Refused); err != nil {
+	if err := c.Store.noteRefused(c.SelfName(), req.Refused, c.now()); err != nil {
 		return RelayReply{}, err
 	}
 	refused, recvErr := c.Receive(req.Entries)
@@ -398,7 +427,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
 		}
-		if err := c.Store.noteRefused(self, reply.Refused); err != nil {
+		if err := c.Store.noteRefused(self, reply.Refused, c.now()); err != nil {
 			return err
 		}
 		refused := map[RelayRef]bool{}
@@ -471,7 +500,15 @@ func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
 		}
 		if err := c.act(b, berr, r); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s %s from %s: %w", r.Kind, r.Body, r.Origin, err))
-			if !errors.Is(err, errUnusable) {
+			switch {
+			case errors.Is(err, ErrFinal):
+				ref := refused(r, err)
+				ref.Final = true
+				failed = append(failed, ref)
+				if err := c.noteFinal(r, err); err != nil {
+					errs = append(errs, err)
+				}
+			case !errors.Is(err, errUnusable):
 				failed = append(failed, refused(r, err))
 				continue
 			}
@@ -723,4 +760,60 @@ func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 		return nil
 	}
 	return c.tellManager(b, o, author, fmt.Sprintf("ym: your steer of %s was refused: it does not report to you.", v.Target))
+}
+
+// noteFinal records a relay this host refused for good where the owner reads its outcome: an item's history, or the goal's feed.
+func (c *Core) noteFinal(r Relay, err error) error {
+	why := err.Error()
+	switch r.Kind {
+	case RelayYM:
+		var y relayYM
+		if json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) < 3 {
+			return nil
+		}
+		what := "ym " + strings.Join(y.Args, " ") + " from " + r.Origin
+		switch y.Args[0] + " " + y.Args[1] {
+		case "goal steer":
+			return c.noteGoal(y.Args[len(y.Args)-1], what, why, r)
+		}
+		if y.Args[0] != "item" {
+			return nil
+		}
+		it, ierr := c.Store.Item(y.Args[2])
+		if ierr != nil {
+			return nil
+		}
+		note := what + " did not land: " + strings.TrimPrefix(why, "ym "+strings.Join(y.Args, " ")+": ")
+		if it.Answer != "" {
+			note += "; answered there already: " + it.Answer
+		} else if it.Reason != "" {
+			note += "; dismissed there already: " + it.Reason
+		}
+		return c.Store.NoteItem(it, note)
+	case RelayVouched:
+		var v relayVouch
+		if json.Unmarshal([]byte(r.Body), &v) != nil {
+			return nil
+		}
+		_, id, _ := SplitRemote(v.Target)
+		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, v.Author), why, r)
+	}
+	return nil
+}
+
+func (c *Core) noteGoal(ref, what, why string, r Relay) error {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return err
+	}
+	m, err := o.lookup(ref)
+	if err != nil {
+		return nil
+	}
+	g, ok := o.Goals[m.GoalID]
+	if !ok {
+		return nil
+	}
+	_, _, err = c.RecordGoalEvent(g.ID, EventUpdate, what+" did not land: "+why, fmt.Sprintf("%s:refused:%s:%d", g.ID, r.Origin, r.OriginSeq))
+	return err
 }

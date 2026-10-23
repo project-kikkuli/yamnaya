@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // hostNet carries relay round trips between in-process hosts, and drops every one to a host that is down.
@@ -402,6 +404,112 @@ func TestARelayWhoseActFailsStaysUnackedAndTakesEffectOnceItSucceeds(t *testing.
 				if pending, _ := w.core.Store.PendingRelays(); len(pending) != 0 {
 					t.Errorf("%s still holds %d relays after c took the command", name, len(pending))
 				}
+			}
+		})
+	}
+}
+
+func TestARelayRefusedForGoodEndsAndLeavesItsOutcomeWhereTheOwnerLooks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// before is what happens on c before the owner's answer arrives; want is in the item's history afterwards.
+		before func(t *testing.T, c *orgWorld, it Item)
+		ref    func(it Item) string
+		want   string
+	}{
+		{name: "answered there first", before: func(t *testing.T, c *orgWorld, it Item) {
+			if _, err := c.core.Store.Transition(it.Key(), ItemAnswered, "D"); err != nil {
+				t.Fatal(err)
+			}
+		}, ref: func(it Item) string { return it.Key() }, want: "answered there already: D"},
+		{name: "dismissed there first", before: func(t *testing.T, c *orgWorld, it Item) {
+			if _, err := c.core.Store.Transition(it.Key(), ItemDismissed, "moot"); err != nil {
+				t.Fatal(err)
+			}
+		}, ref: func(it Item) string { return it.Key() }, want: "dismissed there already: moot"},
+		{name: "no such item there", before: func(*testing.T, *orgWorld, Item) {}, ref: func(Item) string { return "#99" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			_, mgr := f.c.goal(t, "ship the fix", "/repo/app")
+			it := f.c.ask(t, mgr.Session, "C or D?")
+			tc.before(t, f.c, it)
+			runs := 0
+			f.c.core.RunSelf = func(args ...string) (string, error) {
+				runs++
+				_, err := f.c.core.Store.Transition(args[2], ItemAnswered, args[3])
+				return "", err
+			}
+			if err := f.a.core.Relay("c", RelayYM, relayYM{Args: []string{"item", "answer", tc.ref(it), "C"}}); err != nil {
+				t.Fatal(err)
+			}
+			for range 4 {
+				f.sync(t)
+			}
+			if runs != 1 {
+				t.Errorf("c ran the answer %d times, want once: a final refusal is not tried again", runs)
+			}
+			if pending, _ := f.a.core.Store.PendingRelays(); len(pending) != 0 {
+				t.Errorf("a still holds %+v after c refused it for good", pending)
+			}
+			if b := f.a.board(t); slices.ContainsFunc(b.Needs, func(n Need) bool { return n.Relay != nil }) {
+				t.Errorf("owner queue shows a relay that ended")
+			}
+			if tc.want == "" {
+				return
+			}
+			got, err := f.c.core.Store.Item(it.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(got.History, func(e Event) bool {
+				return strings.Contains(e.Text, "item answer "+it.Key()+" C") && strings.Contains(e.Text, tc.want)
+			}) {
+				t.Errorf("item history %+v, want the owner's answer that did not land and %q", got.History, tc.want)
+			}
+		})
+	}
+}
+
+func TestARelayRefusedOverAndOverReachesTheOwnersQueueUntilDropped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// syncs is how many cycles c refuses it, wait how long passes after the first.
+		syncs int
+		wait  time.Duration
+		shown bool
+	}{
+		{name: "refused twice", syncs: RefusalsBeforeOwner - 1},
+		{name: "refused enough times", syncs: RefusalsBeforeOwner, shown: true},
+		{name: "refused once long ago", syncs: 1, wait: RefusedBeforeOwner, shown: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			f.c.core.RunSelf = func(args ...string) (string, error) { return "", errors.New("database is locked") }
+			if err := f.a.core.Relay("c", RelayYM, relayYM{Args: []string{"item", "answer", "#3", "yes"}}); err != nil {
+				t.Fatal(err)
+			}
+			for range tc.syncs {
+				f.sync(t)
+			}
+			f.a.clock = f.a.clock.Add(tc.wait)
+			b := f.a.board(t)
+			i := slices.IndexFunc(b.Needs, func(n Need) bool { return n.Relay != nil })
+			if (i >= 0) != tc.shown {
+				t.Fatalf("owner queue shows the refused relay = %v, want %v", i >= 0, tc.shown)
+			}
+			if i < 0 {
+				return
+			}
+			n := b.Needs[i]
+			if !strings.Contains(n.Relay.Error, "database is locked") || n.Key() != "relay:"+strconv.FormatInt(n.Relay.Seq, 10) {
+				t.Errorf("row %+v key %s, want c's reason and the relay's own seq", n.Relay, n.Key())
+			}
+			if _, err := f.a.core.Store.DropRelay(n.Relay.Seq); err != nil {
+				t.Fatal(err)
+			}
+			if b := f.a.board(t); slices.ContainsFunc(b.Needs, func(n Need) bool { return n.Relay != nil }) {
+				t.Errorf("owner queue still shows the relay after dropping it")
 			}
 		})
 	}

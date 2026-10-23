@@ -16,6 +16,6 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ym:", err)
-		os.Exit(1)
+		os.Exit(cli.ExitCode(err))
 	}
 }

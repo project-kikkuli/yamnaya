@@ -307,7 +307,7 @@ func (s *Store) Find(scope, ref string) (Item, error) {
 		}
 		return Item{}, fmt.Errorf("item %s is ambiguous: %s; pass -p <project> or name:ID", ref, strings.Join(names, ", "))
 	}
-	return Item{}, fmt.Errorf("item %s: %w", ref, ErrNotFound)
+	return Item{}, Final(fmt.Errorf("item %s: %w", ref, ErrNotFound))
 }
 
 func (s *Store) history(it Item) (Item, error) {
@@ -390,7 +390,7 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, err
 	}
 	if !transitions[to][it.State] {
-		return it, fmt.Errorf("item %s is %s; cannot move it to %s", it.ID, it.State, to)
+		return it, Final(fmt.Errorf("item %s is %s; cannot move it to %s", it.ID, it.State, to))
 	}
 	var answer, reason string
 	var answeredAt any
@@ -420,6 +420,19 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, err
 	}
 	return s.Item(it.Key())
+}
+
+// NoteItem adds text to the item's history without changing its state.
+func (s *Store) NoteItem(it Item, text string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := addEvent(tx, it.Key(), it.State, it.State, text); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ClaimDelivery marks the item delivered, false when another delivery took it first.

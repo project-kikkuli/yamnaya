@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -276,6 +277,11 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		head = pal.yellow.Render(pad("steer", 8))
 		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", n.Manager, n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
 		keys = "enter open   o manager   S steer again   R relaunch   x dismiss"
+	case n.Relay != nil:
+		head = pal.red.Render(pad("refused", 8))
+		what = fmt.Sprintf("%s keeps refusing %s, %d times since %s: %s", n.Relay.Dest, relayWhat(*n.Relay), n.Relay.Refusals,
+			n.Relay.RefusedSince.Local().Format(time.Kitchen), n.Relay.Error)
+		keys = "x drop it"
 	case n.PR != nil:
 		head, what = pal.yellow.Render(pad("merge", 8)), n.PR.URL
 		if n.PR.Status != nil && n.PR.Status.Title != "" {
@@ -479,6 +485,13 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(keys...) }), true
 		}
 		return m, nil, false
+	}
+	if r.need != nil && r.need.Relay != nil && key == "x" {
+		seq := r.need.Relay.Seq
+		return m, m.do(func() (string, error) {
+			_, err := m.core.Store.DropRelay(seq)
+			return fmt.Sprintf("relay %d dropped", seq), err
+		}), true
 	}
 	if r.need != nil && r.need.Steer != nil && key == "x" {
 		id := r.need.Key()
@@ -763,4 +776,15 @@ func askBlock(reply string) []string {
 		out = append(out, strings.TrimRight(strings.ReplaceAll(l, "\r", ""), " "))
 	}
 	return out
+}
+
+// relayWhat names what a relay carries, as its owner would recognize it.
+func relayWhat(r core.Relay) string {
+	var y struct {
+		Args []string `json:"args"`
+	}
+	if r.Kind == core.RelayYM && json.Unmarshal([]byte(r.Body), &y) == nil && len(y.Args) > 0 {
+		return "ym " + strings.Join(y.Args, " ")
+	}
+	return "a " + r.Kind + " relay"
 }
