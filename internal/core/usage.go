@@ -251,6 +251,10 @@ func (s Live) UsageKey() string {
 func MergeFleet(local Fleet, remotes []RemoteBoard) Fleet {
 	out := local
 	out.Sessions = map[string]SessionSpend{}
+	out.Agents = map[string]Spend{}
+	for k, v := range local.Agents {
+		out.Agents[k] = v
+	}
 	for k, v := range local.Sessions {
 		out.Sessions[k] = v
 	}
@@ -272,6 +276,9 @@ func MergeFleet(local Fleet, remotes []RemoteBoard) Fleet {
 		seen[origin] = true
 		out.Today = out.Today.Plus(r.Usage.Today)
 		out.Week = out.Week.Plus(r.Usage.Week)
+		for k, v := range r.Usage.Agents {
+			out.Agents[RemoteKey(r.Host, k)] = v
+		}
 		for k, v := range r.Usage.Sessions {
 			v.Host = r.Host
 			if v.Parent != "" {

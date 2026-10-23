@@ -81,7 +81,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 						if !alive {
 							return nil, nil
 						}
-						return []proc.Proc{{PID: 4242, Args: []string{harness, "resume", profileConversation}}}, nil
+						return []proc.Proc{{PID: 4242, TTY: "/dev/ttys999", Args: []string{harness, "resume", profileConversation}}}, nil
 					},
 					Signal: func(int, syscall.Signal) error { signals++; alive = false; return nil },
 				}

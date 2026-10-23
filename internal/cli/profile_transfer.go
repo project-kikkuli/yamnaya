@@ -269,6 +269,9 @@ func stageArtifact(state string, source profile.Profile, destination profile.Pro
 }
 func transferConversation(state string, rec launch.Record, destination profile.Profile) (string, error) {
 	source := recordProfile(rec)
+	if !rec.AttachedAt.IsZero() || rec.Account != "" {
+		source.Account = rec.Account
+	}
 	head := transcript(rec)
 	if head == "" {
 		return "", fmt.Errorf("source transcript is unavailable")

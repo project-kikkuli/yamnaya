@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
-	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -186,11 +185,19 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 		return st, err
 	}
 	owners := map[string]string{}
-	if records, err := (launch.Records{Dir: filepath.Join(m.StateDir, "launches")}).All(); err == nil {
-		for _, r := range records {
-			if r.Session != "" && r.NativePID > 0 && proc.ConfigRoot(r.NativePID, "YAMNAYA_LAUNCH_KEY") == r.Key {
-				owners[r.Harness+"/"+profile.ID(r.Profile)+"/"+r.Session] = r.Account
-			}
+	paths, _ := filepath.Glob(filepath.Join(m.StateDir, "launches", "*.json"))
+	for _, path := range paths {
+		var r struct {
+			Session   string `json:"session"`
+			Harness   string `json:"harness"`
+			Profile   string `json:"profile"`
+			Account   string `json:"account"`
+			Key       string `json:"key"`
+			NativePID int    `json:"native_pid"`
+		}
+		data, err := os.ReadFile(path)
+		if err == nil && json.Unmarshal(data, &r) == nil && r.Key != "" && r.Session != "" && r.NativePID > 0 && proc.ConfigRoot(r.NativePID, "YAMNAYA_LAUNCH_KEY") == r.Key {
+			owners[r.Harness+"/"+profile.ID(r.Profile)+"/"+r.Session] = r.Account
 		}
 	}
 	ps := m.Profiles
@@ -544,7 +551,8 @@ func (m *Meter) build(now time.Time) core.Fleet {
 		s.ByModel[k.Model] = s.ByModel[k.Model].Plus(sp)
 		if !fl.Root && fl.Harness == claudeName {
 			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.physical()), "agent-"), ".jsonl")
-			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
+			key := profile.SessionKey(fl.Harness, fl.Profile, fl.Session) + "/" + agent
+			f.Agents[key] = f.Agents[key].Plus(sp)
 		}
 		if k.Day == today {
 			f.Today = f.Today.Plus(sp)
@@ -567,7 +575,8 @@ func (m *Meter) build(now time.Time) core.Fleet {
 			s.Own = s.Own.Plus(sp)
 		} else if fl.Harness == claudeName {
 			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.physical()), "agent-"), ".jsonl")
-			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
+			key := profile.SessionKey(fl.Harness, fl.Profile, fl.Session) + "/" + agent
+			f.Agents[key] = f.Agents[key].Plus(sp)
 		}
 	}
 	for child, parent := range m.edges {

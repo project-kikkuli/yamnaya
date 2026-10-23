@@ -632,6 +632,9 @@ func (m Model) spend(sessions ...core.Live) string {
 	}
 	in := map[string]bool{}
 	for _, s := range sessions {
+		if _, known := f.Sessions[s.UsageKey()]; s.Remote != "" && !known {
+			return "usage unknown"
+		}
 		in[s.UsageKey()] = true
 	}
 	var total core.Spend
@@ -659,6 +662,11 @@ func (m Model) missionSpend(ps ...core.Project) string {
 	}
 	var total core.Spend
 	for _, p := range ps {
+		for _, s := range p.Sessions {
+			if _, known := m.board.Fleet.Sessions[s.UsageKey()]; s.Remote != "" && !known {
+				return "usage unknown"
+			}
+		}
 		total = total.Plus(p.Spend)
 	}
 	return spendText(m.board.Fleet, total)
@@ -670,11 +678,16 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 	if !f.Ready {
 		return ""
 	}
-	if sp, ok := f.Agents[s.Key()+"/"+c.ID]; ok {
+	if sp, ok := f.Agents[s.UsageKey()+"/"+c.ID]; ok {
 		return spendText(f, sp)
 	}
-	if ss, ok := f.Sessions[c.ID]; ok {
+	child := s
+	child.ID = c.ID
+	if ss, ok := f.Sessions[child.UsageKey()]; ok {
 		return spendText(f, ss.Total)
+	}
+	if s.Remote != "" {
+		return "usage unknown"
 	}
 	return core.Spend{}.Dollars()
 }

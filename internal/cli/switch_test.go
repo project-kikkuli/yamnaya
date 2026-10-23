@@ -154,6 +154,8 @@ func TestRelaunchTakesOverTheLaunchRecordInTheSessionsDirectory(t *testing.T) {
 					w.ConfigRoot = root
 					w.SQLiteRoot = root
 					w.ConfigExplicit = true
+					w.RootValue = os.Getenv("CODEX_HOME")
+					w.RootSet = true
 				}
 				if g, ok := got[w.Key]; !ok || !reflect.DeepEqual(g, w) {
 					t.Fatalf("record %s = %+v, want %+v", w.Key, g, w)
