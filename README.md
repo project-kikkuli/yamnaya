@@ -106,6 +106,8 @@ Agents share one machine, so ym hands out a fixed number of slots for heavy comm
 
 `ym slot --status [--json]` lists the capacity, the load average, each holder with its command, pid, session, how long and where, and each waiter. The board's header and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header turns red, names the load and the three sessions, or programs outside any session, using the most processor time.
 
+Any process holding more than a quarter of the machine's memory gets a red header line (`memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1`), on another host's board too, tagged with that host. When it runs under an agent, ym tells that agent's manager once, with how to end it. ym never stops it itself.
+
 ## Mountains
 
 Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done. The sky follows your local clock. `A` hides them, `NO_COLOR` leaves them out, `YM_REDUCED_MOTION=1` holds them still. ym sends the mountains only as fast as your terminal takes them in, so they rise from the bottom row up when shown again and a key never waits behind them.

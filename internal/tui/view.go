@@ -190,6 +190,11 @@ func (m Model) header() string {
 			hosts = append(hosts, line)
 		}
 		h += "\n " + pal.dim.Render("hosts ") + strings.Join(hosts, "   ")
+		for _, r := range m.board.Remotes {
+			for _, sw := range r.Swollen {
+				h += "\n " + pal.red.Render(m.hostTag(r.Host)+" "+sw.Line())
+			}
+		}
 	}
 	if m.core != nil && m.core.Meter != nil {
 		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
@@ -216,6 +221,9 @@ func machineLines(mc core.Machine, now time.Time, width int) string {
 	}
 	if o := mc.Overload(); o != "" {
 		h += "\n" + pal.red.Render(fit(" "+o))
+	}
+	for _, s := range mc.Swollen {
+		h += "\n" + pal.red.Render(fit(" "+s.Line()))
 	}
 	return h
 }

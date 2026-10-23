@@ -5,6 +5,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
 func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T) {
@@ -92,6 +95,45 @@ func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
 			}
 			if c.wantRelaunch && !strings.Contains(w.launches.starts[1].Prompt, "relaunched") {
 				t.Fatalf("relaunch prompt lacks the resume note:\n%s", w.launches.starts[1].Prompt)
+			}
+		})
+	}
+}
+
+func TestAProcessHoldingALargeShareOfMemoryReachesItsAgentsManagerOnce(t *testing.T) {
+	const gib = 1 << 30
+	for _, c := range []struct {
+		name  string
+		bytes float64
+		want  string
+	}{
+		{"leaked helper under an agent", 26 * gib, "memory: script pid 5000 holds 26 GiB, 41% of RAM, for 51m"},
+		{"an ordinary agent-sized process", 0.4 * gib, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "keep workstations current", "/repo/vibe-apps")
+			agent := 1000 + len(w.procs)
+			w.spawn("agent", m.Session)
+			w.procs = append(w.procs, proc.Proc{PID: 5000, PPID: agent, Elapsed: 51 * time.Minute, Args: []string{"script", "-qc", "claude", "/dev/null"}})
+			w.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: t.TempDir(), Capacity: 3, Cores: 8, Memory: 64 * gib}, nil }
+			w.core.Loads = func() float64 { return 1 }
+			w.core.Mem = func() (map[int]float64, error) { return map[int]float64{agent: 0.3 * gib, 5000: c.bytes}, nil }
+			w.loop(t, 3)
+			var got []string
+			for _, text := range w.handedTo(m.Session) {
+				if strings.Contains(text, "memory:") {
+					got = append(got, text)
+				}
+			}
+			if c.want == "" {
+				if len(got) != 0 {
+					t.Fatalf("manager heard %q about an ordinary process", got)
+				}
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0], c.want) || !strings.Contains(got[0], "kill 5000") {
+				t.Fatalf("manager heard %q, want once %q with how to end it", got, c.want)
 			}
 		})
 	}

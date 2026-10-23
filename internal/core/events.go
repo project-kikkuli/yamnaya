@@ -29,6 +29,7 @@ const (
 	EventAgentStopped = "agent-stopped"
 	EventAgentHung    = "agent-hung"
 	EventAgentAdrift  = "agent-adrift"
+	EventAgentSwollen = "agent-swollen"
 	EventResumed      = "resumed"
 	EventResumeFailed = "resume-failed"
 )
@@ -43,7 +44,7 @@ var ownerKinds = map[string]bool{
 var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
-	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventResumed: true, EventResumeFailed: true,
+	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventResumed: true, EventResumeFailed: true,
 	EventSteered: true, EventAdopted: true,
 }
 

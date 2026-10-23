@@ -57,11 +57,12 @@ type Core struct {
 	ShowRemotes bool
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
-	// Slots is this host's pool of shared slots, Loads its load average and CPU each process's processor use; a nil Slots
-	// leaves the board without a Machine, a nil Loads reads the system's.
+	// Slots is this host's pool of shared slots, Loads its load average, CPU each process's processor use and Mem its resident
+	// memory in bytes; a nil Slots leaves the board without a Machine, a nil Loads reads the system's.
 	Slots func() (slot.Pool, error)
 	Loads func() float64
 	CPU   func() (map[int]float64, error)
+	Mem   func() (map[int]float64, error)
 
 	gc       gitCache
 	fw       forwardedSet
@@ -70,6 +71,7 @@ type Core struct {
 	paced    PRPace
 	recovery recovery
 	cpu      cpuCache
+	mem      cpuCache
 }
 
 // Live is a discovered session with where it runs and how many processes run it.

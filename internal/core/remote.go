@@ -45,6 +45,8 @@ type RemoteBoard struct {
 	Feeds map[string]Feed
 	// Fresh is each of its managers' and chiefs' latest brief and whether it is behind, by its own reading.
 	Fresh map[string]Freshness
+	// Swollen are its processes holding a large share of its memory.
+	Swollen []Swollen
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
 	Stale bool
 	// FailingSince is when reads of the host started failing, zero while the last read answered.

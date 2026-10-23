@@ -34,6 +34,8 @@ type boardJSON struct {
 	Feeds           map[string]core.Feed `json:"feeds,omitempty"`
 	// Fresh is each manager's and chief's latest brief and whether it is behind, by this host's reading.
 	Fresh map[string]core.Freshness `json:"fresh,omitempty"`
+	// Swollen are this host's processes holding a large share of its memory.
+	Swollen []core.Swollen `json:"swollen,omitempty"`
 }
 
 type launchedJSON struct {
@@ -152,6 +154,7 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	if out.Fresh, err = c.Freshness(b.Org); err != nil {
 		return out, err
 	}
+	out.Swollen = b.Machine.Swollen
 	for _, m := range b.Org.Managers {
 		out.Managers = append(out.Managers, m)
 	}
@@ -216,7 +219,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
-	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds, r.Fresh = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds, j.Fresh
+	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds, r.Fresh, r.Swollen = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds, j.Fresh, j.Swollen
 	return r
 }
 

@@ -58,3 +58,19 @@ func (c *Core) noticeHung(b Board, o Org) error {
 	}
 	return nil
 }
+
+// noticeSwollen tells the manager of each session running a process past SwollenShare of the machine's memory, once per process.
+func (c *Core) noticeSwollen(b Board, o Org) error {
+	for _, s := range b.Machine.Swollen {
+		if s.Session == "" {
+			continue
+		}
+		text := s.Line() + fmt.Sprintf(". It starves every session on this host as it grows. Look at it with ym open %s; end it with kill %d if it is a leak.",
+			s.Session, s.PID)
+		started := c.now().Add(-s.Elapsed).Truncate(time.Minute).UTC().Format(time.RFC3339)
+		if err := c.noticeAgent(b, o, s.Session, EventAgentSwollen, text, fmt.Sprintf("swollen\x00%d\x00%s", s.PID, started)); err != nil {
+			return err
+		}
+	}
+	return nil
+}

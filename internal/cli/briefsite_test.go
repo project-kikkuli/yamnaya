@@ -2,9 +2,9 @@ package cli
 
 import (
 	"io"
-	"os"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"

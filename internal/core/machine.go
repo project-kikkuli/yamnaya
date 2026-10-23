@@ -20,6 +20,31 @@ type Machine struct {
 	Holders, Waiters []SlotUse
 	// Hogs are the sessions, or programs outside any session, using the most processor time, read only while Overloaded.
 	Hogs []Hog
+	// Swollen are the processes holding more than SwollenShare of the machine's memory, largest first.
+	Swollen []Swollen
+}
+
+// SwollenShare is the share of the machine's memory one process may hold before ym flags it: past it, a few more like it starve
+// every session on the host.
+const SwollenShare = 0.25
+
+// Swollen is a process holding a large share of the machine's memory, with the session and goal it runs under.
+type Swollen struct {
+	PID                 int
+	Command             string
+	Bytes               float64
+	Share               float64
+	Elapsed             time.Duration
+	Session, Goal, Name string
+}
+
+// Line is "memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1".
+func (s Swollen) Line() string {
+	line := fmt.Sprintf("memory: %s pid %d holds %.0f GiB, %.0f%% of RAM, for %s", s.Command, s.PID, s.Bytes/(1<<30), s.Share*100, Span(s.Elapsed))
+	if who := who(s.Goal, s.Name, ""); who != "" {
+		line += ", under " + who
+	}
+	return line
 }
 
 // SlotUse is a slot claim and the session and goal it runs for; Session is "" when no session runs it.
@@ -107,6 +132,9 @@ func (c *Core) machine(b *Board, procs []proc.Proc) {
 	if m.Overloaded() && c.CPU != nil {
 		m.Hogs = place.hogs(c.cpu.read(b.At, c.CPU))
 	}
+	if c.Mem != nil && st.Memory > 0 {
+		m.Swollen = place.swollen(c.mem.read(b.At, c.Mem), float64(st.Memory))
+	}
 	b.Machine = m
 }
 
@@ -177,6 +205,27 @@ func (p places) use(cl slot.Claim) SlotUse {
 		u.Goal, u.Name = n[0], n[1]
 	}
 	return u
+}
+
+// swollen are the processes holding more than SwollenShare of total memory, largest first.
+func (p places) swollen(mem map[int]float64, total float64) []Swollen {
+	var out []Swollen
+	for pid, bytes := range mem {
+		if bytes <= SwollenShare*total {
+			continue
+		}
+		s := Swollen{PID: pid, Bytes: bytes, Share: bytes / total, Session: p.sessionOf(pid)}
+		if pr, ok := p.table[pid]; ok {
+			s.Command, s.Elapsed = pr.Command(), pr.Elapsed
+		}
+		if s.Session != "" {
+			n := p.named[s.Session]
+			s.Goal, s.Name = n[0], n[1]
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
+	return out
 }
 
 // hogs sums processor use by session, or by program outside any session, and keeps the three heaviest above half a core.

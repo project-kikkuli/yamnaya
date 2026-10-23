@@ -47,6 +47,7 @@ func Wire(path string) (*core.Core, error) {
 		RunSelf:   runSelf,
 		Slots:     slot.Machine,
 		CPU:       slot.CPU,
+		Mem:       slot.Mem,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core, l.srv = c, srv

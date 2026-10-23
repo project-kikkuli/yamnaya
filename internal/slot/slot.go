@@ -219,7 +219,20 @@ func CPU() (map[int]float64, error) {
 	return ParseCPU(string(out)), nil
 }
 
-// ParseCPU reads ps's "pid pcpu" lines.
+// Mem reads each process's resident memory, in bytes, from ps.
+func Mem() (map[int]float64, error) {
+	out, err := exec.Command("ps", "-A", "-o", "pid=,rss=").Output()
+	if err != nil {
+		return nil, err
+	}
+	mem := ParseCPU(string(out))
+	for pid, kib := range mem {
+		mem[pid] = kib * 1024
+	}
+	return mem, nil
+}
+
+// ParseCPU reads ps's "pid value" lines, such as pid and pcpu.
 func ParseCPU(out string) map[int]float64 {
 	cpu := map[int]float64{}
 	for _, line := range strings.Split(out, "\n") {
