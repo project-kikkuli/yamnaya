@@ -8,8 +8,10 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"golang.org/x/sys/unix"
 )
 
 // Server is the tmux server ym owns for the sessions it launches; it never touches any other server.
@@ -164,7 +166,13 @@ func parsePane(name, out string) (Pane, error) {
 	}
 	status, _ := strconv.Atoi(f[3])
 	pid, _ := strconv.Atoi(f[4])
-	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1", Status: status, Signal: f[5], PID: pid}, nil
+	signal := f[5]
+	if n, err := strconv.Atoi(signal); err == nil {
+		if name := unix.SignalName(syscall.Signal(n)); name != "" {
+			signal = strings.ToLower(strings.TrimPrefix(name, "SIG"))
+		}
+	}
+	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1", Status: status, Signal: signal, PID: pid}, nil
 }
 
 // Kill ends session name; a session that is already gone is not an error.

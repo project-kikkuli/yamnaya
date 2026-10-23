@@ -8,7 +8,53 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
+
+func wireProfileStatusline(root, home, ym string) (string, error) {
+	settings := filepath.Join(root, "settings.json")
+	data, err := os.ReadFile(settings)
+	if os.IsNotExist(err) {
+		return wireStatuslineAt(root, home, ym)
+	}
+	if err != nil {
+		return "", err
+	}
+	var doc map[string]json.RawMessage
+	if err = json.Unmarshal(data, &doc); err != nil {
+		return "", err
+	}
+	var sl struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	if raw := doc["statusLine"]; len(raw) > 0 {
+		if err = json.Unmarshal(raw, &sl); err != nil {
+			return "", err
+		}
+	}
+	script := filepath.Join(root, "statusline-ym.sh")
+	if sl.Command == "" || sl.Command == "sh "+shellQuote(script) {
+		return wireStatuslineAt(root, home, ym)
+	}
+	text := "#!/bin/sh\ninput=$(cat)\n" + limitsLine(ym) + "\nprintf '%s' \"$input\" | sh -c " + shellQuote(sl.Command) + "\n"
+	if err = profile.Write(script, []byte(text)); err != nil {
+		return "", err
+	}
+	doc["statusLine"], err = json.Marshal(map[string]string{"type": "command", "command": "sh " + shellQuote(script)})
+	if err != nil {
+		return "", err
+	}
+	data, err = json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err = profile.Write(settings, data); err != nil {
+		return "", err
+	}
+	return "statusline: records limits inside " + root, nil
+}
 
 // limitsLine feeds the statusline input to ym in the background, so the statusline gains no latency.
 func limitsLine(ym string) string {
@@ -18,7 +64,11 @@ func limitsLine(ym string) string {
 // wireStatusline makes Claude Code's statusline under home record limits with ym: it adds a statusline when there is none,
 // and otherwise adds the record line to the statusline's script right after it reads its input.
 func wireStatusline(home, ym string) (string, error) {
-	settings := filepath.Join(home, ".claude", "settings.json")
+	return wireStatuslineAt(filepath.Join(home, ".claude"), home, ym)
+}
+
+func wireStatuslineAt(root, home, ym string) (string, error) {
+	settings := filepath.Join(root, "settings.json")
 	doc := map[string]any{}
 	b, err := os.ReadFile(settings)
 	switch {
@@ -32,7 +82,7 @@ func wireStatusline(home, ym string) (string, error) {
 	line := limitsLine(ym)
 	sl, _ := doc["statusLine"].(map[string]any)
 	if sl == nil {
-		script := filepath.Join(home, ".claude", "statusline-ym.sh")
+		script := filepath.Join(root, "statusline-ym.sh")
 		if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
 			return "", err
 		}

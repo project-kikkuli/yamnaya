@@ -1,11 +1,15 @@
 package usage
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
@@ -21,6 +25,8 @@ type statusWindow struct {
 }
 
 type claudeLimits struct {
+	Account  string        `json:"account,omitempty"`
+	Profile  string        `json:"profile,omitempty"`
 	Seen     int64         `json:"seen"`
 	FiveHour *statusWindow `json:"five_hour,omitempty"`
 	SevenDay *statusWindow `json:"seven_day,omitempty"`
@@ -28,6 +34,43 @@ type claudeLimits struct {
 
 // RecordClaudeLimits saves the rate limits in one statusline JSON document to stateDir. Input without them changes nothing.
 func RecordClaudeLimits(stateDir string, in io.Reader, now time.Time) error {
+	ps, err := profile.Load(stateDir)
+	if err != nil {
+		return err
+	}
+	selected := os.Getenv("YAMNAYA_PROFILE")
+	root := os.Getenv("CLAUDE_CONFIG_DIR")
+	if root != "" {
+		if canonical, err := filepath.EvalSymlinks(root); err == nil {
+			root = canonical
+		}
+		if selected == "" {
+			for _, candidate := range ps {
+				if candidate.Harness == claudeName && candidate.Root == root {
+					selected = candidate.ID
+					break
+				}
+			}
+		}
+	}
+	p, err := profile.Find(ps, claudeName, selected)
+	if err != nil {
+		return err
+	}
+	if root != "" && root != p.Root {
+		return fmt.Errorf("statusline root disagrees with selected profile")
+	}
+	if account, bound := os.LookupEnv("YAMNAYA_ACCOUNT"); bound {
+		if account == p.Account {
+			p.Account = account
+		} else {
+			p.Account = ""
+		}
+	}
+
+	return RecordProfileLimits(stateDir, p, in, now)
+}
+func RecordProfileLimits(stateDir string, p profile.Profile, in io.Reader, now time.Time) error {
 	var doc struct {
 		RateLimits *claudeLimits `json:"rate_limits"`
 	}
@@ -39,6 +82,8 @@ func RecordClaudeLimits(stateDir string, in io.Reader, now time.Time) error {
 		return nil
 	}
 	l.Seen = now.Unix()
+	l.Account = p.Account
+	l.Profile = p.ID
 	b, err := json.Marshal(l)
 	if err != nil {
 		return err
@@ -46,11 +91,30 @@ func RecordClaudeLimits(stateDir string, in io.Reader, now time.Time) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(stateDir, claudeLimitsFile), b)
+	return writeFile(claudeLimitPath(stateDir, p.ID), b)
 }
 
 func readClaudeLimits(stateDir string) []core.Limit {
-	b, err := os.ReadFile(filepath.Join(stateDir, claudeLimitsFile))
+	ps, err := profile.Load(stateDir)
+	if err != nil {
+		return nil
+	}
+	var out []core.Limit
+	for _, p := range ps {
+		if p.Harness == claudeName {
+			out = append(out, readProfileLimits(stateDir, p)...)
+		}
+	}
+	return out
+}
+func claudeLimitPath(dir, id string) string {
+	if profile.ID(id) == "default" {
+		return filepath.Join(dir, claudeLimitsFile)
+	}
+	return filepath.Join(dir, "claude-limits."+id+".json")
+}
+func readProfileLimits(stateDir string, p profile.Profile) []core.Limit {
+	b, err := os.ReadFile(claudeLimitPath(stateDir, p.ID))
 	if err != nil {
 		return nil
 	}
@@ -71,7 +135,7 @@ func readClaudeLimits(stateDir string) []core.Limit {
 		if err != nil {
 			continue
 		}
-		out = append(out, core.Limit{Harness: claudeName, Name: w.name, Used: *w.w.Used, Window: w.span, ResetsAt: resets, Seen: time.Unix(l.Seen, 0)})
+		out = append(out, core.Limit{Harness: claudeName, Profile: p.ID, ProfileLabel: p.Label, Account: l.Account, Name: w.name, Used: *w.w.Used, Window: w.span, ResetsAt: resets, Seen: time.Unix(l.Seen, 0)})
 	}
 	return out
 }
@@ -99,11 +163,44 @@ func parseResets(raw json.RawMessage) (time.Time, error) {
 
 // current drops windows that have already reset.
 func current(ls []core.Limit, now time.Time) []core.Limit {
-	var out []core.Limit
+	newest := map[string]core.Limit{}
 	for _, l := range ls {
 		if l.ResetsAt.After(now) {
-			out = append(out, l)
+			if old, ok := newest[l.Key()]; !ok || old.Seen.Before(l.Seen) {
+				newest[l.Key()] = l
+			}
 		}
 	}
+	var out []core.Limit
+	for _, l := range newest {
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out
+}
+
+func KnownLimits(dir string, now time.Time) []core.Limit {
+	out := readClaudeLimits(dir)
+	path := filepath.Join(dir, "ym.db")
+	if _, err := os.Stat(path); err != nil {
+		return current(out, now)
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return current(out, now)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT body FROM ym_usage_limits`)
+	if err != nil {
+		return current(out, now)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var body string
+		var lim core.Limit
+		if rows.Scan(&body) == nil && json.Unmarshal([]byte(body), &lim) == nil {
+			out = append(out, lim)
+		}
+	}
+	return current(out, now)
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -135,6 +136,9 @@ func TestFocusJumpsOnlyYmsOwnClientWithoutChangingLayout(t *testing.T) {
 		t.Skip("script not installed")
 	}
 	client := exec.Command("script", "-q", "/dev/null", "tmux", "-L", h.Socket, "attach", "-t", "home")
+	if runtime.GOOS == "linux" {
+		client = exec.Command("script", "-q", "-c", "tmux -L "+h.Socket+" attach -t home", "/dev/null")
+	}
 	client.Env = append(os.Environ(), "TERM=xterm-256color")
 	stdin, err := client.StdinPipe()
 	if err != nil {

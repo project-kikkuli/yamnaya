@@ -16,6 +16,8 @@ import (
 
 // boardJSON is this host's board as another host's ym reads it.
 type boardJSON struct {
+	Profiles []core.LoginProfile `json:"profiles,omitempty"`
+	Usage    *usageJSON          `json:"usage,omitempty"`
 	// At is when ym serve took the snapshot.
 	At       string         `json:"at,omitempty"`
 	Sessions []sessionJSON  `json:"sessions"`
@@ -39,6 +41,8 @@ type boardJSON struct {
 }
 
 type launchedJSON struct {
+	Profile string `json:"profile,omitempty"`
+	Account string `json:"account,omitempty"`
 	Key     string `json:"key"`
 	Harness string `json:"harness"`
 	Session string `json:"session"`
@@ -48,6 +52,8 @@ type launchedJSON struct {
 }
 
 type dormantJSON struct {
+	Profile string `json:"profile,omitempty"`
+	Account string `json:"account,omitempty"`
 	Key     string `json:"key"`
 	Harness string `json:"harness"`
 	Session string `json:"session"`
@@ -131,7 +137,11 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	if err != nil {
 		return boardJSON{}, err
 	}
-	out := boardJSON{Sessions: sessionsJSON(c, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+	b.Fleet.Failovers = failoverStates(c.StateDir)
+	out := boardJSON{Profiles: b.Profiles, Usage: usageWire(b.Fleet), Sessions: sessionsJSON(c, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+	for i := range out.Sessions {
+		out.Sessions[i].Resume = nil
+	}
 	if out.Closed, err = closedItems(c); err != nil {
 		return out, err
 	}
@@ -139,11 +149,11 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 		out.Items = append(out.Items, withHistory(c, it))
 	}
 	for _, l := range b.Launched {
-		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
+		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
 	}
 	for _, p := range b.Projects {
 		for _, d := range p.Dormant {
-			out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+			out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
 		}
 	}
@@ -193,9 +203,12 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		}
 		return id
 	}
-	r := core.RemoteBoard{Host: host}
+	r := core.RemoteBoard{Host: host, Profiles: append([]core.LoginProfile(nil), j.Profiles...), Usage: usageFromWire(j.Usage)}
+	for i := range r.Profiles {
+		r.Profiles[i].Host = host
+	}
 	for _, s := range j.Sessions {
-		l := core.Live{Session: core.Session{Harness: s.Harness, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
+		l := core.Live{Session: core.Session{Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
 		if s.Prompt != "" {
@@ -210,10 +223,10 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Closed = append(r.Closed, fromJSON(host, qualify, it))
 	}
 	for _, l := range j.Launched {
-		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed)})
+		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed)})
 	}
 	for _, d := range j.Dormant {
-		r.Dormant = append(r.Dormant, core.Dormant{Key: qualify(d.Key), Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+		r.Dormant = append(r.Dormant, core.Dormant{Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
 	}
 	for _, w := range j.Waiting {

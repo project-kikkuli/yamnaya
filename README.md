@@ -250,6 +250,20 @@ Messages on ym's tmux server are recorded before a paste starts. ym checks the c
 
 ym starts Codex as the platform binary its npm package ships rather than through its node wrapper, since endpoint security such as SentinelOne kills a node process whose command line carries a long prompt, as every manager's does. `YAMNAYA_STATE_DIR`, `YAMNAYA_YM_SOCKET` and `YAMNAYA_NO_SERVE` reach Codex's shells, so `ym` run there acts on the same state and tmux server.
 
+## Login profiles
+
+ym keeps the existing default Claude and Codex login. Register additional native config roots with `ym profiles add claude personal --root /absolute/claude-personal` or `ym profiles add codex personal --root /absolute/codex-personal`. Labels are optional display names. `ym profiles login <harness> <id>` runs the native login inside that root; native provider storage keeps each profile’s credentials separate. On a host without a browser, use `ym remote <host> profiles login codex personal --device-auth` and complete the native device authorization in a browser. A host-local root is a path on that host.
+
+Use `--profile <id>` with `ym new`, `ym goal`, and `ym chief`. The board cycles launch profiles with Shift-Tab. Unspecified launches inherit a usable parent profile or choose deterministically among profiles without a known exhausted pool. Profile and subscription identity are separate: aliases of the same provider principal/workspace share quota; missing identity or quota is shown as unknown.
+
+`ym switch <session-or-launch> --profile <id>` resumes an idle or exited conversation using another login. `--profile auto` chooses a different verified pool. B on the board selects a subscription. Background failover waits for a structured subscription exhaustion plus a settled turn, records attempted pools, and resumes with an instruction to inspect prior tool effects before continuing. It does not replay the previous prompt. Exactly-once tool execution cannot be guaranteed by a native resume.
+
+ym starts managed Codex sessions with `--no-daemon` so each conversation can stop and resume independently. If an external client or shared server cannot be quiesced, ym reports the blocker and keeps the source recoverable. Close that client before switching; unrelated sessions remain running.
+
+An explicitly empty or relative default `CLAUDE_CONFIG_DIR` is unsupported because native Claude resolves its storage against the working directory. Choose a named absolute profile, or intentionally unset that variable or configure an absolute default. Absolute legacy root spelling and the default secure-storage override stay intact; other profiles and providers remain available.
+
+`ym usage`, `ym limits`, and the board separate profile usage and subscription windows. Copied history keeps its original payer; only new destination responses and fresh limit observations belong to the destination. Account changes in an existing root create accounting epochs rather than relabeling older charges. Remote snapshots preserve host scope and deduplicate account-global quota observations; older snapshots report usage unknown.
+
 ## Development
 
     ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./internal/<package>/...

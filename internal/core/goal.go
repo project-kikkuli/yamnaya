@@ -13,7 +13,7 @@ import (
 )
 
 // NewGoal records the owner's ask for repo and starts the manager that owns it.
-func (c *Core) NewGoal(ask, repo, harness string) (Goal, Manager, error) {
+func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Manager, error) {
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, Manager{}, errors.New("a goal needs the ask in your words")
@@ -31,7 +31,7 @@ func (c *Core) NewGoal(ask, repo, harness string) (Goal, Manager, error) {
 	if err := writeBrief(g.BriefPath, "# "+oneLine(ask)+"\n\nNot started yet: the manager writes this brief.\n"); err != nil {
 		return g, Manager{}, err
 	}
-	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
 	if err != nil {
 		return g, m, err
 	}
@@ -63,7 +63,7 @@ func managerHarness(harness string) (string, error) {
 }
 
 // NewChief records a chief over children, managers or chiefs by id, and starts its session in repo on harness.
-func (c *Core) NewChief(name, remit, repo, harness string, children []string) (Manager, error) {
+func (c *Core) NewChief(name, remit, repo, harness string, children []string, selected ...string) (Manager, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Manager{}, errors.New("a chief needs a name")
@@ -73,7 +73,7 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string) (M
 		return Manager{}, err
 	}
 	repo = MainCheckout(repo)
-	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Harness: harness, Repo: repo, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}
@@ -397,7 +397,7 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 			return resumed
 		}
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name),
+	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name),
 		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()
@@ -409,6 +409,7 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 	}
 	heard(c.now())
 	m.Session, m.LastError = st.Session, ""
+	m.Profile, m.ConfigRoot = st.Profile, st.ConfigRoot
 	c.Store.SaveManager(m)
 	return m
 }
@@ -473,4 +474,11 @@ func (c *Core) GoalByRef(ref string) (Goal, error) {
 		return g, fmt.Errorf("%s is a chief and owns no goal", m.ID)
 	}
 	return g, nil
+}
+
+func firstProfile(selected []string) string {
+	if len(selected) > 0 {
+		return selected[0]
+	}
+	return ""
 }

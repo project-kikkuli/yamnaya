@@ -46,9 +46,11 @@ type Goal struct {
 
 // Manager is a long-lived session's persistent identity: the session it runs as changes when ym relaunches it, the manager does not.
 type Manager struct {
-	ID   string
-	Role string
-	Name string
+	Profile    string
+	ConfigRoot string `json:"-"`
+	ID         string
+	Role       string
+	Name       string
 	// ParentID is the chief the manager reports to; empty reports to the owner.
 	ParentID    string
 	GoalID      string
@@ -235,8 +237,8 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 		m.Harness = "claude"
 	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, parent_id, goal_id, harness, repo, brief_path, launched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
-		m.Role, m.Name, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt)).Scan(&num)
+	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, parent_id, goal_id, harness, repo, brief_path, launched_at, profile, config_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		m.Role, m.Name, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt), m.Profile, m.ConfigRoot).Scan(&num)
 	m.ID = managerID(num)
 	return m, err
 }
@@ -252,9 +254,9 @@ func (s *Store) SaveManager(m Manager) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, name=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
-		retired=?, launched_at=?, failures=?, next_attempt=?, last_error=?, nudges=?, nudged_at=? WHERE num=?`,
+		retired=?, launched_at=?, failures=?, next_attempt=?, last_error=?, nudges=?, nudged_at=?, profile=?, config_root=? WHERE num=?`,
 		m.Role, m.Name, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,
-		m.Retired, stamp(m.LaunchedAt), m.Failures, stamp(m.NextAttempt), m.LastError, m.Nudges, stamp(m.NudgedAt), num); err != nil {
+		m.Retired, stamp(m.LaunchedAt), m.Failures, stamp(m.NextAttempt), m.LastError, m.Nudges, stamp(m.NudgedAt), m.Profile, m.ConfigRoot, num); err != nil {
 		return err
 	}
 	if m.Session != "" {
@@ -269,14 +271,14 @@ func (s *Store) SaveManager(m Manager) error {
 	return tx.Commit()
 }
 
-const managerCols = `num, role, name, parent_id, goal_id, session, harness, repo, directory, brief_path, artifact_url, retired, launched_at, failures, next_attempt, last_error, nudges, nudged_at`
+const managerCols = `num, role, name, parent_id, goal_id, session, harness, repo, directory, brief_path, artifact_url, retired, launched_at, failures, next_attempt, last_error, nudges, nudged_at, profile, config_root`
 
 func scanManager(row interface{ Scan(...any) error }) (Manager, error) {
 	var m Manager
 	var num int64
 	var launched, next, nudged sql.NullString
 	err := row.Scan(&num, &m.Role, &m.Name, &m.ParentID, &m.GoalID, &m.Session, &m.Harness, &m.Repo, &m.Directory, &m.BriefPath, &m.ArtifactURL,
-		&m.Retired, &launched, &m.Failures, &next, &m.LastError, &m.Nudges, &nudged)
+		&m.Retired, &launched, &m.Failures, &next, &m.LastError, &m.Nudges, &nudged, &m.Profile, &m.ConfigRoot)
 	m.ID = managerID(num)
 	m.LaunchedAt, m.NextAttempt, m.NudgedAt = parseTime(launched), parseTime(next), parseTime(nudged)
 	return m, err

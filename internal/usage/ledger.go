@@ -13,6 +13,7 @@ import (
 )
 
 const ledgerSchema = `
+CREATE TABLE IF NOT EXISTS ym_usage_exhaustions(key TEXT PRIMARY KEY,body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ym_usage_files (
 	id INTEGER PRIMARY KEY,
 	path TEXT NOT NULL UNIQUE,
@@ -142,6 +143,19 @@ func openLedger(path string) (*ledger, error) {
 			return nil, fmt.Errorf("rescan for slices: %w", err)
 		}
 	}
+	for _, column := range []string{"profile", "profile_label", "account", "physical_path"} {
+		var count int
+		if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('ym_usage_files') WHERE name=?", column).Scan(&count); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if count == 0 {
+			if _, err := db.Exec("ALTER TABLE ym_usage_files ADD COLUMN " + column + " TEXT NOT NULL DEFAULT ''"); err != nil {
+				db.Close()
+				return nil, err
+			}
+		}
+	}
 	return &ledger{db: db}, nil
 }
 
@@ -179,14 +193,14 @@ func (l *ledger) loadSlices(now time.Time) (map[sliceKey]core.Tokens, error) {
 
 func (l *ledger) load() (map[string]*file, map[sumKey]core.Tokens, map[string]core.Limit, error) {
 	files := map[string]*file{}
-	rows, err := l.db.Query(`SELECT id, path, harness, session, root, size, mtime, offset, cursor, cost FROM ym_usage_files`)
+	rows, err := l.db.Query(`SELECT id, path, harness, session, root, size, mtime, offset, cursor, cost, profile, profile_label, account, physical_path FROM ym_usage_files`)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	for rows.Next() {
 		f := &file{}
 		var cursor string
-		if err := rows.Scan(&f.ID, &f.Path, &f.Harness, &f.Session, &f.Root, &f.Size, &f.MTime, &f.Offset, &cursor, &f.Cost); err != nil {
+		if err := rows.Scan(&f.ID, &f.Path, &f.Harness, &f.Session, &f.Root, &f.Size, &f.MTime, &f.Offset, &cursor, &f.Cost, &f.Profile, &f.ProfileLabel, &f.Account, &f.PhysicalPath); err != nil {
 			rows.Close()
 			return nil, nil, nil, err
 		}
@@ -312,8 +326,8 @@ func (l *ledger) commit(b batch) error {
 		}
 	}
 	st.Close()
-	st, err = tx.Prepare(`INSERT INTO ym_usage_files (id, path, harness, session, root, size, mtime, offset, cursor, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, offset = excluded.offset, cursor = excluded.cursor, cost = excluded.cost`)
+	st, err = tx.Prepare(`INSERT INTO ym_usage_files (id, path, harness, session, root, size, mtime, offset, cursor, cost, profile, profile_label, account, physical_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, offset = excluded.offset, cursor = excluded.cursor, cost = excluded.cost, profile=excluded.profile,profile_label=excluded.profile_label,account=excluded.account,physical_path=excluded.physical_path`)
 	if err != nil {
 		return err
 	}
@@ -323,7 +337,7 @@ func (l *ledger) commit(b batch) error {
 			c, _ := json.Marshal(f.Cursor)
 			cursor = string(c)
 		}
-		if _, err := st.Exec(f.ID, f.Path, f.Harness, f.Session, b2i(f.Root), f.Size, f.MTime, f.Offset, cursor, f.Cost); err != nil {
+		if _, err := st.Exec(f.ID, f.Path, f.Harness, f.Session, b2i(f.Root), f.Size, f.MTime, f.Offset, cursor, f.Cost, f.Profile, f.ProfileLabel, f.Account, f.PhysicalPath); err != nil {
 			return err
 		}
 	}

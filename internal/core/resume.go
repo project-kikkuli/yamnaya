@@ -219,7 +219,7 @@ func (c *Core) ReviveWork(b Board) error {
 		if _, live := b.Session(o.ID); live || !c.take(o.ID) {
 			continue
 		}
-		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Cwd: o.Cwd}}, workResumeText)
+		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Profile: o.Profile, ConfigRoot: o.ConfigRoot, Cwd: o.Cwd}}, workResumeText)
 		c.noteResult("session "+Short(o.ID)+" in "+o.Cwd, o.ID, true, err)
 	}
 	return errors.Join(errs...)
@@ -255,9 +255,11 @@ const aliveFile = "alive.json"
 
 // Running is a session that ran outside ym's tmux server when ym serve last looked.
 type Running struct {
-	ID      string `json:"id"`
-	Harness string `json:"harness"`
-	Cwd     string `json:"cwd"`
+	Profile    string `json:"profile,omitempty"`
+	ConfigRoot string `json:"config_root,omitempty"`
+	ID         string `json:"id"`
+	Harness    string `json:"harness"`
+	Cwd        string `json:"cwd"`
 }
 
 // running lists b's sessions on this host that ym did not launch and could resume: they have an id, a directory and a terminal.
@@ -271,7 +273,7 @@ func running(b Board) []Running {
 		if s.Remote != "" || s.Background || s.ID == "" || s.Cwd == "" || launched[s.ID] {
 			continue
 		}
-		out = append(out, Running{ID: s.ID, Harness: s.Harness, Cwd: s.Cwd})
+		out = append(out, Running{ID: s.ID, Harness: s.Harness, Profile: s.Profile, ConfigRoot: s.ConfigRoot, Cwd: s.Cwd})
 	}
 	slices.SortFunc(out, func(a, b Running) int { return strings.Compare(a.ID, b.ID) })
 	return out

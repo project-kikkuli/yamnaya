@@ -3,14 +3,14 @@ package usage
 import (
 	"bufio"
 	"errors"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"io"
-	"os"
 	"time"
 )
 
 // readLines calls fn for each complete line after offset and returns the offset past the last one.
 func readLines(path string, offset int64, fn func(line []byte)) (int64, error) {
-	f, err := os.Open(path)
+	f, err := nativefile.Open(path)
 	if err != nil {
 		return offset, err
 	}

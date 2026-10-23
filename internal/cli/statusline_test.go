@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,6 +59,30 @@ func TestWireStatusline(t *testing.T) {
 				t.Errorf("settings lost model: %s", b)
 			}
 		})
+	}
+}
+
+func TestNamedStatuslineKeepsExternalScriptUntouchedAndRoutesProfile(t *testing.T) {
+	root, external := t.TempDir(), filepath.Join(t.TempDir(), "original.sh")
+	original := "#!/bin/sh\ninput=$(cat)\nprintf '%s' \"$input\"\n"
+	putProfileFile(t, external, original)
+	doc, _ := json.Marshal(map[string]any{"statusLine": map[string]string{"type": "command", "command": "sh " + shellQuote(external)}, "model": "opus"})
+	putProfileFile(t, filepath.Join(root, "settings.json"), string(doc))
+	for range 2 {
+		if _, err := wireProfileStatusline(root, t.TempDir(), "/usr/bin/true"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(external)
+	if err != nil || string(b) != original {
+		t.Fatal("named profile modified external statusline")
+	}
+	cmd := exec.Command("sh", filepath.Join(root, "statusline-ym.sh"))
+	cmd.Env = append(os.Environ(), "YAMNAYA_PROFILE=work", "CLAUDE_CONFIG_DIR="+root)
+	cmd.Stdin = strings.NewReader(`{"fixture":"same input"}`)
+	out, err := cmd.Output()
+	if err != nil || string(out) != `{"fixture":"same input"}` {
+		t.Fatalf("original statusline behavior lost: %q %v", out, err)
 	}
 }
 

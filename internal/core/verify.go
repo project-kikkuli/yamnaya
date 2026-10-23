@@ -173,7 +173,7 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 		v.Session, v.LastError = "", "ym's launcher is unavailable"
 		return c.Store.SaveVerification(v)
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Repo: g.Repo,
+	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
 		Slug: fmt.Sprintf("verify-%s-%d", g.ID, v.Attempt), Session: uuid.NewString(), Await: true})
 	if err != nil {
 		v.Session, v.LastError = "", err.Error()

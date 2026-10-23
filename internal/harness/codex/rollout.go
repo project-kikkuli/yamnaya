@@ -3,9 +3,9 @@ package codex
 import (
 	"bufio"
 	"encoding/json"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"io"
 	"maps"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -306,7 +306,7 @@ func (a *Adapter) scan(path, cwd string) scan {
 }
 
 func (a *Adapter) advance(t *scan, path, cwd string) {
-	f, err := os.Open(path)
+	f, err := nativefile.Open(path)
 	if err != nil {
 		return
 	}
@@ -347,7 +347,7 @@ func (a *Adapter) advance(t *scan, path, cwd string) {
 
 // Episodes replays a rollout from its start and returns every episode of an agent going nowhere it shows.
 func Episodes(path string) []drift.Sign {
-	f, err := os.Open(path)
+	f, err := nativefile.Open(path)
 	if err != nil {
 		return nil
 	}

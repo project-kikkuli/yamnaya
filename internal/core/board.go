@@ -12,17 +12,19 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
 // Core composes harnesses, hosts and the store.
 type Core struct {
-	Store     *Store
-	Harnesses []Harness
-	Hosts     []Host
-	Procs     func() ([]proc.Proc, error)
-	Now       func() time.Time
-	Meter     Meter
+	ProfileList func() []LoginProfile
+	Store       *Store
+	Harnesses   []Harness
+	Hosts       []Host
+	Procs       func() ([]proc.Proc, error)
+	Now         func() time.Time
+	Meter       Meter
 	// Git places a directory in its repository; nil leaves sessions without a repo.
 	Git func(dir string) GitInfo
 	// PRs fetches pull request status for RefreshPRs.
@@ -38,7 +40,8 @@ type Core struct {
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
-	Port func(cwd, id, to string) (string, error)
+	Port        func(cwd, id, to string) (string, error)
+	PreparePort func(Session, string, string) (PortPlan, error)
 	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean syscall.Kill and 3s.
 	Signal         func(pid int, sig syscall.Signal) error
 	KillGrace      time.Duration
@@ -199,6 +202,7 @@ type Board struct {
 	Projects []Project
 	Repos    []Repo
 	Needs    []Need
+	Profiles []LoginProfile
 	Fleet    Fleet
 	Kills    map[string]time.Time
 	// Stale are open items whose mission has no live session left.
@@ -227,27 +231,41 @@ func (b Board) Session(key string) (Live, bool) {
 	if next, ok := b.moved[key]; ok {
 		key = next
 	}
-	if b.index != nil {
-		if i, ok := b.index[key]; ok {
-			return b.Sessions[i], true
-		}
-		return Live{}, false
+	if b.index == nil {
+		b.indexSessions()
 	}
-	for _, s := range b.Sessions {
-		if s.Key() == key {
-			return s, true
-		}
+	if i, ok := b.index[key]; ok && i >= 0 {
+		return b.Sessions[i], true
 	}
 	return Live{}, false
 }
 
 func (b *Board) indexSessions() {
 	b.index = make(map[string]int, len(b.Sessions))
-	for i, s := range b.Sessions {
-		if _, ok := b.index[s.Key()]; !ok {
-			b.index[s.Key()] = i
+	bind := func(key string, i int) {
+		if prev, ok := b.index[key]; ok {
+			if prev >= 0 {
+				a, s := b.Sessions[prev], b.Sessions[i]
+				if a.Harness != s.Harness || profile.ID(a.Profile) != profile.ID(s.Profile) || a.Remote != s.Remote {
+					b.index[key] = -1
+				}
+			}
+			return
 		}
+		b.index[key] = i
 	}
+	for i, s := range b.Sessions {
+		ref := s.Ref()
+		explicit := s.Harness + ":" + profile.ID(s.Profile) + "@" + s.Key()
+		if s.Remote != "" {
+			ref = RemoteKey(s.Remote, ref)
+			explicit = RemoteKey(s.Remote, explicit)
+		}
+		bind(explicit, i)
+		bind(ref, i)
+		bind(s.Key(), i)
+	}
+
 	b.projects = make(map[string]int, len(b.Projects))
 	for i, p := range b.Projects {
 		if _, ok := b.projects[p.Key]; !ok {
@@ -338,6 +356,9 @@ func terminals(procs []proc.Proc) uint64 {
 // Board reads every session, groups sessions into projects and lists what needs the owner.
 func (c *Core) Board() (Board, error) {
 	b := Board{At: c.now()}
+	if c.ProfileList != nil {
+		b.Profiles = c.ProfileList()
+	}
 	var err error
 	if b.Kills, err = c.Store.Kills(b.At.Add(-24 * time.Hour)); err != nil {
 		return b, err
@@ -386,7 +407,7 @@ func (c *Core) Board() (Board, error) {
 	copies := map[string][]Session{}
 	for _, s := range found {
 		if s.ID != "" {
-			copies[s.Harness+"/"+s.ID] = append(copies[s.Harness+"/"+s.ID], s)
+			copies[s.Harness+"/"+s.Profile+"/"+s.ID] = append(copies[s.Harness+"/"+s.Profile+"/"+s.ID], s)
 		}
 	}
 	table := proc.Index(procs)
@@ -397,7 +418,7 @@ func (c *Core) Board() (Board, error) {
 			b.moved[s.ID] = c.Resolve(s.ID)
 			continue
 		}
-		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.ID]}
+		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.Profile+"/"+s.ID]}
 		h, host := c.locate(s.TTY)
 		if host == nil {
 			l.App, l.Muxed = appOf(table, s.PID), muxed(table, s.PID)
@@ -490,7 +511,7 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	if c.Meter != nil {
-		b.Fleet = c.Meter.Fleet(b.At)
+		b.Fleet = MergeFleet(c.Meter.Fleet(b.At), b.Remotes)
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}
@@ -845,10 +866,11 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 	}
 	seen := map[string]bool{}
 	for _, s := range sessions {
-		if seen[s.Key()] {
+		identity := s.Harness + "/" + s.UsageKey()
+		if seen[identity] {
 			continue
 		}
-		seen[s.Key()] = true
+		seen[identity] = true
 		p := get(projectOf(s.Key(), parents, lin))
 		p.Sessions = append(p.Sessions, s)
 	}

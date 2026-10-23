@@ -2,7 +2,6 @@
 package proc
 
 import (
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -41,15 +40,6 @@ func (p Proc) program() int {
 		return 1
 	}
 	return 0
-}
-
-// listPS runs ps once and returns every process.
-func listPS() ([]Proc, error) {
-	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,tty=,etime=,args=").Output()
-	if err != nil {
-		return nil, err
-	}
-	return Parse(string(out)), nil
 }
 
 // Parse reads ps output in pid, ppid, tty, etime, args order.

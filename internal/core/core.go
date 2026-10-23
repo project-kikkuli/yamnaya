@@ -112,8 +112,12 @@ type Member struct {
 
 // Session is one harness process. ID is "" when the adapter could not tell.
 type Session struct {
-	Harness string
-	ID      string
+	Profile      string
+	ProfileLabel string
+	Account      string
+	ConfigRoot   string
+	Harness      string
+	ID           string
 	// Parent is the session that spawned this one, when the harness records it.
 	Parent string
 	PID    int

@@ -3,8 +3,10 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
 // Find reads one live session by full id, displayed shorthand or unambiguous prefix, without reading the whole board.
@@ -32,6 +34,11 @@ func (c *Core) Find(ref string) (Live, error) {
 }
 
 func (c *Core) find(ref string) (Live, error) {
+	scope := ""
+	if before, after, ok := strings.Cut(ref, "@"); ok {
+		scope = before
+		ref = after
+	}
 	procs, err := c.Procs()
 	if err != nil {
 		return Live{}, err
@@ -46,7 +53,7 @@ func (c *Core) find(ref string) (Live, error) {
 			}
 		}
 		for _, s := range c.Harnesses[i].Discover(mine) {
-			if !c.foreign(s.Cwd) {
+			if !c.foreign(s.Cwd) && (scope == "" || s.Harness+":"+profile.ID(s.Profile) == scope) {
 				found = append(found, s)
 				ids = append(ids, s.ID)
 			}
@@ -59,9 +66,13 @@ func (c *Core) find(ref string) (Live, error) {
 	var copies []Session
 	for _, s := range found {
 		if s.ID == id {
+			if len(copies) > 0 && (copies[0].Harness != s.Harness || profile.ID(copies[0].Profile) != profile.ID(s.Profile)) {
+				return Live{}, fmt.Errorf("%w %q: use harness:profile@session to choose a login", ErrAmbiguous, ref)
+			}
 			copies = append(copies, s)
 		}
 	}
+
 	l := Live{Session: copies[0], Copies: copies}
 	hit := c.harness(l.Harness)
 	if h, host := c.locate(l.TTY); host != nil {

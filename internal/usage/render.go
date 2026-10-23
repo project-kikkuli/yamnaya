@@ -23,6 +23,9 @@ func Top(f core.Fleet, n int) []core.SessionSpend {
 func Render(out io.Writer, f core.Fleet, host string, top int) {
 	fmt.Fprintf(out, "spend on %s: today %s   7d %s\n", host, f.Today.Dollars(), f.Week.Dollars())
 	RenderLimits(out, f.Limits, f.At)
+	for _, state := range f.Failovers {
+		fmt.Fprintf(out, "failover %s %s: %s (reset %s)\n", state.Session, state.Status, state.Reason, state.Reset.Format(time.RFC3339))
+	}
 	var ours, theirs float64
 	n := 0
 	for _, s := range Top(f, len(f.Sessions)) {
@@ -35,12 +38,18 @@ func Render(out io.Writer, f core.Fleet, host string, top int) {
 	}
 	for _, s := range Top(f, top) {
 		t := s.Total.Tokens
-		fmt.Fprintf(out, "%-6s %s  %s  in %s out %s cache read %s write 5m %s 1h %s", s.Harness, s.ID, s.Total.Dollars(),
+		fmt.Fprintf(out, "%-6s %s  %s  in %s out %s cache read %s write 5m %s 1h %s", profileDisplay(s.Harness, s.Profile), s.ID, s.Total.Dollars(),
 			count(t.Input), count(t.Output), count(t.CacheRead), count(t.CacheWrite5m), count(t.CacheWrite1h))
 		if s.Reported > 0 {
 			fmt.Fprintf(out, "  reported $%.2f", s.Reported)
 		}
 		fmt.Fprintln(out)
+		for account, sp := range s.ByAccount {
+			if account == "" {
+				account = "unknown"
+			}
+			fmt.Fprintf(out, "  account %s: %s\n", account, sp.Dollars())
+		}
 	}
 }
 
@@ -50,7 +59,10 @@ func RenderLimits(out io.Writer, ls []core.Limit, now time.Time) {
 		return
 	}
 	for _, l := range ls {
-		fmt.Fprintf(out, "limit: %s %s %.0f%% resets in %s (seen %s ago)", l.Harness, l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)), core.Span(now.Sub(l.Seen)))
+		fmt.Fprintf(out, "limit: %s %s %.0f%% resets in %s (seen %s ago)", l.IdentityLabel(), l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)), core.Span(now.Sub(l.Seen)))
+		if l.Used >= 100 {
+			fmt.Fprint(out, " exhausted")
+		}
 		if l.Plan != "" {
 			fmt.Fprintf(out, " plan %s", l.Plan)
 		}
@@ -68,4 +80,11 @@ func count(n int64) string {
 		return fmt.Sprintf("%.0fk", float64(n)/1e3)
 	}
 	return fmt.Sprint(n)
+}
+
+func profileDisplay(h, id string) string {
+	if id == "" || id == "default" {
+		return h
+	}
+	return h + "/" + id
 }

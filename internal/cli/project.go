@@ -238,6 +238,15 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 }
 
 func sessionByPrefix(b core.Board, ref string) (core.Live, error) {
+	for _, s := range b.Sessions {
+		key := s.Ref()
+		if s.Remote != "" {
+			key = core.RemoteKey(s.Remote, key)
+		}
+		if key == ref && key != s.Key() {
+			return s, nil
+		}
+	}
 	var ids []string
 	for _, s := range b.Sessions {
 		ids = append(ids, s.Key())
@@ -246,6 +255,16 @@ func sessionByPrefix(b core.Board, ref string) (core.Live, error) {
 	if err != nil {
 		return core.Live{}, err
 	}
-	s, _ := b.Session(id)
-	return s, nil
+	var found core.Live
+	have := false
+	for _, s := range b.Sessions {
+		if s.Key() != id {
+			continue
+		}
+		if have && (found.Ref() != s.Ref() || found.Remote != s.Remote) {
+			return core.Live{}, fmt.Errorf("%w %q: use a host/profile-qualified session", core.ErrAmbiguous, ref)
+		}
+		found, have = s, true
+	}
+	return found, nil
 }

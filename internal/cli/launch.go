@@ -21,14 +21,18 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 )
 
 type launcher struct {
-	core    *core.Core
-	srv     *tmux.Host
-	records launch.Records
-	conf    string
+	rootOf     func(int, string) string
+	resumeNote string
+	operation  string
+	core       *core.Core
+	srv        *tmux.Host
+	records    launch.Records
+	conf       string
 	// stamp is the file whose age throttles the board's background gc; empty never starts one.
 	stamp  string
 	squash *launch.Squash
@@ -79,15 +83,20 @@ func bin(harnessName string) (string, error) {
 }
 
 func startArgv(rec launch.Record) ([]string, error) {
+	if rec.ConfigRoot != "" {
+		if err := recordProfile(rec).ValidateSubscription(rec.Worktree.Path); err != nil {
+			return nil, err
+		}
+	}
 	b, err := bin(rec.Harness)
 	if err != nil {
 		return nil, err
 	}
 	prompt := rec.Prompt + slotNote
 	if rec.Harness == claude.Name {
-		return []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, prompt}, nil
+		return scopedArgv(rec, []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, prompt}), nil
 	}
-	return append(append([]string{b, "--yolo"}, codexDirs(rec)...), prompt), nil
+	return scopedArgv(rec, append(append([]string{b, "--yolo"}, codexDirs(rec)...), prompt)), nil
 }
 
 // slotNote ends every prompt ym starts an agent on, so heavy work across all agents shares the machine's slots.
@@ -97,6 +106,21 @@ const slotNote = "\n\nThis machine is shared by many agents. Run every heavy com
 
 // resumeArgv continues rec's conversation, with prompt as its next message unless it is empty.
 func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
+	if rec.ConfigRoot != "" {
+		rec.Account = recordProfile(rec).Account
+	}
+	if rec.Handoff != "" {
+		if prompt != "" && prompt != rec.Handoff {
+			prompt = rec.Handoff + "\n\n" + prompt
+		} else {
+			prompt = rec.Handoff
+		}
+	}
+	if rec.ConfigRoot != "" {
+		if err := recordProfile(rec).ValidateSubscription(rec.Worktree.Path); err != nil {
+			return nil, err
+		}
+	}
 	b, err := bin(rec.Harness)
 	if err != nil {
 		return nil, err
@@ -107,10 +131,13 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	} else {
 		argv = append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session)
 	}
+	if rec.Model != "" {
+		argv = append(argv, "--model", rec.Model)
+	}
 	if prompt != "" {
 		argv = append(argv, prompt)
 	}
-	return argv, nil
+	return scopedArgv(rec, argv), nil
 }
 
 // transcript is the path of rec's conversation, empty when its harness keeps none.
@@ -119,22 +146,34 @@ func transcript(rec launch.Record) string {
 		return ""
 	}
 	if rec.Harness == codex.Name {
-		return codex.New().Transcript(rec.Session)
+		return recordCodex(rec).Transcript(rec.Session)
 	}
-	return claude.New().Transcript(rec.Session)
+	return recordClaude(rec).Transcript(rec.Session)
 }
 
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
 // The state dir, tmux server and serve choice set in ym's environment are passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
 	var args []string
+	if rec.ConfigRoot != "" {
+		args = append(args, "--no-daemon")
+	}
+	if rec.Profile != "" && rec.Profile != "default" {
+		args = append(args, "-c", "sqlite_home="+strconv.Quote(rec.ConfigRoot))
+	}
 	if path, err := core.DefaultStorePath(); err == nil {
 		args = append(args, "--add-dir", filepath.Dir(path))
 	}
-	for _, key := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_NO_SERVE"} {
+	for _, key := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_NO_SERVE", "CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"} {
 		if v := os.Getenv(key); v != "" {
 			args = append(args, "-c", "shell_environment_policy.set."+key+"="+strconv.Quote(v))
 		}
+	}
+	if rec.ConfigRoot != "" {
+		args = append(args, "-c", "shell_environment_policy.set.CODEX_HOME="+strconv.Quote(rec.ConfigRoot), "-c", "shell_environment_policy.set.YAMNAYA_PROFILE="+strconv.Quote(profile.ID(rec.Profile)), "-c", "shell_environment_policy.set.YAMNAYA_ACCOUNT="+strconv.Quote(rec.Account))
+	}
+	if rec.ConfigRoot != "" {
+		args = append(args, "-c", "shell_environment_policy.set.CODEX_SQLITE_HOME="+strconv.Quote(sqliteRoot(recordProfile(rec))))
 	}
 	for _, dir := range commitDirs(rec.Worktree) {
 		args = append(args, "--add-dir", dir)
@@ -158,10 +197,16 @@ func commitDirs(w launch.Worktree) []string {
 
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
 func (l launcher) settle(rec launch.Record) launch.Record {
+	if rec.Handoff != "" && l.core != nil {
+		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, "The prior turn stopped because") {
+			rec.Handoff = ""
+			l.records.Save(rec)
+		}
+	}
 	if rec.Session != "" || rec.Harness != codex.Name {
 		return rec
 	}
-	if id := codex.New().LatestIn(rec.Worktree.Path, rec.Started); id != "" {
+	if id := recordCodex(rec).LatestIn(rec.Worktree.Path, rec.Started); id != "" {
 		rec.Session = id
 		l.records.Save(rec)
 	}
@@ -282,7 +327,32 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	if _, err := bin(rec.Harness); err != nil {
 		return core.Started{}, err
 	}
-	var err error
+	preferred := ""
+	if n.Profile == "" && n.Parent != "" {
+		if parent, ok := l.records.Find(n.Parent); ok && parent.Harness == rec.Harness {
+			preferred = parent.Profile
+		} else if l.core != nil {
+			if parent, err := l.core.Find(n.Parent); err == nil && parent.Harness == rec.Harness {
+				preferred = parent.Profile
+			}
+		}
+	}
+	selected, err := l.selectProfile(rec.Harness, n.Profile)
+	if n.Profile == "" && preferred != "" {
+		if candidate, e := l.selectProfile(rec.Harness, preferred); e == nil && profileUsable(candidate, profileLimits(filepath.Dir(l.records.Dir)), time.Now()) {
+			selected, err = candidate, nil
+		}
+	}
+	if err != nil {
+		return core.Started{}, err
+	}
+	if n.ConfigRoot != "" && n.ConfigRoot != selected.Root {
+		return core.Started{}, fmt.Errorf("profile root changed for %s", selected.ID)
+	}
+	setRecordProfile(&rec, selected)
+	if err = provisionProfile(selected); err != nil {
+		return core.Started{}, err
+	}
 	if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
 		return core.Started{}, err
 	}
@@ -291,7 +361,7 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	if err != nil {
 		return core.Started{}, err
 	}
-	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+	if err := trustRecord(rec); err != nil {
 		return core.Started{}, err
 	}
 	rec.Starting = true
@@ -299,9 +369,13 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 		return core.Started{}, err
 	}
 	name := tmux.SessionName(rec.Key)
-	if _, err := l.srv.Start(l.conf, name, rec.Worktree.Path, argv); err != nil {
+	pane, startErr := l.srv.Start(l.conf, name, rec.Worktree.Path, argv)
+	if err := startErr; err != nil {
 		return core.Started{}, err
 	}
+	rec.AttachedAt = time.Now()
+	rec.NativePID = pane.PID
+	rec.Dedicated = rec.Harness == codex.Name
 	rec.Starting = false
 	if err := l.records.Save(rec); err != nil {
 		return core.Started{}, err
@@ -322,7 +396,7 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	}
 	var b strings.Builder
 	printLaunch(&b, rec, name, l.srv.Socket)
-	return core.Started{Key: rec.Key, Session: rec.Session, Message: strings.TrimRight(b.String(), "\n")}, nil
+	return core.Started{Key: rec.Key, Session: rec.Session, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Message: strings.TrimRight(b.String(), "\n")}, nil
 }
 
 // await waits until Codex records rec's thread; a session that records none in time is ended, so no agent runs that ym cannot name.
@@ -339,7 +413,7 @@ func (l launcher) await(rec launch.Record) (launch.Record, error) {
 
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var useCodex bool
-	var repo, slug string
+	var repo, slug, selected string
 	cmd := &cobra.Command{
 		Use:   "new [--codex] [--repo NAME|PATH] [--slug S] <prompt>",
 		Short: "Start claude (or codex) on a prompt in a new worktree, in ym's own tmux server",
@@ -351,7 +425,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			if err := ensureWorkService(); err != nil {
 				return err
 			}
-			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug}
+			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug, Profile: selected}
 			if useCodex {
 				n.Harness = codex.Name
 			}
@@ -377,6 +451,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			return nil
 		}),
 	}
+	cmd.Flags().StringVar(&selected, "profile", "", "login profile id on this host")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "start codex instead of claude")
 	cmd.Flags().StringVar(&repo, "repo", "", "repository to branch from, by path or by any part of its name (default: the current directory's)")
 	cmd.Flags().StringVar(&slug, "slug", "", "worktree and branch name (default: from the prompt)")
@@ -485,7 +560,7 @@ func (l launcher) Launched() []core.Launched {
 	out := make([]core.Launched, 0, len(all))
 	for _, rec := range all {
 		if rec.IsLanded() {
-			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed})
+			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed})
 			continue
 		}
 		if !rec.Seen.IsZero() {
@@ -500,7 +575,7 @@ func (l launcher) Launched() []core.Launched {
 		if was := rec; mark(&rec, st) != was {
 			l.records.Save(rec)
 		}
-		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path,
+		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: st, Path: rec.Worktree.Path,
 			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})
 	}
 	return out
@@ -546,7 +621,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 func (l launcher) revive(rec launch.Record) (string, error) {
 	argv, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if rec.Session != "" {
-			return resumeArgv(*rec, "")
+			return resumeArgv(*rec, l.resumeNote)
 		}
 		return startArgv(*rec)
 	})
@@ -567,12 +642,15 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 		return "", false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
 	}
 	resumed := transcript(rec) != ""
+	if !resumed && rec.Profile != "" && rec.Profile != "default" {
+		return "", false, fmt.Errorf("profile %s conversation is unavailable; refusing to replace it with a new session", rec.Profile)
+	}
 	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
 			return resumeArgv(*rec, prompt)
 		}
 		if rec.Harness == claude.Name {
-			if err := claude.New().Unstart(rec.Session); err != nil {
+			if err := recordClaude(*rec).Unstart(rec.Session); err != nil {
 				return nil, err
 			}
 		}
@@ -609,6 +687,23 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 
 // restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
 func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, string, error) {
+	if err := recordProfile(rec).DefaultConstraint(); err != nil {
+		return nil, "", err
+	}
+	if rec.Session != "" && l.operation != rec.Session {
+		release, err := profile.Operation(filepath.Dir(l.records.Dir), rec.Harness, rec.Session)
+		if err != nil {
+			return nil, "", err
+		}
+		defer release()
+		l.operation = rec.Session
+		var errRecover error
+		rec, errRecover = l.recoverMigration(rec)
+		if errRecover != nil {
+			return nil, "", errRecover
+		}
+	}
+
 	pane, st := l.state(rec)
 	if st == "running" {
 		return nil, "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
@@ -627,9 +722,14 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		return nil, "", err
 	}
 	rec.Worktree = back
-	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+	if err := trustRecord(rec); err != nil {
 		return nil, "", err
 	}
+	if err := provisionProfile(recordProfile(rec)); err != nil {
+		return nil, "", err
+	}
+	rec.Account = recordProfile(rec).Account
+	rec.AttachedAt = time.Now()
 	args, err := argv(&rec)
 	if err != nil {
 		return nil, "", err
@@ -643,6 +743,10 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	if err != nil {
 		return nil, "", err
 	}
+	if p, err := l.srv.Pane(name); err == nil {
+		rec.NativePID = p.PID
+		rec.Dedicated = rec.Harness == codex.Name
+	}
 	rec.Landed, rec.Killed, rec.Revive, rec.Seen = time.Time{}, time.Time{}, false, time.Time{}
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
@@ -651,6 +755,11 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	}
 	if rec.Harness == codex.Name && rec.Session != "" {
 		if err := detach("resume-watch", name); err != nil {
+			return nil, "", err
+		}
+	}
+	if l.core != nil && l.core.Store != nil && rec.Session != "" {
+		if err = l.core.Store.ClearKill(rec.Session); err != nil {
 			return nil, "", err
 		}
 	}
@@ -715,7 +824,7 @@ func (l launcher) Dormant() []core.Dormant {
 			st = "ended outside ym"
 		}
 		if st != "running" && st != core.LaunchUnknown {
-			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
+			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
 				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started})
 		}
 	}
@@ -752,7 +861,8 @@ func cleanDir(p string) string {
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	return &cobra.Command{
+	var selected string
+	cmd := &cobra.Command{
 		Use: "revive <key|session>",
 		Short: ("Resume an exited or landed session, or one ym saw running elsewhere, in its directory, recreating the worktree and branch " +
 			"when they are gone, from another clone when its own is gone, else as an empty directory holding only the conversation"),
@@ -763,7 +873,12 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 				return err
 			}
 			l.core = e.core
-			msg, err := l.Revive(args[0])
+			var msg string
+			if selected != "" {
+				msg, err = l.ReviveProfile(args[0], selected)
+			} else {
+				msg, err = l.Revive(args[0])
+			}
 			if err != nil {
 				return err
 			}
@@ -771,6 +886,8 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			return nil
 		}),
 	}
+	cmd.Flags().StringVar(&selected, "profile", "", "resume using this subscription profile")
+	return cmd
 }
 
 // unlandable is land's refusal while removing the worktree would lose work.
@@ -1008,4 +1125,20 @@ func (l launcher) remote(err error, ref string, verb ...string) (string, error) 
 		return "", err
 	}
 	return l.core.RunRemote(host, append(verb, rest)...)
+}
+
+func (l launcher) ReviveProfile(ref, id string) (string, error) {
+	if l.core != nil {
+		if host, rest, ok := l.core.RemoteSession(ref); ok {
+			return l.core.RunRemote(host, "revive", rest, "--profile", id)
+		}
+	}
+	rec, err := l.find(ref)
+	if err != nil {
+		return "", err
+	}
+	if profile.ID(rec.Profile) == profile.ID(id) {
+		return l.revive(rec)
+	}
+	return l.SwitchProfile(ref, id)
 }

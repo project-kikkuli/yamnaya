@@ -789,7 +789,7 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		}
 		repo, harness := m.newL.Repo, m.newL.Harness
 		return m, m.do(func() (string, error) {
-			g, mg, err := m.core.NewGoal(text, repo, harness)
+			g, mg, err := m.core.NewGoal(text, repo, harness, m.newL.Profile)
 			if err == nil {
 				err = m.launchedHere("goal", harness)
 			}
@@ -812,7 +812,7 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		name, repo, harness, over := m.chiefName, m.newL.Repo, m.newL.Harness, m.inPicks
 		m.picked = nil
 		return m, m.do(func() (string, error) {
-			c, err := m.core.NewChief(name, text, repo, harness, over)
+			c, err := m.core.NewChief(name, text, repo, harness, over, m.newL.Profile)
 			if err == nil {
 				err = m.launchedHere("chief", harness)
 			}

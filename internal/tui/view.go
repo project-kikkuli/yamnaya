@@ -252,7 +252,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
+			inDismissStale: "dismiss every stale item because", inProfile: "login profile id for " + m.inLabel + " (ym profiles lists logins)", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
@@ -266,7 +266,12 @@ func (m Model) footer() []string {
 			}
 		}
 		if m.launching() {
-			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
+			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "] [shift-tab profile: " + func() string {
+				if m.newL.Profile == "" {
+					return "auto"
+				}
+				return m.newL.Profile
+			}() + "]")
 		}
 		if m.launchOn != "" && m.launching() {
 			label += " on " + m.hostTag(m.launchOn)
@@ -630,7 +635,10 @@ func (m Model) spend(sessions ...core.Live) string {
 	}
 	in := map[string]bool{}
 	for _, s := range sessions {
-		in[s.Key()] = true
+		if _, known := f.Sessions[s.UsageKey()]; s.Remote != "" && !known {
+			return "usage unknown"
+		}
+		in[s.UsageKey()] = true
 	}
 	var total core.Spend
 	for key := range in {
@@ -657,6 +665,11 @@ func (m Model) missionSpend(ps ...core.Project) string {
 	}
 	var total core.Spend
 	for _, p := range ps {
+		for _, s := range p.Sessions {
+			if _, known := m.board.Fleet.Sessions[s.UsageKey()]; s.Remote != "" && !known {
+				return "usage unknown"
+			}
+		}
 		total = total.Plus(p.Spend)
 	}
 	return spendText(m.board.Fleet, total)
@@ -668,11 +681,16 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 	if !f.Ready {
 		return ""
 	}
-	if sp, ok := f.Agents[s.Key()+"/"+c.ID]; ok {
+	if sp, ok := f.Agents[s.UsageKey()+"/"+c.ID]; ok {
 		return spendText(f, sp)
 	}
-	if ss, ok := f.Sessions[c.ID]; ok {
+	child := s
+	child.ID = c.ID
+	if ss, ok := f.Sessions[child.UsageKey()]; ok {
 		return spendText(f, ss.Total)
+	}
+	if s.Remote != "" {
+		return "usage unknown"
 	}
 	return core.Spend{}.Dollars()
 }
@@ -882,7 +900,7 @@ func (m Model) detailView() viewPage {
 		if title == "" {
 			title = core.Short(s.Key())
 		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(s.Harness, 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + pad(m.where(s), wide)
+		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(profileDisplay(s.Harness, s.Profile), 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + pad(m.where(s), wide)
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}
@@ -1088,7 +1106,7 @@ func (m Model) sessionView() viewPage {
 	if title == "" {
 		title = core.Short(s.Key())
 	}
-	b.WriteString(pal.bold.Render(" "+title) + pal.dim.Render("  "+s.Harness+" "+s.Key()) + "\n\n")
+	b.WriteString(pal.bold.Render(" "+title) + pal.dim.Render("  "+profileDisplay(s.Harness, s.Profile)+" "+s.Key()) + "\n\n")
 	status := s.Status.String()
 	if !s.Since.IsZero() {
 		status += " since " + age(m.board.At, s.Since)

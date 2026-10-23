@@ -15,10 +15,22 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
 // Adopt waits until s sits idle, ends its agent in its current terminal and resumes the conversation on ym's server.
 func (l launcher) Adopt(s core.Live, say func(string)) (core.Target, error) {
+	ps, err := profile.Load(filepath.Dir(l.records.Dir))
+	if err != nil {
+		return core.Target{}, err
+	}
+	selected, err := profile.Find(ps, s.Harness, s.Profile)
+	if err != nil {
+		return core.Target{}, err
+	}
+	if err = selected.DefaultConstraint(); err != nil {
+		return core.Target{}, err
+	}
 	if why := s.Unadoptable(); why != "" {
 		return core.Target{}, errors.New(why)
 	}
@@ -68,13 +80,23 @@ func (l launcher) Relaunch(from core.Live, harnessName, id string) (string, erro
 
 // takeOver points from's launch record in from's directory at session id of harness, or records that directory as adopted when there is none.
 func (l launcher) takeOver(from core.Live, harnessName, id string) (launch.Record, error) {
-	rec, ok := l.records.Find(from.ID)
+	rec, ok := l.records.Find(from.Harness + ":" + profile.ID(from.Profile) + "@" + from.ID)
 	if !ok || rec.Worktree.Path != from.Cwd {
 		if why := launch.Unadoptable(from.Cwd); why != "" {
 			return launch.Record{}, errors.New(why)
 		}
 		rec = launch.Adopted(from, time.Now())
 		rec.Key = launch.AdoptKey(id)
+	}
+	if harnessName == from.Harness {
+		rec.Profile = from.Profile
+		rec.ConfigRoot = from.ConfigRoot
+	} else {
+		selected, err := l.selectProfile(harnessName, "")
+		if err != nil {
+			return rec, err
+		}
+		setRecordProfile(&rec, selected)
 	}
 	rec.Harness, rec.Session = harnessName, id
 	return rec, l.records.Save(rec)
@@ -273,4 +295,25 @@ func sendHoldCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			return err
 		}),
 	}
+}
+
+func (l launcher) RelaunchProfile(from core.Live, target core.Session) (string, error) {
+	rec, ok := l.records.Find(from.Harness + ":" + profile.ID(from.Profile) + "@" + from.ID)
+	if !ok || rec.Worktree.Path != from.Cwd {
+		rec = launch.Adopted(from, time.Now())
+		rec.Key = launch.AdoptKey(target.ID)
+	}
+	selected, err := l.selectProfile(target.Harness, target.Profile)
+	if err != nil {
+		return "", err
+	}
+	if selected.Root != target.ConfigRoot {
+		return "", fmt.Errorf("ported profile root changed")
+	}
+	rec.Harness, rec.Session = target.Harness, target.ID
+	setRecordProfile(&rec, selected)
+	if err = l.records.Save(rec); err != nil {
+		return "", err
+	}
+	return l.revive(rec)
 }
