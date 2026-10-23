@@ -11,7 +11,9 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/pressure"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
+	"path/filepath"
 )
 
 func pressureRoots(records []launch.Record, panes map[string]tmux.Pane, org core.Org) map[int]pressure.Owner {
@@ -82,7 +84,17 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		if err != nil {
 			return err
 		}
-		sampleErr := state.Sample(at, load, pool.Cores, procs, pressureRoots(records, panes, org), pressure.SetNice)
+		roots := pressureRoots(records, panes, org)
+		sessions, dirs := pressureSources(records, panes, roots)
+		var jobs map[int]pressure.Owner
+		if state.Holding {
+			table, err := proc.List()
+			if err != nil {
+				return err
+			}
+			jobs = pressure.AppJobs(procs, pressure.AppServers(table), sessions, dirs, pressure.ReadIdentity)
+		}
+		sampleErr := state.Sample(at, load, pool.Cores, procs, roots, jobs, pressure.SetNice)
 		if err = state.Save(pool.Dir); err != nil {
 			return errors.Join(sampleErr, err)
 		}
@@ -117,4 +129,25 @@ func recordPressureNotices(c *core.Core, state *pressure.State, dir string) erro
 		}
 	}
 	return nil
+}
+
+func pressureSources(records []launch.Record, panes map[string]tmux.Pane, roots map[int]pressure.Owner) (map[string]pressure.Owner, map[string]pressure.Owner) {
+	sessions, dirs := map[string]pressure.Owner{}, map[string]pressure.Owner{}
+	for _, rec := range records {
+		pane, ok := panes[tmux.SessionName(rec.Key)]
+		if !ok {
+			continue
+		}
+		owner, ok := roots[pane.PID]
+		if !ok || owner.Session != rec.Session {
+			continue
+		}
+		if rec.Session != "" {
+			sessions[rec.Session] = owner
+		}
+		if rec.Worktree.Path != "" {
+			dirs[filepath.Clean(rec.Worktree.Path)] = owner
+		}
+	}
+	return sessions, dirs
 }

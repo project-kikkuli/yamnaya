@@ -51,7 +51,7 @@ func TestSustainedLoadHoldsSlotsAndRecoveryUsesHysteresis(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var s State
 			for _, p := range tc.samples {
-				if err := s.Sample(at.Add(time.Duration(p.seconds)*time.Second), p.load, 12, nil, nil, nil); err != nil {
+				if err := s.Sample(at.Add(time.Duration(p.seconds)*time.Second), p.load, 12, nil, nil, nil, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -95,13 +95,13 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 		return nil
 	}
 	var s State
-	if err := s.Sample(at, 30, 12, processes, roots, setter); err != nil {
+	if err := s.Sample(at, 30, 12, processes, roots, nil, setter); err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 0 {
 		t.Fatal("reniced before sustained overload", got)
 	}
-	if err := s.Sample(at.Add(61*time.Second), 30, 12, processes, roots, setter); err != nil {
+	if err := s.Sample(at.Add(61*time.Second), 30, 12, processes, roots, nil, setter); err != nil {
 		t.Fatal(err)
 	}
 	if want := []int{21, 13, 19, 12, 14}; !reflect.DeepEqual(got, want) {
@@ -124,7 +124,7 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = nil
-	if err := restored.Sample(at.Add(70*time.Second), 30, 12, processes, roots, setter); err != nil {
+	if err := restored.Sample(at.Add(70*time.Second), 30, 12, processes, roots, nil, setter); err != nil {
 		t.Fatal(err)
 	}
 	if len(got) > 0 || len(restored.Notices()) > 0 || !restored.Holding {
@@ -135,7 +135,7 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 func TestExitedJobsAndReusedPIDsDoNotKeepOriginalPriorities(t *testing.T) {
 	at := time.Unix(1000, 0)
 	state := State{Active: true, Holding: true, Changed: []Change{{Process: Process{PID: 12, Started: 100}}, {Process: Process{PID: 13, Started: 100}}}}
-	if err := state.Sample(at, 10, 12, []Process{{PID: 12, Started: 200}}, nil, nil); err != nil {
+	if err := state.Sample(at, 10, 12, []Process{{PID: 12, Started: 200}}, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(state.Changed) != 0 {
@@ -145,7 +145,7 @@ func TestExitedJobsAndReusedPIDsDoNotKeepOriginalPriorities(t *testing.T) {
 
 func TestPriorityFailuresAreReportedAndNeverClaimedAsApplied(t *testing.T) {
 	state := State{Active: true}
-	err := state.Sample(time.Now(), 30, 12, []Process{{PID: 10, Command: "codex"}, {PID: 11, PPID: 10, Command: "compile", CPU: 50}}, map[int]Owner{10: {Session: "worker"}}, func(Process, int) error { return os.ErrPermission })
+	err := state.Sample(time.Now(), 30, 12, []Process{{PID: 10, Command: "codex"}, {PID: 11, PPID: 10, Command: "compile", CPU: 50}}, map[int]Owner{10: {Session: "worker"}}, nil, func(Process, int) error { return os.ErrPermission })
 	if !errors.Is(err, os.ErrPermission) || len(state.Changed) != 0 {
 		t.Fatal(err, state.Changed)
 	}

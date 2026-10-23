@@ -115,7 +115,7 @@ func (s *State) Observe(at time.Time, load float64, cores int) error {
 }
 
 // Sample lowers only child jobs of verified agent roots, in CPU order.
-func (s *State) Sample(at time.Time, load float64, cores int, procs []Process, roots map[int]Owner, set func(Process, int) error) error {
+func (s *State) Sample(at time.Time, load float64, cores int, procs []Process, roots, jobs map[int]Owner, set func(Process, int) error) error {
 	if err := s.Observe(at, load, cores); err != nil {
 		return err
 	}
@@ -137,10 +137,17 @@ func (s *State) Sample(at time.Time, load float64, cores int, procs []Process, r
 		return nil
 	}
 	owners := map[int]Owner{}
+	for pid, owner := range jobs {
+		owners[pid] = owner
+	}
 	for _, p := range procs {
 		seen := map[int]bool{}
 		for id := p.PID; id > 1 && !seen[id]; id = table[id].PPID {
 			seen[id] = true
+			if owner, ok := jobs[id]; ok {
+				owners[p.PID] = owner
+				break
+			}
 			if owner, ok := roots[id]; ok {
 				owners[p.PID] = owner
 				break
