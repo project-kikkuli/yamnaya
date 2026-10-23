@@ -76,7 +76,8 @@ const PRBatchSize = 50
 const PRStale = 2 * time.Minute
 
 // RefreshPRs fetches every pull request on the board whose status is missing or stale: in batches from a PRBatch, then one at a
-// time, a few at once, for any a batch could not read.
+// time, a few at once, for any a batch answered without. A batch that fails ends the cycle's reads, so a GitHub outage or an
+// exhausted budget never turns into one request per pull request; they stay due for the next cycle.
 // It never runs on the render path; callers start it in the background.
 func (c *Core) RefreshPRs(b Board) (int, error) {
 	if c.PRs == nil {
@@ -122,7 +123,11 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		var left []string
 		for start := 0; start < len(due); start += PRBatchSize {
 			chunk := due[start:min(start+PRBatchSize, len(due))]
-			got, _ := batch.PRStatuses(chunk)
+			got, err := batch.PRStatuses(chunk)
+			if err != nil {
+				firstErr = err
+				break
+			}
 			for _, url := range chunk {
 				st, ok := got[url]
 				if !ok {

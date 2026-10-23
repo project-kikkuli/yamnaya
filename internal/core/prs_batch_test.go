@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -14,12 +15,16 @@ type batchSource struct {
 	batches, ones int
 	now           func() time.Time
 	unreadable    map[string]bool
+	down          bool
 }
 
 func (s *batchSource) PRStatuses(urls []string) (map[string]PRStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batches++
+	if s.down {
+		return nil, errors.New("GraphQL budget exhausted")
+	}
 	out := map[string]PRStatus{}
 	for _, u := range urls {
 		if !s.unreadable[u] {
@@ -84,5 +89,25 @@ func TestOpenPullRequestsStayFreshWithinGitHubsBudget(t *testing.T) {
 				t.Errorf("%d single requests in four minutes, want at most %d", src.ones, most)
 			}
 		})
+	}
+}
+
+// TestAFailingBatchNeverFansOutIntoSingleRequests keeps a GitHub outage or an exhausted budget from costing one request per pull
+// request: the cycle stops at the first failed batch and every pull request stays due.
+func TestAFailingBatchNeverFansOutIntoSingleRequests(t *testing.T) {
+	st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	src := &batchSource{now: func() time.Time { return now }, down: true}
+	c := &Core{Store: st, PRs: src, Now: func() time.Time { return now }}
+	var b Board
+	for i := range 500 {
+		b.Sessions = append(b.Sessions, Live{Session: Session{ID: fmt.Sprint(i), Facts: Facts{PRs: []PR{{URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", i+1)}}}}})
+	}
+	if _, err := c.RefreshPRs(b); err == nil || src.batches != 1 || src.ones != 0 {
+		t.Fatalf("err %v, %d batches and %d single requests, want the failure, one batch and none", err, src.batches, src.ones)
 	}
 }

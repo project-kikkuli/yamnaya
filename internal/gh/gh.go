@@ -26,7 +26,21 @@ type Source struct {
 	Now  func() time.Time
 	// LandingRun runs the landing query for a pull request URL; nil runs gh.
 	LandingRun func(url string) ([]byte, error)
+
+	budgetMu sync.Mutex
+	// paused is when batches may run again, after the account's GraphQL budget fell to the reserve or ran out.
+	paused time.Time
 }
+
+// Reserve is the share of the account's hourly GraphQL budget ym leaves to the owner and their agents: below it, ym reads no
+// pull requests until the budget resets. Every ym reads the same account budget, so all of them stop together.
+const Reserve = 0.5
+
+// rateLimitWait is how long batches stop after GitHub refused one for its rate limit without saying when the budget resets.
+const rateLimitWait = 5 * time.Minute
+
+// ErrPaused is PRStatuses' answer while the account's GraphQL budget is at the reserve.
+var ErrPaused = errors.New("GitHub GraphQL budget at ym's reserve; waiting for it to reset")
 
 func New() *Source {
 	return &Source{Run: query, Batch: graphQL, REST: rest, Repo: repoExists, Now: time.Now}
@@ -81,6 +95,12 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 	if s.Batch == nil {
 		return nil, errors.New("no batch query")
 	}
+	s.budgetMu.Lock()
+	paused := s.paused
+	s.budgetMu.Unlock()
+	if s.Now().Before(paused) {
+		return nil, ErrPaused
+	}
 	var q strings.Builder
 	q.WriteString("query(")
 	vars := map[string]string{}
@@ -91,17 +111,36 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 		fmt.Fprintf(&q, "$u%d: URI!", i)
 		vars[fmt.Sprintf("u%d", i)] = u
 	}
-	q.WriteString(") { viewer { login }")
+	q.WriteString(") { viewer { login } rateLimit { limit remaining resetAt }")
 	for i := range urls {
 		fmt.Fprintf(&q, " p%d: resource(url: $u%d) { %s }", i, i, prFields)
 	}
 	q.WriteString(" }")
 	out, err := s.Batch(q.String(), vars)
 	var v struct {
-		Data map[string]json.RawMessage `json:"data"`
+		Data   map[string]json.RawMessage `json:"data"`
+		Errors []struct {
+			Type string `json:"type"`
+		} `json:"errors"`
 	}
-	if jerr := json.Unmarshal(out, &v); jerr != nil || v.Data == nil {
+	jerr := json.Unmarshal(out, &v)
+	limited := err != nil && strings.Contains(strings.ToLower(err.Error()), "rate limit")
+	for _, e := range v.Errors {
+		limited = limited || e.Type == "RATE_LIMITED"
+	}
+	if limited {
+		s.pause(s.Now().Add(rateLimitWait))
+	}
+	if jerr != nil || v.Data == nil {
 		return nil, errors.Join(err, jerr, errors.New("no data in the batch reply"))
+	}
+	var budget struct {
+		Limit     int       `json:"limit"`
+		Remaining int       `json:"remaining"`
+		ResetAt   time.Time `json:"resetAt"`
+	}
+	if raw, ok := v.Data["rateLimit"]; ok && json.Unmarshal(raw, &budget) == nil && budget.Limit > 0 && float64(budget.Remaining) < Reserve*float64(budget.Limit) {
+		s.pause(budget.ResetAt)
 	}
 	var viewer struct{ Login string }
 	if raw, ok := v.Data["viewer"]; ok {
@@ -123,6 +162,14 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 		got[u] = st
 	}
 	return got, nil
+}
+
+func (s *Source) pause(until time.Time) {
+	s.budgetMu.Lock()
+	defer s.budgetMu.Unlock()
+	if until.After(s.paused) {
+		s.paused = until
+	}
 }
 
 type count struct {

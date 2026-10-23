@@ -191,6 +191,7 @@ func (a *Adapter) transcript(cwd, id string) string {
 	if cwd != "" {
 		p := filepath.Join(a.Dir, "projects", encodeCwd(cwd), id+".jsonl")
 		if _, err := os.Stat(p); err == nil {
+			a.remember(id, found{path: p})
 			return p
 		}
 	}
@@ -202,29 +203,40 @@ func (a *Adapter) transcript(cwd, id string) string {
 		if _, err := os.Stat(f.path); err == nil {
 			return f.path
 		}
-	} else if ok && now.Sub(f.at) < missRetry {
+	} else if ok && now.Before(f.retry) {
 		return ""
 	}
 	matches, _ := filepath.Glob(filepath.Join(a.Dir, "projects", "*", id+".jsonl"))
-	f = found{at: now}
 	if len(matches) > 0 {
-		f.path = matches[0]
+		a.remember(id, found{path: matches[0]})
+		return matches[0]
 	}
+	wait := min(max(2*f.wait, missRetry), maxMissRetry)
+	a.remember(id, found{retry: now.Add(wait), wait: wait})
+	return ""
+}
+
+func (a *Adapter) remember(id string, f found) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.found == nil {
 		a.found = map[string]found{}
 	}
 	a.found[id] = f
-	a.mu.Unlock()
-	return f.path
 }
 
-// missRetry is how long a session id no project directory holds is taken as missing before every project directory is listed again.
-const missRetry = 30 * time.Second
+// A session id no project directory holds is looked for again after missRetry, then twice as long after each miss up to
+// maxMissRetry: each look lists every project directory.
+const (
+	missRetry    = 30 * time.Second
+	maxMissRetry = 10 * time.Minute
+)
 
+// found is where a session's transcript is, or when to look for a missing one again.
 type found struct {
-	path string
-	at   time.Time
+	path  string
+	retry time.Time
+	wait  time.Duration
 }
 
 // An idle session finishes its transcript within a second of Claude Code writing its state file idle, then writes nothing the
