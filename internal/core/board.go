@@ -59,6 +59,7 @@ type Core struct {
 	fw      forwardedSet
 	prompts promptCache
 	reuse   boardReuse
+	paced   PRPace
 }
 
 // Live is a discovered session with where it runs and how many processes run it.

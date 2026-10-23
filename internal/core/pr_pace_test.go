@@ -53,3 +53,55 @@ func TestTheBoardSaysWhenPullRequestReadsAreSlowedStoppedOrFailing(t *testing.T)
 		})
 	}
 }
+
+// TestAnUnchangedPaceLeavesTheDatabaseAlone runs ten minutes of ym serve's five-second cycle with nothing due and counts the
+// commits a board reading the database sees: an unchanged pace is written only every paceBeat, a pace the board would show
+// differently at once.
+func TestAnUnchangedPaceLeavesTheDatabaseAlone(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		left      []float64
+		most, few int
+	}{
+		{"steady full budget", []float64{0.9, 0.8, 0.7}, 3, 1},
+		{"budget falling into the slow band", []float64{0.9, 0.3, 0.2}, 5, 3},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ym.db")
+			st, err := OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			view, err := OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { view.Close() })
+			now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+			src := &budgetSource{batchSource: batchSource{now: func() time.Time { return now }}, reset: now.Add(2 * time.Hour), reads: map[string]int{}}
+			serve := &Core{Store: st, PRs: src, Now: func() time.Time { return now }}
+			version := func() (v int) {
+				if err := view.db.QueryRow(`PRAGMA data_version`).Scan(&v); err != nil {
+					t.Fatal(err)
+				}
+				return v
+			}
+			commits, last := 0, version()
+			cycles := int(10 * time.Minute / (5 * time.Second))
+			for i := range cycles {
+				src.left = c.left[i*len(c.left)/cycles]
+				if _, err := serve.RefreshPRs(Board{}); err != nil {
+					t.Fatal(err)
+				}
+				if v := version(); v != last {
+					commits, last = commits+1, v
+				}
+				now = now.Add(5 * time.Second)
+			}
+			if commits > c.most || commits < c.few {
+				t.Fatalf("%d commits in ten minutes, want %d to %d", commits, c.few, c.most)
+			}
+		})
+	}
+}

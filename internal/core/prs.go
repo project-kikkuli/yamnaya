@@ -234,7 +234,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		}()
 	}
 	wg.Wait()
-	if err := c.Store.SavePRPace(pace); err != nil && firstErr == nil {
+	if err := c.savePace(pace); err != nil && firstErr == nil {
 		firstErr = err
 	}
 	return n, firstErr

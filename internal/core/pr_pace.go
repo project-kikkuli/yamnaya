@@ -53,6 +53,23 @@ func (p PRPace) Note(now time.Time) string {
 	return fmt.Sprintf("pull requests read every %s, goals' every %s: %s", minutes(board), minutes(goal), budget)
 }
 
+// paceBeat is how often an unchanged pace is written again, so a failure still happening outlives paceFresh on the board.
+const paceBeat = paceFresh / 2
+
+// savePace writes pace only when the board would say something else, or after paceBeat: every write moves the database's
+// data_version, which makes every board reload rebuild.
+func (c *Core) savePace(p PRPace) error {
+	last := c.paced
+	if !last.At.IsZero() && p.Note(p.At) == last.Note(p.At) && p.At.Sub(last.At) < paceBeat {
+		return nil
+	}
+	if err := c.Store.SavePRPace(p); err != nil {
+		return err
+	}
+	c.paced = p
+	return nil
+}
+
 func minutes(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(d.Round(time.Minute)/time.Minute))
 }
