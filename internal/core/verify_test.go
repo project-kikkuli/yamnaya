@@ -178,7 +178,7 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 			if !slices.Equal(kinds, want) {
 				t.Fatalf("goal events %q, want %q", kinds, want)
 			}
-			if tc.state == GoalActive && !strings.Contains(w.toManager(), "- "+EventFailedVerify+": attempt 1 failed") {
+			if tc.state == GoalActive && !strings.Contains(w.toManager(), " "+EventFailedVerify+": attempt 1 failed") {
 				t.Fatalf("findings did not come in the manager's wake: %q", w.toManager())
 			}
 		})

@@ -11,10 +11,16 @@ CREATE TABLE IF NOT EXISTS ym_forwarded (
 	id TEXT PRIMARY KEY,
 	at TEXT NOT NULL
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ym_agent_reports (
+	session TEXT PRIMARY KEY,
+	head TEXT NOT NULL DEFAULT '',
+	said TEXT NOT NULL DEFAULT '',
+	at TEXT NOT NULL
+) WITHOUT ROWID;
 `
 
-// ForwardIdle records the last reply of every idle agent a manager runs, once per reply, as an event that wakes the manager; an agent
-// of a chief is handed to it directly.
+// ForwardIdle records the last reply of every idle agent a manager or chief runs, once per reply, as an event in its inbox; a reply
+// that adds nothing is recorded as idle-again, which ym only counts.
 func (c *Core) ForwardIdle(b Board) error {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
@@ -41,12 +47,25 @@ func (c *Core) ForwardIdle(b Board) error {
 			c.fw.add(id)
 			continue
 		}
-		if g, ok := b.Org.Goals[m.GoalID]; ok {
-			if _, _, err := c.RecordGoalEvent(g.ID, EventFinished, strings.TrimPrefix(idleText(*s), "ym: "), ""); err != nil {
+		fresh, err := c.news(*s)
+		if err != nil {
+			return err
+		}
+		kind := EventFinished
+		if !fresh {
+			kind = EventIdleAgain
+		}
+		text := strings.TrimPrefix(idleText(*s), "ym: ")
+		inbox := m.GoalID
+		if _, ok := b.Org.Goals[inbox]; !ok {
+			inbox = b.Org.Recipient(key, b.parents)
+		}
+		if _, _, remote := SplitRemote(inbox); remote && fresh {
+			if err := c.tellManager(b, b.Org, inbox, "ym: "+clip(text, lineMax)); err != nil {
 				return err
 			}
-		} else if to := b.Org.Recipient(key, b.parents); to != Owner {
-			if err := c.tellManager(b, b.Org, to, idleText(*s)); err != nil {
+		} else if inbox != Owner && !remote {
+			if _, _, err := c.RecordGoalEvent(inbox, kind, text, ""); err != nil {
 				return err
 			}
 		}

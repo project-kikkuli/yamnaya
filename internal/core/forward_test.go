@@ -2,6 +2,7 @@ package core
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestAnIdleAgentsLastMessageReachesItsManagerOnceAcrossARestart(t *testing.T
 		t.Fatal(err)
 	}
 	w.core.Store = st
-	_, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+	g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
 	w.spawn("agent", m.Session)
 	w.spawn("helper", "agent")
 	w.spawn("mine", "")
@@ -36,8 +37,8 @@ func TestAnIdleAgentsLastMessageReachesItsManagerOnceAcrossARestart(t *testing.T
 		return w.handedTo(m.Session)
 	}
 	got := forward()
-	if len(got) != 1 || !strings.Contains(got[0], "agent agent") || !strings.Contains(got[0], reply) {
-		t.Fatalf("manager got %q, want the agent's whole last message once", got)
+	if len(got) != 1 || !strings.Contains(got[0], "agent agent") || !strings.Contains(got[0], oneLine(reply)) {
+		t.Fatalf("manager got %q, want the agent's last message once", got)
 	}
 	if len(w.claude.handed) != 1 {
 		t.Fatalf("handed %q; the owner's own session, the manager and a busy agent forward nothing", w.claude.handed)
@@ -52,7 +53,14 @@ func TestAnIdleAgentsLastMessageReachesItsManagerOnceAcrossARestart(t *testing.T
 		t.Fatalf("restart resent %q", got)
 	}
 	w.set("agent", func(s *Session) { s.ResultAt = at.Add(time.Hour) })
-	if got := forward(); len(got) != 1 {
-		t.Fatalf("the same words in a later reply reached the manager %d times, want once", len(got))
+	if got := forward(); len(got) != 0 {
+		t.Fatalf("the same words in a later reply woke the manager: %q", got)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(events); !slices.Equal(got, []string{EventFinished, EventIdleAgain}) {
+		t.Fatalf("events %v, want the first reply and the repeat recorded as idle-again", got)
 	}
 }

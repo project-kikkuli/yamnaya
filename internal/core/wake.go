@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -137,7 +136,7 @@ func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
 }
 
 // noticeAgent records what happened to an agent, once per key, as an event on the goal of the manager over it, which wakes the
-// manager and reaches its chiefs and the owner's feed; an agent of a chief is told to the chief directly.
+// manager and reaches its chiefs and the owner's feed; for an agent of a chief it goes in the chief's own inbox.
 func (c *Core) noticeAgent(b Board, o Org, session, kind, text, key string) error {
 	m, managed := o.Managed(session, b.parents)
 	if !managed {
@@ -155,16 +154,16 @@ func (c *Core) noticeAgent(b Board, o Org, session, kind, text, key string) erro
 	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_forwarded WHERE id = ?`, key).Scan(&seen); err != nil || seen > 0 {
 		return err
 	}
-	if err := c.tell(b, o.Managers[to].Session, "ym: "+text, false); err != nil {
-		return err
+	if _, _, remote := SplitRemote(to); remote {
+		return c.tellManager(b, o, to, "ym: "+clip(oneLine(text), lineMax))
 	}
-	_, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, key, now())
+	_, _, err := c.RecordGoalEvent(to, kind, text, key)
 	return err
 }
 
 // Wake fires due timers, nudges a manager that ended its turn with nothing in flight, then hands every running manager its goal's
-// new events and every running chief its subtree's, each as one message per cycle. Events wait for a manager that is down; its
-// relaunch prompt carries them.
+// new events and every running chief its subtree's, each as one short message once they are due. Events wait for a manager that is
+// down; its relaunch prompt carries them.
 func (c *Core) Wake(b Board) error {
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -198,40 +197,22 @@ func (c *Core) Wake(b Board) error {
 
 func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	events, err := c.Store.undelivered(g.ID)
-	if err != nil || len(events) == 0 {
+	if err != nil || !c.wakeDue(events) {
 		return err
 	}
-	if err := c.tell(b, m.Session, "ym: "+wakeText(g, events), false); err != nil {
+	if err := c.tell(b, m.Session, wakeText(g, events), false); err != nil {
 		return err
 	}
 	return c.Store.markDelivered(events, c.now())
 }
 
-func stalesBrief(events []GoalEvent) bool {
-	for _, e := range events {
-		if slices.Contains(briefKinds, e.Kind) {
-			return true
-		}
-	}
-	return false
-}
-
-// wakeText lists a goal's new events for its manager, oldest first.
+// wakeText lists a goal's new events for its manager, one line each, those that need it first.
 func wakeText(g Goal, events []GoalEvent) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s on goal %s %q, oldest first:", plural(len(events), "new event"), g.ID, shortName(g.Ask))
-	for _, e := range events {
-		sb.WriteString("\n- " + e.Kind + ": " + e.Payload)
-	}
-	if stalesBrief(events) {
-		sb.WriteString("\nYour brief predates these: once you have acted, record a fresh one with ym goal brief.")
-	}
-	sb.WriteString("\nAct on what needs you. When the goal moves, tell the owner in one line with ym goal update \"<line>\". ym wakes you on the next event, or at a time you set with ym goal wake <when> <why>.")
-	return sb.String()
+	return inboxText(fmt.Sprintf("goal %s %q", g.ID, shortName(g.Ask)), events, "", nil)
 }
 
 func (c *Core) chiefEvents(o Org, m Manager) ([]GoalEvent, error) {
-	var goals []string
+	goals := []string{m.ID}
 	for _, below := range o.Subtree(m.ID) {
 		if g, ok := o.Goals[below.GoalID]; ok && below.ID != m.ID {
 			goals = append(goals, g.ID)
@@ -246,25 +227,25 @@ func (c *Core) chiefEvents(o Org, m Manager) ([]GoalEvent, error) {
 
 func (c *Core) wakeChief(b Board, o Org, m Manager) error {
 	events, err := c.chiefEvents(o, m)
-	if err != nil || len(events) == 0 {
+	if err != nil || !c.wakeDue(events) {
 		return err
 	}
-	if err := c.tell(b, m.Session, "ym: "+chiefText(o, events), false); err != nil {
+	if err := c.tell(b, m.Session, chiefText(o, events, ""), false); err != nil {
 		return err
 	}
 	return c.Store.markHeard(m.ID, events, c.now())
 }
 
-// chiefText lists the state changes under a chief, oldest first.
-func chiefText(o Org, events []GoalEvent) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s under you, oldest first:", plural(len(events), "change"))
-	for _, e := range events {
-		g := o.Goals[e.Goal]
-		fmt.Fprintf(&sb, "\n- %s (%s %q) %s: %s", g.ID, g.ManagerID, shortName(g.Ask), e.Kind, e.Payload)
-	}
-	sb.WriteString("\nYour reports keep working without you; step in only where a nudge or a decision unblocks one.")
-	return sb.String()
+// chiefText lists the changes under a chief, one line each naming its goal, those that need it first; host names this host to a
+// chief on another one.
+func chiefText(o Org, events []GoalEvent, host string) string {
+	return inboxText("changes under you", events, host, func(e GoalEvent) string {
+		g, ok := o.Goals[e.Goal]
+		if !ok {
+			return "your agent"
+		}
+		return g.ID + " (" + g.ManagerID + ")"
+	})
 }
 
 func plural(n int, what string) string {
@@ -373,8 +354,8 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 	return e, c.Store.SaveGoal(g)
 }
 
-// nudgeIdle wakes a manager at once when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI,
-// no wake set, no ask waiting on someone, and no event since its last wake. It nudges once until something else happens on the
+// nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI, no wake
+// set, no ask waiting on someone, and nothing that wakes it since its last wake; what waits for the digest rides along. It nudges once until something else happens on the
 // goal; a manager that stays idle after that is the quiet watch's to nudge and flag.
 func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	if g.State != GoalActive {
@@ -384,7 +365,7 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	if !ok || s.Status != Idle || s.Prompt != nil || s.ResultAt.IsZero() {
 		return nil
 	}
-	if pending, err := c.Store.undelivered(g.ID); err != nil || len(pending) > 0 {
+	if pending, err := c.Store.undelivered(g.ID); err != nil || urgent(pending) {
 		return err
 	}
 	if last, err := c.Store.lastDelivered(g.ID); err != nil || last.After(s.ResultAt) {
@@ -396,8 +377,7 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	if c.inFlight(b, o, m) {
 		return nil
 	}
-	_, _, err := c.RecordGoalEvent(g.ID, EventNudge, "you ended your turn with nothing in flight: no agent is working, no pull request awaits CI, no wake is set and nobody owes you an answer. "+
-		"Start the next piece of work with ym new, set a wake with ym goal wake <when> <why> if you are waiting on something ym cannot see, or finish with ym goal done.",
+	_, _, err := c.RecordGoalEvent(g.ID, EventNudge, "you ended your turn with nothing in flight: no agent working, no pull request awaiting CI, no wake set, nobody owing you an answer.",
 		"nudge:"+m.Session+"@"+s.ResultAt.UTC().Format(time.RFC3339Nano))
 	return err
 }

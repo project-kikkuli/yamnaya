@@ -453,9 +453,9 @@ func (c *Core) missed(o Org, m Manager) ([]GoalEvent, func(time.Time)) {
 
 func wakeOrChief(o Org, m Manager, events []GoalEvent) string {
 	if g, ok := o.Goals[m.GoalID]; ok {
-		return wakeText(g, events)
+		return strings.TrimPrefix(wakeText(g, events), "ym: ")
 	}
-	return chiefText(o, events)
+	return strings.TrimPrefix(chiefText(o, events, ""), "ym: ")
 }
 
 // GoalByRef is the goal a goal, manager or manager name ref names.

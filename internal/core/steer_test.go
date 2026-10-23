@@ -48,8 +48,8 @@ func TestASteerIsANumberedRevisionTheManagerMustAdoptExactly(t *testing.T) {
 		t.Fatalf("second steer is revision %d, want 2", second.Revision)
 	}
 	got := w.messages(m.Session)
-	if len(got) != 2 || !strings.Contains(got[1], "Revision 2") || !strings.Contains(got[1], "CSV and TSV") || !strings.Contains(got[1], "ym goal adopt "+m.ID+" --revision 2") {
-		t.Fatalf("manager got %q, want each revision with how to adopt it", got)
+	if len(got) != 2 || !strings.Contains(got[1], "Revision 2") || !strings.Contains(got[1], "CSV and TSV") {
+		t.Fatalf("manager got %q, want each revision", got)
 	}
 	if n := node(t, w.board(t), m.ID); n.Steer == nil || n.Steer.Revision != 2 || n.Steer.Adopted() {
 		t.Fatalf("board shows steer %+v, want revision 2 not adopted", n.Steer)
@@ -355,11 +355,8 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 	w.steer(t, g.ID, "make the importer handle CSV and TSV", Owner)
 	w.loop(t, 2)
 	got := wakes(w.handedTo(m.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "ym goal adopt "+m.ID+" --revision 1") {
-		t.Fatalf("manager wakes %q, want one carrying the steer and how to adopt it", got)
-	}
-	if strings.Contains(got[0], "Your brief predates") {
-		t.Fatalf("an unadopted steer asked for a fresh brief before adoption:\n%s", got[0])
+	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "Revision 1") {
+		t.Fatalf("manager wakes %q, want one carrying the steer's revision", got)
 	}
 	if heard := strings.Join(wakes(w.handedTo(chief.Session)), "\n"); !strings.Contains(heard, "steered") {
 		t.Fatalf("chief did not hear its report was steered: %q", heard)
@@ -368,8 +365,8 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 	w.pr(t, "agent", "https://github.com/acme/august/pull/7", PRStatus{State: "OPEN", Title: "TSV importer"})
 	w.loop(t, 1)
 	got = wakes(w.handedTo(m.Session))
-	if len(got) != 2 || !strings.Contains(got[1], "pr-opened") || !strings.Contains(got[1], "Your brief predates these") {
-		t.Fatalf("a pull request opening did not ask for a fresh brief in its wake: %q", got)
+	if len(got) != 2 || !strings.Contains(got[1], "pr-opened") {
+		t.Fatalf("a pull request opening did not reach the manager: %q", got)
 	}
 	if f := node(t, w.board(t), m.ID).Fresh; !f.Stale() || !strings.HasPrefix(f.BehindWhat, EventPROpened) {
 		t.Fatalf("brief after the pull request opened: %+v, want stale behind pr-opened", f)

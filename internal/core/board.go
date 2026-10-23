@@ -54,6 +54,8 @@ type Core struct {
 	Boot func() time.Time
 	// Woke is when this host last woke from sleep; a session's silence while it slept does not make it hung.
 	Woke time.Time
+	// Pace is how long a wake waits for followers and the rest wait for a digest; nil means WakeDebounce and DigestEvery.
+	Pace *WakePace
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.

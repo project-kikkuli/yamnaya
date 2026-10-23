@@ -67,6 +67,7 @@ func newOrgWorld(t *testing.T) *orgWorld {
 	w.core.Launches = w.launches
 	w.core.StateDir = t.TempDir()
 	w.core.Now = func() time.Time { return w.clock }
+	w.core.Pace = &WakePace{}
 	w.claude.inbox = map[string]error{}
 	return w
 }
@@ -183,13 +184,18 @@ func TestAgentAsksUnderAManagerReachTheManagerAndNeverTheOwner(t *testing.T) {
 	if got := ownerItems(b); len(got) != 0 {
 		t.Fatalf("owner queue holds %d agent asks, want none: %+v", len(got), got)
 	}
+	w.loop(t, 2)
 	handed := w.handedTo(m.Session)
-	if len(handed) != 20 {
-		t.Fatalf("manager got %d asks, want 20: %q", len(handed), handed)
+	if len(handed) != 1 {
+		t.Fatalf("manager got %d messages, want all 20 asks in one wake: %q", len(handed), handed)
 	}
-	for i, text := range handed {
-		if !strings.Contains(text, fmt.Sprintf("question %d?", i)) || !strings.Contains(text, "ym item answer") {
-			t.Fatalf("ask %d reached the manager as %q", i, text)
+	items, err := w.core.Store.Items(ItemFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if !strings.Contains(handed[0], it.Key()+" ask from agent "+Short(it.Session)+" to "+m.ID+": "+it.Question) {
+			t.Fatalf("ask %s %q is not a line of the manager's wake:\n%s", it.Key(), it.Question, handed[0])
 		}
 	}
 }
@@ -225,6 +231,7 @@ func TestEscalationClimbsNestedChiefsAndOnlyTheTopReachesTheOwner(t *testing.T) 
 		t.Run(tc.from, func(t *testing.T) {
 			before := len(w.claude.handed)
 			it := w.ask(t, tc.from, "escalate from "+tc.from+"?")
+			w.loop(t, 1)
 			b := w.board(t)
 			inQueue := slices.ContainsFunc(ownerItems(b), func(o Item) bool { return o.Key() == it.Key() })
 			if inQueue != tc.owner {
@@ -278,6 +285,7 @@ func TestADeadManagerIsRelaunchedAndKeepsItsIdentity(t *testing.T) {
 		t.Fatalf("manager session %s after relaunch, want the new %s", now.Session, again.Session)
 	}
 	w.ask(t, "agent", "still mine?")
+	w.loop(t, 1)
 	if got := w.handedTo(now.Session); len(got) != 1 {
 		t.Fatalf("an agent of the old session asked; the relaunched manager got %q", got)
 	}
@@ -534,6 +542,7 @@ func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
 	w.supervise(t)
 	w.spawn("late-agent", "moved-session")
 	w.ask(t, "late-agent", "which parser?")
+	w.loop(t, 1)
 	if got := w.handedTo("moved-session"); len(got) != 1 {
 		t.Fatalf("manager under its new session id got %q, want the late agent's ask", got)
 	}

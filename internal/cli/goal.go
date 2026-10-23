@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
-		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts),
+		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with))
 	return cmd
 }
@@ -737,4 +738,35 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	}
 	cmd.Flags().BoolVar(&keep, "keep-unread", false, "leave the news unread")
 	return cmd
+}
+
+func goalEventCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "event <n>...",
+		Short: "Print goal events whole, by the numbers a wake shows (#<n>, or #<host>/<n> for another host's)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			for _, arg := range args {
+				arg = strings.TrimPrefix(arg, "#")
+				if host, rest, ok := core.SplitRemote(arg); ok && e.core.Remotes != nil {
+					out, err := e.core.RunRemote(host, "goal", "event", rest)
+					if err != nil {
+						return err
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), out)
+					continue
+				}
+				seq, err := strconv.ParseInt(arg, 10, 64)
+				if err != nil {
+					return fmt.Errorf("%q is not an event number", arg)
+				}
+				ev, err := e.core.Store.GoalEvent(seq)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d %s %s %s\n%s\n", ev.Seq, ev.Goal, ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
+			}
+			return nil
+		}),
+	}
 }

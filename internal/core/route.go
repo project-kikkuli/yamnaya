@@ -2,7 +2,6 @@ package core
 
 import (
 	"fmt"
-	"strings"
 )
 
 // stuckFailures is how many launches in a row may fail before a manager or chief counts as stuck.
@@ -190,20 +189,25 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 	if err != nil {
 		return added, err
 	}
+	woken := false
 	if m, ok := o.Managed(c.Resolve(it.Session), c.parentsFor(b, berr)); ok {
 		if g, ok := o.Goals[m.GoalID]; ok {
 			to := "the owner"
 			if added.Recipient != Owner {
 				to = added.Recipient
 			}
-			now := c.now()
-			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAsked, Created: now, Delivered: now,
-				Payload: fmt.Sprintf("%s asked %s (%s): %s", askerOf(o, it.Session), to, added.Key(), oneLine(added.Question))}); err != nil {
+			woken = added.Recipient == m.ID
+			e := GoalEvent{Goal: g.ID, Kind: EventAsked, Created: c.now(),
+				Payload: fmt.Sprintf("%s ask from %s to %s: %s", added.Key(), askerOf(o, it.Session), to, oneLine(added.Question))}
+			if !woken {
+				e.Delivered = e.Created
+			}
+			if _, _, err := c.Store.AddGoalEvent(e); err != nil {
 				return added, err
 			}
 		}
 	}
-	if added.Recipient == Owner {
+	if added.Recipient == Owner || woken {
 		return added, nil
 	}
 	return added, c.askManager(b, o, added)
@@ -224,41 +228,16 @@ func askerOf(o Org, session string) string {
 	return "agent " + Short(session)
 }
 
-// askText is how an ask reaches the manager or chief it was routed to.
+// askText is how an ask reaches the manager or chief it was routed to: one line naming the item, which ym item show prints whole.
 func askText(b Board, o Org, it Item) string {
 	from := "agent " + Short(it.Session)
-	if s, ok := b.Session(it.Session); ok && s.Title != "" {
-		from += " (" + oneLine(s.Title) + ")"
-	}
 	if m, ok := o.ManagerOf(it.Session); ok {
 		from = m.Label()
 		if g, ok := o.Goals[m.GoalID]; ok {
-			from += " on goal " + g.ID + " \"" + oneLine(g.Ask) + "\""
+			from += " on goal " + g.ID
 		}
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "ym: %s asks you (%s %s, %s): %s", from, it.Key(), it.ID, it.Kind, oneLine(it.Question))
-	if it.Rec != "" {
-		fmt.Fprintf(&sb, " Recommended: %s.", oneLine(it.Rec))
-	}
-	for _, opt := range it.Options {
-		fmt.Fprintf(&sb, " Option %s: %s.", opt.Label, oneLine(opt.Effect))
-	}
-	if it.Assumption != "" {
-		fmt.Fprintf(&sb, " Context: %s", it.Assumption)
-	}
-	if it.Tried != "" {
-		fmt.Fprintf(&sb, " Tried: %s.", oneLine(it.Tried))
-	}
-	if len(it.Evidence) > 0 {
-		fmt.Fprintf(&sb, " Evidence: %s.", strings.Join(it.Evidence, ", "))
-	}
-	for _, pr := range it.Dossier.PRs {
-		fmt.Fprintf(&sb, " PR: %s.", pr)
-	}
-	fmt.Fprintf(&sb, " You own this: answer with ym item answer '%s' <answer> (ym item go '%s' to say go ahead, ym item dismiss '%s' <reason>)."+
-		" Escalate with your own ym item add only if it is beyond your authority.", it.Key(), it.Key(), it.Key())
-	return sb.String()
+	return fmt.Sprintf("ym: %s ask from %s: %s", it.Key(), from, clip(oneLine(it.Question), lineMax))
 }
 
 // tell hands text to the session: typed or sent when it runs on the board, else queued for its next inbox or relaunch.

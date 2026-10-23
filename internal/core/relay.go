@@ -695,8 +695,8 @@ func (c *Core) notify(title, body string) error {
 	return c.Notify(title, body)
 }
 
-// wakeRemoteChiefs hands each chief on another host the state changes of the goals below it here: the goals of every manager and
-// chief whose chief runs there. A chief hears only what happened after this host first reported to it.
+// wakeRemoteChiefs hands each chief on another host the state changes of the goals below it here, once they are due: the goals of
+// every manager and chief whose chief runs there. A chief hears only what happened after this host first reported to it.
 func (c *Core) wakeRemoteChiefs(o Org) error {
 	var errs []error
 	for _, m := range o.Ordered() {
@@ -719,6 +719,9 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 			errs = append(errs, err)
 			continue
 		}
+		if heard && !c.wakeDue(events) {
+			continue
+		}
 		if heard {
 			shown := Org{Goals: map[string]Goal{}}
 			self := c.SelfName()
@@ -727,7 +730,7 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 				shown.Goals[id] = g
 			}
 			host, rest, _ := SplitRemote(m.ParentID)
-			if err := c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: "ym: " + chiefText(shown, events)}); err != nil {
+			if err := c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: chiefText(shown, events, self)}); err != nil {
 				errs = append(errs, err)
 				continue
 			}

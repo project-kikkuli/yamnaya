@@ -32,6 +32,8 @@ const (
 	EventAgentSwollen = "agent-swollen"
 	EventResumed      = "resumed"
 	EventResumeFailed = "resume-failed"
+	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, a repeat or a still-waiting note.
+	EventIdleAgain = "idle-again"
 )
 
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
@@ -182,10 +184,10 @@ func (s *Store) markDelivered(events []GoalEvent, at time.Time) error {
 	return tx.Commit()
 }
 
-// lastKind is the kind of the goal's newest event, "" when it has none.
+// lastKind is the kind of the goal's newest event that is not an agent's reply adding nothing, "" when it has none.
 func (s *Store) lastKind(goal string) (string, error) {
 	var kind string
-	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? ORDER BY seq DESC LIMIT 1`, goal).Scan(&kind)
+	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? AND kind != ? ORDER BY seq DESC LIMIT 1`, goal, EventIdleAgain).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -217,7 +219,8 @@ func (s *Store) latest(q, arg string, last bool) (time.Time, error) {
 	return out, rows.Err()
 }
 
-// chiefPending lists the events of goals that chief has not heard, created since since, oldest first.
+// chiefPending lists the events of goals that chief has not heard, created since since, oldest first: their state changes, and
+// everything its own agents did, which ym records under the chief's id.
 func (s *Store) chiefPending(chief string, goals []string, since time.Time) ([]GoalEvent, error) {
 	if len(goals) == 0 {
 		return nil, nil
@@ -234,7 +237,7 @@ func (s *Store) chiefPending(chief string, goals []string, since time.Time) ([]G
 	}
 	var out []GoalEvent
 	for _, e := range events {
-		if chiefKinds[e.Kind] && !e.Created.Before(since) {
+		if (chiefKinds[e.Kind] || e.Goal == chief) && !e.Created.Before(since) {
 			out = append(out, e)
 		}
 	}

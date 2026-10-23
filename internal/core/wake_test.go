@@ -44,7 +44,7 @@ func kinds(events []GoalEvent) []string {
 func wakes(texts []string) []string {
 	var out []string
 	for _, t := range texts {
-		if strings.Contains(t, "new event") || strings.Contains(t, "under you") {
+		if strings.Contains(t, "ym: goal ") || strings.Contains(t, "changes under you") {
 			out = append(out, t)
 		}
 	}
@@ -519,5 +519,13 @@ func TestAManagerThatOnlyAnswersNudgesIsNudgedOnceUntilSomethingHappens(t *testi
 	}
 	if n := nudges(); n != 2 {
 		t.Fatalf("after its agent finished the manager got %d nudges in all, want 2", n)
+	}
+	w.set("agent", func(s *Session) { s.Result, s.ResultAt = "parser done", w.clock.Add(time.Second) })
+	w.loop(t, 1)
+	for range 5 {
+		turn()
+	}
+	if n := nudges(); n != 2 {
+		t.Fatalf("an agent repeating itself got the manager %d nudges in all, want still 2", n)
 	}
 }
