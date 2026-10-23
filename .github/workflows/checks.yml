@@ -17,7 +17,7 @@ jobs:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: go build -o "$RUNNER_TEMP/ym" ./cmd/ym
-      - run: '"$RUNNER_TEMP/ym" slot -- nice -n 19 go test -p 2 ./...'
+      - run: '"$RUNNER_TEMP/ym" slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./...'
       - run: '"$RUNNER_TEMP/ym" slot -- go vet ./...'
       - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
       - run: '"$RUNNER_TEMP/ym" slot -- staticcheck ./...'
