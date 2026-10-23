@@ -58,6 +58,8 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if err != nil {
 			return err
 		}
+		self, _ := os.Executable()
+		started, _ := os.Stat(self)
 		lockPath := filepath.Join(dir, "work-service.lock")
 		lock := inheritedServeLock(lockPath)
 		if lock == nil {
@@ -82,7 +84,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		defer cancel()
 		upgraded := make(chan bool, 1)
 		if !once {
-			go monitorWorkService(ctx, cancel, dir, upgraded)
+			go monitorWorkService(ctx, cancel, dir, started, upgraded)
 		}
 		reviews := reviewPoll{fetch: intake.New().Requests, every: 5 * time.Minute}
 		docs := &docSweeper{dir: dir, every: 3 * time.Minute, recheck: 15 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}

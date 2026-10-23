@@ -18,9 +18,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func monitorWorkService(ctx context.Context, cancel context.CancelFunc, dir string, upgraded chan<- bool) {
+// monitorWorkService ends serve when ym service restart asks, and reports an upgrade once the executable on disk differs from
+// initial, the one this serve started from.
+func monitorWorkService(ctx context.Context, cancel context.CancelFunc, dir string, initial os.FileInfo, upgraded chan<- bool) {
 	self, _ := os.Executable()
-	initial, _ := os.Stat(self)
 	stop := filepath.Join(dir, "work-service-stop")
 	marker, _ := os.ReadFile(stop)
 	var previous os.FileInfo
