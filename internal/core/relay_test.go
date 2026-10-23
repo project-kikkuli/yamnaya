@@ -515,6 +515,26 @@ func TestARelayRefusedOverAndOverReachesTheOwnersQueueUntilDropped(t *testing.T)
 	}
 }
 
+func TestARefusedRelayLeavesTheQueueWhenItsHostCanActAgain(t *testing.T) {
+	f := newFleet(t)
+	f.c.core.RunSelf = func(...string) (string, error) { return "", errors.New("database is locked") }
+	if err := f.a.core.Relay("c", RelayYM, relayYM{Args: []string{"item", "answer", "#3", "yes"}}); err != nil {
+		t.Fatal(err)
+	}
+	for range RefusalsBeforeOwner {
+		f.sync(t)
+	}
+	isRelay := func(n Need) bool { return n.Relay != nil }
+	if !slices.ContainsFunc(f.a.board(t).Needs, isRelay) {
+		t.Fatal("the refused command never reached the owner")
+	}
+	f.c.core.RunSelf = func(...string) (string, error) { return "answered", nil }
+	f.sync(t)
+	if slices.ContainsFunc(f.a.board(t).Needs, isRelay) {
+		t.Fatal("the delivered command still needs the owner")
+	}
+}
+
 func TestAnotherHostsGoalShowsTheBriefThatHostKeeps(t *testing.T) {
 	at := newOrgWorld(t).clock
 	brief := &Brief{Manager: "mgr1", Version: 3, Assessment: "caesar chain is the long pole", CreatedAt: at}

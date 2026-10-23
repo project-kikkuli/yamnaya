@@ -90,12 +90,11 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 		// launched is whether facts passed and a verifier ran.
 		launched     bool
 		state        string
-		ownerRow     string
 		toManager    string
 		findingsHave string
 	}{
-		{name: "no pull requests, verifier passes", verdict: VerdictPass, launched: true, state: GoalDone, ownerRow: "done", toManager: "passed verification"},
-		{name: "merged green, verifier passes", landing: &merged, verdict: VerdictPass, launched: true, state: GoalDone, ownerRow: "done", toManager: "passed verification"},
+		{name: "no pull requests, verifier passes", verdict: VerdictPass, launched: true, state: GoalDone, toManager: "passed verification"},
+		{name: "merged green, verifier passes", landing: &merged, verdict: VerdictPass, launched: true, state: GoalDone, toManager: "passed verification"},
 		{name: "merged green, verifier fails", landing: &merged, verdict: VerdictFail, findings: []string{"CSV with quoted commas is rejected: importer/csv.go:40"},
 			launched: true, state: GoalActive, toManager: "quoted commas", findingsHave: "quoted commas"},
 		{name: "pull request still open", landing: &Landing{State: "OPEN"}, state: GoalActive, toManager: "still open", findingsHave: "fail merged " + pr1 + ": still open"},
@@ -147,12 +146,8 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 			if g.State != tc.state {
 				t.Fatalf("goal %s, want %s; verification %+v", g.State, tc.state, v)
 			}
-			var want []string
-			if tc.ownerRow != "" {
-				want = []string{g.ID + " " + tc.ownerRow}
-			}
-			if rows := goalRows(w.board(t)); !slices.Equal(rows, want) {
-				t.Fatalf("owner rows %q, want %q", rows, want)
+			if rows := goalRows(w.board(t)); len(rows) != 0 {
+				t.Fatalf("owner rows %q, want none: a done goal reports on the tree, a failed one goes back to its manager", rows)
 			}
 			if !strings.Contains(w.toManager(), tc.toManager) {
 				t.Fatalf("manager was told %q, want it to mention %q", w.toManager(), tc.toManager)
@@ -171,7 +166,7 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 					t.Fatalf("event %s %q never reached the manager", e.Kind, e.Payload)
 				}
 			}
-			want = []string{EventVerifying, EventFailedVerify}
+			want := []string{EventVerifying, EventFailedVerify}
 			if tc.state == GoalDone {
 				want = []string{EventVerifying, EventVerified, EventDone}
 			}

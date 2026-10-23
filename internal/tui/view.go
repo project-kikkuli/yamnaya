@@ -1418,17 +1418,18 @@ func (m Model) pickView() string {
 const Help = ` ym runs your work like a company: you hand a goal to a manager, the manager runs agents for it, and
  only what truly needs you reaches you.
 
- NEEDS YOU is your queue: goals that finished or got stuck, escalations no manager or chief could settle,
- pull requests ready to merge in repos where managers may not merge, reviews GitHub asks of you
- personally, Notion discussions and reviews addressed to you that no goal claims, permission prompts,
- and one row per session you started that asks you something.
+ NEEDS YOU is your queue: stuck goals, escalations no manager or chief could settle, pull requests ready
+ to merge in repos where managers may not merge, reviews GitHub asks of you personally, Notion discussions
+ and reviews addressed to you that no goal claims, permission prompts, and one row per session you started
+ that asks you something. A row leaves on its own once it is settled.
  GOALS is the goal tree: each chief row has its managers and chiefs indented beneath it, and its standing is
  its reports' worst. Every row shows its standing and its brief's age, "brief stale" or "no brief"; enter on a
  chief opens it with its reports.
  A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), adrift (an agent is busy
  going nowhere: the same failure again and again, its context compacted over and over, or writes in
  another repository; ym tells its manager the evidence), down (its manager's
- session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), or done.
+ session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), or done. A done goal stays
+ on the tree with its summary for a day after it passed verification; x clears it sooner.
  SESSIONS YOU STARTED groups the sessions no manager runs by repository. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
  Agents a manager starts report to it: their ym item add reaches the manager's session, not you.
@@ -1469,7 +1470,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    l            later: snooze the item
    u            reopen a snoozed item (detail)
    x            dismiss the item with a reason; on a waiting session, hide the row until it asks again;
-                on a done or stuck goal, a merge, a review or a doc ask, clear it from the queue
+                on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
+                from the goal tree
    w            show the item in full with its history, or a waiting session's last reply
    r            rename a mission; an empty name restores the inferred one
    m            merge a mission into another

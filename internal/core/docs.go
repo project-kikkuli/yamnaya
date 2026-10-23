@@ -102,8 +102,13 @@ func (s *Store) SyncDocPage(source, page, edited string, asks []DocAsk) error {
 // docPageWatch adds what a deep read of a page leaves behind for cheaper rechecks: its blocks, its comment signature, and whether
 // the owner created it or takes part in its discussions.
 func docPageWatch(db *sql.DB) error {
-	for _, col := range []string{`ym_doc_pages blocks TEXT NOT NULL DEFAULT '[]'`, `ym_doc_pages comments TEXT NOT NULL DEFAULT ''`,
-		`ym_doc_pages watch INTEGER NOT NULL DEFAULT 0`, `ym_doc_asks at TEXT NOT NULL DEFAULT ''`} {
+	return addColumns(db, `ym_doc_pages blocks TEXT NOT NULL DEFAULT '[]'`, `ym_doc_pages comments TEXT NOT NULL DEFAULT ''`,
+		`ym_doc_pages watch INTEGER NOT NULL DEFAULT 0`, `ym_doc_asks at TEXT NOT NULL DEFAULT ''`)
+}
+
+// addColumns adds each "table column definition" its table lacks.
+func addColumns(db *sql.DB, cols ...string) error {
+	for _, col := range cols {
 		table, def, _ := strings.Cut(col, " ")
 		name, _, _ := strings.Cut(def, " ")
 		var has int

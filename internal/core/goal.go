@@ -336,7 +336,7 @@ func (c *Core) ReplaceManager(b Board, ref string) (Manager, error) {
 	return m, nil
 }
 
-// AckGoal clears a done or stuck goal's row from the owner's queue.
+// AckGoal clears a stuck goal's row from the owner's queue, or a done goal from the goal tree.
 func (c *Core) AckGoal(id string) error {
 	if host, rest, ok := c.remoteHost(id); ok {
 		_, err := c.RunOrRelay(host, "goal", "ack", rest)

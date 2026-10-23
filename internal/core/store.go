@@ -263,6 +263,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate doc pages: %w", err)
 	}
+	if err := addColumns(db, `ym_review_requests title TEXT NOT NULL DEFAULT ''`, `ym_review_requests author TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate review requests: %w", err)
+	}
 	scans, err := sql.Open("sqlite", "file:"+strings.TrimSuffix(path, ".db")+"-scans.db?"+q.Encode())
 	if err == nil {
 		_, err = scans.Exec(`CREATE TABLE IF NOT EXISTS ym_scans (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, data BLOB NOT NULL)`)

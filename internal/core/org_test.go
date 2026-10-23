@@ -427,25 +427,210 @@ func TestASessionTheOwnerStartedShowsOneWaitingRowForAllItsAsks(t *testing.T) {
 	}
 }
 
-func TestAFinishedGoalShowsOnceUntilCleared(t *testing.T) {
-	w := newOrgWorld(t)
-	g, m := w.goal(t, "ship the importer", "/repo/august")
-	if _, _, err := w.core.FinishGoal(m.Session, "importer shipped", nil); err != nil {
-		t.Fatal(err)
+func TestADoneGoalNeverWaitsInTheQueueAndLeavesTheTreeOnceClearedOrADayOld(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		clear  bool
+		after  time.Duration
+		inTree bool
+	}{
+		{name: "just done", inTree: true},
+		{name: "done for most of a day", after: DoneShown - time.Minute, inTree: true},
+		{name: "cleared", clear: true},
+		{name: "a day old", after: DoneShown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			if _, _, err := w.core.FinishGoal(m.Session, "importer shipped", nil); err != nil {
+				t.Fatal(err)
+			}
+			w.supervise(t)
+			if _, err := w.core.RecordVerdict(w.launches.starts[len(w.launches.starts)-1].Session, g.ID, VerdictPass, nil); err != nil {
+				t.Fatal(err)
+			}
+			if tc.clear {
+				if err := w.core.AckGoal(g.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.clock = w.clock.Add(tc.after)
+			b := w.board(t)
+			n, inTree := b.Node(m.ID)
+			if rows := goalRows(b); len(rows) != 0 || inTree != tc.inTree || inTree && n.Standing != StandDone {
+				t.Fatalf("queue rows %q, on the tree %v standing %q; want no queue row and on the tree %v as done", rows, inTree, n.Standing, tc.inTree)
+			}
+		})
 	}
-	w.supervise(t)
-	if _, err := w.core.RecordVerdict(w.launches.starts[len(w.launches.starts)-1].Session, g.ID, VerdictPass, nil); err != nil {
-		t.Fatal(err)
+}
+
+func TestASettledDutyLeavesTheOwnersQueueOnItsOwn(t *testing.T) {
+	const url = "https://github.com/acme/august/pull/7"
+	green := PRStatus{State: "OPEN", Passed: 4, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	stuck := func(w *orgWorld, t *testing.T, edit func(*Goal)) {
+		t.Helper()
+		g, err := w.core.Store.Goal("goal1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		edit(&g)
+		if err := w.core.Store.SaveGoal(g); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if rows := goalRows(w.board(t)); !slices.Equal(rows, []string{g.ID + " done"}) {
-		t.Fatalf("goal rows %q, want the done goal once", rows)
-	}
-	if err := w.core.AckGoal(g.ID); err != nil {
-		t.Fatal(err)
-	}
-	b := w.board(t)
-	if rows := goalRows(b); len(rows) != 0 || len(b.Tree) != 0 {
-		t.Fatalf("cleared goal still shows: rows %q, tree %d", rows, len(b.Tree))
+	isGoal := func(n Need) bool { return n.Goal != nil }
+	for _, tc := range []struct {
+		name          string
+		raise, settle func(*orgWorld, *testing.T)
+		is            func(Need) bool
+	}{
+		{
+			name: "stuck goal that moves again",
+			raise: func(w *orgWorld, t *testing.T) {
+				stuck(w, t, func(g *Goal) { g.State, g.Evidence = GoalStuck, "manager down" })
+			},
+			settle: func(w *orgWorld, t *testing.T) { stuck(w, t, func(g *Goal) { g.State, g.Evidence = GoalActive, "" }) },
+			is:     isGoal,
+		},
+		{
+			name: "stuck goal that passes verification",
+			raise: func(w *orgWorld, t *testing.T) {
+				stuck(w, t, func(g *Goal) { g.State, g.Evidence = GoalStuck, "manager down" })
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				stuck(w, t, func(g *Goal) { g.State, g.Evidence, g.DoneAt = GoalDone, "", w.clock })
+			},
+			is: isGoal,
+		},
+		{
+			name:  "ask from a session the owner started, answered",
+			raise: func(w *orgWorld, t *testing.T) { w.spawn("mine", ""); w.ask(t, "mine", "which file?") },
+			settle: func(w *orgWorld, t *testing.T) {
+				if _, _, err := w.core.Answer(w.board(t), ownerItems(w.board(t))[0].Key(), "csv.go"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			is: func(n Need) bool { return n.Item != nil },
+		},
+		{
+			name:  "ask from a session the owner started, dismissed",
+			raise: func(w *orgWorld, t *testing.T) { w.spawn("mine", ""); w.ask(t, "mine", "which file?") },
+			settle: func(w *orgWorld, t *testing.T) {
+				b := w.board(t)
+				if _, _, err := w.core.Dismiss(b, ownerItems(b)[0].Key(), "no longer needed"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			is: func(n Need) bool { return n.Item != nil },
+		},
+		{
+			name: "green pull request, closed",
+			raise: func(w *orgWorld, t *testing.T) {
+				w.spawn("mine", "")
+				w.pr(t, "mine", url, green)
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				closed := green
+				closed.State = "CLOSED"
+				w.pr(t, "mine", url, closed)
+			},
+			is: func(n Need) bool { return n.PR != nil },
+		},
+		{
+			name: "document discussion, resolved",
+			raise: func(w *orgWorld, t *testing.T) {
+				a := DocAsk{Key: "notion:discussion", Page: "other-page", Version: "comment1", Text: "Approve the copy?"}
+				if err := w.core.Store.SyncDocPage("notion", a.Page, "edit1", []DocAsk{a}); err != nil {
+					t.Fatal(err)
+				}
+				w.route(t)
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				if err := w.core.Store.SyncDocPage("notion", "other-page", "edit2", nil); err != nil {
+					t.Fatal(err)
+				}
+			},
+			is: func(n Need) bool { return n.Doc != nil },
+		},
+		{
+			name: "waiting session, answered",
+			raise: func(w *orgWorld, t *testing.T) {
+				w.core.Ask = firstAsk
+				w.spawn("mine", "")
+				w.set("mine", func(s *Session) { s.Result = asking })
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				b := w.board(t)
+				for _, n := range b.Needs {
+					if n.Waiting() {
+						if _, err := w.core.AnswerWaiting(*n.Session, n.Reply, "ship it"); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			},
+			is: func(n Need) bool { return n.Waiting() },
+		},
+		{
+			name: "waiting session, ended",
+			raise: func(w *orgWorld, t *testing.T) {
+				w.core.Ask = firstAsk
+				w.spawn("mine", "")
+				w.set("mine", func(s *Session) { s.Result = asking })
+			},
+			settle: func(w *orgWorld, t *testing.T) { w.stop("mine") },
+			is:     func(n Need) bool { return n.Waiting() },
+		},
+		{
+			name: "permission prompt, resolved",
+			raise: func(w *orgWorld, t *testing.T) {
+				w.spawn("mine", "")
+				w.set("mine", func(s *Session) { s.Prompt = &Prompt{Tool: "Bash"} })
+			},
+			settle: func(w *orgWorld, t *testing.T) { w.set("mine", func(s *Session) { s.Prompt = nil }) },
+			is:     func(n Need) bool { return n.Session != nil && n.Session.Prompt != nil },
+		},
+		{
+			name: "green pull request, merged",
+			raise: func(w *orgWorld, t *testing.T) {
+				w.spawn("mine", "")
+				w.pr(t, "mine", url, green)
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				merged := green
+				merged.State = "MERGED"
+				w.pr(t, "mine", url, merged)
+			},
+			is: func(n Need) bool { return n.PR != nil },
+		},
+		{
+			name: "review request, withdrawn",
+			raise: func(w *orgWorld, t *testing.T) {
+				if err := w.core.Store.SyncReviews([]ReviewRequest{{URL: url, Updated: "1", Title: "Read CSV", Author: "mira"}}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			settle: func(w *orgWorld, t *testing.T) {
+				if err := w.core.Store.SyncReviews(nil); err != nil {
+					t.Fatal(err)
+				}
+			},
+			is: func(n Need) bool { return n.Review != nil && n.Review.Title == "Read CSV" && n.Review.Author == "mira" },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.goal(t, "ship the importer", "/repo/august")
+			tc.raise(w, t)
+			if !slices.ContainsFunc(w.board(t).Needs, tc.is) {
+				t.Fatalf("raised duty is not in the queue: %+v", w.board(t).Needs)
+			}
+			tc.settle(w, t)
+			w.clock = w.clock.Add(time.Second)
+			if b := w.board(t); slices.ContainsFunc(b.Needs, tc.is) {
+				t.Fatalf("settled duty still in the queue: %+v", b.Needs)
+			}
+		})
 	}
 }
 

@@ -17,7 +17,7 @@ func TestGitHubIntakeReportsCoverageAndHumanRequestIdentity(t *testing.T) {
 			if strings.HasSuffix(args[len(args)-1], "/requested_reviewers") {
 				return []byte(`{"users":[{"login":"reviewer"}],"teams":[]}`), nil
 			}
-			return []byte(fmt.Sprintf(`[{"total_count":1,"incomplete_results":%t,"items":[{"updated_at":"2026-01-02T00:00:00Z","pull_request":{"html_url":"https://github.com/example/query/pull/241"}}]}]`, incomplete)), nil
+			return []byte(fmt.Sprintf(`[{"total_count":1,"incomplete_results":%t,"items":[{"updated_at":"2026-01-02T00:00:00Z","title":"Read CSV","user":{"login":"mira"},"pull_request":{"html_url":"https://github.com/example/query/pull/241"}}]}]`, incomplete)), nil
 		}}
 		got, err := f.Requests(context.Background())
 		if incomplete {
@@ -26,7 +26,7 @@ func TestGitHubIntakeReportsCoverageAndHumanRequestIdentity(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || len(got) != 1 || got[0] != (Request{URL: "https://github.com/example/query/pull/241", Updated: "2026-01-02T00:00:00Z"}) {
+		if err != nil || len(got) != 1 || got[0] != (Request{URL: "https://github.com/example/query/pull/241", Updated: "2026-01-02T00:00:00Z", Title: "Read CSV", Author: "mira"}) {
 			t.Fatalf("request identity lost: %+v %v", got, err)
 		}
 	}

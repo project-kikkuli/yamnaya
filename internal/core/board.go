@@ -163,7 +163,7 @@ type Need struct {
 	Reply, Line string
 	// Asks are every open owner item of a session no manager runs, folded into this one row; Item is the oldest.
 	Asks []Item
-	// Goal is a goal that finished or got stuck.
+	// Goal is a stuck goal that needs the owner.
 	Goal *Goal
 	// PR is a pull request ready to merge that no manager may merge; Manager is the manager whose agent opened it, if any.
 	PR      *PR

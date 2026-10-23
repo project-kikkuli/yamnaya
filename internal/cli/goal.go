@@ -545,7 +545,7 @@ func goalDropCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 func goalAckCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ack <goal>",
-		Short: "Clear a done or stuck goal from your queue, as c does on the board",
+		Short: "Clear a stuck goal from your queue, or a done goal from the goal tree, as x does on the board",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if err := e.core.AckGoal(args[0]); err != nil {

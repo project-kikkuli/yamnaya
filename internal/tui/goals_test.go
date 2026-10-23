@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -504,5 +505,77 @@ func TestAGoalRowFlagsAnUnadoptedSteerAndTheSelectedRowItsBrief(t *testing.T) {
 	}
 	if v := refresh(t, m).View().Content; strings.Contains(v, "not adopted") || !strings.Contains(v, "brief v1") {
 		t.Fatalf("after adopting and briefing, the row should show brief v1 and no steer flag:\n%s", v)
+	}
+}
+
+func TestADoneGoalStaysOffNeedsYouAndReportsOnTheTreeUntilXClearsIt(t *testing.T) {
+	m, c, ms := goalSetup(t, "make the importer handle CSV")
+	g, err := c.Store.Goal(ms[0].GoalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.State, g.Summary, g.DoneAt = core.GoalDone, "importer reads CSV, PR 7 merged", time.Now()
+	if err := c.Store.SaveGoal(g); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	if slices.ContainsFunc(m.rows(), func(r row) bool { return r.need != nil && r.need.Goal != nil }) {
+		t.Fatalf("a done goal waits in NEEDS YOU:\n%s", m.View().Content)
+	}
+	m = to(t, m, isNode(ms[0].ID))
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "done: importer reads CSV, PR 7 merged") || !strings.Contains(v, "x clear") {
+		t.Fatalf("the done goal's row hides its summary or how to clear it:\n%s", v)
+	}
+	m = refresh(t, press(t, m, "x"))
+	if slices.ContainsFunc(m.rows(), isNode(ms[0].ID)) {
+		t.Fatal("x left the done goal on the tree")
+	}
+}
+
+func TestAReviewRowNamesThePullRequestAndWhoOpenedIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  core.ReviewRequest
+		want string
+	}{
+		{"titled", core.ReviewRequest{URL: "https://github.com/acme/august/pull/7", Updated: "1", Title: "Read CSV", Author: "mira"},
+			"Read CSV by mira https://github.com/acme/august/pull/7"},
+		{"read before titles were kept", core.ReviewRequest{URL: "https://github.com/acme/august/pull/7", Updated: "1"}, "https://github.com/acme/august/pull/7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, _ := goalSetup(t)
+			if err := c.Store.SyncReviews([]core.ReviewRequest{tc.req}); err != nil {
+				t.Fatal(err)
+			}
+			m = to(t, press(t, refresh(t, m), slices.Repeat([]string{"up"}, 30)...), func(r row) bool { return r.need != nil && r.need.Review != nil })
+			if v := ansi.Strip(m.View().Content); !strings.Contains(v, tc.want) {
+				t.Fatalf("the review row does not read %q:\n%s", tc.want, v)
+			}
+		})
+	}
+}
+
+func TestAQueueRowForAManagersDutyNamesItsGoal(t *testing.T) {
+	m := New(&core.Core{})
+	m.board = core.Board{Tree: []core.Node{{Manager: core.Manager{ID: "mgr1"}, Goal: &core.Goal{ID: "goal1", Ask: "make the importer handle CSV"}}}}
+	m.loaded, m.width = true, 200
+	pr := core.PR{URL: "https://github.com/acme/august/pull/7", Status: &core.PRStatus{Title: "Read CSV"}}
+	for _, tc := range []struct {
+		name string
+		need core.Need
+		want string
+	}{
+		{"merge by a manager", core.Need{PR: &pr, Manager: "mgr1"}, "goal1 (make the importer handle CSV): Read CSV"},
+		{"merge by the owner's session", core.Need{PR: &pr}, "merge    Read CSV"},
+		{"unadopted steer", core.Need{Steer: &core.Steer{Manager: "mgr1", Revision: 2, Nudges: 2, Text: "ship TSV too"}, Manager: "mgr1"},
+			"goal1 (make the importer handle CSV) has not adopted r2 after 2 nudges: ship TSV too"},
+		{"steer of a manager gone from the tree", core.Need{Steer: &core.Steer{Manager: "mgr9", Revision: 1, Text: "stop"}, Manager: "mgr9"}, "mgr9 has not adopted r1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line, ok := m.queueLines(1, tc.need)
+			if line = ansi.Strip(line); !ok || !strings.Contains(line, tc.want) {
+				t.Fatalf("row %q, want it to read %q", line, tc.want)
+			}
+		})
 	}
 }

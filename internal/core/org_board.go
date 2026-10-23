@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
+
+// DoneShown is how long a done goal stays on the board's goal tree, unless the owner clears it sooner.
+const DoneShown = 24 * time.Hour
 
 // How a goal or chief stands, worst last.
 const (
@@ -115,7 +119,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	shown := map[string]bool{}
 	reports := map[string][]Manager{}
 	for _, m := range ordered {
-		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || (g.State == GoalDone && !g.AckedAt.IsZero())) {
+		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || (g.State == GoalDone && (!g.AckedAt.IsZero() || b.At.Sub(g.DoneAt) >= DoneShown))) {
 			continue
 		}
 		shown[m.ID] = true
@@ -189,8 +193,8 @@ func (c *Core) standing(b Board, n Node) string {
 	return worst
 }
 
-// queue adds the owner's other duties to the needs list: goals that finished or got stuck, pull requests ready to merge that no
-// manager may merge, review requests GitHub addresses to the owner personally, and document asks no goal claims.
+// queue adds the owner's other duties to the needs list: stuck goals, pull requests ready to merge that no manager may merge,
+// review requests GitHub addresses to the owner personally, and document asks no goal claims.
 func (c *Core) queue(b *Board, o Org) error {
 	dismissed, err := c.Store.queueDismissed()
 	if err != nil {
@@ -199,7 +203,7 @@ func (c *Core) queue(b *Board, o Org) error {
 	var extra []Need
 	for _, m := range o.Ordered() {
 		g, ok := o.Goals[m.GoalID]
-		if !ok || !g.AckedAt.IsZero() || (g.State != GoalDone && g.State != GoalStuck) {
+		if !ok || !g.AckedAt.IsZero() || g.State != GoalStuck {
 			continue
 		}
 		extra = append(extra, Need{Goal: &g})

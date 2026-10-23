@@ -17,7 +17,7 @@ The board shows every goal as a mountain, with your queue of things only you can
 3. `ym` opens the board and starts `ym serve` in the background if it is not running.
 
 On the board you see the goal under **Goals**, moving. Its mountain grows climbers as the manager starts agents and camps as pull requests open.
-**Needs you** stays empty until the manager hits something only you can decide, or the goal passes verification and is done.
+**Needs you** stays empty until the manager hits something only you can decide. When the goal passes verification, its row under **Goals** reads done with the manager's summary.
 Press `o` on the goal to open the manager and talk to it like any session.
 
 ## How work flows
@@ -47,12 +47,12 @@ Busy is not moving. ym reads each agent's transcript for signs it is going nowhe
 
 ## What reaches you
 
-The **Needs you** queue holds only:
+The **Needs you** queue holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a session's question answered. It holds:
 
-- goals that are done (passed verification) or stuck
+- stuck goals
 - asks that climbed past every manager and chief
 - green pull requests in repositories where managers may not merge
-- GitHub review requests addressed to you personally, not to your teams
+- GitHub review requests addressed to you personally, not to your teams, with the pull request's title and who opened it
 - Notion discussions and reviews addressed to you that no goal claims
 - permission prompts
 - one row per session you started yourself that asks you something
@@ -63,7 +63,7 @@ It stays quiet because every ask arrives ready to decide:
 - ym attaches the goal, its manager, the work's pull requests with CI, recent agent activity and the goal's feed events you have not read, and `ym serve` refreshes them each cycle. The selected row sums it up in one `evidence:` line; `enter` shows what was tried, the evidence and the full context. Answering or dismissing one of the goal's asks, opening the goal or `ym goal feed` marks the news read.
 - An ask that climbed to you past a stuck or retired manager or chief without a recommendation or options shows `unprepared`, with what is missing and who was told to fix it with `ym item prepare`. Asks from your own sessions are never marked unprepared.
 
-Done and stuck also raise a desktop notification; nothing else does.
+A done goal never waits in the queue. It stays under **Goals** with its summary for a day after it passes verification, then leaves the board; `x` on its row, or `ym goal ack <goal>`, clears it sooner. Done and stuck also raise a desktop notification; nothing else does.
 
 Each goal row shows its unread feed count and newest line. `enter` opens the goal with its feed and marks it read.
 
@@ -76,7 +76,7 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `enter` / `esc` | open or drill in / go back |
 | `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
 | `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
-| `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item |
+| `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item; `x` also clears a queue row or a done goal |
 | `B` / `W` / `V` | show the manager's brief / open its served brief page / open its registered artifact |
 | `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
 | `C` | new chief: check the goals and chiefs it oversees (selected rows start checked), then type its name and remit |
@@ -190,7 +190,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
 | | `ym goal steer [--file F\|-] <id>` / `context [--all] <id>` | change what a goal or chief is about / print its plan revisions |
 | | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
-| | `ym goal ack <goal>` | clear a done or stuck goal from your queue |
+| | `ym goal ack <goal>` | clear a stuck goal from your queue, or a done goal from the goal tree |
 | | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
 | | `ym chief [--codex] [--over ID,ID] [--remit T] "<name>"` | start a chief, on codex with `--codex`; `attach <child> <chief>`, `detach <child>` |
 | Manager | `ym goal update "<line>"` | post where the goal stands |

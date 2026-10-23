@@ -38,7 +38,7 @@ type Goal struct {
 	LastMovedAt time.Time
 	CreatedAt   time.Time
 	DoneAt      time.Time
-	// AckedAt is when the owner cleared the goal's done or stuck row from the queue.
+	// AckedAt is when the owner cleared the goal: a stuck one from the queue, a done one from the goal tree.
 	AckedAt time.Time
 	// Host is the host the goal runs on when that is not this one.
 	Host string
@@ -375,6 +375,8 @@ func (s *Store) Authority() (map[string]bool, error) {
 type ReviewRequest struct {
 	URL     string
 	Updated string
+	// Title and Author are the pull request's title and who opened it, as GitHub last listed them.
+	Title, Author string
 }
 
 // SyncReviews makes the open review requests exactly reqs: new ones open, ones GitHub no longer lists close.
@@ -388,8 +390,9 @@ func (s *Store) SyncReviews(reqs []ReviewRequest) error {
 		return err
 	}
 	for _, r := range reqs {
-		if _, err = tx.Exec(`INSERT INTO ym_review_requests (url, updated, state, seen_at) VALUES (?, ?, 'open', ?)
-			ON CONFLICT(url) DO UPDATE SET state = 'open', updated = excluded.updated, seen_at = excluded.seen_at`, r.URL, r.Updated, now()); err != nil {
+		if _, err = tx.Exec(`INSERT INTO ym_review_requests (url, updated, title, author, state, seen_at) VALUES (?, ?, ?, ?, 'open', ?)
+			ON CONFLICT(url) DO UPDATE SET state = 'open', updated = excluded.updated, title = excluded.title, author = excluded.author,
+			seen_at = excluded.seen_at`, r.URL, r.Updated, r.Title, r.Author, now()); err != nil {
 			return err
 		}
 	}
@@ -401,7 +404,7 @@ func (s *Store) OpenReviews() ([]ReviewRequest, error) {
 }
 
 func (s *Store) openReviews() ([]ReviewRequest, error) {
-	rows, err := s.db.Query(`SELECT url, updated FROM ym_review_requests WHERE state = 'open' ORDER BY seen_at`)
+	rows, err := s.db.Query(`SELECT url, updated, title, author FROM ym_review_requests WHERE state = 'open' ORDER BY seen_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +412,7 @@ func (s *Store) openReviews() ([]ReviewRequest, error) {
 	var out []ReviewRequest
 	for rows.Next() {
 		var r ReviewRequest
-		if err := rows.Scan(&r.URL, &r.Updated); err != nil {
+		if err := rows.Scan(&r.URL, &r.Updated, &r.Title, &r.Author); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -196,6 +196,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	var meta []string
 	if n.Goal != nil {
 		meta = append(meta, n.Manager.ID, "moved "+age(m.board.At, n.Goal.LastMovedAt))
+		if n.Goal.State == core.GoalDone && n.Goal.Summary != "" {
+			meta = append(meta, "done: "+n.Goal.Summary)
+		}
 		if n.Goal.Evidence != "" {
 			meta = append(meta, n.Goal.Evidence)
 		}
@@ -220,7 +223,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		keys += "   D detach"
 	}
 	keys += "   C new chief"
-	if n.Goal != nil {
+	if n.Goal != nil && n.Goal.State == core.GoalDone {
+		keys += "   x clear   K drop"
+	} else if n.Goal != nil {
 		keys += "   K drop"
 	} else {
 		keys += "   K retire"
@@ -290,6 +295,17 @@ func (m Model) artifact(n core.Node) (string, bool) {
 	return n.Manager.ArtifactURL, n.Manager.ArtifactURL != ""
 }
 
+// goalToClear is the goal x clears on r: a stuck goal's queue row, or a done goal's row on the goal tree.
+func goalToClear(r row) *core.Goal {
+	switch {
+	case r.need != nil && r.need.Goal != nil:
+		return r.need.Goal
+	case r.node != nil && r.node.Goal != nil && r.node.Goal.State == core.GoalDone:
+		return r.node.Goal
+	}
+	return nil
+}
+
 // goalName is the goal's id, tagged with its host's short name when it runs on another host.
 func (m Model) goalName(g core.Goal) string {
 	_, id, _ := core.SplitRemote(g.ID)
@@ -303,23 +319,29 @@ func briefOf(n core.Node) string {
 	return n.Manager.BriefPath
 }
 
-// queueLines draws the owner duties that are not an item or a session: finished and stuck goals, merges, reviews and doc asks.
+// managerName names a manager by its goal and ask, or a chief by its name, falling back to the id ym knows it by.
+func (m Model) managerName(id string) string {
+	n, ok := m.board.Node(id)
+	switch {
+	case !ok:
+		return id
+	case n.Goal != nil:
+		return m.goalName(*n.Goal) + " (" + ansi.Truncate(oneLine(n.Goal.Ask), 40, "…") + ")"
+	}
+	return n.Manager.Label()
+}
+
+// queueLines draws the owner duties that are not an item or a session: stuck goals, steers, relays, merges, reviews and doc asks.
 func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	sel := i == m.cursor
 	var head, what, keys string
 	switch {
-	case n.Goal != nil && n.Goal.State == core.GoalDone:
-		head, what = pal.green.Render(pad("done", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
-		if n.Goal.Summary != "" {
-			what += pal.dim.Render("  " + n.Goal.Summary)
-		}
-		keys = "B brief   o manager   x clear"
 	case n.Goal != nil:
 		head, what = pal.red.Render(pad("stuck", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
 		keys = "enter open   B brief   o manager   R relaunch   s send   x clear"
 	case n.Steer != nil:
 		head = pal.yellow.Render(pad("steer", 8))
-		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", n.Manager, n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
+		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", m.managerName(n.Manager), n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
 		keys = "enter open   o manager   S steer again   R relaunch   x dismiss"
 	case n.Relay != nil:
 		head = pal.red.Render(pad("refused", 8))
@@ -331,9 +353,15 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		if n.PR.Status != nil && n.PR.Status.Title != "" {
 			what = n.PR.Status.Title + pal.dim.Render("  "+n.PR.URL)
 		}
+		if n.Manager != "" {
+			what = m.managerName(n.Manager) + ": " + what
+		}
 		keys = "enter open in browser   x dismiss"
 	case n.Review != nil:
 		head, what = pal.yellow.Render(pad("review", 8)), n.Review.URL
+		if n.Review.Title != "" {
+			what = n.Review.Title + pal.dim.Render("  by "+n.Review.Author+"  "+n.Review.URL)
+		}
 		keys = "enter open in browser   x dismiss"
 	case n.Doc != nil:
 		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Title+pal.dim.Render("  "+n.Doc.Asker+": "+n.Doc.Text)
@@ -554,8 +582,8 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		id := r.need.Key()
 		return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(id) }), true
 	}
-	if r.need != nil && r.need.Goal != nil && key == "x" {
-		id := r.need.Goal.ID
+	if g := goalToClear(r); g != nil && key == "x" {
+		id := g.ID
 		return m, m.do(func() (string, error) { return id + " cleared", m.core.AckGoal(id) }), true
 	}
 	if r.need != nil && r.item != nil && len(r.need.Asks) > 1 && key == "enter" {

@@ -61,3 +61,44 @@ func TestOldPRTableMigratesOnceWhenManyProcessesOpenIt(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got["u"], want)
 	}
 }
+
+func TestExistingReviewRequestsKeepTheirStateAndGainContextOnRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ym.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE ym_review_requests (url TEXT PRIMARY KEY, updated TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, seen_at TEXT NOT NULL)`,
+		`INSERT INTO ym_review_requests VALUES ('open', '1', 'open', '2026-10-01T00:00:00Z'), ('gone', '1', 'gone', '2026-10-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	for range 2 {
+		st, err := OpenStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reviews, err := st.OpenReviews()
+		st.Close()
+		if err != nil || len(reviews) != 1 || reviews[0].URL != "open" {
+			t.Fatalf("review requests changed during migration: %+v, %v", reviews, err)
+		}
+	}
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	want := ReviewRequest{URL: "open", Updated: "2", Title: "Read CSV", Author: "mira"}
+	if err := st.SyncReviews([]ReviewRequest{want}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.OpenReviews(); err != nil || len(got) != 1 || got[0] != want {
+		t.Fatalf("refreshed review requests = %+v, %v; want %+v", got, err, want)
+	}
+}

@@ -12,6 +12,8 @@ import (
 // Request is an open pull request GitHub asks the owner to review as an individual reviewer.
 type Request struct {
 	URL, Updated string
+	// Title and Author are the pull request's title and the login of who opened it.
+	Title, Author string
 }
 
 // Requests lists the owner's direct review requests, failing rather than returning a partial list.
@@ -36,7 +38,11 @@ func (f Fetcher) Requests(ctx context.Context) ([]Request, error) {
 		Incomplete bool `json:"incomplete_results"`
 		Items      []struct {
 			Updated string `json:"updated_at"`
-			Pull    struct {
+			Title   string `json:"title"`
+			User    struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			Pull struct {
 				URL string `json:"html_url"`
 			} `json:"pull_request"`
 		}
@@ -68,7 +74,7 @@ func (f Fetcher) Requests(ctx context.Context) ([]Request, error) {
 				}
 				for _, user := range reviewers.Users {
 					if strings.EqualFold(user.Login, login) {
-						out = append(out, Request{URL: item.Pull.URL, Updated: item.Updated})
+						out = append(out, Request{URL: item.Pull.URL, Updated: item.Updated, Title: item.Title, Author: item.User.Login})
 						break
 					}
 				}

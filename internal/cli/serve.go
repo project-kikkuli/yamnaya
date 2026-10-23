@@ -220,7 +220,7 @@ func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
 	}
 	out := make([]core.ReviewRequest, len(reqs))
 	for i, q := range reqs {
-		out[i] = core.ReviewRequest{URL: q.URL, Updated: q.Updated}
+		out[i] = core.ReviewRequest{URL: q.URL, Updated: q.Updated, Title: q.Title, Author: q.Author}
 	}
 	return c.Store.SyncReviews(out)
 }
