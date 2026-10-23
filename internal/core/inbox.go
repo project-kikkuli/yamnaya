@@ -14,7 +14,7 @@ import (
 var wakeKinds = map[string]bool{
 	EventAsked: true, EventStuck: true, EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true,
 	EventResumeFailed: true, EventCIRed: true, EventConflict: true, EventReview: true, EventSteered: true, EventFailedVerify: true,
-	EventTimer: true, EventNudge: true,
+	EventTimer: true, EventNudge: true, EventMachineThrottled: true,
 }
 
 const (

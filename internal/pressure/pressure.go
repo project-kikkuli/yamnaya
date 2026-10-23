@@ -238,11 +238,11 @@ func (s State) Notices() []Notice {
 		for _, c := range changes[:min(3, len(changes))] {
 			top = append(top, fmt.Sprintf("%s pid %d %.0f%%", filepath.Base(c.Command), c.PID, c.CPU))
 		}
-		slots := "new slots open"
+		slots := "slots open"
 		if s.Holding {
-			slots = "new slots held"
+			slots = "slots held"
 		}
-		out = append(out, Notice{Manager: changes[0].Manager, Goal: goal, Text: fmt.Sprintf("ym: overload %.1f on %d cores; %s heavy child jobs niced to 15, %s; top: %s", s.Load, s.Cores, goal, slots, strings.Join(top, ", "))})
+		out = append(out, Notice{Manager: changes[0].Manager, Goal: goal, Text: fmt.Sprintf("load %.1f on %d cores; child jobs nice 15; %s; top: %s", s.Load, s.Cores, slots, strings.Join(top, ", "))})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Manager < out[j].Manager })
 	return out

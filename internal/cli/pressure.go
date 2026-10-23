@@ -112,7 +112,7 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 func recordPressureNotices(c *core.Core, state *pressure.State, dir string) error {
 	for _, notice := range state.Notices() {
 		key := "overload:" + state.Since.UTC().Format(time.RFC3339Nano) + ":" + notice.Goal
-		if _, _, err := c.RecordGoalEvent(notice.Goal, "machine-throttled", notice.Text, key); err != nil {
+		if _, _, err := c.RecordGoalEvent(notice.Goal, core.EventMachineThrottled, notice.Text, key); err != nil {
 			return err
 		}
 		state.Notified[notice.Goal] = true
