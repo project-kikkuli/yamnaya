@@ -8,27 +8,31 @@ set -euo pipefail
 if [ -z "${YM_REHEARSAL_SRC:-}" ]; then
 	YM_REHEARSAL_SRC=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 	export YM_REHEARSAL_SRC
-	copy=$(mktemp -t ym-rehearse)
+	copy=$(mktemp "${TMPDIR:-/tmp}/ym-rehearse.XXXXXX")
 	cp "$0" "$copy"
 	exec bash "$copy" "$@"
 fi
 
 usage() {
 	cat <<'EOF'
-usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF]
+usage: tools/rehearse/rehearse.sh [--host H | --local] [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF]
 
 Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
-Each run builds ym from REF (default origin/main), creates the private repository <you>/ym-rehearsal-<stamp> from
-tools/rehearse/seed, runs there, and when it ends, by timeout, signal or error, ends its tmux server and ym serve, deletes the
-repository and the run's checkouts, and keeps timeline.log, serve.log and brief.md in
-~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/. YM_REHEARSAL_REPO=owner/name runs on an existing repository instead
-and keeps it, so concurrent runs can share one.
+A run goes to a remote host over ssh unless --local: --host H, else $YM_REHEARSAL_HOST, else the one host ym remote
+reached. There the script runs from a clone of yamnaya kept in the rehearsal root. Each run builds ym from REF (default
+origin/main), creates the private repository <you>/ym-rehearsal-<stamp> from tools/rehearse/seed, runs there, and when it
+ends, by timeout, signal or error, ends its tmux server and ym serve, deletes the repository and the run's checkouts, and
+keeps timeline.log, serve.log and brief.md in ~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/ on the host it ran
+on. That root holds a .ym-rehearsal file, so the host's own ym never shows, records or adopts a rehearsal's sessions.
+YM_REHEARSAL_REPO=owner/name runs on an existing repository instead and keeps it, so concurrent runs can share one.
 EOF
 }
 
-scenario=clean ask="" timeout=60 ref=origin/main
+scenario=clean ask="" timeout=60 ref=origin/main host=${YM_REHEARSAL_HOST:-} local=0
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--host) host=$2; shift 2 ;;
+	--local) local=1; shift ;;
 	--scenario) scenario=$2; shift 2 ;;
 	--ask) ask=$2; shift 2 ;;
 	--timeout) timeout=$2; shift 2 ;;
@@ -38,6 +42,30 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+root=$HOME/tmp/arbiter-work/yamnaya-rehearsal
+
+if [ "$local" = 0 ]; then
+	ssh=${YAMNAYA_SSH_BIN:-ssh}
+	if [ -z "$host" ]; then
+		hosts=$(sqlite3 -readonly "${YAMNAYA_STATE_DIR:-$HOME/.local/state/yamnaya}/ym.db" 'SELECT name FROM ym_hosts ORDER BY first_used' 2>/dev/null || true)
+		if [ "$(grep -c . <<<"$hosts")" != 1 ]; then
+			echo "pick the host to rehearse on with --host (ym remote knows: ${hosts//$'\n'/ }), or run here with --local" >&2
+			exit 2
+		fi
+		host=$hosts
+	fi
+	origin=$(git -C "$YM_REHEARSAL_SRC" remote get-url origin)
+	remote_args=(--local --scenario "$scenario" --timeout "$timeout" --ref "$ref")
+	if [ -n "$ask" ]; then remote_args+=(--ask "$ask"); fi
+	script=$(basename "$0")
+	# The remote root and the clone are made before the script lands, so it runs from a yamnaya checkout of its own there.
+	"$ssh" "$host" "set -e; r=\$HOME/tmp/arbiter-work/yamnaya-rehearsal; mkdir -p \$r; touch \$r/.ym-rehearsal
+		[ -d \$r/src/.git ] || git clone -q $(printf %q "$origin") \$r/src; cat >\$r/$script" <"$0"
+	echo "rehearsing on $host; its logs stay in ~/tmp/arbiter-work/yamnaya-rehearsal there"
+	exec "$ssh" -tt "$host" "r=\$HOME/tmp/arbiter-work/yamnaya-rehearsal; YM_REHEARSAL_SRC=\$r/src YM_REHEARSAL_REPO=$(printf %q "${YM_REHEARSAL_REPO:-}") \
+		bash -l \$r/$script$(printf ' %q' "${remote_args[@]}"); s=\$?; rm -f \$r/$script; exit \$s"
+fi
+
 src=$YM_REHEARSAL_SRC
 stamp=$(date +%Y%m%d-%H%M%S)
 ground=${YM_REHEARSAL_REPO:-}
@@ -46,8 +74,9 @@ if [ -z "$ground" ]; then
 	ground=$(gh api user --jq .login)/ym-rehearsal-$stamp
 	owned=1
 fi
-run=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/$stamp-$scenario
+run=$root/$stamp-$scenario
 mkdir -p "$run/bin" "$run/state" "$run/src" "$run/snap"
+touch "$root/.ym-rehearsal"
 log=$run/timeline.log
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -99,6 +128,7 @@ for f in auth.json config.toml; do
 done
 export CODEX_HOME=$run/codex
 export YAMNAYA_YM_SOCKET=ymr-$stamp
+owner_ym=${YM_OWNER_BIN:-$(command -v ym || echo "$HOME/.local/bin/ym")}
 export PATH=$run/bin:$PATH
 unset TMUX TMUX_PANE CLAUDECODE CLAUDE_CODE_ENTRYPOINT YAMNAYA_TMUX_SOCKET
 db=$run/state/ym.db
@@ -129,7 +159,7 @@ cleanup() {
 		else
 			note "could not delete $ground: $out"
 		fi
-		rm -rf "${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims-${ground##*/}"
+		rm -rf "$root/claims-${ground##*/}"
 	fi
 	find "$run" -mindepth 1 -maxdepth 1 ! -name timeline.log ! -name serve.log ! -name brief.md -exec rm -rf {} +
 }
@@ -150,7 +180,7 @@ else
 	git clone -q "git@github.com:$ground.git" "$run/proving-ground"
 fi
 if [ -z "$ask" ]; then
-	claims=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims-${ground##*/}
+	claims=$root/claims-${ground##*/}
 	mkdir -p "$claims"
 	main_go=$(cat "$run/proving-ground/cmd/tally/main.go")
 	while IFS='|' read -r flag text; do
@@ -180,7 +210,7 @@ prs() {
 
 # owner_board is what the owner's own ym shows of this run: its sessions as rows, waiting rows and items from them.
 owner_board() {
-	env -u YAMNAYA_STATE_DIR -u YAMNAYA_YM_SOCKET YAMNAYA_NO_SERVE=1 "${YM_OWNER_BIN:-$HOME/go/bin/ym}" board 2>/dev/null | jq -r --arg run "$run" '
+	env -u YAMNAYA_STATE_DIR -u YAMNAYA_YM_SOCKET YAMNAYA_NO_SERVE=1 "$owner_ym" board 2>/dev/null | jq -r --arg run "$run" '
 		([.sessions[]? | select((.cwd // "") | startswith($run)) | .id]) as $ids
 		| (.sessions[]? | select((.cwd // "") | startswith($run)) | "owner-row \(.id[0:8]) \(.status) \((.title // "")[0:50])"),
 		  (.waiting[]? | select(.session as $s | $ids | index($s)) | "owner-waiting \(.session[0:8]) \((.line // "")[0:120])"),
@@ -207,7 +237,7 @@ snapshot() {
 		owner_board >"$run/snap/owner"
 	fi
 	cat "$run/snap/owner"
-	for b in "$run"/state/goals/*/brief.md; do [ -f "$b" ] && echo "brief $(basename "$(dirname "$b")") $(md5 -q "$b") $(sed -n '1,3p' "$b" | short 100)"; done
+	for b in "$run"/state/goals/*/brief.md; do [ -f "$b" ] && echo "brief $(basename "$(dirname "$b")") $(cksum <"$b" | cut -d' ' -f1) $(sed -n '1,3p' "$b" | short 100)"; done
 	[ -f "$run/state/work-service.json" ] && jq -r '"serve pid=\(.pid) error=" + (.error[0:160])' "$run/state/work-service.json" 2>/dev/null || true
 }
 

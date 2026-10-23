@@ -130,26 +130,35 @@ func TestOnlyTheDefaultStateDirSweepsEveryRepository(t *testing.T) {
 	}
 }
 
-func TestYmNeverAdoptsASessionWorkingInTheHomeDirectory(t *testing.T) {
+func TestYmNeverAdoptsASessionInTheHomeDirectoryOrAnotherYmsRehearsal(t *testing.T) {
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	home := filepath.Join(base, "home")
 	repo, plain := filepath.Join(home, "repo"), filepath.Join(base, "plain")
-	for _, d := range []string{repo, plain} {
+	rehearsals := filepath.Join(base, "rehearsals")
+	run := filepath.Join(rehearsals, "run", "proving-ground-wt-x")
+	for _, d := range []string{repo, plain, run} {
 		os.MkdirAll(d, 0o755)
 	}
 	git(t, repo, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(rehearsals, core.RehearsalMark), nil, 0o644)
 	t.Setenv("HOME", home)
+	owner := filepath.Join(base, "state")
 	for _, c := range []struct {
 		name    string
 		cwd     string
+		state   string
 		adopted bool
+		why     string
 	}{
-		{"the home directory", home, false},
-		{"the home directory through a trailing slash", home + "/", false},
-		{"a repository in the home directory", repo, true},
-		{"a plain directory elsewhere", plain, true},
+		{"the home directory", home, owner, false, "home directory"},
+		{"the home directory through a trailing slash", home + "/", owner, false, "home directory"},
+		{"a repository in the home directory", repo, owner, true, ""},
+		{"a plain directory elsewhere", plain, owner, true, ""},
+		{"a rehearsal, seen by the owner's ym", run, owner, false, "rehearsal"},
+		{"a rehearsal, seen by the ym running it", run, filepath.Join(rehearsals, "run", "state"), true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("YAMNAYA_STATE_DIR", c.state)
 			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: t.TempDir()}}
 			s := core.Live{Session: core.Session{Harness: "claude", ID: "s1", Cwd: c.cwd, PID: 4242}}
 			l.Saw([]core.Live{s})
@@ -157,11 +166,11 @@ func TestYmNeverAdoptsASessionWorkingInTheHomeDirectory(t *testing.T) {
 				t.Fatalf("recorded %v, want %v", ok, c.adopted)
 			}
 			if !c.adopted {
-				if _, err := l.Adopt(s, nil); err == nil || !strings.Contains(err.Error(), "home directory") {
-					t.Fatalf("Adopt = %v, want a refusal naming the home directory", err)
+				if _, err := l.Adopt(s, nil); err == nil || !strings.Contains(err.Error(), c.why) {
+					t.Fatalf("Adopt = %v, want a refusal naming the %s", err, c.why)
 				}
 				if _, err := l.takeOver(s, "codex", "s2"); err == nil {
-					t.Fatal("takeOver recorded the home directory")
+					t.Fatalf("takeOver recorded %s", c.cwd)
 				}
 			}
 		})

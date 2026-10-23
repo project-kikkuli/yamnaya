@@ -295,7 +295,7 @@ func (c *Core) KnownRepos() ([]string, error) {
 	}
 	for _, owned := range c.owned(procs) {
 		for _, p := range owned {
-			if dir := proc.Cwd(p.PID); dir != "" {
+			if dir := proc.Cwd(p.PID); dir != "" && !c.foreign(dir) {
 				add(dir)
 			}
 		}

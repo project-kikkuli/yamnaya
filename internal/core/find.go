@@ -55,7 +55,7 @@ func (c *Core) find(ref string) (Live, error) {
 	}
 	var found []Session
 	for _, s := range hit.Discover(mine) {
-		if match(s.ID) {
+		if match(s.ID) && !c.foreign(s.Cwd) {
 			found = append(found, s)
 		}
 	}

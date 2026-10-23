@@ -364,7 +364,11 @@ func (c *Core) Board() (Board, error) {
 	}
 	var found []Session
 	for _, d := range discovered {
-		found = append(found, d...)
+		for _, s := range d {
+			if !c.foreign(s.Cwd) {
+				found = append(found, s)
+			}
+		}
 	}
 	c.place(found, b.At)
 	c.placeDrift(found, b.At)

@@ -116,7 +116,9 @@ func TestAProcessHoldingALargeShareOfMemoryReachesItsAgentsManagerOnce(t *testin
 			agent := 1000 + len(w.procs)
 			w.spawn("agent", m.Session)
 			w.procs = append(w.procs, proc.Proc{PID: 5000, PPID: agent, Elapsed: 51 * time.Minute, Args: []string{"script", "-qc", "claude", "/dev/null"}})
-			w.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: t.TempDir(), Capacity: 3, Cores: 8, Memory: 64 * gib}, nil }
+			w.core.Slots = func() (slot.Pool, error) {
+				return slot.Pool{Dir: t.TempDir(), Capacity: 3, Cores: 8, Memory: 64 * gib}, nil
+			}
 			w.core.Loads = func() float64 { return 1 }
 			w.core.Mem = func() (map[int]float64, error) { return map[int]float64{agent: 0.3 * gib, 5000: c.bytes}, nil }
 			w.loop(t, 3)
