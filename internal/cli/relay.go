@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,12 +35,34 @@ func relayCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				fmt.Fprintln(cmd.OutOrStdout(), "nothing waiting")
 			}
 			for _, r := range pending {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-5d to %-20s %-5s since %s  %s\n", r.Seq, r.Dest, r.Kind, r.Created.Local().Format(time.DateTime), oneLine(r.Body))
+				fmt.Fprintf(cmd.OutOrStdout(), "%-5d to %-20s %-7s since %s  %s\n", r.Seq, r.Dest, r.Kind, r.Created.Local().Format(time.DateTime), oneLine(r.Body))
+				if r.Error != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "      refused there: %s; sent again each cycle, ym relay drop %d stops it\n", oneLine(r.Error), r.Seq)
+				}
 			}
 			return nil
 		}),
 	}
 	cmd.AddCommand(&cobra.Command{
+		Use:   "drop <seq>",
+		Short: "Stop carrying a relay another host keeps refusing",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			seq, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("%q is not a relay number from ym relay", args[0])
+			}
+			ok, err := e.core.Store.DropRelay(seq)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("no relay %d waits to be carried", seq)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "dropped relay %d\n", seq)
+			return nil
+		}),
+	}, &cobra.Command{
 		Use:    "sync",
 		Short:  "Trade relays with the host that reaches this one: read its request on stdin, print what this host holds",
 		Args:   cobra.NoArgs,

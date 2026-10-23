@@ -237,6 +237,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate item recipients: %w", err)
 	}
+	if err := relayErrors(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate relay errors: %w", err)
+	}
 	if err := retireWork(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("retire work layer: %w", err)

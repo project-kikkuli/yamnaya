@@ -23,6 +23,10 @@ const (
 	RelayYM = "ym"
 	// RelayEvents hands a chief on the destination the state changes of goals below it on the origin, and every chief above it too.
 	RelayEvents = "events"
+	// RelayVouch asks a chief's host whether a steer's author is that chief or above it, for the goal's host that cannot see that far.
+	RelayVouch = "vouch"
+	// RelayVouched tells the goal's host the author is above its chief, so the steer lands.
+	RelayVouched = "vouched"
 	// RelayNotify raises the owner's desktop notification on the destination, the host the owner sits at.
 	RelayNotify = "notify"
 )
@@ -37,6 +41,8 @@ type Relay struct {
 	Kind      string    `json:"kind"`
 	Body      string    `json:"body"`
 	Created   time.Time `json:"created"`
+	// Error is why the host it went to last refused it; it is sent again until that host acts on it or the owner drops it.
+	Error string `json:"error,omitempty"`
 }
 
 type relayTell struct {
@@ -66,6 +72,15 @@ type relayYM struct {
 	Args []string `json:"args"`
 }
 
+type relayVouch struct {
+	// Chief is the chief on the destination the climb reached; Target names the steered manager by its host.
+	Chief  string `json:"chief"`
+	Author string `json:"author"`
+	Target string `json:"target"`
+	Text   string `json:"text"`
+	Hops   int    `json:"hops"`
+}
+
 type relayNotify struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
@@ -81,6 +96,8 @@ type RelaySync struct {
 	Entries []Relay  `json:"entries"`
 	// Ack confirms the called host's entries, by its own seq, that the caller now holds.
 	Ack []int64 `json:"ack"`
+	// Refused names the called host's entries the caller could not act on yet, with why; the called host keeps them.
+	Refused []RelayRef `json:"refused,omitempty"`
 }
 
 // RelayReply is what the called host still has to carry, by its own seq.
@@ -94,9 +111,11 @@ type RelayReply struct {
 type RelayRef struct {
 	Origin    string `json:"origin"`
 	OriginSeq int64  `json:"origin_seq"`
+	// Error is why the host refused it, for ym relay to show.
+	Error string `json:"error,omitempty"`
 }
 
-func (r Relay) ref() RelayRef { return RelayRef{r.Origin, r.OriginSeq} }
+func (r Relay) ref() RelayRef { return RelayRef{Origin: r.Origin, OriginSeq: r.OriginSeq} }
 
 // errUnusable marks a relay that no later attempt can act on, such as one this ym cannot read; it is dropped, not sent again.
 var errUnusable = errors.New("unusable relay")
@@ -159,7 +178,7 @@ func (s *Store) addRelay(r Relay) (Relay, bool, error) {
 
 // PendingRelays lists the relays no host has confirmed carrying yet, oldest first.
 func (s *Store) PendingRelays() ([]Relay, error) {
-	rows, err := s.db.Query(`SELECT seq, origin, origin_seq, dest, kind, body, created FROM ym_relay WHERE delivered IS NULL ORDER BY seq`)
+	rows, err := s.db.Query(`SELECT seq, origin, origin_seq, dest, kind, body, created, last_error FROM ym_relay WHERE delivered IS NULL ORDER BY seq`)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +187,7 @@ func (s *Store) PendingRelays() ([]Relay, error) {
 	for rows.Next() {
 		var r Relay
 		var created int64
-		if err := rows.Scan(&r.Seq, &r.Origin, &r.OriginSeq, &r.Dest, &r.Kind, &r.Body, &created); err != nil {
+		if err := rows.Scan(&r.Seq, &r.Origin, &r.OriginSeq, &r.Dest, &r.Kind, &r.Body, &created, &r.Error); err != nil {
 			return nil, err
 		}
 		r.Created = time.Unix(0, created)
@@ -203,6 +222,41 @@ func unmarshal(body string, v any) error {
 // firstSight records that the relay origin numbered seq arrived; false when it arrived before.
 func (s *Store) firstSight(origin string, seq int64, at time.Time) (bool, error) {
 	res, err := s.db.Exec(`INSERT OR IGNORE INTO ym_relay_seen (origin, origin_seq, at) VALUES (?, ?, ?)`, origin, seq, at.UnixNano())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// relayErrors adds the column holding why a relay was last refused.
+func relayErrors(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_relay') WHERE name = 'last_error'`).Scan(&has); err != nil || has > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE ym_relay ADD COLUMN last_error TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// noteRefused records why another host refused each of this host's relays refs name, own or carried on.
+func (s *Store) noteRefused(self string, refs []RelayRef) error {
+	for _, r := range refs {
+		q := `UPDATE ym_relay SET last_error = ? WHERE delivered IS NULL AND origin = ? AND origin_seq = ?`
+		args := []any{r.Error, r.Origin, r.OriginSeq}
+		if r.Origin == self {
+			q, args = `UPDATE ym_relay SET last_error = ? WHERE delivered IS NULL AND origin = '' AND seq = ?`, []any{r.Error, r.OriginSeq}
+		}
+		if _, err := s.db.Exec(q, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DropRelay stops carrying relay seq, as the owner decides for one that keeps being refused.
+func (s *Store) DropRelay(seq int64) (bool, error) {
+	res, err := s.db.Exec(`UPDATE ym_relay SET delivered = ? WHERE seq = ? AND delivered IS NULL`, time.Now().UnixNano(), seq)
 	if err != nil {
 		return false, err
 	}
@@ -303,6 +357,9 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
+	if err := c.Store.noteRefused(c.SelfName(), req.Refused); err != nil {
+		return RelayReply{}, err
+	}
 	refused, recvErr := c.Receive(req.Entries)
 	out, err := c.outgoing()
 	if out == nil {
@@ -341,9 +398,12 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
 		}
+		if err := c.Store.noteRefused(self, reply.Refused); err != nil {
+			return err
+		}
 		refused := map[RelayRef]bool{}
 		for _, ref := range reply.Refused {
-			refused[ref] = true
+			refused[RelayRef{Origin: ref.Origin, OriginSeq: ref.OriginSeq}] = true
 		}
 		var sent []int64
 		for _, r := range mine {
@@ -363,18 +423,15 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		}
 		held := map[RelayRef]bool{}
 		for _, ref := range failed {
-			held[ref] = true
+			held[RelayRef{Origin: ref.Origin, OriginSeq: ref.OriginSeq}] = true
 		}
-		var ack []int64
+		ack := []int64{}
 		for _, r := range reply.Entries {
 			if !held[r.ref()] {
 				ack = append(ack, r.Seq)
 			}
 		}
-		if len(ack) == 0 {
-			continue
-		}
-		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack}); err != nil {
+		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack, Refused: failed}); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 		}
 	}
@@ -396,13 +453,13 @@ func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
 		}
 		if r.Dest != self {
 			if _, _, err := c.Store.addRelay(Relay{Origin: r.Origin, OriginSeq: r.OriginSeq, Dest: r.Dest, Kind: r.Kind, Body: r.Body, Created: r.Created}); err != nil {
-				errs, failed = append(errs, err), append(failed, r.ref())
+				errs, failed = append(errs, err), append(failed, refused(r, err))
 			}
 			continue
 		}
 		seen, err := c.Store.relaySeen(r.Origin, r.OriginSeq)
 		if err != nil {
-			errs, failed = append(errs, err), append(failed, r.ref())
+			errs, failed = append(errs, err), append(failed, refused(r, err))
 			continue
 		}
 		if seen {
@@ -415,15 +472,21 @@ func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
 		if err := c.act(b, berr, r); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s %s from %s: %w", r.Kind, r.Body, r.Origin, err))
 			if !errors.Is(err, errUnusable) {
-				failed = append(failed, r.ref())
+				failed = append(failed, refused(r, err))
 				continue
 			}
 		}
 		if _, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now()); err != nil {
-			errs, failed = append(errs, err), append(failed, r.ref())
+			errs, failed = append(errs, err), append(failed, refused(r, err))
 		}
 	}
 	return failed, errors.Join(errs...)
+}
+
+func refused(r Relay, err error) RelayRef {
+	ref := r.ref()
+	ref.Error = err.Error()
+	return ref
 }
 
 func (c *Core) act(b Board, berr error, r Relay) error {
@@ -506,6 +569,27 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 			return err
 		}
 		return c.tellChiefs(b, o, t.Manager, t.Text)
+	case RelayVouch:
+		var v relayVouch
+		if err := unmarshal(r.Body, &v); err != nil {
+			return err
+		}
+		return c.vouch(b, o, v)
+	case RelayVouched:
+		var v relayVouch
+		if err := unmarshal(r.Body, &v); err != nil {
+			return err
+		}
+		_, id, _ := SplitRemote(v.Target)
+		m, err := o.lookup(id)
+		if err != nil {
+			return fmt.Errorf("%w: %w", errUnusable, err)
+		}
+		if !o.Active(m) {
+			return c.tellManager(b, o, v.Author, fmt.Sprintf("ym: your steer of %s did not land: it has ended.", v.Target))
+		}
+		_, err = c.applySteer(b, o, m, v.Text, v.Author)
+		return err
 	case RelayNotify:
 		var n relayNotify
 		if err := unmarshal(r.Body, &n); err != nil {
@@ -614,4 +698,29 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 		errs = append(errs, c.Store.markHeard(m.ParentID, events, c.now()))
 	}
 	return errors.Join(errs...)
+}
+
+// vouch answers whether a steer's author is the chief v names or above it: it lets the steer land on the goal's host, asks the next
+// host up when the climb leaves this one, or tells the author the goal does not report to it.
+func (c *Core) vouch(b Board, o Org, v relayVouch) error {
+	self := c.SelfName()
+	author := v.Author
+	if h, rest, remote := SplitRemote(author); remote && h == self {
+		author = rest
+	}
+	reports, via := climb(o, author, v.Chief)
+	reports = reports || author == v.Chief
+	host, _, _ := SplitRemote(v.Target)
+	switch {
+	case reports:
+		return c.Relay(host, RelayVouched, v)
+	case via != "" && v.Hops < maxHops:
+		next, rest, _ := SplitRemote(via)
+		v.Chief, v.Hops = rest, v.Hops+1
+		return c.Relay(next, RelayVouch, v)
+	}
+	if _, _, remote := SplitRemote(author); !remote && o.Managers[author].Session == "" {
+		return nil
+	}
+	return c.tellManager(b, o, author, fmt.Sprintf("ym: your steer of %s was refused: it does not report to you.", v.Target))
 }

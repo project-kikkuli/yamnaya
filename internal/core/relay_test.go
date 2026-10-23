@@ -24,7 +24,12 @@ func (n *hostNet) Sync(host string, req RelaySync) (RelayReply, error) {
 		n.loseAcks--
 		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
 	}
-	return n.hosts[host].core.ServeSync(req)
+	reply, err := n.hosts[host].core.ServeSync(req)
+	// ym relay sync prints a failed act on stderr and still answers, as here.
+	if reply.Entries != nil {
+		return reply, nil
+	}
+	return reply, err
 }
 
 // fleet is an owner's host "a" that reaches hosts "b" and "c" over the net.
@@ -362,7 +367,7 @@ func TestARelayWhoseActFailsStaysUnackedAndTakesEffectOnceItSucceeds(t *testing.
 	}{{name: "carried by the courier on to a third host", from: "b"}, {name: "handed straight to the host it names", from: "a"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFleet(t)
-			fails := 1
+			fails := 1 << 10
 			var ran []string
 			f.c.core.RunSelf = func(args ...string) (string, error) {
 				if fails > 0 {
@@ -380,12 +385,15 @@ func TestARelayWhoseActFailsStaysUnackedAndTakesEffectOnceItSucceeds(t *testing.
 			} else if _, err := from.core.RunOrRelay("c", "item", "answer", "#3", "yes"); err != nil {
 				t.Fatal(err)
 			}
-			var errs []error
-			for range 4 {
-				errs = append(errs, f.a.core.SyncRelays([]string{"b", "c"}, f.net))
-			}
-			if !strings.Contains(fmt.Sprint(errs), "database is locked") {
-				t.Errorf("sync errors %v, want the failed run reported", errs)
+			for i := range 4 {
+				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
+				if i == 1 {
+					held, _ := f.a.core.Store.PendingRelays()
+					if len(held) != 1 || !strings.Contains(held[0].Error, "database is locked") {
+						t.Errorf("a holds %+v after c refused the command, want it kept with c's reason", held)
+					}
+					fails = 0
+				}
 			}
 			if len(ran) != 1 || ran[0] != "item answer #3 yes" {
 				t.Errorf("ran %q after one failed run, want the command run once it can be", ran)

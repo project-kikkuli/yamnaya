@@ -408,9 +408,16 @@ func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoe
 		return "", err
 	}
 	for _, stranger := range []string{RemoteKey("a", "mgr9"), RemoteKey("c", chief.ID)} {
-		if _, err := f.b.core.SteerContext(f.b.board(t), mgr.ID, "JSON only", stranger); err == nil {
-			t.Fatalf("%s steered %s, which does not report to it", stranger, mgr.ID)
+		st, err := f.b.core.SteerContext(f.b.board(t), mgr.ID, "JSON only", stranger)
+		if err != nil || st.Pending != RemoteKey("a", chief.ID) {
+			t.Fatalf("%s steering %s = %+v, %v; want it held for a's chief to confirm", stranger, mgr.ID, st, err)
 		}
+	}
+	for range 3 {
+		f.sync(t)
+	}
+	if steers, _ := f.b.core.Store.Steers(mgr.ID); len(steers) != 0 {
+		t.Fatalf("strangers steered %s: %+v", mgr.ID, steers)
 	}
 	f.a.core.Remotes = &sshTo{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b"}}}, hosts: map[string]*orgWorld{"b": f.b}}
 	if _, err := f.a.core.SteerContext(f.a.board(t), RemoteKey("b", mgr.ID), "CSV only", chief.ID); err != nil {
@@ -438,4 +445,76 @@ type sshTo struct {
 
 func (r *sshTo) Run(host string, args ...string) (string, error) {
 	return r.hosts[host].core.RunSelf(args...)
+}
+
+// steerRunner runs a relayed ym goal steer on w the way the CLI parses it.
+func steerRunner(t *testing.T, w *orgWorld) func(args ...string) (string, error) {
+	return func(args ...string) (string, error) {
+		var text, by, ref string
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--text":
+				i++
+				text = args[i]
+			case "--by":
+				i++
+				by = args[i]
+			default:
+				ref = args[i]
+			}
+		}
+		if strings.Join(args[:2], " ") != "goal steer" {
+			t.Fatalf("ran %q, want a goal steer", args)
+		}
+		_, err := w.core.SteerContext(w.board(t), ref, text, by)
+		return "", err
+	}
+}
+
+func TestAChiefTwoHostsUpSteersAGoalThroughTheChiefBetweenThemAndAStrangerIsToldNo(t *testing.T) {
+	f := newFleet(t)
+	top := f.c.chief(t, "org")
+	stranger := f.c.chief(t, "elsewhere")
+	mid := f.a.chief(t, "platform")
+	if err := f.a.core.Attach(mid.ID, RemoteKey("c", top.ID)); err != nil {
+		t.Fatal(err)
+	}
+	_, mgr := f.b.goal(t, "ship the fix", "/repo/app")
+	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", mid.ID)); err != nil {
+		t.Fatal(err)
+	}
+	f.b.core.RunSelf = steerRunner(t, f.b)
+	steer := func(chief Manager, plan string) {
+		t.Helper()
+		st, err := f.c.core.SteerContext(f.c.board(t), RemoteKey("b", mgr.ID), plan, chief.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(st.Text, plan) {
+			t.Fatalf("steer = %+v", st)
+		}
+		for range 4 {
+			f.sync(t)
+		}
+	}
+	steer(stranger, "drop the fix")
+	if steers, _ := f.b.core.Store.Steers(mgr.ID); len(steers) != 0 {
+		t.Fatalf("a chief nothing reports to steered %s: %+v", mgr.ID, steers)
+	}
+	if !slices.ContainsFunc(f.c.handedTo(stranger.Session), func(s string) bool { return strings.Contains(s, "was refused") }) {
+		t.Errorf("stranger heard %q, want that its steer was refused", f.c.handedTo(stranger.Session))
+	}
+	steer(top, "ship it smaller")
+	steers, err := f.b.core.Store.Steers(mgr.ID)
+	if err != nil || len(steers) != 1 || steers[0].Text != "ship it smaller" || steers[0].Author != RemoteKey("c", top.ID) {
+		t.Fatalf("b holds steers %+v (%v), want revision 1 by c's top chief", steers, err)
+	}
+	for range Nudges + 2 {
+		f.b.clock = f.b.clock.Add(AdoptAfter + time.Minute)
+		f.b.supervise(t)
+		f.sync(t)
+	}
+	if !slices.ContainsFunc(f.c.handedTo(top.Session), func(s string) bool { return strings.Contains(s, "has not adopted revision") }) {
+		t.Fatalf("top chief on c heard %q, want that its steer of %s went unadopted", f.c.handedTo(top.Session), mgr.ID)
+	}
 }

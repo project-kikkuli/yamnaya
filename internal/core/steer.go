@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS ym_steers (
 
 // Steer is one revision of what a goal or chief is about: the plan its manager works to, replacing the revisions before it.
 type Steer struct {
+	// Pending names the chief on another host asked to confirm that Author is above it; the steer lands once it does.
+	Pending  string
 	Manager  string
 	Revision int
 	Text     string
@@ -192,10 +194,21 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		return Steer{}, fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID)
 	}
 	if author != Owner {
-		if !below(o, author, m.ID) {
+		reports, via := climb(o, author, m.ID)
+		if !reports && via != "" {
+			host, rest, _ := SplitRemote(via)
+			v := relayVouch{Chief: rest, Author: author, Target: RemoteKey(c.SelfName(), m.ID), Text: text}
+			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
+		}
+		if !reports {
 			return Steer{}, fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.ID, author)
 		}
 	}
+	return c.applySteer(b, o, m, text, author)
+}
+
+// applySteer records text as m's next revision by author and tells m to adopt it.
+func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer, error) {
 	if latest, err := c.Store.LatestSteers(); err != nil {
 		return Steer{}, err
 	} else if st, ok := latest[m.ID]; ok && st.Text == text {
@@ -245,20 +258,31 @@ func raisedTo(o Org, st Steer) string {
 	return o.Above(st.Author)
 }
 
-// below reports whether id reports to chief, directly or through other chiefs, here or a chief on another host its climb reaches.
+// below reports whether id reports to chief, directly or through other chiefs here.
 func below(o Org, chief, id string) bool {
+	reports, _ := climb(o, chief, id)
+	return reports
+}
+
+// climb walks up from id's chief toward chief. It reports whether it reached chief; when the walk ends at a chief on another host
+// first, via names that chief, whose host knows the rest of the way.
+func climb(o Org, chief, id string) (reports bool, via string) {
 	seen := map[string]bool{id: true}
 	for at := o.Managers[id].ParentID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
 		if at == chief {
 			m, ok := o.Managers[at]
-			return !ok || !m.Retired
+			return !ok || !m.Retired, ""
 		}
 		seen[at] = true
-		if m, ok := o.Managers[at]; !ok || m.Retired {
-			return false
+		m, ok := o.Managers[at]
+		if _, _, remote := SplitRemote(at); !ok && remote {
+			return false, at
+		}
+		if !ok || m.Retired {
+			return false, ""
 		}
 	}
-	return false
+	return false, ""
 }
 
 func subject(o Org, m Manager) string {
