@@ -74,15 +74,33 @@ func startArgv(rec launch.Record) ([]string, error) {
 	return append(append([]string{b, "--yolo"}, codexDirs(rec)...), rec.Prompt), nil
 }
 
-func resumeArgv(rec launch.Record) ([]string, error) {
+// resumeArgv continues rec's conversation, with prompt as its next message unless it is empty.
+func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	b, err := bin(rec.Harness)
 	if err != nil {
 		return nil, err
 	}
+	var argv []string
 	if rec.Harness == claude.Name {
-		return []string{b, "--dangerously-skip-permissions", "--resume", rec.Session}, nil
+		argv = []string{b, "--dangerously-skip-permissions", "--resume", rec.Session}
+	} else {
+		argv = append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session)
 	}
-	return append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session), nil
+	if prompt != "" {
+		argv = append(argv, prompt)
+	}
+	return argv, nil
+}
+
+// transcript is the path of rec's conversation, empty when its harness keeps none.
+func transcript(rec launch.Record) string {
+	if rec.Session == "" {
+		return ""
+	}
+	if rec.Harness == codex.Name {
+		return codex.New().Transcript(rec.Session)
+	}
+	return claude.New().Transcript(rec.Session)
 }
 
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
@@ -384,7 +402,8 @@ func (l launcher) Launched() []core.Launched {
 		}
 		rec = l.settle(rec)
 		st := stateIn(panes, listErr, rec)
-		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path})
+		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path,
+			Parent: rec.Parent, Killed: rec.Killed})
 	}
 	return out
 }
@@ -413,52 +432,89 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
-	pane, st := l.state(rec)
-	if st == "running" {
-		return "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
-	}
-	if st == core.LaunchUnknown {
-		return "", fmt.Errorf("tmux could not say whether %s still runs; try again", rec.Key)
-	}
-	if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
-		return "", err
-	}
-	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
-		return "", err
-	}
-	argv, err := startArgv(rec)
-	if rec.Session != "" {
-		argv, err = resumeArgv(rec)
-	}
+	argv, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+		if rec.Session != "" {
+			return resumeArgv(*rec, "")
+		}
+		return startArgv(*rec)
+	})
 	if err != nil {
 		return "", err
-	}
-	name := tmux.SessionName(rec.Key)
-	if pane.ID != "" {
-		err = l.srv.Respawn(name, rec.Worktree.Path, argv)
-	} else {
-		_, err = l.srv.Start(l.conf, name, rec.Worktree.Path, argv)
-	}
-	if err != nil {
-		return "", err
-	}
-	if rec.IsLanded() || !rec.Killed.IsZero() {
-		rec.Landed, rec.Killed = time.Time{}, time.Time{}
-		if err := l.records.Save(rec); err != nil {
-			return "", err
-		}
-	}
-	if rec.Harness == codex.Name && rec.Session != "" {
-		if err := detach("resume-watch", name); err != nil {
-			return "", err
-		}
 	}
 	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
 }
 
+// Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript
+// is gone, starts it over in its worktree on start, or on its first prompt when start is empty.
+func (l launcher) Resume(session, prompt, start string) (bool, error) {
+	rec, ok := l.records.Find(session)
+	if !ok || rec.Session != session {
+		return false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
+	}
+	resumed := transcript(rec) != ""
+	_, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+		if resumed {
+			return resumeArgv(*rec, prompt)
+		}
+		fresh := *rec
+		if start != "" {
+			fresh.Prompt = start
+		}
+		if rec.Harness == codex.Name {
+			rec.Session, rec.Started = "", time.Now()
+		}
+		return startArgv(fresh)
+	})
+	return resumed, err
+}
+
+// restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
+func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, error) {
+	pane, st := l.state(rec)
+	if st == "running" {
+		return nil, fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
+	}
+	if st == core.LaunchUnknown {
+		return nil, fmt.Errorf("tmux could not say whether %s still runs; try again", rec.Key)
+	}
+	if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
+		return nil, err
+	}
+	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+		return nil, err
+	}
+	was := rec
+	args, err := argv(&rec)
+	if err != nil {
+		return nil, err
+	}
+	name := tmux.SessionName(rec.Key)
+	if pane.ID != "" {
+		err = l.srv.Respawn(name, rec.Worktree.Path, args)
+	} else {
+		_, err = l.srv.Start(l.conf, name, rec.Worktree.Path, args)
+	}
+	if err != nil {
+		return nil, err
+	}
+	rec.Landed, rec.Killed = time.Time{}, time.Time{}
+	if rec != was {
+		if err := l.records.Save(rec); err != nil {
+			return nil, err
+		}
+	}
+	if rec.Harness == codex.Name && rec.Session != "" {
+		if err := detach("resume-watch", name); err != nil {
+			return nil, err
+		}
+	}
+	return args, nil
+}
+
 // landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
-// and a death by a signal or after ym kill only a day on.
-func landsAlone(rec launch.Record, state string, now time.Time) bool {
+// and a death by a signal or after ym kill only a day on. A goal's agent whose pane went without ym kill is resumed instead, as a
+// restart of the host leaves it.
+func landsAlone(rec launch.Record, state string, now time.Time, work func(session, parent string) bool) bool {
 	switch {
 	case state == "running", state == core.LaunchUnknown:
 		return false
@@ -466,6 +522,8 @@ func landsAlone(rec launch.Record, state string, now time.Time) bool {
 		return now.Sub(rec.Killed) >= 24*time.Hour
 	case strings.HasPrefix(state, "sig"):
 		return now.Sub(rec.Started) >= 24*time.Hour
+	case state == "gone" && work(rec.Session, rec.Parent):
+		return false
 	}
 	return true
 }
@@ -475,6 +533,8 @@ func (l launcher) Dormant() []core.Dormant {
 	l.sweepSoon()
 	all, _ := l.records.All()
 	dirs := sync.OnceValue(cwds)
+	work := sync.OnceValue(l.goalWork)
+	keep := func(session, parent string) bool { return work()(session, parent) }
 	panes, listErr := l.srv.Panes()
 	var out []core.Dormant
 	for _, rec := range all {
@@ -482,11 +542,11 @@ func (l launcher) Dormant() []core.Dormant {
 			continue
 		}
 		st := stateIn(panes, listErr, rec)
-		if landsAlone(rec, st, time.Now()) {
+		if landsAlone(rec, st, time.Now(), keep) {
 			// Landing removes the worktree, so it goes by the pane as it is now, not a table read before the session started.
 			_, st = l.state(rec)
 		}
-		if landsAlone(rec, st, time.Now()) {
+		if landsAlone(rec, st, time.Now(), keep) {
 			_, err := l.landUnused(rec, dirs)
 			if err == nil {
 				continue
@@ -501,6 +561,18 @@ func (l launcher) Dormant() []core.Dormant {
 		}
 	}
 	return out
+}
+
+// goalWork reports which sessions work under a goal, none without a core to read goals from.
+func (l launcher) goalWork() func(session, parent string) bool {
+	if l.core == nil {
+		return func(string, string) bool { return false }
+	}
+	work := l.core.GoalWork()
+	return func(session, parent string) bool {
+		_, ok := work(session, parent)
+		return ok
+	}
 }
 
 func (l launcher) Revive(key string) (string, error) {

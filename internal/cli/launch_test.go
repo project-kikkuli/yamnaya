@@ -30,6 +30,9 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt.Path, ".git"), []byte("gitdir: "+admin+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	resume := func(prompt string) func(launch.Record) ([]string, error) {
+		return func(r launch.Record) ([]string, error) { return resumeArgv(r, prompt) }
+	}
 	commits := []string{filepath.Join(gitDir, "objects"), filepath.Join(gitDir, "refs"), filepath.Join(gitDir, "logs"), admin}
 	for _, c := range []struct {
 		name   string
@@ -38,9 +41,11 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 		writes bool
 	}{
 		{"codex start", launch.Record{Harness: "codex", Prompt: "go", Worktree: wt}, startArgv, true},
-		{"codex resume", launch.Record{Harness: "codex", Session: "t1", Worktree: wt}, resumeArgv, true},
+		{"codex resume", launch.Record{Harness: "codex", Session: "t1", Worktree: wt}, resume(""), true},
+		{"codex resume with a message", launch.Record{Harness: "codex", Session: "t1", Prompt: "carry on", Worktree: wt}, resume("carry on"), true},
 		{"claude start", launch.Record{Harness: "claude", Session: "s1", Prompt: "go", Worktree: wt}, startArgv, false},
-		{"claude resume", launch.Record{Harness: "claude", Session: "s1", Worktree: wt}, resumeArgv, false},
+		{"claude resume", launch.Record{Harness: "claude", Session: "s1", Worktree: wt}, resume(""), false},
+		{"claude resume with a message", launch.Record{Harness: "claude", Session: "s1", Prompt: "carry on", Worktree: wt}, resume("carry on"), false},
 		{"claude resume command", launch.Record{Harness: "claude", Session: "s1"}, func(r launch.Record) ([]string, error) {
 			return claude.New().Resume(r.Session), nil
 		}, false},

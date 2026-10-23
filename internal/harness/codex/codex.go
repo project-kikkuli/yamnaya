@@ -72,6 +72,22 @@ func (a *Adapter) Owns(p proc.Proc) bool {
 
 func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "resume", "--yolo", id} }
 
+// Transcript is the path of thread id's rollout, empty when Codex keeps none.
+func (a *Adapter) Transcript(id string) string {
+	db, ok := a.db()
+	if !ok {
+		return ""
+	}
+	t, ok := threadByID(db, id)
+	if !ok || t.rollout == "" {
+		return ""
+	}
+	if _, err := os.Stat(t.rollout); err != nil {
+		return ""
+	}
+	return t.rollout
+}
+
 type thread struct {
 	id, rollout, title, cwd, task, branch, role, nickname, path, model string
 	updated                                                            time.Time

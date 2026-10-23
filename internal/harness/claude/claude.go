@@ -244,6 +244,9 @@ var nonPathChars = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 func encodeCwd(cwd string) string { return nonPathChars.ReplaceAllString(cwd, "-") }
 
+// Transcript is the path of session id's transcript, empty when Claude Code keeps none.
+func (a *Adapter) Transcript(id string) string { return a.transcript("", id) }
+
 func (a *Adapter) transcript(cwd, id string) string {
 	if cwd != "" {
 		p := filepath.Join(a.Dir, "projects", encodeCwd(cwd), id+".jsonl")

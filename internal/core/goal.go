@@ -350,7 +350,12 @@ func (o Org) goalOf(session string) (Goal, error) {
 }
 
 // launch starts m's session, fresh with its prompt, and records the attempt; a failure is kept on the manager for the supervisor.
-func (c *Core) launch(b Board, o Org, m Manager) Manager {
+func (c *Core) launch(b Board, o Org, m Manager) Manager { return c.start(b, o, m, false) }
+
+// relaunch brings m back: its own session resumed when ym launched it and can, else a fresh one as launch starts.
+func (c *Core) relaunch(b Board, o Org, m Manager) Manager { return c.start(b, o, m, true) }
+
+func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 	m.LaunchedAt, m.Nudges, m.NudgedAt = c.now(), 0, timeZero
 	if c.Launches == nil {
 		m.LastError = "ym's launcher is unavailable"
@@ -368,6 +373,17 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager {
 	prompt := c.prompt(m, o, waiting)
 	if len(events) > 0 && m.Session != "" {
 		prompt += "\n\nWhile you were down, " + wakeOrChief(o, m, events)
+	}
+	if resume {
+		if resumed, ok := c.resumeManager(o, m, waiting, events, prompt); ok {
+			if resumed.LastError == "" {
+				for _, msg := range waiting {
+					c.Store.Claim(msg.Seq, MsgInbox)
+				}
+				heard(c.now())
+			}
+			return resumed
+		}
 	}
 	_, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name), Session: session})
 	if err != nil {

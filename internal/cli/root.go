@@ -106,6 +106,7 @@ func NewRoot() *cobra.Command {
 			return err
 		}
 		adoptChildren()
+		keepDefault(cmd.ErrOrStderr())
 		if err := ensureWorkService(); err != nil {
 			return err
 		}

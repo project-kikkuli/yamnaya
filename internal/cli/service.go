@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -83,6 +84,11 @@ func serviceCmd() *cobra.Command {
 		}
 		defer lock.Close()
 		status["running"] = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
+		if runtime.GOOS == "darwin" {
+			if path, loaded, pid := launchdState(); loaded {
+				status["kept"], status["kept_pid"] = path, pid
+			}
+		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(status)
 	}}, &cobra.Command{Use: "restart", Short: "Restart reconciliation with this shell's credentials and environment", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		dir, err := stateDir()
@@ -128,15 +134,72 @@ func serviceCmd() *cobra.Command {
 		}
 	}}, &cobra.Command{Use: "ensure", Short: "Start background reconciliation unless it already runs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		return ensureWorkService()
-	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a launchd agent on macOS or a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if runtime.GOOS == "darwin" {
+			path, err := keepLaunchd()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s\n", path)
+			return nil
+		}
 		dir, unit, err := keepWorkService()
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s/%s.timer\n", dir, unit)
 		return nil
+	}}, &cobra.Command{Use: "unkeep", Short: "Stop keeping background reconciliation running across reboots; the running ym serve stays up until it exits", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if runtime.GOOS == "darwin" {
+			path, err := unkeepLaunchd()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "ym serve is no longer kept running; removed %s\n", path)
+			return nil
+		}
+		dir, unit, err := unkeepWorkService()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "ym serve is no longer kept running; removed %s/%s.timer\n", dir, unit)
+		return nil
+	}}, &cobra.Command{Use: "run", Hidden: true, Short: "Run ym serve in the login shell's environment, as the launchd agent ym service keep writes does", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		return serviceRun(cmd.ErrOrStderr())
 	}})
 	return root
+}
+
+// unkeepWorkService stops and removes the systemd user units keepWorkService installed.
+func unkeepWorkService() (string, string, error) {
+	state, err := stateDir()
+	if err != nil {
+		return "", "", err
+	}
+	unit, err := serveUnit(state)
+	if err != nil {
+		return "", "", err
+	}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return "", "", err
+	}
+	dir := filepath.Join(config, "systemd", "user")
+	bus := os.Environ()
+	if os.Getenv("XDG_RUNTIME_DIR") == "" {
+		bus = append(bus, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", os.Getuid()))
+	}
+	c := exec.Command("systemctl", "--user", "disable", "--now", unit+".timer")
+	c.Env = bus
+	if out, err := c.CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("systemctl --user disable --now %s.timer: %w: %s", unit, err, strings.TrimSpace(string(out)))
+	}
+	for _, name := range []string{unit + ".service", unit + ".timer"} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			return "", "", err
+		}
+	}
+	return dir, unit, nil
 }
 
 // keepWorkService installs and starts a systemd user timer that starts ym serve at boot and every minute it is not running, so a

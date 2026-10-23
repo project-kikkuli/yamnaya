@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func git(t *testing.T, dir string, args ...string) {
@@ -44,25 +46,29 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		landed bool
 		tree   bool
 		branch bool
+		goal   bool
 	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false},
-		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true},
-		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true},
-		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true},
-		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false},
-		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true},
-		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true},
-		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true},
-		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true},
-		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true},
-		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true},
-		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true},
-		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true},
-		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false},
+		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true, false},
+		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true, false},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false},
+		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true, false},
+		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false},
+		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true, false},
+		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true, false},
+		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true, false},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true, false},
+		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false},
+		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false},
+		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false},
+		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true, false},
+		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true, false},
+		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true, false},
+		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true},
+		{"gone after ym kill a day ago, merged, a goal's agent", "", day, "", merged, true, false, false, true, false, false, true},
+		{"exit 0, pushed, a goal's agent", "exit 0", 0, "", push, false, false, false, true, false, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -94,6 +100,9 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: log}
 			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-c.age),
 				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+			if c.goal {
+				l.core, rec.Parent = goalCore(t, base, repo), "mgr-session"
+			}
 			if c.killed {
 				rec.Killed = rec.Started
 			}
@@ -257,4 +266,24 @@ func TestGCDropsOnlyRecordsLandedLongAgo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// goalCore is a ym with one active goal in repo whose manager runs as mgr-session.
+func goalCore(t *testing.T, dir, repo string) *core.Core {
+	t.Helper()
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+	_, m, err := c.NewGoal("ship the importer", repo, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Session = "mgr-session"
+	if err := st.SaveManager(m); err != nil {
+		t.Fatal(err)
+	}
+	return c
 }

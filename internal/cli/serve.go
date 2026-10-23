@@ -25,6 +25,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var interval time.Duration
 	var discover bool
 	var briefs string
+	var wait bool
 	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		if interval <= 0 {
 			return fmt.Errorf("interval must be positive")
@@ -43,7 +44,11 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			return err
 		}
 		defer lock.Close()
-		if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		how := syscall.LOCK_EX | syscall.LOCK_NB
+		if wait {
+			how = syscall.LOCK_EX
+		}
+		if err = syscall.Flock(int(lock.Fd()), how); err != nil {
 			return fmt.Errorf("work service already running: %w", err)
 		}
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -114,6 +119,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		}
 	})}
 	cmd.Flags().BoolVar(&once, "once", false, "reconcile once and exit")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for a ym serve already running to exit, then take over, instead of exiting")
 	cmd.Flags().BoolVar(&discover, "discover", true, "discover native sessions on this host")
 	cmd.Flags().DurationVar(&interval, "interval", 5*time.Second, "background reconciliation cadence")
 	cmd.Flags().StringVar(&briefs, "briefs", core.BriefsAddr(), "address to serve goal and chief briefs on; empty serves none")

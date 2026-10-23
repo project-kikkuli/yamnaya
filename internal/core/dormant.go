@@ -98,8 +98,10 @@ type Launched struct {
 	Session string
 	State   string
 	Path    string
-	// Landed is when ym landed it, or zero while it is not landed.
-	Landed time.Time
+	// Parent is the session that spawned it, or empty.
+	Parent string
+	// Landed is when ym landed it, or zero while it is not landed; Killed is when ym kill stopped it, or zero.
+	Landed, Killed time.Time
 }
 
 func (l Launched) String() string {

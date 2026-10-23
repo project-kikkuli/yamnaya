@@ -13,7 +13,8 @@ import (
 // and tell the owner what finished or got stuck.
 func (c *Core) Loop(b Board) error {
 	var errs []error
-	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.Wake} {
+	c.watchCold(b)
+	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold} {
 		errs = append(errs, step(b))
 	}
 	return errors.Join(append(errs, c.NotifyOwner())...)

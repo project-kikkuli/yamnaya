@@ -55,11 +55,12 @@ type Core struct {
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
 
-	gc      gitCache
-	fw      forwardedSet
-	prompts promptCache
-	reuse   boardReuse
-	paced   PRPace
+	gc       gitCache
+	fw       forwardedSet
+	prompts  promptCache
+	reuse    boardReuse
+	paced    PRPace
+	recovery recovery
 }
 
 // Live is a discovered session with where it runs and how many processes run it.

@@ -219,6 +219,7 @@ func installCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "skill: %s -> %s\n", l[0], l[1])
 			}
+			keepDefault(out)
 			old := filepath.Join(home, ".config", "yamnaya", "tmux.conf")
 			if err := os.Remove(old); err == nil {
 				fmt.Fprintf(out, "removed %s; drop any source-file line for it from your tmux config\n", old)

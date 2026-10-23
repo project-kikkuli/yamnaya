@@ -29,19 +29,21 @@ const (
 	EventAgentStopped = "agent-stopped"
 	EventAgentHung    = "agent-hung"
 	EventAgentAdrift  = "agent-adrift"
+	EventResumed      = "resumed"
+	EventResumeFailed = "resume-failed"
 )
 
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
 var ownerKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventMerged: true, EventClosed: true, EventStuck: true, EventDone: true,
-	EventFailedVerify: true, EventUpdate: true,
+	EventFailedVerify: true, EventUpdate: true, EventResumeFailed: true,
 }
 
 // chiefKinds are the state changes a chief hears from every goal below it.
 var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
-	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true,
+	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventResumed: true, EventResumeFailed: true,
 	EventSteered: true, EventAdopted: true,
 }
 
