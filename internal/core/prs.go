@@ -72,12 +72,40 @@ type PRBatch interface {
 // PRBatchSize is how many pull requests RefreshPRs asks a PRBatch for at once.
 const PRBatchSize = 50
 
-// PRStale is how long a fetched status of an open pull request stays good.
+// PRStale is how long a fetched status of an open pull request stays good while GitHub's budget is plentiful.
 const PRStale = 2 * time.Minute
 
-// RefreshPRs fetches every pull request on the board whose status is missing or stale: in batches from a PRBatch, then one at a
-// time, a few at once, for any a batch answered without. A batch that fails ends the cycle's reads, so a GitHub outage or an
-// exhausted budget never turns into one request per pull request; they stay due for the next cycle.
+// PRBudget is a PRSource that knows how much of the account's GitHub budget is left: a fraction of the hourly limit, and when
+// it resets. ok is false before the source has seen the budget.
+type PRBudget interface {
+	Budget() (left float64, reset time.Time, ok bool)
+}
+
+// How reads slow as the account's budget falls, so the owner's other tools always keep their share: at full pace down to half
+// the budget left, then stretching smoothly to PRSlowest at a tenth, where reads stop until the budget resets. Pull requests
+// no active goal tracks stop first, at a quarter, so managers keep their CI and review events longest.
+const (
+	budgetFull  = 0.5
+	budgetBoard = 0.25
+	budgetFloor = 0.1
+	PRSlowest   = 30 * time.Minute
+)
+
+// prStale is how long a status stays good with left of the budget, for a pull request an active goal tracks or not; 0 reads none.
+func prStale(left float64, goal bool) time.Duration {
+	switch {
+	case left >= budgetFull:
+		return PRStale
+	case left < budgetFloor, !goal && left < budgetBoard:
+		return 0
+	}
+	slow := (budgetFull - left) / (budgetFull - budgetFloor)
+	return PRStale + time.Duration(slow*float64(PRSlowest-PRStale))
+}
+
+// RefreshPRs fetches every pull request on the board whose status is missing or stale, active goals' first: in batches from a
+// PRBatch, then one at a time, a few at once, for any a batch answered without. A batch that fails ends the cycle's reads, so a
+// GitHub outage or an exhausted budget never turns into one request per pull request; they stay due for the next cycle.
 // It never runs on the render path; callers start it in the background.
 func (c *Core) RefreshPRs(b Board) (int, error) {
 	if c.PRs == nil {
@@ -88,35 +116,59 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		return 0, err
 	}
 	now := c.now()
-	var due []string
-	seen := map[string]bool{}
-	for _, s := range b.Sessions {
-		for _, pr := range s.AllPRs() {
-			if seen[pr.URL] {
-				continue
-			}
-			seen[pr.URL] = true
-			st, ok := known[pr.URL]
-			if !ok || (!st.Closed() && now.Sub(st.Fetched) >= PRStale) {
-				due = append(due, pr.URL)
-			}
+	left := 1.0
+	if bud, ok := c.PRs.(PRBudget); ok {
+		if f, reset, ok := bud.Budget(); ok && now.Before(reset) {
+			left = f
 		}
 	}
+	goal := map[string]bool{}
 	tracked, err := c.Store.GoalPRs()
 	if err != nil {
 		return 0, err
 	}
-	for goal, urls := range tracked {
-		if g, ok := b.Org.Goals[goal]; !ok || !b.Org.Active(b.Org.Managers[g.ManagerID]) {
-			continue
-		}
-		for _, url := range urls {
-			if st, ok := known[url]; !seen[url] && ok && !st.Closed() && now.Sub(st.Fetched) >= PRStale {
-				seen[url] = true
-				due = append(due, url)
+	for id, urls := range tracked {
+		if g, ok := b.Org.Goals[id]; ok && b.Org.Active(b.Org.Managers[g.ManagerID]) {
+			for _, url := range urls {
+				goal[url] = true
 			}
 		}
 	}
+	var candidates []string
+	seen := map[string]bool{}
+	for _, s := range b.Sessions {
+		_, managed := b.Org.Managed(s.Key(), b.parents)
+		for _, pr := range s.AllPRs() {
+			if managed {
+				goal[pr.URL] = true
+			}
+			if !seen[pr.URL] {
+				seen[pr.URL] = true
+				candidates = append(candidates, pr.URL)
+			}
+		}
+	}
+	for _, urls := range tracked {
+		for _, url := range urls {
+			if _, ok := known[url]; ok && goal[url] && !seen[url] {
+				seen[url] = true
+				candidates = append(candidates, url)
+			}
+		}
+	}
+	var due, later []string
+	for _, url := range candidates {
+		st, ok := known[url]
+		stale := prStale(left, goal[url])
+		switch {
+		case stale == 0, ok && (st.Closed() || now.Sub(st.Fetched) < stale):
+		case goal[url]:
+			due = append(due, url)
+		default:
+			later = append(later, url)
+		}
+	}
+	due = append(due, later...)
 	var firstErr error
 	n := 0
 	if batch, ok := c.PRs.(PRBatch); ok {

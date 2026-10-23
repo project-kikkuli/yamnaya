@@ -2,7 +2,6 @@ package gh
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -59,19 +58,20 @@ func TestABatchReadsEveryPullRequestItCanAndLeavesTheRest(t *testing.T) {
 	}
 }
 
-// TestBatchesStopAtTheReserveUntilTheBudgetResets leaves the owner and their agents half of the account's GraphQL budget.
-func TestBatchesStopAtTheReserveUntilTheBudgetResets(t *testing.T) {
+// TestABatchReportsTheBudgetAndARefusalPausesBatches keeps what GitHub says of the account's budget for RefreshPRs to pace by,
+// and stops asking for a while after GitHub refuses a batch for its rate limit.
+func TestABatchReportsTheBudgetAndARefusalPausesBatches(t *testing.T) {
 	reset := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
-	ok := `{"data":{"viewer":{"login":"mira"},"rateLimit":{"limit":5000,"remaining":%d,"resetAt":"2026-10-22T10:00:00Z"},"p0":{"state":"MERGED"}}}`
 	for _, c := range []struct {
 		name      string
 		reply     string
 		err       error
+		left      float64
 		resumesAt time.Time
 	}{
-		{"plenty left", fmt.Sprintf(ok, 4000), nil, time.Time{}},
-		{"at the reserve", fmt.Sprintf(ok, 2400), nil, reset},
-		{"refused for the rate limit", `{"errors":[{"type":"RATE_LIMITED"}]}`, errors.New("exit status 1"), reset.Add(-time.Hour).Add(rateLimitWait)},
+		{"plenty left", `{"data":{"rateLimit":{"limit":5000,"remaining":4000,"resetAt":"2026-10-22T10:00:00Z"},"p0":{"state":"MERGED"}}}`, nil, 0.8, time.Time{}},
+		{"little left", `{"data":{"rateLimit":{"limit":5000,"remaining":600,"resetAt":"2026-10-22T10:00:00Z"},"p0":{"state":"MERGED"}}}`, nil, 0.12, time.Time{}},
+		{"refused for the rate limit", `{"errors":[{"type":"RATE_LIMITED"}]}`, errors.New("exit status 1"), 0, reset.Add(-time.Hour).Add(rateLimitWait)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			now := reset.Add(-time.Hour)
@@ -82,6 +82,9 @@ func TestBatchesStopAtTheReserveUntilTheBudgetResets(t *testing.T) {
 			}}
 			urls := []string{"https://github.com/me/app/pull/1"}
 			s.PRStatuses(urls)
+			if left, at, ok := s.Budget(); c.left > 0 && (!ok || left != c.left || !at.Equal(reset)) {
+				t.Fatalf("budget %v resets %v known %v, want %v at %v", left, at, ok, c.left, reset)
+			}
 			for _, at := range []time.Time{now.Add(time.Minute), c.resumesAt.Add(-time.Second), c.resumesAt} {
 				if at.Before(now) {
 					continue

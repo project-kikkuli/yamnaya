@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -61,7 +60,7 @@ func claudeSources(dir string) []source {
 }
 
 func stat(path, session string, root bool) (source, bool) {
-	info, err := os.Stat(path)
+	info, err := lstat(path)
 	if err != nil {
 		return source{}, false
 	}

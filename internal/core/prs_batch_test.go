@@ -111,3 +111,75 @@ func TestAFailingBatchNeverFansOutIntoSingleRequests(t *testing.T) {
 		t.Fatalf("err %v, %d batches and %d single requests, want the failure, one batch and none", err, src.batches, src.ones)
 	}
 }
+
+// budgetSource is a batchSource that reports a fixed share of the account's budget left and counts reads per pull request.
+type budgetSource struct {
+	batchSource
+	left  float64
+	reset time.Time
+	reads map[string]int
+}
+
+func (s *budgetSource) Budget() (float64, time.Time, bool) { return s.left, s.reset, true }
+
+func (s *budgetSource) PRStatuses(urls []string) (map[string]PRStatus, error) {
+	for _, u := range urls {
+		s.reads[u]++
+	}
+	return s.batchSource.PRStatuses(urls)
+}
+
+// TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest runs an hour of ym serve's cycle at a fixed share of the account's
+// budget left: full pace above half, slower and slower below it, the board's other pull requests stopping at a quarter and
+// every read stopping at a tenth.
+func TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest(t *testing.T) {
+	for _, c := range []struct {
+		left               float64
+		goalMin, goalMax   int
+		boardMin, boardMax int
+	}{
+		{0.9, 29, 31, 29, 31},
+		{0.5, 29, 31, 29, 31},
+		{0.3, 3, 5, 3, 5},
+		{0.2, 2, 4, 0, 0},
+		{0.05, 0, 0, 0, 0},
+	} {
+		t.Run(fmt.Sprintf("%.0f%% left", c.left*100), func(t *testing.T) {
+			st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+			src := &budgetSource{batchSource: batchSource{now: func() time.Time { return now }}, left: c.left, reset: now.Add(2 * time.Hour), reads: map[string]int{}}
+			core := &Core{Store: st, PRs: src, Now: func() time.Time { return now }}
+			b := Board{Org: Org{Managers: map[string]Manager{"m1": {ID: "m1"}}, Goals: map[string]Goal{}, Sessions: map[string]string{"goal-agent": "m1"}}}
+			for i := range 2 {
+				var prs []PR
+				for j := range 5 {
+					prs = append(prs, PR{URL: fmt.Sprintf("https://github.com/acme/app/pull/%d", i*10+j)})
+				}
+				b.Sessions = append(b.Sessions, Live{Session: Session{ID: []string{"goal-agent", "own"}[i], Facts: Facts{PRs: prs}}})
+			}
+			for _, pr := range b.Sessions[0].PRs {
+				st.SavePRStatus(pr.URL, PRStatus{State: "OPEN", Fetched: now.Add(-time.Hour)})
+			}
+			for _, pr := range b.Sessions[1].PRs {
+				st.SavePRStatus(pr.URL, PRStatus{State: "OPEN", Fetched: now.Add(-time.Hour)})
+			}
+			for range int(time.Hour / (5 * time.Second)) {
+				if _, err := core.RefreshPRs(b); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(5 * time.Second)
+			}
+			for i, want := range [][2]int{{c.goalMin, c.goalMax}, {c.boardMin, c.boardMax}} {
+				for _, pr := range b.Sessions[i].PRs {
+					if got := src.reads[pr.URL]; got < want[0] || got > want[1] {
+						t.Errorf("%s read %d times in the hour, want %d to %d", pr.URL, got, want[0], want[1])
+					}
+				}
+			}
+		})
+	}
+}

@@ -28,19 +28,18 @@ type Source struct {
 	LandingRun func(url string) ([]byte, error)
 
 	budgetMu sync.Mutex
-	// paused is when batches may run again, after the account's GraphQL budget fell to the reserve or ran out.
+	// paused is when batches may run again after GitHub refused one for its rate limit.
 	paused time.Time
+	// left and reset are the account's GraphQL budget as the last batch saw it.
+	left  float64
+	reset time.Time
 }
-
-// Reserve is the share of the account's hourly GraphQL budget ym leaves to the owner and their agents: below it, ym reads no
-// pull requests until the budget resets. Every ym reads the same account budget, so all of them stop together.
-const Reserve = 0.5
 
 // rateLimitWait is how long batches stop after GitHub refused one for its rate limit without saying when the budget resets.
 const rateLimitWait = 5 * time.Minute
 
-// ErrPaused is PRStatuses' answer while the account's GraphQL budget is at the reserve.
-var ErrPaused = errors.New("GitHub GraphQL budget at ym's reserve; waiting for it to reset")
+// ErrPaused is PRStatuses' answer for a while after GitHub refused a batch for its rate limit.
+var ErrPaused = errors.New("GitHub refused a batch for its rate limit; waiting before the next")
 
 func New() *Source {
 	return &Source{Run: query, Batch: graphQL, REST: rest, Repo: repoExists, Now: time.Now}
@@ -139,8 +138,10 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 		Remaining int       `json:"remaining"`
 		ResetAt   time.Time `json:"resetAt"`
 	}
-	if raw, ok := v.Data["rateLimit"]; ok && json.Unmarshal(raw, &budget) == nil && budget.Limit > 0 && float64(budget.Remaining) < Reserve*float64(budget.Limit) {
-		s.pause(budget.ResetAt)
+	if raw, ok := v.Data["rateLimit"]; ok && json.Unmarshal(raw, &budget) == nil && budget.Limit > 0 {
+		s.budgetMu.Lock()
+		s.left, s.reset = float64(budget.Remaining)/float64(budget.Limit), budget.ResetAt
+		s.budgetMu.Unlock()
 	}
 	var viewer struct{ Login string }
 	if raw, ok := v.Data["viewer"]; ok {
@@ -162,6 +163,13 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 		got[u] = st
 	}
 	return got, nil
+}
+
+// Budget is the share of the account's hourly GraphQL budget left when the last batch ran, and when it resets.
+func (s *Source) Budget() (float64, time.Time, bool) {
+	s.budgetMu.Lock()
+	defer s.budgetMu.Unlock()
+	return s.left, s.reset, !s.reset.IsZero()
 }
 
 func (s *Source) pause(until time.Time) {
