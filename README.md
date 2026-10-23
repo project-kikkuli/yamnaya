@@ -115,6 +115,8 @@ Hosts talk through relays. Each host keeps every ask, message and command bound 
 
 `ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers.
 
+- GitHub: pull request status, checks and review threads come from `gh api graphql`, 50 pull requests to a query, at most every two minutes per open PR. A pull request missing from a batch's answer is read alone; a batch that fails ends that cycle's reads. ym leaves half the account's hourly GraphQL budget to you and your agents: while GitHub reports less than half left, every ym instance reads no pull requests until the budget resets.
+- Files: ym rereads a transcript or state file only after a stat shows it changed. An idle Claude session whose state file has not changed for five seconds is reread at most every ten seconds until it does.
 - The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
 - A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
@@ -181,5 +183,7 @@ Commands that act for an agent find its session by walking up the process tree t
     staticcheck ./...
 
 `internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` draws the mountains.
+
+`agent-slot -- go test ./internal/scale ./internal/cli ./internal/tui -run '^$' -bench . -benchtime 20x` measures a synthetic thousand-goal installation (two levels of chiefs, about 3000 sessions with 2 subagents each, 2000 PRs): one second of the board, one `ym serve` cycle with its GitHub calls per minute, and drawing the board and mountains, with CPU and terminal bytes per op. `YM_SCALE_DIR` keeps the installation between runs; `YM_SCALE_PROFILE` writes a CPU profile of the measured ops.
 
 `tools/rehearse/rehearse.sh [--scenario S] [--ref REF] [--timeout MIN]` runs a real goal end to end against a private proving-ground repository (`$YM_REHEARSAL_REPO`) with its own state directory and tmux server, logging every change to `timeline.log`. Scenarios inject one fault: `clean`, `kill-manager`, `kill-worker`, `freeze-worker`, `break-ci`, `review-comment`, `kill-serve`. `--reset-ground` closes the proving ground's open pull requests and puts its main back at its first commit, so the asks are new work again.
