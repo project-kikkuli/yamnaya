@@ -1136,6 +1136,14 @@ func (m *Model) pop() {
 
 // expand shows an item in full; its keys act on it there.
 func (m Model) expand(id string) (tea.Model, tea.Cmd) {
+	if _, _, remote := m.core.RemoteRef(id); remote {
+		for _, it := range m.remoteItems() {
+			if it.Key() == id {
+				m.why, m.back, m.mode = &it, m.mode, modeWhy
+				return m, nil
+			}
+		}
+	}
 	it, err := m.core.Store.Item(id)
 	if err != nil {
 		m.message = "error: " + err.Error()
@@ -1508,4 +1516,13 @@ func titleOf(s core.Live) string {
 		return s.Title
 	}
 	return core.Short(s.Key())
+}
+
+// remoteItems are the items other hosts last reported, open and lately closed, with their history.
+func (m Model) remoteItems() []core.Item {
+	var out []core.Item
+	for _, r := range m.board.Remotes {
+		out = append(append(out, r.Items...), r.Closed...)
+	}
+	return out
 }

@@ -150,3 +150,26 @@ func TestLaunchesStartWhereTheTargetSaysAndTheNextOneDefaultsThere(t *testing.T)
 		})
 	}
 }
+
+func TestTheItemsListShowsAnotherHostsClosedItemWithTheHistoryThatHostKept(t *testing.T) {
+	m, c, _ := setup(t)
+	m, r := withBox(t, m, c)
+	r.boards[0].Closed = []core.Item{{Seq: 2, ID: "D2", Kind: core.KindDecision, Question: "Which word?", Session: "far-lead-0001", State: core.ItemAnswered,
+		Answer: "D", Host: box, History: []core.Event{{To: core.ItemOpen}, {From: core.ItemOpen, To: core.ItemAnswered, Text: "D"},
+			{From: core.ItemAnswered, To: core.ItemAnswered, Text: "ym item answer #2 C did not land: answered there already: D"}}}}
+	m = refresh(t, m)
+	m = press(t, m, "I")
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "Which word?") {
+		t.Fatalf("items list lacks box's answered item:\n%s", v)
+	}
+	for range len(m.items) {
+		if r, ok := m.selected(); ok && r.item != nil && r.item.Host == box && r.item.Seq == 2 {
+			break
+		}
+		m = press(t, m, "down")
+	}
+	m = press(t, m, "w")
+	if v := ansi.Strip(m.View().Content); m.mode != modeWhy || !strings.Contains(v, "did not land: answered there already: D") {
+		t.Fatalf("w on box's item shows mode %v:\n%s", m.mode, v)
+	}
+}

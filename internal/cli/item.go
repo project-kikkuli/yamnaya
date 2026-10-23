@@ -416,6 +416,7 @@ type itemJSON struct {
 	Received   bool          `json:"received"`
 	Recipient  string        `json:"recipient"`
 	Host       string        `json:"host,omitempty"`
+	History    []core.Event  `json:"history,omitempty"`
 }
 
 func ts(t time.Time) string {
@@ -436,7 +437,7 @@ func toJSON(it core.Item) itemJSON {
 	}
 	return itemJSON{Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
-		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero()}
+		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero(), History: it.History}
 }
 
 func printItems(w io.Writer, items []core.Item, asJSON bool) error {

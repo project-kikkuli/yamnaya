@@ -148,3 +148,32 @@ func TestLocalRefsNeverReadRemoteHosts(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryItemListsAnotherHostsOpenAndLatelyClosedItemsWithTheirHistory(t *testing.T) {
+	w, r := remoteWorld(t)
+	note := Event{At: w.core.now(), From: ItemAnswered, To: ItemAnswered, Text: "ym item answer #2 C from a did not land: answered there already: D"}
+	r.boards[0].Closed = []Item{{Seq: 2, ID: "D2", Kind: KindDecision, Question: "which word?", State: ItemAnswered, Answer: "D", Host: "box",
+		History: []Event{{At: w.core.now(), To: ItemOpen}, {At: w.core.now(), From: ItemOpen, To: ItemAnswered, Text: "D"}, note}}}
+	b := w.board(t)
+	for _, tc := range []struct {
+		all  bool
+		want []string
+	}{{all: false, want: []string{"box/#1"}}, {all: true, want: []string{"box/#1", "box/#2"}}} {
+		items, err := w.core.ItemsIn(b, "", tc.all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, it := range items {
+			if it.Host != "" {
+				keys = append(keys, it.Key())
+			}
+		}
+		if !reflect.DeepEqual(keys, tc.want) {
+			t.Errorf("all=%v: remote items %v, want %v", tc.all, keys, tc.want)
+		}
+		if tc.all && !strings.Contains(items[len(items)-1].History[2].Text, "did not land") {
+			t.Errorf("box/#2 history %+v lacks the refused answer's note", items[len(items)-1].History)
+		}
+	}
+}

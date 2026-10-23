@@ -532,8 +532,17 @@ func (c *Core) ItemsIn(b Board, project string, all bool) ([]Item, error) {
 		f.States = []string{ItemOpen}
 	}
 	items, err := c.Store.Items(f)
-	if err != nil || project == "" {
+	if err != nil {
 		return items, err
+	}
+	for _, r := range b.Remotes {
+		items = append(items, r.Items...)
+		if all {
+			items = append(items, r.Closed...)
+		}
+	}
+	if project == "" {
+		return items, nil
 	}
 	var kept []Item
 	for _, it := range items {

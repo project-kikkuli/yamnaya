@@ -17,6 +17,8 @@ type boardJSON struct {
 	Launched []launchedJSON `json:"launched"`
 	Dormant  []dormantJSON  `json:"dormant"`
 	Waiting  []waitingJSON  `json:"waiting"`
+	// Closed are items answered or dismissed in the last week, with their history, for another host's list of every item.
+	Closed []itemJSON `json:"closed,omitempty"`
 	// Self is what this host calls itself; the rest is its goal tree and how each manager and chief stands by this host's reading.
 	Self            string               `json:"self,omitempty"`
 	Managers        []core.Manager       `json:"managers,omitempty"`
@@ -68,8 +70,11 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				return err
 			}
 			out := boardJSON{Sessions: sessionsJSON(e.core, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+			if out.Closed, err = closedItems(e.core); err != nil {
+				return err
+			}
 			for _, it := range items {
-				out.Items = append(out.Items, toJSON(it))
+				out.Items = append(out.Items, withHistory(e.core, it))
 			}
 			for _, l := range b.Launched {
 				out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
@@ -135,10 +140,10 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Sessions = append(r.Sessions, l)
 	}
 	for _, it := range j.Items {
-		r.Items = append(r.Items, core.Item{Seq: it.Seq, Scope: qualify(it.Scope), ID: it.ID, Alias: it.Alias, Kind: it.Kind, Action: it.Action,
-			Question: it.Question, Rec: it.Rec, Options: it.Options, Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session,
-			Harness: it.Harness, CreatedAt: parseTS(it.CreatedAt), State: it.State, Answer: it.Answer, Reason: it.Reason,
-			AnsweredAt: parseTS(it.AnsweredAt), Recipient: it.Recipient, Host: host})
+		r.Items = append(r.Items, fromJSON(host, qualify, it))
+	}
+	for _, it := range j.Closed {
+		r.Closed = append(r.Closed, fromJSON(host, qualify, it))
 	}
 	for _, l := range j.Launched {
 		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed)})
@@ -157,4 +162,41 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 func parseTS(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
+}
+
+// fromJSON is an item another host printed, its scope qualified with that host.
+func fromJSON(host string, qualify func(string) string, it itemJSON) core.Item {
+	return core.Item{Seq: it.Seq, Scope: qualify(it.Scope), ID: it.ID, Alias: it.Alias, Kind: it.Kind, Action: it.Action,
+		Question: it.Question, Rec: it.Rec, Options: it.Options, Assumption: it.Assumption, Evidence: it.Evidence, Tried: it.Tried,
+		Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, CreatedAt: parseTS(it.CreatedAt), State: it.State, Answer: it.Answer,
+		Reason: it.Reason, AnsweredAt: parseTS(it.AnsweredAt), Recipient: it.Recipient, Host: host, History: it.History}
+}
+
+// withHistory is it as JSON with every state change it went through.
+func withHistory(c *core.Core, it core.Item) itemJSON {
+	if full, err := c.Store.Item(it.Key()); err == nil {
+		it.History = full.History
+	}
+	return toJSON(it)
+}
+
+// closedWindow is how far back another host's list of every item reaches into answered and dismissed ones.
+const closedWindow = 7 * 24 * time.Hour
+
+func closedItems(c *core.Core) ([]itemJSON, error) {
+	all, err := c.Store.Items(core.ItemFilter{})
+	if err != nil {
+		return nil, err
+	}
+	out := []itemJSON{}
+	for _, it := range all {
+		at := it.AnsweredAt
+		if at.IsZero() {
+			at = it.CreatedAt
+		}
+		if it.State != core.ItemOpen && time.Since(at) < closedWindow {
+			out = append(out, withHistory(c, it))
+		}
+	}
+	return out, nil
 }

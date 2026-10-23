@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 const fakeBoard = `{"sessions":[{"harness":"claude","id":"aaaa-1111","pid":7,"status":"busy","title":"fix one typo","host":"ym %2","project":"aaaa-1111","repo_key":"/src/app/.git"}],
@@ -88,5 +91,47 @@ func TestOneShotReadsCallAHostStillSilentAtTheirDeadlineUnreachable(t *testing.T
 	r.ssh, r.timeout = fakeSSH(t), 5*time.Second
 	if got := r.Boards()[0].State(); got != "unreachable: no answer in 1s" {
 		t.Errorf("state = %q", got)
+	}
+}
+
+func TestABoardCarriesLatelyClosedItemsWithTheirHistoryToAnotherHost(t *testing.T) {
+	dir := t.TempDir()
+	c, err := Wire(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Store.Close()
+	open, err := c.Store.AddItem(core.Item{Session: "s1", Kind: core.KindDecision, Question: "still open?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := c.Store.AddItem(core.Item{Session: "s1", Kind: core.KindDecision, Question: "which word?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Store.Transition(done.Key(), core.ItemAnswered, "D"); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := closedItems(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(boardJSON{Items: []itemJSON{withHistory(c, open)}, Closed: closed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j boardJSON
+	if err := json.Unmarshal(raw, &j); err != nil {
+		t.Fatal(err)
+	}
+	r := remoteBoard("box", j)
+	if len(r.Closed) != 1 || r.Closed[0].Key() != "box/"+done.Key() || r.Closed[0].Answer != "D" {
+		t.Fatalf("closed = %+v, want the answered item keyed by box", r.Closed)
+	}
+	if h := r.Closed[0].History; len(h) < 2 || h[len(h)-1].To != core.ItemAnswered || h[len(h)-1].Text != "D" {
+		t.Errorf("history = %+v, want its answer", h)
+	}
+	if len(r.Items) != 1 || r.Items[0].Key() != "box/"+open.Key() {
+		t.Errorf("open items = %+v", r.Items)
 	}
 }

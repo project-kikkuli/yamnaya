@@ -29,6 +29,8 @@ type RemoteBoard struct {
 	Err      error
 	Sessions []Live
 	Items    []Item
+	// Closed are its items answered or dismissed lately, with their history.
+	Closed   []Item
 	Launched []Launched
 	Dormant  []Dormant
 	Waiting  []RemoteWaiting
