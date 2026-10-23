@@ -1114,7 +1114,7 @@ type revivedMsg struct {
 // openLaunch is the command that shows the launched session key in this terminal: ym open on its host, or here.
 func openLaunch(c *core.Core, key string) *exec.Cmd {
 	if host, rest, ok := c.RemoteRef(key); ok && c.Remotes != nil {
-		return c.Remotes.Attach(host, "open", rest)
+		return c.Remotes.Attach(host, "open", "--no-board", rest)
 	}
 	self, err := os.Executable()
 	if err != nil {
