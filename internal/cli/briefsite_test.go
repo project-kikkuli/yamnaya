@@ -88,6 +88,11 @@ func TestBriefPagesShowEachVersionAndRollReportsUpUnderTheirChief(t *testing.T) 
 	if res, _ := http.Get(srv.URL + "/b/goal99"); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown goal answered %d, want 404", res.StatusCode)
 	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/b/"+g.ID, nil)
+	req.Host = "rebind.example.com"
+	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != http.StatusForbidden {
+		t.Fatalf("a request for a foreign name answered %v, %v; want 403", res, err)
+	}
 }
 
 func TestBriefSiteAnswersOnlyRequestsToAnAddress(t *testing.T) {

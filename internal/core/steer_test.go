@@ -376,19 +376,50 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 	}
 }
 
-func TestAnUnadoptedSteerFromAChiefOnAnotherHostIsRaisedToThatChief(t *testing.T) {
+func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoesUnadopted(t *testing.T) {
 	f := newFleet(t)
 	chief := f.a.chief(t, "platform")
 	_, mgr := f.b.goal(t, "ship the fix", "/repo/app")
 	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
 		t.Fatal(err)
 	}
+	var refused []error
+	f.b.core.RunSelf = func(args ...string) (string, error) {
+		var text, by, ref string
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--text":
+				i++
+				text = args[i]
+			case "--by":
+				i++
+				by = args[i]
+			default:
+				ref = args[i]
+			}
+		}
+		if strings.Join(args[:2], " ") != "goal steer" || by == "" {
+			t.Fatalf("b ran %q, want a chief's goal steer", args)
+		}
+		_, err := f.b.core.SteerContext(f.b.board(t), ref, text, by)
+		if err != nil {
+			refused = append(refused, err)
+		}
+		return "", err
+	}
 	for _, stranger := range []string{RemoteKey("a", "mgr9"), RemoteKey("c", chief.ID)} {
 		if _, err := f.b.core.SteerContext(f.b.board(t), mgr.ID, "JSON only", stranger); err == nil {
 			t.Fatalf("%s steered %s, which does not report to it", stranger, mgr.ID)
 		}
 	}
-	f.b.steer(t, mgr.ID, "CSV only", RemoteKey("a", chief.ID))
+	f.a.core.Remotes = &sshTo{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b"}}}, hosts: map[string]*orgWorld{"b": f.b}}
+	if _, err := f.a.core.SteerContext(f.a.board(t), RemoteKey("b", mgr.ID), "CSV only", chief.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.sync(t)
+	if steers, err := f.b.core.Store.Steers(mgr.ID); err != nil || len(steers) != 1 || len(refused) > 0 {
+		t.Fatalf("b holds steers %+v (%v), refused %v; want the chief's revision 1", steers, err, refused)
+	}
 	for range Nudges + 2 {
 		f.b.clock = f.b.clock.Add(AdoptAfter + time.Minute)
 		f.b.supervise(t)
@@ -398,3 +429,11 @@ func TestAnUnadoptedSteerFromAChiefOnAnotherHostIsRaisedToThatChief(t *testing.T
 		t.Fatalf("chief on a heard %q, want that its steer of %s went unadopted", f.a.handedTo(chief.Session), mgr.ID)
 	}
 }
+
+// sshTo runs a ym command on another host of the fleet as ym remote does over ssh.
+type sshTo struct {
+	fakeRemotes
+	hosts map[string]*orgWorld
+}
+
+func (r *sshTo) Run(host string, args ...string) (string, error) { return r.hosts[host].core.RunSelf(args...) }
