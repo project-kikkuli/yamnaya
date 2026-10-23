@@ -281,7 +281,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() {
 			m.board = b.board
 			if b.tick {
 				return m, m.tick()

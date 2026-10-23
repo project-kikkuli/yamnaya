@@ -41,3 +41,25 @@ func TestTheHeaderShowsSlotHoldersWaitersAndAnOverload(t *testing.T) {
 		}
 	}
 }
+
+func TestThrottleTransitionsRefreshTheHeaderEvenWhenSessionsAreUnchanged(t *testing.T) {
+	now := time.Now()
+	m := Model{core: &core.Core{}, board: missionBoard(now), loaded: true, width: 200, height: 50, cursor: -1}
+	m.board.Gen = 7
+	m.board.Machine = core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 10}
+	page := m.prepareView()
+	m.page = &page
+	for _, state := range []pressure.State{{Active: true, Holding: true}, {Active: true}, {}} {
+		board := m.board
+		board.Machine.Slots.Pressure = state
+		next, _ := m.Update(boardMsg{board: board})
+		m = next.(Model)
+		view := ansi.Strip(m.View().Content)
+		if want := state.Line(); want != "" && !strings.Contains(view, want) {
+			t.Fatalf("missing %q in %s", want, view)
+		}
+		if !state.Active && strings.Contains(view, "throttle:") {
+			t.Fatal("throttle header did not clear", view)
+		}
+	}
+}
