@@ -54,8 +54,11 @@ func branchOwns(worktree, branch, oid string, ahead int, now time.Time) bool {
 	git := func(args ...string) bool {
 		return exec.Command("git", append([]string{"-C", worktree}, args...)...).Run() == nil
 	}
-	upstream, _ := exec.Command("git", "-C", worktree, "config", "--get", "branch."+branch+".merge").Output()
-	own := strings.TrimSpace(string(upstream)) == "refs/heads/"+branch || !git("cat-file", "-e", oid+"^{commit}") || git("merge-base", "--is-ancestor", oid, "HEAD") ||
+	config := func(key string) string {
+		out, _ := exec.Command("git", "-C", worktree, "config", "--get", "branch."+branch+"."+key).Output()
+		return strings.TrimSpace(string(out))
+	}
+	own := config("remote") == "origin" && config("merge") == "refs/heads/"+branch || !git("cat-file", "-e", oid+"^{commit}") || git("merge-base", "--is-ancestor", oid, "HEAD") ||
 		(ahead > 0 && git("merge-base", "--is-ancestor", "HEAD", oid))
 	ownersMu.Lock()
 	owners[key] = ownerEntry{own, now}

@@ -30,6 +30,7 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 		return path
 	}
 	opener, other, fresh, unseen, rebased := repo("opener"), repo("other"), repo("fresh"), repo("unseen"), repo("rebased")
+	elsewhere, untracked, fork := repo("tracks-another-branch"), repo("untracked"), repo("tracks-a-fork")
 	git(t, opener, "switch", "-q", "-c", "x")
 	git(t, opener, "commit", "-q", "--allow-empty", "-m", "opener's work")
 	git(t, opener, "push", "-q", "origin", "x")
@@ -43,6 +44,16 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 	git(t, rebased, "switch", "-q", "x")
 	git(t, rebased, "reset", "-q", "--hard", "origin/main")
 	git(t, rebased, "commit", "-q", "--allow-empty", "-m", "opener's work, amended before its force-push")
+	for _, dir := range []string{elsewhere, untracked, fork} {
+		git(t, dir, "fetch", "-q", "origin")
+		git(t, dir, "switch", "-q", "--no-track", "-c", "x", "origin/main")
+		git(t, dir, "commit", "-q", "--allow-empty", "-m", "unrelated work on a same-named branch")
+	}
+	git(t, elsewhere, "config", "branch.x.remote", "origin")
+	git(t, elsewhere, "config", "branch.x.merge", "refs/heads/add-consonants-flag")
+	git(t, fork, "remote", "add", "fork", origin)
+	git(t, fork, "config", "branch.x.remote", "fork")
+	git(t, fork, "config", "branch.x.merge", "refs/heads/x")
 	git(t, unseen, "switch", "-q", "-c", "x")
 	git(t, unseen, "commit", "-q", "--allow-empty", "-m", "unseen work")
 
@@ -59,6 +70,9 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 		{"fresh-branch", fresh, false},
 		{"never-fetched", unseen, true},
 		{"rebased-since-push", rebased, true},
+		{"tracks-another-branch", elsewhere, false},
+		{"untracked-unrelated", untracked, false},
+		{"tracks-a-fork", fork, false},
 	}
 	for _, s := range sessions {
 		w.spawn(s.id, m.Session)
