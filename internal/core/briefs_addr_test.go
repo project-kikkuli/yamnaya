@@ -21,7 +21,7 @@ func TestBriefsAddrGivesEachStateDirectoryItsOwnPort(t *testing.T) {
 		}
 	}
 	seen := map[string]string{}
-	for _, state := range []string{filepath.Join(home, "run1", "state"), filepath.Join(home, "run2", "state"), "/tmp/rehearsal/state"} {
+	for _, state := range []string{"/tmp/run1/state", "/tmp/run2/state", "/tmp/rehearsal/state"} {
 		got := addr(state)
 		port, err := strconv.Atoi(strings.TrimPrefix(got, "127.0.0.1:"))
 		if err != nil || port == 7477 || port < 1024 || port > 65535 {
