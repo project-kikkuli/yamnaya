@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/project-kikkuli/yamnaya/internal/agenttest"
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
@@ -25,7 +26,7 @@ func TestMain(m *testing.M) {
 		p.hues = append(p.hues, lipgloss.NewStyle())
 	}
 	pal = p
-	os.Exit(m.Run())
+	os.Exit(agenttest.Run(m))
 }
 
 func usePalette(t *testing.T, color bool) {

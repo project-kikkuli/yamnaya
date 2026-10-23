@@ -3,6 +3,7 @@ package launch
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -98,6 +99,23 @@ func sigName(sig syscall.Signal) string {
 		return "SIGINT"
 	}
 	return "SIGTERM"
+}
+
+// Unadoptable says why ym gives no launch record to a session working in dir, or "": the home directory holds everything
+// the owner has, so nothing ym does to a launch may ever point at it.
+func Unadoptable(dir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	have, err := os.Stat(dir)
+	if err != nil {
+		return ""
+	}
+	if want, err := os.Stat(home); err == nil && os.SameFile(have, want) {
+		return dir + " is the home directory; start the agent in a repository to have ym adopt it"
+	}
+	return ""
 }
 
 // AdoptKey names the launch record of an adopted session.

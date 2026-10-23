@@ -23,7 +23,7 @@ func (l launcher) Saw(sessions []core.Live) {
 	var bySession map[string]launch.Record
 	now := time.Now()
 	for _, s := range sessions {
-		if s.Remote != "" || s.Background || s.ID == "" || s.Cwd == "" || s.Status == core.Moved || (s.Handle != nil && s.Handle.Host == l.srv.Name()) || (s.Harness != claude.Name && s.Harness != codex.Name) {
+		if s.Remote != "" || s.Background || s.ID == "" || s.Cwd == "" || launch.Unadoptable(s.Cwd) != "" || s.Status == core.Moved || (s.Handle != nil && s.Handle.Host == l.srv.Name()) || (s.Harness != claude.Name && s.Harness != codex.Name) {
 			continue
 		}
 		if bySession == nil {

@@ -62,7 +62,7 @@ func cwds() []string {
 }
 
 // gc sweeps the repositories of launch records and, when l.everywhere, every repository in repos and with linked worktrees
-// under ~/dev; otherwise it touches only the worktrees and branches of launch records. It marks the records of worktrees it
+// under ~/dev; otherwise it touches only the worktrees and branches its own launches made, never an adopted session's. It marks the records of worktrees it
 // removes landed, then drops the records landed over landedKeep ago whose transcripts are gone, logs every removal, and says how many.
 func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	seen := map[string]bool{}
@@ -71,8 +71,10 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	if !l.everywhere {
 		repos, own = nil, &launch.Owned{Paths: map[string]bool{}, Branches: map[string]bool{}}
 		for _, rec := range recs {
-			own.Paths[rec.Worktree.Path] = true
-			own.Branches[rec.Worktree.Branch] = rec.Worktree.Branch != ""
+			if !rec.Adopted {
+				own.Paths[rec.Worktree.Path] = true
+				own.Branches[rec.Worktree.Branch] = rec.Worktree.Branch != ""
+			}
 		}
 	} else if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
 		repos = append(repos, launch.Discovered(filepath.Join(home, "dev"), l.repos, time.Now())...)

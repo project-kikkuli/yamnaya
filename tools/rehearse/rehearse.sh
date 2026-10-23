@@ -92,6 +92,12 @@ git -C "$src" archive "$rev" | tar -x -C "$run/src"
 (cd "$run/src" && go build -o "$run/bin/ym" ./cmd/ym)
 
 export YAMNAYA_STATE_DIR=$run/state
+# Codex writes its threads under CODEX_HOME; a private one with copies of the owner's login and config keeps the run's out of ~/.codex.
+mkdir -p "$run/codex"
+for f in auth.json config.toml; do
+	if [ -f "$HOME/.codex/$f" ]; then cp "$HOME/.codex/$f" "$run/codex/"; fi
+done
+export CODEX_HOME=$run/codex
 export YAMNAYA_YM_SOCKET=ymr-$stamp
 export PATH=$run/bin:$PATH
 unset TMUX TMUX_PANE CLAUDECODE CLAUDE_CODE_ENTRYPOINT YAMNAYA_TMUX_SOCKET
