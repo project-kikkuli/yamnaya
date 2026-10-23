@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -9,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
 // fakeLaunchd stands in for launchctl: it records what it is asked and loads and unloads labels.
@@ -176,5 +180,95 @@ func TestADeletedStateDirsAgentRemovesItselfInsteadOfRecreatingIt(t *testing.T) 
 	}
 	if _, err := os.Stat(state); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("service run recreated %s", state)
+	}
+}
+
+func TestALaunchRunningWhenYmsServerWentAwayResumesAndOneThatHadExitedDoesNot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seen    []string
+		killed  bool
+		revives bool
+	}{
+		{name: "running, then the server went", seen: []string{"running", "gone"}, revives: true},
+		{name: "exited, then the server went", seen: []string{"running", "exited 0", "gone"}},
+		{name: "killed by a signal, then the server went", seen: []string{"running", "sigkill", "gone"}},
+		{name: "running, then ym kill, then the server went", seen: []string{"running", "gone"}, killed: true},
+		{name: "launched, never seen running, then its session went", seen: []string{"gone"}},
+		{name: "running, tmux could not say, then the server went", seen: []string{"running", "unknown", "gone"}, revives: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := launch.Record{Key: "k"}
+			if tc.killed {
+				rec.Killed = time.Now()
+			}
+			for _, st := range tc.seen {
+				mark(&rec, st)
+			}
+			if rec.Revive != tc.revives {
+				t.Fatalf("revive %v, want %v", rec.Revive, tc.revives)
+			}
+		})
+	}
+}
+
+func TestAnAgentWhoseBinaryOrStateDirIsGoneIsDroppedAndALiveOneStays(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		binGone, stateGone bool
+		dropped            bool
+	}{
+		{name: "binary and state dir there"},
+		{name: "binary deleted with its scratch dir", binGone: true, dropped: true},
+		{name: "state dir deleted", stateGone: true, dropped: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, agents := fakeLaunchctl(t)
+			scratch := t.TempDir()
+			bin, state := filepath.Join(scratch, "ym"), filepath.Join(scratch, "state")
+			if !tc.binGone {
+				if err := os.WriteFile(bin, nil, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !tc.stateGone {
+				if err := os.Mkdir(state, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			label := "io.yamnaya.ym-serve-0123abcd"
+			path := filepath.Join(agents, label+".plist")
+			if err := os.WriteFile(path, []byte(servePlist(label, bin, state, map[string]string{"YAMNAYA_STATE_DIR": state})), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
+			f.loaded[target] = true
+			if errs := dropDeadAgents(); len(errs) > 0 {
+				t.Fatal(errs)
+			}
+			_, err := os.Stat(path)
+			if gone := errors.Is(err, os.ErrNotExist); gone != tc.dropped || f.loaded[target] == tc.dropped {
+				t.Fatalf("plist removed %v, loaded %v; want dropped %v", gone, f.loaded[target], tc.dropped)
+			}
+		})
+	}
+}
+
+func TestALaunchWhoseSessionIsNotUpYetIsUnknownNotGone(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name string
+		rec  launch.Record
+		want string
+	}{
+		{name: "saved a moment ago, its tmux session still starting", rec: launch.Record{Started: now.Add(-3 * time.Second), Starting: true}, want: "unknown"},
+		{name: "its launch died before starting its session", rec: launch.Record{Started: now.Add(-time.Hour), Starting: true}, want: "gone"},
+		{name: "started a moment ago, then its session went", rec: launch.Record{Started: now.Add(-3 * time.Second)}, want: "gone"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := missing(tc.rec, now); got != tc.want {
+				t.Fatalf("state %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

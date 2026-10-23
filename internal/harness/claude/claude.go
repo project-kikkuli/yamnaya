@@ -244,8 +244,42 @@ var nonPathChars = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 func encodeCwd(cwd string) string { return nonPathChars.ReplaceAllString(cwd, "-") }
 
-// Transcript is the path of session id's transcript, empty when Claude Code keeps none.
-func (a *Adapter) Transcript(id string) string { return a.transcript("", id) }
+// Transcript is the path of session id's transcript, empty when Claude Code keeps none or it holds no turn to resume.
+func (a *Adapter) Transcript(id string) string {
+	if p := a.transcript("", id); p != "" && hasTurn(p) {
+		return p
+	}
+	return ""
+}
+
+// Unstart moves aside session id's transcript when it holds no turn, as a session ended before its first turn leaves, since Claude
+// Code neither resumes such a session nor starts one under its id while the file is there.
+func (a *Adapter) Unstart(id string) error {
+	p := a.transcript("", id)
+	if p == "" || hasTurn(p) {
+		return nil
+	}
+	return os.Rename(p, p+".noturn")
+}
+
+func hasTurn(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 1<<16)
+	for {
+		line, err := r.ReadBytes('\n')
+		var rec struct{ Type string }
+		if json.Unmarshal(line, &rec) == nil && (rec.Type == "user" || rec.Type == "assistant") {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+	}
+}
 
 func (a *Adapter) transcript(cwd, id string) string {
 	if cwd != "" {

@@ -239,11 +239,16 @@ func (l launcher) Start(n core.NewLaunch) (string, error) {
 	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
 		return "", err
 	}
+	rec.Starting = true
 	if err := l.records.Save(rec); err != nil {
 		return "", err
 	}
 	name := tmux.SessionName(rec.Key)
 	if _, err := l.srv.Start(l.conf, name, rec.Worktree.Path, argv); err != nil {
+		return "", err
+	}
+	rec.Starting = false
+	if err := l.records.Save(rec); err != nil {
 		return "", err
 	}
 	if rec.Parent != "" {
@@ -363,12 +368,21 @@ func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	p, err := l.srv.Pane(tmux.SessionName(rec.Key))
 	if errors.Is(err, core.ErrNotFound) {
-		return p, "gone"
+		return p, missing(rec, time.Now())
 	}
 	if err != nil {
 		return p, core.LaunchUnknown
 	}
 	return p, paneState(p)
+}
+
+// missing is the state of a record whose tmux session is not there: gone, or unknown while the launch that saved it before
+// starting its session may still be starting it.
+func missing(rec launch.Record, now time.Time) string {
+	if rec.Starting && now.Sub(rec.Started) < core.StartGrace {
+		return core.LaunchUnknown
+	}
+	return "gone"
 }
 
 // stateIn is a record's state read from a pane table taken once for many records, unknown when tmux could not list it.
@@ -378,7 +392,7 @@ func stateIn(panes map[string]tmux.Pane, listErr error, rec launch.Record) strin
 	}
 	p, ok := panes[tmux.SessionName(rec.Key)]
 	if !ok {
-		return "gone"
+		return missing(rec, time.Now())
 	}
 	return paneState(p)
 }
@@ -404,10 +418,27 @@ func (l launcher) Launched() []core.Launched {
 		}
 		rec = l.settle(rec)
 		st := stateIn(panes, listErr, rec)
+		if was := rec; mark(&rec, st) != was {
+			l.records.Save(rec)
+		}
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path,
-			Parent: rec.Parent, Killed: rec.Killed})
+			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})
 	}
 	return out
+}
+
+// mark records whether rec's agent runs, and, when its pane went under an agent last seen running without ym kill, as a restart
+// of the host or of ym's tmux server leaves it, that it resumes.
+func mark(rec *launch.Record, state string) launch.Record {
+	switch {
+	case state == "running":
+		rec.Running = true
+	case state == "gone" && rec.Running && rec.Killed.IsZero():
+		rec.Running, rec.Revive = false, true
+	case state != core.LaunchUnknown && state != "gone":
+		rec.Running = false
+	}
+	return *rec
 }
 
 func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -458,6 +489,11 @@ func (l launcher) Resume(session, prompt, start string) (bool, error) {
 		if resumed {
 			return resumeArgv(*rec, prompt)
 		}
+		if rec.Harness == claude.Name {
+			if err := claude.New().Unstart(rec.Session); err != nil {
+				return nil, err
+			}
+		}
 		fresh := *rec
 		if start != "" {
 			fresh.Prompt = start
@@ -468,6 +504,20 @@ func (l launcher) Resume(session, prompt, start string) (bool, error) {
 		return startArgv(fresh)
 	})
 	return resumed, err
+}
+
+// Bring resumes s, a session that ran outside ym's server, on ym's server in its own directory and conversation, with prompt as
+// its next message; it fails when its transcript is gone.
+func (l launcher) Bring(s core.Live, prompt string) error {
+	rec, err := l.takeOver(s, s.Harness, s.ID)
+	if err != nil {
+		return err
+	}
+	if transcript(rec) == "" {
+		return fmt.Errorf("its conversation's transcript is gone")
+	}
+	_, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, prompt) })
+	return err
 }
 
 // restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
@@ -499,7 +549,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	if err != nil {
 		return nil, err
 	}
-	rec.Landed, rec.Killed = time.Time{}, time.Time{}
+	rec.Landed, rec.Killed, rec.Revive = time.Time{}, time.Time{}, false
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
 			return nil, err
@@ -524,7 +574,7 @@ func landsAlone(rec launch.Record, state string, now time.Time, work func(sessio
 		return now.Sub(rec.Killed) >= 24*time.Hour
 	case strings.HasPrefix(state, "sig"):
 		return now.Sub(rec.Started) >= 24*time.Hour
-	case state == "gone" && work(rec.Session, rec.Parent):
+	case state == "gone" && (rec.Revive || rec.Running || work(rec.Session, rec.Parent)):
 		return false
 	}
 	return true

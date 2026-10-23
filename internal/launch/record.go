@@ -29,6 +29,12 @@ type Record struct {
 	Killed time.Time `json:"killed,omitzero"`
 	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.
 	Landed time.Time `json:"landed,omitzero"`
+	// Running is set while ym last saw its agent run; Revive once ym's tmux server went away under it, as a restart of the host
+	// leaves it, so it resumes instead of landing.
+	Running bool `json:"running,omitempty"`
+	// Starting is set while ym new has saved the record and not yet seen its tmux session start.
+	Starting bool `json:"starting,omitempty"`
+	Revive   bool `json:"revive,omitempty"`
 }
 
 func (r Record) IsLanded() bool { return !r.Landed.IsZero() }

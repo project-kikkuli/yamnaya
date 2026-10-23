@@ -102,6 +102,8 @@ type Launched struct {
 	Parent string
 	// Landed is when ym landed it, or zero while it is not landed; Killed is when ym kill stopped it, or zero.
 	Landed, Killed time.Time
+	// Revive is set when it was running as ym's tmux server went away, so ym resumes it.
+	Revive bool
 }
 
 func (l Launched) String() string {

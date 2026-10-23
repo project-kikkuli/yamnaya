@@ -258,3 +258,43 @@ func TestComposerReadsTheInputBoxOnlyWhenNoDialogShows(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyATranscriptWithATurnIsResumedAndAnEmptyOneMovesAside(t *testing.T) {
+	for _, tc := range []struct {
+		name, body   string
+		resumable    bool
+		movedAside   bool
+		noTranscript bool
+	}{
+		{name: "a conversation", body: `{"type":"mode","mode":"normal"}` + "\n" + `{"type":"user","message":{"content":"hi"}}` + "\n", resumable: true},
+		{name: "bookkeeping only, as a session ended before its first turn leaves", body: `{"type":"mode","mode":"normal"}` + "\n" + `{"type":"last-prompt","lastPrompt":"hi"}` + "\n", movedAside: true},
+		{name: "no transcript", noTranscript: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "projects", "-repo", "s1.jsonl")
+			if !tc.noTranscript {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a := &Adapter{Dir: dir, Now: time.Now}
+			if got := a.Transcript("s1") != ""; got != tc.resumable {
+				t.Fatalf("resumable %v, want %v", got, tc.resumable)
+			}
+			if err := a.Unstart("s1"); err != nil {
+				t.Fatal(err)
+			}
+			_, err := os.Stat(path + ".noturn")
+			if moved := err == nil; moved != tc.movedAside {
+				t.Fatalf("moved aside %v, want %v", moved, tc.movedAside)
+			}
+			if _, err := os.Stat(path); (err == nil) != tc.resumable {
+				t.Fatalf("transcript kept %v, want %v", err == nil, tc.resumable)
+			}
+		})
+	}
+}

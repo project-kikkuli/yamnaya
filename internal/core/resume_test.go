@@ -3,6 +3,8 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +20,16 @@ type resumes struct {
 }
 
 type resumeCall struct{ session, prompt, start string }
+
+func (r *resumes) Bring(s Live, prompt string) error {
+	if err := r.fail[s.ID]; err != nil {
+		return err
+	}
+	r.resumed = append(r.resumed, resumeCall{s.ID, prompt, s.Cwd})
+	r.w.spawn(s.ID, "")
+	r.state(s.ID, "running")
+	return nil
+}
 
 func (r *resumes) Resume(session, prompt, start string) (bool, error) {
 	known := slices.ContainsFunc(r.launched, func(l Launched) bool { return l.Session == session }) ||
@@ -184,6 +196,40 @@ func TestAGoalAgentWhosePaneWentIsResumedUnlessItWasStopped(t *testing.T) {
 	}
 }
 
+func TestAGoalAgentIsResumedEachTimeItsPaneGoesButAFailedResumeOnlyOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail bool
+		want int
+	}{
+		{name: "it came back and its pane went again", want: 2},
+		{name: "its resume failed and it is still gone", fail: true, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			_, m := w.goal(t, "ship the importer", "/repo/august")
+			r.launched = append(r.launched, Launched{Key: "wt-agent", Harness: "claude", Session: "agent", State: "gone", Parent: m.Session})
+			if tc.fail {
+				r.fail["agent"] = errors.New("claude not found on PATH")
+			}
+			for range 2 {
+				if err := w.core.ReviveWork(w.board(t)); err != nil && !tc.fail {
+					t.Fatal(err)
+				}
+				w.clock = w.clock.Add(ResumePace)
+				if err := w.core.ReviveWork(w.board(t)); err != nil && !tc.fail {
+					t.Fatal(err)
+				}
+				w.restart(r)
+				w.clock = w.clock.Add(ResumePace)
+			}
+			if len(r.resumed) != tc.want {
+				t.Fatalf("resumed %d times, want %d: %+v", len(r.resumed), tc.want, r.resumed)
+			}
+		})
+	}
+}
+
 func TestResumesAfterARestartArePacedOneAtATime(t *testing.T) {
 	w, r := resumeWorld(t)
 	_, m := w.goal(t, "ship the importer", "/repo/august")
@@ -242,5 +288,94 @@ func TestAColdStartRaisesOneNotificationSayingWhatCameBackAndWhatDidNot(t *testi
 	})
 	if !failed {
 		t.Fatalf("the agent that could not resume is not news in the goal's feed: %+v", events)
+	}
+}
+
+func TestAColdStartBringsBackEverySessionThatWasRunningNotJustGoalWork(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session string
+		setup   func(*orgWorld, *resumes)
+		back    bool
+	}{
+		{name: "a session ym launched, running when its server went", session: "plain", back: true, setup: func(w *orgWorld, r *resumes) {
+			r.launched = append(r.launched, Launched{Key: "wt-plain", Session: "plain", State: "gone", Revive: true})
+		}},
+		{name: "a session ym launched that had exited before", session: "plain", setup: func(w *orgWorld, r *resumes) {
+			r.launched = append(r.launched, Launched{Key: "wt-plain", Session: "plain", State: "gone"})
+		}},
+		{name: "a session ym launched and ym kill stopped", session: "plain", setup: func(w *orgWorld, r *resumes) {
+			r.launched = append(r.launched, Launched{Key: "wt-plain", Session: "plain", State: "gone", Revive: true, Killed: w.clock})
+		}},
+		{name: "a session the owner started in a terminal", session: "mine", back: true, setup: func(w *orgWorld, r *resumes) {
+			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
+		}},
+		{name: "a session the owner started and ym kill stopped", session: "mine", setup: func(w *orgWorld, r *resumes) {
+			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
+			w.core.Store.RecordKill("mine", w.clock)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			var shown []string
+			w.core.Notify = func(title, body string) error { shown = append(shown, title+" | "+body); return nil }
+			r.launched = append(r.launched, Launched{Key: "wt-other", Session: "other", State: "running"})
+			w.spawn("other", "")
+			launched := tc.session == "plain"
+			if !launched {
+				tc.setup(w, r)
+				w.set("mine", func(s *Session) { s.Cwd = "/repo/august" })
+			}
+			w.loop(t, 1)
+			w.restart(r)
+			if launched {
+				tc.setup(w, r)
+			}
+			for range 10 {
+				w.clock = w.clock.Add(5 * time.Second)
+				w.loop(t, 1)
+			}
+			got := slices.ContainsFunc(r.resumed, func(c resumeCall) bool { return c.session == tc.session })
+			if got != tc.back {
+				t.Fatalf("%s brought back %v, want %v (resumes %+v)", tc.session, got, tc.back, r.resumed)
+			}
+			if tc.back && (len(shown) != 1 || !strings.Contains(shown[0], Short(tc.session))) {
+				t.Fatalf("notifications %q, want one naming %s", shown, tc.session)
+			}
+		})
+	}
+}
+
+func TestOnlyAFreshListOrOneFromBeforeTheBootBringsTheOwnersSessionsBack(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		age    time.Duration
+		booted time.Duration
+		back   bool
+	}{
+		{name: "written moments before the server went", age: 10 * time.Second, booted: -24 * time.Hour, back: true},
+		{name: "written before the host rebooted overnight", age: 9 * time.Hour, booted: -1 * time.Hour, back: true},
+		{name: "a serve started hours after its last look, no reboot", age: 9 * time.Hour, booted: -24 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			w.core.Boot = func() time.Time { return time.Now().Add(tc.booted) }
+			r.launched = append(r.launched, Launched{Key: "wt-other", Session: "other", State: "running"})
+			w.spawn("other", "")
+			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
+			w.set("mine", func(s *Session) { s.Cwd = "/repo/august" })
+			w.loop(t, 1)
+			path := filepath.Join(w.core.StateDir, aliveFile)
+			old := time.Now().Add(-tc.age)
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+			w.restart(r)
+			w.loop(t, 1)
+			got := slices.ContainsFunc(r.resumed, func(c resumeCall) bool { return c.session == "mine" })
+			if got != tc.back {
+				t.Fatalf("brought back %v, want %v", got, tc.back)
+			}
+		})
 	}
 }

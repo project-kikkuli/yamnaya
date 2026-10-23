@@ -200,6 +200,64 @@ func keepDefault(w io.Writer) {
 	if _, err := keepLaunchd(); err != nil {
 		fmt.Fprintln(w, "ym serve is not kept across restarts:", err)
 	}
+	for _, err := range dropDeadAgents() {
+		fmt.Fprintln(w, err)
+	}
+}
+
+var plistString = regexp.MustCompile(`<string>([^<]*)</string>`)
+var plistStateDir = regexp.MustCompile(`<key>YAMNAYA_STATE_DIR</key><string>([^<]*)</string>`)
+
+// dropDeadAgents unloads and removes every other state directory's agent whose ym binary or state directory is gone, as a
+// rehearsal in a deleted scratch directory leaves, so launchd stops retrying it at every login.
+func dropDeadAgents() []error {
+	dir, err := agentsDir()
+	if err != nil {
+		return []error{err}
+	}
+	paths, _ := filepath.Glob(filepath.Join(dir, "io.yamnaya.ym-serve-*.plist"))
+	var errs []error
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		strs := plistString.FindAllSubmatch(raw, 3)
+		if len(strs) < 2 {
+			continue
+		}
+		dead := missingPath(unescape(string(strs[1][1])))
+		if m := plistStateDir.FindSubmatch(raw); m != nil {
+			dead = dead || missingPath(unescape(string(m[1])))
+		}
+		if !dead {
+			continue
+		}
+		target := fmt.Sprintf("gui/%d/%s", os.Getuid(), unescape(string(strs[0][1])))
+		if _, err := launchctl("print", target); err == nil {
+			if out, err := launchctl("bootout", target); err != nil {
+				errs = append(errs, fmt.Errorf("launchctl bootout %s: %w: %s", target, err, strings.TrimSpace(string(out))))
+				continue
+			}
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+func missingPath(p string) bool {
+	_, err := os.Stat(p)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func unescape(s string) string {
+	var out string
+	if xml.Unmarshal([]byte("<s>"+s+"</s>"), &out) != nil {
+		return s
+	}
+	return out
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -236,6 +294,13 @@ func serviceRun(w io.Writer) error {
 		fmt.Fprintf(w, "%s was deleted; ym stops keeping its serve running\n", state)
 		_, err := unkeepLaunchd()
 		return err
+	}
+	if state, err := stateDir(); err == nil {
+		if unit, err := serveUnit(state); err == nil && unit == "ym-serve" {
+			for _, err := range dropDeadAgents() {
+				fmt.Fprintln(w, err)
+			}
+		}
 	}
 	env, err := loginEnv(loginShell())
 	if err != nil {

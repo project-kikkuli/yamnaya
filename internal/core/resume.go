@@ -1,9 +1,13 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,10 +23,12 @@ type Resumer interface {
 	// over on start in the same worktree, or on its first prompt when start is empty; resumed says which. ErrNotFound when ym
 	// launched no such session.
 	Resume(session, prompt, start string) (resumed bool, err error)
+	// Bring resumes s, a session that ran outside ym's server, on ym's server in its own directory and conversation.
+	Bring(s Live, prompt string) error
 }
 
 // recovery is what ym serve keeps between cycles about the sessions it brings back: when it last started one, the agents it
-// already tried, and the cold start it is reporting on.
+// tried since they last ran, and the cold start it is reporting on.
 type recovery struct {
 	mu    sync.Mutex
 	last  time.Time
@@ -30,6 +36,10 @@ type recovery struct {
 	// cold is set from the cycle that finds every launched session gone until that recovery is reported.
 	cold, reported bool
 	notes          []resumeNote
+	// alive is what aliveFile holds; orphans are the sessions a cold start brings back from it.
+	alive, orphans []Running
+	// wrote is when aliveFile was last written; it is rewritten at least every freshAlive/4, so its age says when serve last looked.
+	wrote time.Time
 }
 
 // resumeNote is one session a cold start brought back, or failed to.
@@ -152,8 +162,10 @@ func (c *Core) tellWork(b Board, m Manager, session, kind, text, key string) err
 	return c.noticeAgent(b, b.Org, session, kind, text, key)
 }
 
-// ReviveWork resumes, one per ResumePace, every agent of an active goal or chief whose pane went without ym landing or killing it,
-// as a restart of its host leaves them; a reboot brings work back and never lands it. Managers and chiefs come back through Supervise.
+// ReviveWork resumes, one per ResumePace, every session ym brings back by itself: an agent of an active goal or chief whose pane
+// went without ym landing or killing it, any session ym launched that was running when its tmux server went away, and, after a cold
+// start, every session the owner started elsewhere that was running before it. A reboot brings work back and never lands it.
+// Managers and chiefs come back through Supervise.
 func (c *Core) ReviveWork(b Board) error {
 	r, can := c.Launches.(Resumer)
 	if !can {
@@ -166,35 +178,33 @@ func (c *Core) ReviveWork(b Board) error {
 	work := c.GoalWork()
 	var errs []error
 	for _, l := range b.Launched {
+		if l.State == "running" {
+			c.recovery.mu.Lock()
+			delete(c.recovery.tried, l.Session)
+			c.recovery.mu.Unlock()
+		}
 		if l.State != "gone" || !l.Landed.IsZero() || !l.Killed.IsZero() || l.Session == "" {
 			continue
 		}
 		m, ok := work(l.Session, l.Parent)
-		if _, killed := kills[l.Session]; killed || !ok || m.Session == l.Session {
+		if _, killed := kills[l.Session]; killed || (!ok && !l.Revive) || (ok && m.Session == l.Session) || !c.take(l.Session) {
 			continue
 		}
-		c.recovery.mu.Lock()
-		tried := c.recovery.tried[l.Session]
-		c.recovery.mu.Unlock()
-		if tried || !c.slot() {
+		if !ok {
+			who := "session " + Short(l.Session) + " (" + l.Key + ")"
+			resumed, err := r.Resume(l.Session, workResumeText, "")
+			c.noteResult(who, l.Session, resumed, err)
 			continue
 		}
-		c.recovery.mu.Lock()
-		if c.recovery.tried == nil {
-			c.recovery.tried = map[string]bool{}
-		}
-		c.recovery.tried[l.Session] = true
-		c.recovery.mu.Unlock()
 		who := "agent " + Short(l.Session) + " (" + l.Key + ")"
 		resumed, err := r.Resume(l.Session, workResumeText, "")
+		c.noteResult(who, l.Session, resumed, err)
 		if err != nil {
-			c.note(resumeNote{who: who, session: l.Session, failure: err.Error(), settled: true})
 			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,
 				fmt.Sprintf("%s's pane went and ym could not resume it: %v. Its worktree %s keeps what it wrote; ym revive %s tries again.", who, err, l.Path, l.Key),
 				"resume-failed\x00"+l.Session+"\x00"+err.Error()))
 			continue
 		}
-		c.note(resumeNote{who: who, session: l.Session, fresh: !resumed})
 		how := "resumed in its own conversation"
 		if !resumed {
 			how = "started over on its first prompt, since its conversation was gone"
@@ -202,7 +212,126 @@ func (c *Core) ReviveWork(b Board) error {
 		errs = append(errs, c.tellWork(b, m, l.Session, EventResumed, fmt.Sprintf("%s's pane went and ym %s.", who, how),
 			"resumed\x00"+l.Session+"\x00"+c.now().Format(time.RFC3339)))
 	}
+	c.recovery.mu.Lock()
+	orphans := slices.Clone(c.recovery.orphans)
+	c.recovery.mu.Unlock()
+	for _, o := range orphans {
+		if _, live := b.Session(o.ID); live || !c.take(o.ID) {
+			continue
+		}
+		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Cwd: o.Cwd}}, workResumeText)
+		c.noteResult("session "+Short(o.ID)+" in "+o.Cwd, o.ID, true, err)
+	}
 	return errors.Join(errs...)
+}
+
+// take reports whether ym may try to bring session back now: it has not tried this serve, and the pace allows one now.
+func (c *Core) take(session string) bool {
+	c.recovery.mu.Lock()
+	tried := c.recovery.tried[session]
+	c.recovery.mu.Unlock()
+	if tried || !c.slot() {
+		return false
+	}
+	c.recovery.mu.Lock()
+	defer c.recovery.mu.Unlock()
+	if c.recovery.tried == nil {
+		c.recovery.tried = map[string]bool{}
+	}
+	c.recovery.tried[session] = true
+	return true
+}
+
+func (c *Core) noteResult(who, session string, resumed bool, err error) {
+	if err != nil {
+		c.note(resumeNote{who: who, session: session, failure: err.Error(), settled: true})
+		return
+	}
+	c.note(resumeNote{who: who, session: session, fresh: !resumed})
+}
+
+// aliveFile lists the sessions running outside ym's server at ym serve's last look, so a cold start knows what the owner had open.
+const aliveFile = "alive.json"
+
+// Running is a session that ran outside ym's tmux server when ym serve last looked.
+type Running struct {
+	ID      string `json:"id"`
+	Harness string `json:"harness"`
+	Cwd     string `json:"cwd"`
+}
+
+// running lists b's sessions on this host that ym did not launch and could resume: they have an id, a directory and a terminal.
+func running(b Board) []Running {
+	launched := map[string]bool{}
+	for _, l := range b.Launched {
+		launched[l.Session] = true
+	}
+	var out []Running
+	for _, s := range b.Sessions {
+		if s.Remote != "" || s.Background || s.ID == "" || s.Cwd == "" || launched[s.ID] {
+			continue
+		}
+		out = append(out, Running{ID: s.ID, Harness: s.Harness, Cwd: s.Cwd})
+	}
+	slices.SortFunc(out, func(a, b Running) int { return strings.Compare(a.ID, b.ID) })
+	return out
+}
+
+// trackRunning keeps aliveFile current while ym's server runs, and leaves it as the last host's state while every launch is gone.
+func (c *Core) trackRunning(b Board) {
+	if c.StateDir == "" || cold(b) {
+		return
+	}
+	now := running(b)
+	c.recovery.mu.Lock()
+	same := slices.Equal(now, c.recovery.alive) && c.recovery.alive != nil && time.Since(c.recovery.wrote) < freshAlive/4
+	c.recovery.mu.Unlock()
+	if same {
+		return
+	}
+	raw, err := json.Marshal(now)
+	if err != nil {
+		return
+	}
+	path := filepath.Join(c.StateDir, aliveFile)
+	if os.WriteFile(path+".new", raw, 0o600) == nil && os.Rename(path+".new", path) == nil {
+		c.recovery.mu.Lock()
+		c.recovery.alive, c.recovery.wrote = now, time.Now()
+		c.recovery.mu.Unlock()
+	}
+}
+
+// freshAlive bounds how old aliveFile may be, on a host that did not restart since, for what it lists to have just gone down.
+const freshAlive = 2 * time.Minute
+
+// lastRunning is what aliveFile says ran before the host went down, less what runs again now and what ym kill stopped. It counts
+// only when written before the host last booted, or moments ago, so a serve started long after its last look brings back nothing.
+func (c *Core) lastRunning(b Board) []Running {
+	path := filepath.Join(c.StateDir, aliveFile)
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if at := info.ModTime(); !at.Before(c.booted()) && time.Since(at) > freshAlive {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var was []Running
+	if json.Unmarshal(raw, &was) != nil {
+		return nil
+	}
+	kills, err := c.Store.Kills(timeZero)
+	if err != nil {
+		return nil
+	}
+	return slices.DeleteFunc(was, func(r Running) bool {
+		_, live := b.Session(r.ID)
+		_, killed := kills[r.ID]
+		return live || killed
+	})
 }
 
 // cold reports whether every session ym launched on this host and has not landed is gone, as after a restart of the host: its
@@ -221,7 +350,8 @@ func cold(b Board) bool {
 	return n > 0
 }
 
-// watchCold opens a cold start's report on the cycle that finds every launched session gone; one report covers it until a pane runs again.
+// watchCold opens a cold start's report on the cycle that finds every launched session gone, taking the sessions the owner had
+// running elsewhere to bring back; one report covers it until a pane runs again.
 func (c *Core) watchCold(b Board) {
 	r := &c.recovery
 	r.mu.Lock()
@@ -234,6 +364,9 @@ func (c *Core) watchCold(b Board) {
 	}
 	if !r.cold && !r.reported {
 		r.cold, r.notes = true, nil
+		if c.StateDir != "" {
+			r.orphans = c.lastRunning(b)
+		}
 	}
 }
 
@@ -269,12 +402,16 @@ func (c *Core) reportCold(b Board) error {
 	for _, n := range r.notes {
 		busy = busy || !n.settled
 	}
+	for _, o := range r.orphans {
+		_, live := b.Session(o.ID)
+		busy = busy || (!live && !r.tried[o.ID])
+	}
 	if busy || c.awaitingResume(b) {
 		r.mu.Unlock()
 		return nil
 	}
 	notes := r.notes
-	r.cold, r.reported, r.notes = false, true, nil
+	r.cold, r.reported, r.notes, r.orphans = false, true, nil, nil
 	r.mu.Unlock()
 	if len(notes) == 0 {
 		return nil
@@ -318,4 +455,12 @@ func coldText(notes []resumeNote) (string, string) {
 	}
 	title := fmt.Sprintf("ym: %d of %d sessions back after a restart", len(back)+len(fresh), len(notes))
 	return title, strings.Join(parts, " ")
+}
+
+// booted is when this host last started, zero when it cannot tell.
+func (c *Core) booted() time.Time {
+	if c.Boot != nil {
+		return c.Boot()
+	}
+	return bootTime()
 }
