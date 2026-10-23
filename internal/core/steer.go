@@ -258,12 +258,6 @@ func raisedTo(o Org, st Steer) string {
 	return o.Above(st.Author)
 }
 
-// below reports whether id reports to chief, directly or through other chiefs here.
-func below(o Org, chief, id string) bool {
-	reports, _ := climb(o, chief, id)
-	return reports
-}
-
 // climb walks up from id's chief toward chief. It reports whether it reached chief; when the walk ends at a chief on another host
 // first, via names that chief, whose host knows the rest of the way.
 func climb(o Org, chief, id string) (reports bool, via string) {
