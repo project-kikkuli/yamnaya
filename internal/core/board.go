@@ -181,6 +181,8 @@ type Board struct {
 	Kills    map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
+	// Gen numbers the boards built; a board reused because nothing it reads changed keeps the number.
+	Gen uint64
 	// Remotes are the other hosts the board reads, reachable or not.
 	Remotes []RemoteBoard
 	// remoteStanding is how each manager and chief on another host stands by that host's reading.
@@ -482,7 +484,7 @@ func (c *Core) Board() (Board, error) {
 	if err := c.queue(&b, b.Org); err != nil {
 		return b, err
 	}
-	c.reuse.put(fp, reusable, b)
+	c.reuse.put(fp, reusable, &b)
 	return b, nil
 }
 

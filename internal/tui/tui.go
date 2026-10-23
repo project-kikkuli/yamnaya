@@ -159,10 +159,12 @@ type Model struct {
 	out     *output
 	// slots are the board's project hues while one view is drawn.
 	slots map[string]int
+	// drawn keeps the last screen drawn, shared by every copy of the model.
+	drawn *lastDraw
 }
 
 func New(c *core.Core) Model {
-	m := Model{core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
+	m := Model{drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -259,6 +261,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.FocusMsg:
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
+	case boardMsg:
+		if b := msg.(boardMsg); b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems {
+			m.board = b.board
+			if b.tick {
+				return m, m.tick()
+			}
+			return m, nil
+		}
 	}
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.PasteMsg:

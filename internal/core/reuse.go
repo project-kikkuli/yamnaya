@@ -33,6 +33,7 @@ const boardRecheck = 10 * time.Second
 
 type boardReuse struct {
 	mu    sync.Mutex
+	gen   uint64
 	last  inputs
 	board Board
 	at    time.Time
@@ -79,23 +80,41 @@ func (r *boardReuse) get(in inputs, reusable bool, now time.Time) (Board, bool) 
 	return r.board, true
 }
 
-func (r *boardReuse) put(in inputs, reusable bool, b Board) {
+func (r *boardReuse) put(in inputs, reusable bool, b *Board) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.last, r.board, r.at, r.ok = in, b, b.At, reusable
+	r.gen++
+	b.Gen = r.gen
+	r.last, r.board, r.at, r.ok = in, *b, b.At, reusable
+}
+
+// renumber gives a reused board whose spend changed a number of its own, and keeps it as the board to reuse.
+func (r *boardReuse) renumber(b *Board) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gen++
+	b.Gen = r.gen
+	at := r.board.At
+	r.board = *b
+	r.board.At = at
 }
 
 // again is a reused board at now, with spend read afresh.
 func (c *Core) again(b Board, now time.Time) Board {
 	b.At = now
 	if c.Meter != nil {
-		b.Fleet = c.Meter.Fleet(now)
+		fleet := c.Meter.Fleet(now)
+		if reflect.DeepEqual(fleet, b.Fleet) {
+			return b
+		}
+		b.Fleet = fleet
 		b.Projects = slices.Clone(b.Projects)
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}
 		b.Repos = repos(b.Projects)
 		b.indexSessions()
+		c.reuse.renumber(&b)
 	}
 	return b
 }

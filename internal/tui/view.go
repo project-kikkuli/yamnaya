@@ -21,9 +21,34 @@ func (m Model) View() tea.View {
 		prepared := m.prepareView()
 		page = &prepared
 	}
-	v := tea.NewView(m.paint(*page))
+	key := drawn{page: page, frame: m.peaks.frame, width: m.width, height: m.height, gen: m.board.Gen, shown: m.shown(), dark: m.peaks.dark, minute: time.Now().Truncate(time.Minute)}
+	if m.drawn == nil || m.drawn.key != key || page != m.page {
+		text := m.paint(*page)
+		if page == m.page && m.drawn != nil {
+			*m.drawn = lastDraw{key: key, text: text}
+		}
+		v := tea.NewView(text)
+		v.AltScreen, v.ReportFocus, v.MouseMode = true, true, tea.MouseModeCellMotion
+		return v
+	}
+	v := tea.NewView(m.drawn.text)
 	v.AltScreen, v.ReportFocus, v.MouseMode = true, true, tea.MouseModeCellMotion
 	return v
+}
+
+// drawn is what a drawn screen was drawn from; a View from the same page, frame, size and board draws nothing new.
+type drawn struct {
+	page          *viewPage
+	frame         int
+	width, height int
+	gen           uint64
+	shown, dark   bool
+	minute        time.Time
+}
+
+type lastDraw struct {
+	key  drawn
+	text string
 }
 
 func (m Model) prepareView() viewPage {

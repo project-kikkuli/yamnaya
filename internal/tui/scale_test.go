@@ -43,22 +43,25 @@ func thousand(b *testing.B) (*scale.Rig, Model) {
 	return rig, next.(Model)
 }
 
-// BenchmarkBoardReload is the board taking one reload over a thousand goals and drawing it, with the bytes it sends per second.
+// BenchmarkBoardReload is the board taking one reload over a thousand goals and drawing it, with the bytes it sends per second:
+// unchanged, as an idle board reloads, and changed, as one does while agents work.
 func BenchmarkBoardReload(b *testing.B) {
-	for _, byRepo := range []bool{false, true} {
-		name := "tree"
-		if byRepo {
-			name = "by-repo"
-		}
-		b.Run(name, func(b *testing.B) {
+	for _, c := range []struct {
+		name            string
+		byRepo, changed bool
+	}{{"idle", false, false}, {"changed", false, true}, {"changed by-repo", true, true}} {
+		b.Run(c.name, func(b *testing.B) {
 			rig, m := thousand(b)
-			m.byRepo = byRepo
+			m.byRepo = c.byRepo
 			boards := make([]core.Board, 0, 8)
-			for range cap(boards) {
+			for i := range cap(boards) {
 				rig.Advance(time.Second)
 				board, err := rig.Core.Board()
 				if err != nil {
 					b.Fatal(err)
+				}
+				if c.changed {
+					board.Gen = uint64(1000 + i)
 				}
 				boards = append(boards, board)
 			}
