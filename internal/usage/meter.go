@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -118,24 +119,37 @@ func (m *Meter) Fleet(now time.Time) core.Fleet {
 
 func (m *Meter) open(now time.Time) error {
 	if m.ledger != nil {
-		return nil
+		return m.reload(now)
 	}
 	l, err := openLedger(filepath.Join(m.StateDir, "ym.db"))
 	if err != nil {
 		return err
 	}
-	files, sums, limits, err := l.load()
-	if err != nil {
+	m.ledger = l
+	if err := m.reload(now); err != nil {
 		l.close()
+		m.ledger = nil
 		return err
 	}
-	slices, err := l.loadSlices(now)
+	m.prices = loadPrices(m.StateDir)
+	if m.Fetch != nil {
+		go m.refreshPrices()
+	}
+	return nil
+}
+
+func (m *Meter) reload(now time.Time) error {
+	files, sums, limits, err := m.ledger.load()
 	if err != nil {
-		l.close()
 		return err
 	}
-	m.ledger, m.files, m.sums, m.slices, m.limits = l, files, sums, slices, limits
+	slices, err := m.ledger.loadSlices(now)
+	if err != nil {
+		return err
+	}
+	m.files, m.sums, m.slices, m.limits = files, sums, slices, limits
 	m.byID = map[int64]*file{}
+	m.nextID = 0
 	for _, f := range files {
 		m.byID[f.ID] = f
 		m.nextID = max(m.nextID, f.ID)
@@ -152,12 +166,8 @@ func (m *Meter) open(now time.Time) error {
 			m.exhaustions[key] = e
 		}
 	}
-	rows.Close()
-	m.prices = loadPrices(m.StateDir)
-	if m.Fetch != nil {
-		go m.refreshPrices()
-	}
-	return nil
+	defer rows.Close()
+	return rows.Err()
 }
 
 // parsed is what reading one file's new lines produced.
@@ -179,6 +189,14 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	start := time.Now()
 	var st Stats
 	if _, err := os.Stat(m.StateDir); err != nil {
+		return st, err
+	}
+	lock, err := os.OpenFile(filepath.Join(m.StateDir, "usage-scan.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return st, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return st, err
 	}
 	if err := m.open(now); err != nil {
