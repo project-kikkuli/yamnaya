@@ -115,7 +115,7 @@ Hosts talk through relays. Each host keeps every ask, message and command bound 
 
 ## Background service
 
-`ym serve` runs the loop above, refreshes pull request status (at most every two minutes per open PR), polls your GitHub review requests every five minutes, sweeps Notion and delivers answers.
+`ym serve` runs the loop above, refreshes pull request status, polls your GitHub review requests every five minutes, sweeps Notion and delivers answers.
 
 - GitHub: pull request status, checks and review threads come from `gh api graphql`, 50 pull requests to a query, at most every two minutes per open PR. A pull request missing from a batch's answer is read alone; a batch that fails ends that cycle's reads. ym leaves half the account's hourly GraphQL budget to you and your agents: while GitHub reports less than half left, every ym instance reads no pull requests until the budget resets.
 - Files: ym rereads a transcript or state file only after a stat shows it changed. An idle Claude session whose state file has not changed for five seconds is reread at most every ten seconds until it does.
