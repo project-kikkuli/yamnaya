@@ -14,6 +14,9 @@ func Run(m *testing.M) int {
 		panic(err)
 	}
 	defer os.RemoveAll(dir)
+	for _, env := range []string{"CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"} {
+		os.Unsetenv(env)
+	}
 	for env, sub := range map[string]string{"CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
 		path := filepath.Join(dir, sub)
 		if err := os.MkdirAll(path, 0o755); err != nil {

@@ -137,12 +137,8 @@ func (c *Core) RemoteSession(ref string) (host, rest string, ok bool) {
 	if host, rest, ok := c.RemoteRef(ref); ok {
 		return host, rest, true
 	}
-	for _, r := range c.remoteBoards() {
-		for _, s := range r.Sessions {
-			if s.ID != "" && (s.ID == ref || len(ref) >= 6 && strings.HasPrefix(s.ID, ref)) {
-				return r.Host, s.ID, true
-			}
-		}
+	if s, err := c.remoteFind(ref); err == nil {
+		return s.Remote, s.ID, true
 	}
 	return "", "", false
 }
@@ -232,15 +228,30 @@ func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard, feeds map[string]Fee
 }
 
 // remoteFind is the live session on another host that ref names.
-func (c *Core) remoteFind(ref string) (Live, bool) {
+func (c *Core) remoteFind(ref string) (Live, error) {
+	var sessions []Live
+	var ids []string
 	for _, r := range c.remoteBoards() {
 		for _, s := range r.Sessions {
-			if s.ID != "" && (s.ID == ref || len(ref) >= 6 && strings.HasPrefix(s.ID, ref)) {
-				return s, true
-			}
+			s.Remote = r.Host
+			sessions = append(sessions, s)
+			ids = append(ids, s.ID)
 		}
 	}
-	return Live{}, false
+	id, err := SessionRef(ref, ids)
+	if err != nil {
+		return Live{}, err
+	}
+	var found Live
+	for _, s := range sessions {
+		if s.ID == id {
+			if found.ID != "" && found.Remote != s.Remote {
+				return Live{}, fmt.Errorf("%w %q on %s and %s; qualify it with a host", ErrAmbiguous, ref, found.Remote, s.Remote)
+			}
+			found = s
+		}
+	}
+	return found, nil
 }
 
 // remoteItem runs an item command on the host id belongs to and returns that host's item; ok is false for a local id.

@@ -169,15 +169,33 @@ func (l launcher) settle(rec launch.Record) launch.Record {
 }
 
 func (l launcher) find(ref string) (launch.Record, error) {
-	rec, ok := l.records.Find(ref)
-	if !ok {
-		return rec, fmt.Errorf("no session launched by ym matches %q; see ym launched", ref)
+	rec, err := l.lookup(ref)
+	if err != nil {
+		return rec, fmt.Errorf("no unique session launched by ym matches %q; see ym launched: %w", ref, err)
 	}
 	if head := launch.Head(rec.Worktree.Path); head != "" && head != rec.Head {
 		rec.Head = head
 		l.records.Save(rec)
 	}
 	return l.settle(rec), nil
+}
+
+func (l launcher) lookup(ref string) (launch.Record, error) {
+	rec, err := l.records.Lookup(ref)
+	if err != nil || l.core == nil || rec.Key == ref || rec.Worktree.Branch == ref || rec.Session == ref {
+		return rec, err
+	}
+	live, err := l.core.Find(ref)
+	if errors.Is(err, core.ErrNotFound) {
+		return rec, nil
+	}
+	if err != nil {
+		return launch.Record{}, err
+	}
+	if live.ID != rec.Session {
+		return launch.Record{}, fmt.Errorf("%w %q: %s and %s", core.ErrAmbiguous, ref, rec.Session, live.ID)
+	}
+	return rec, nil
 }
 
 // attach shows a launched session in this terminal, then returns to the board.
@@ -194,9 +212,12 @@ func (e *env) openLaunched(w io.Writer, ref string, show func(*exec.Cmd) error) 
 	if err != nil {
 		return false, err
 	}
-	rec, ok := l.records.Find(ref)
-	if !ok {
-		return false, nil
+	rec, err := l.lookup(ref)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
 	if !rec.Seen.IsZero() {
 		if _, err := e.core.Find(rec.Session); err == nil {
@@ -979,7 +1000,7 @@ func resumeWatchCmd() *cobra.Command {
 
 // remote runs ym verb ref on the host ref names when no launch here matches it, else returns err.
 func (l launcher) remote(err error, ref string, verb ...string) (string, error) {
-	if l.core == nil {
+	if l.core == nil || !errors.Is(err, core.ErrNotFound) {
 		return "", err
 	}
 	host, rest, ok := l.core.RemoteSession(ref)

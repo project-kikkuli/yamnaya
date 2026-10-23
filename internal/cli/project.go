@@ -148,10 +148,18 @@ func linkCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				}
 				parent = c.Session
 			}
-			if err := e.core.Store.Link(args[0], parent); err != nil {
+			from, err := e.core.CallerOf(parent)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s spawned by %s\n", args[0], parent)
+			child, err := e.core.CallerOf(args[0])
+			if err != nil {
+				return err
+			}
+			if err := e.core.Store.Link(child.Session, from.Session); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s spawned by %s\n", child.Session, from.Session)
 			return nil
 		}),
 	}
@@ -182,8 +190,10 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			key, harness := args[0], ""
 			if it, err := e.item(b, args[0]); err == nil {
 				key, harness = it.Session, it.Harness
-			} else if s, ok := sessionByPrefix(b, args[0]); ok {
+			} else if s, err := sessionByPrefix(b, args[0]); err == nil {
 				key, harness = s.Key(), s.Harness
+			} else if !errors.Is(err, core.ErrNotFound) {
+				return err
 			}
 			ts := e.core.Targets(b, key, harness)
 			if len(ts) == 0 {
@@ -227,11 +237,15 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	return cmd
 }
 
-func sessionByPrefix(b core.Board, ref string) (core.Live, bool) {
+func sessionByPrefix(b core.Board, ref string) (core.Live, error) {
+	var ids []string
 	for _, s := range b.Sessions {
-		if s.Key() == ref || (len(ref) >= 6 && strings.HasPrefix(s.Key(), ref)) {
-			return s, true
-		}
+		ids = append(ids, s.Key())
 	}
-	return core.Live{}, false
+	id, err := core.SessionRef(ref, ids)
+	if err != nil {
+		return core.Live{}, err
+	}
+	s, _ := b.Session(id)
+	return s, nil
 }

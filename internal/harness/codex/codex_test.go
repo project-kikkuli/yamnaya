@@ -69,6 +69,11 @@ func setup(t *testing.T) fixture {
 		Cwd:       func(pid int) string { return "/Users/me/src/web" },
 		Now:       time.Now,
 	}
+	t.Cleanup(func() {
+		if f.state != nil {
+			f.state.Close()
+		}
+	})
 	return f
 }
 
@@ -94,6 +99,40 @@ func TestSessionIDFromArgvOpenFilesThenNewestThread(t *testing.T) {
 		if got := f.SessionID(c.proc); got != c.want {
 			t.Errorf("pid %d: SessionID = %q, want %q", c.proc.PID, got, c.want)
 		}
+	}
+}
+
+func TestCollidingThreadPrefixesKeepEachProcessOnItsOwnRollout(t *testing.T) {
+	ids := []string{"01a16a70-a4c4-7670-a0a2-e092c1f5e145", "01a16a70-a4c4-7670-a0a2-e0a21f96395f"}
+	f := setup(t)
+	db, err := sql.Open("sqlite", filepath.Join(f.Home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	for i, old := range []string{busyID, idleID} {
+		oldPath := f.Transcript(old)
+		path := filepath.Join(filepath.Dir(oldPath), "rollout-2026-01-02T03-04-05-"+ids[i]+".jsonl")
+		if err := os.Rename(oldPath, path); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE threads SET id = ?, rollout_path = ? WHERE id = ?`, ids[i], path, old); err != nil {
+			t.Fatal(err)
+		}
+		f.open[i+1] = []string{path}
+	}
+	procs := []proc.Proc{cp(1, time.Hour, "codex"), cp(2, time.Hour, "codex")}
+	got := f.Discover(procs)
+	for i, p := range procs {
+		if id := f.SessionID(p); id != ids[i] || got[i].ID != id || got[i].PID != p.PID {
+			t.Fatalf("pid %d: SessionID %s, discovered %+v, want %s", p.PID, id, got[i], ids[i])
+		}
+		if !strings.Contains(f.Transcript(ids[i]), ids[i]) {
+			t.Fatalf("thread %s lost its own rollout", ids[i])
+		}
+	}
+	if got[0].Title != "Retry work" || got[1].Title != "Docs pass" || got[0].Status != core.Busy || got[1].Status != core.Idle {
+		t.Fatalf("rollout facts crossed sessions: %+v", got)
 	}
 }
 

@@ -122,7 +122,7 @@ func Unadoptable(dir string) string {
 }
 
 // AdoptKey names the launch record of an adopted session.
-func AdoptKey(id string) string { return "adopt-" + core.Short(id) }
+func AdoptKey(id string) string { return "adopt-" + id }
 
 // Adopted is the launch record that resumes s on ym's server in the directory it ran in. Its directory stays the owner's: landing it never removes it.
 func Adopted(s core.Live, at time.Time) Record {

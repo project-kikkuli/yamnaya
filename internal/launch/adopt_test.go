@@ -96,7 +96,7 @@ func TestAdoptedKeepsTheSessionsDirectoryAndBranch(t *testing.T) {
 	rec := Adopted(s, s.Since)
 	real, _ := filepath.EvalSymlinks(dir)
 	gitDir, _ := filepath.EvalSymlinks(rec.Worktree.GitDir)
-	if rec.Key != "adopt-01234567" || !rec.Adopted || rec.Session != s.ID || rec.Parent != "lead" || rec.Prompt != "Fix login" ||
+	if rec.Key != "adopt-"+s.ID || !rec.Adopted || rec.Session != s.ID || rec.Parent != "lead" || rec.Prompt != "Fix login" ||
 		rec.Worktree.Path != dir || rec.Worktree.Branch != "trunk" || gitDir != filepath.Join(real, ".git") || rec.Head == "" {
 		t.Fatalf("record %+v", rec)
 	}

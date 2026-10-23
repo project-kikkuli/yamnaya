@@ -106,7 +106,7 @@ func claimLine(c slot.Claim, now time.Time) string {
 		parts = append(parts, fmt.Sprintf("pid %d", c.PID))
 	}
 	if c.Session != "" {
-		parts = append(parts, c.Harness+" "+clip(c.Session, 9))
+		parts = append(parts, c.Harness+" "+core.Short(c.Session))
 	}
 	if !c.Since.IsZero() {
 		parts = append(parts, "for "+span(now.Sub(c.Since)))

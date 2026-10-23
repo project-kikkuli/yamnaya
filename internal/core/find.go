@@ -1,20 +1,22 @@
 package core
 
 import (
+	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-// Find reads the one live session whose id is ref or starts with a ref of six or more characters, without reading the whole board.
+// Find reads one live session by full id, displayed shorthand or unambiguous prefix, without reading the whole board.
 // A session that continued under another id yields the live session it continued in.
 func (c *Core) Find(ref string) (Live, error) {
 	l, err := c.find(ref)
-	if err != nil {
-		if r, ok := c.remoteFind(ref); ok {
-			return r, nil
+	if errors.Is(err, ErrNotFound) {
+		if r, remoteErr := c.remoteFind(ref); !errors.Is(remoteErr, ErrNotFound) {
+			return r, remoteErr
 		}
+	} else if err != nil {
+		return Live{}, err
 	}
 	id := ref
 	if err == nil {
@@ -34,40 +36,34 @@ func (c *Core) find(ref string) (Live, error) {
 	if err != nil {
 		return Live{}, err
 	}
-	match := func(id string) bool {
-		return id != "" && (id == ref || (len(ref) >= 6 && strings.HasPrefix(id, ref)))
-	}
-	var hit Harness
-	var mine []proc.Proc
+	var found []Session
+	var ids []string
 	for i, owned := range c.owned(procs) {
+		var mine []proc.Proc
 		for _, p := range owned {
-			if match(c.Harnesses[i].SessionID(p)) {
-				hit = c.Harnesses[i]
+			if SessionMatches(c.Harnesses[i].SessionID(p), ref) {
 				mine = append(mine, p)
 			}
 		}
-		if hit != nil {
-			break
+		for _, s := range c.Harnesses[i].Discover(mine) {
+			if !c.foreign(s.Cwd) {
+				found = append(found, s)
+				ids = append(ids, s.ID)
+			}
 		}
 	}
-	if hit == nil {
-		return Live{}, fmt.Errorf("no live session %q: %w", ref, ErrNotFound)
+	id, err := SessionRef(ref, ids)
+	if err != nil {
+		return Live{}, fmt.Errorf("no unique live session: %w", err)
 	}
-	var found []Session
-	for _, s := range hit.Discover(mine) {
-		if match(s.ID) && !c.foreign(s.Cwd) {
-			found = append(found, s)
+	var copies []Session
+	for _, s := range found {
+		if s.ID == id {
+			copies = append(copies, s)
 		}
 	}
-	if len(found) == 0 {
-		return Live{}, fmt.Errorf("no live session %q: %w", ref, ErrNotFound)
-	}
-	l := Live{Session: found[0], Copies: found}
-	for _, s := range found[1:] {
-		if s.ID != l.ID {
-			return Live{}, fmt.Errorf("%q matches sessions %s and %s", ref, Short(l.ID), Short(s.ID))
-		}
-	}
+	l := Live{Session: copies[0], Copies: copies}
+	hit := c.harness(l.Harness)
 	if h, host := c.locate(l.TTY); host != nil {
 		l.Handle = &h
 		if l.Prompt == nil {

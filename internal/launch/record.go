@@ -3,6 +3,7 @@ package launch
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 // Record is one agent session ym launched: where it runs and how to bring it back.
@@ -125,25 +128,52 @@ func read(path string) (Record, bool) {
 	return c.rec, c.ok
 }
 
-// Find matches ref against keys, branch slugs and session ids; a session id may be given by a prefix of six or more.
-// A record not yet landed wins over a landed one.
+// Find is Lookup without its error; ambiguous references never select a record.
 func (r Records) Find(ref string) (Record, bool) {
-	all, _ := r.All()
-	var landed *Record
-	for i, rec := range all {
-		if rec.Key == ref || rec.Worktree.Branch == ref || (rec.Session != "" && (rec.Session == ref || (len(ref) >= 6 && strings.HasPrefix(rec.Session, ref)))) {
-			if !rec.IsLanded() {
-				return rec, true
-			}
-			if landed == nil {
-				landed = &all[i]
+	rec, err := r.Lookup(ref)
+	return rec, err == nil
+}
+
+// Lookup matches keys, branch slugs and unambiguous session references, preferring an unlanded record of the same session.
+func (r Records) Lookup(ref string) (Record, error) {
+	all, err := r.All()
+	if err != nil {
+		return Record{}, err
+	}
+	var exact []Record
+	var ids []string
+	for _, rec := range all {
+		if rec.Key == ref || rec.Worktree.Branch == ref {
+			exact = append(exact, rec)
+		}
+		ids = append(ids, rec.Session)
+	}
+	if len(exact) == 0 {
+		id, err := core.SessionRef(ref, ids)
+		if err != nil {
+			return Record{}, err
+		}
+		for _, rec := range all {
+			if rec.Session == id {
+				exact = append(exact, rec)
 			}
 		}
 	}
-	if landed != nil {
-		return *landed, true
+	var live []Record
+	for _, rec := range exact {
+		if !rec.IsLanded() {
+			live = append(live, rec)
+		}
 	}
-	return Record{}, false
+	if len(live) > 0 {
+		exact = live
+	}
+	for _, rec := range exact[1:] {
+		if rec.Session != exact[0].Session {
+			return Record{}, fmt.Errorf("%w %q: launches %s and %s", core.ErrAmbiguous, ref, exact[0].Key, rec.Key)
+		}
+	}
+	return exact[0], nil
 }
 
 // Landing is one line of the landing log: a session ym landed, what it ran in, and why it was safe to remove.

@@ -32,7 +32,7 @@ func kill(c *core.Core, ref string, yes, tty bool, in io.Reader, out io.Writer) 
 	if errors.Is(err, core.ErrNotFound) && c.Launches != nil {
 		var matches []core.Launched
 		for _, l := range c.Launches.Launched() {
-			if l.Key == ref || l.Session != "" && strings.HasPrefix(l.Session, ref) {
+			if l.Key == ref || core.SessionMatches(l.Session, ref) {
 				matches = append(matches, l)
 			}
 		}

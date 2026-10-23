@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -145,8 +146,11 @@ func switchSession(k *core.Core, ref, to string, relaunch bool, out io.Writer) e
 	if err != nil {
 		return err
 	}
-	s, ok := sessionByPrefix(b, ref)
-	if !ok {
+	s, err := sessionByPrefix(b, ref)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return err
+	}
+	if err != nil {
 		r, err := k.Find(ref)
 		if err != nil || r.Remote == "" {
 			return fmt.Errorf("no live session %q", ref)

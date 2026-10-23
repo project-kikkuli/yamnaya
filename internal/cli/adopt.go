@@ -214,7 +214,11 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			}
 			text := strings.Join(args[1:], " ")
 			var msg string
-			if rec, found := l.records.Find(args[0]); found && rec.Session != "" {
+			rec, lookupErr := l.lookup(args[0])
+			if lookupErr != nil && !errors.Is(lookupErr, core.ErrNotFound) {
+				return lookupErr
+			}
+			if lookupErr == nil && rec.Session != "" {
 				pane, state := l.state(rec)
 				var p *serverPane
 				if state == "running" {

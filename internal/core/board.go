@@ -908,14 +908,6 @@ func defaultName(p Project) string {
 	return Short(p.Key)
 }
 
-// Short is a session key cut to its first eight characters.
-func Short(key string) string {
-	if len(key) > 8 {
-		return key[:8]
-	}
-	return key
-}
-
 func projectStatus(p Project) Status {
 	if len(p.Sessions) == 0 {
 		return Unknown

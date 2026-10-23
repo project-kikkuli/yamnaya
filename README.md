@@ -221,7 +221,9 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
 | | `ym service status\|restart\|keep\|unkeep` / `ym docs [connect <email>]` | background service / Notion |
 
-Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; `--session` overrides. State lives in `~/.local/state/yamnaya/ym.db` (`YAMNAYA_STATE_DIR` overrides).
+Session commands accept a full session ID, the shorthand printed by `ym sessions`, or an unambiguous prefix of at least six characters. UUIDv7 sessions, including Codex threads, display the last 12 characters so sessions started together have distinct labels; Claude UUIDv4 sessions display the first eight. An ambiguous shorthand or prefix returns an error with the full IDs instead of selecting a session. Stored sessions, inboxes, goal links and adopted launch keys use full IDs.
+
+Commands that act for an agent use Codex's full `CODEX_THREAD_ID` in its tool shells, including when the shell's process ancestry names no session or a different one. Otherwise they find the session by walking up the process tree to the nearest `claude` or `codex` process; `--session` overrides. State lives in `~/.local/state/yamnaya/ym.db` (`YAMNAYA_STATE_DIR` overrides).
 
 ym starts Codex as the platform binary its npm package ships rather than through its node wrapper, since endpoint security such as SentinelOne kills a node process whose command line carries a long prompt, as every manager's does. `YAMNAYA_STATE_DIR`, `YAMNAYA_YM_SOCKET` and `YAMNAYA_NO_SERVE` reach Codex's shells, so `ym` run there acts on the same state and tmux server.
 

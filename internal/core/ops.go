@@ -38,9 +38,15 @@ func (c *Core) Identify(pid int) (Caller, error) {
 	return Caller{}, fmt.Errorf("no claude or codex process above pid %d: %w", pid, ErrNotFound)
 }
 
-// Calling is the session above pid, or the one its harness names in the environment when the process table cannot be read.
+// Calling uses Codex's thread environment when ancestry is missing or disagrees; Claude's environment needs an unreadable table.
 func (c *Core) Calling(pid int, getenv func(string) string) (Caller, error) {
 	cl, err := c.Identify(pid)
+	if id := getenv("CODEX_THREAD_ID"); id != "" {
+		if err == nil && cl.Harness == "codex" && cl.Session == id {
+			return cl, nil
+		}
+		return Caller{Harness: "codex", Session: id}, nil
+	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		if env, ok := CallerFromEnv(getenv); ok {
 			return env, nil
@@ -49,7 +55,7 @@ func (c *Core) Calling(pid int, getenv func(string) string) (Caller, error) {
 	return cl, err
 }
 
-// CallerFromEnv is the session a harness names in its shells' environment, for when the process table cannot be read, as in Codex's sandbox.
+// CallerFromEnv is the full session id a harness names in its shells' environment.
 func CallerFromEnv(getenv func(string) string) (Caller, bool) {
 	for _, v := range []struct{ harness, key string }{{"codex", "CODEX_THREAD_ID"}, {"claude", "CLAUDE_CODE_SESSION_ID"}} {
 		if id := getenv(v.key); id != "" {
@@ -59,7 +65,7 @@ func CallerFromEnv(getenv func(string) string) (Caller, bool) {
 	return Caller{}, false
 }
 
-// CallerOf is the session ref names: a live session's full id or an unambiguous prefix of at least six characters, else ref itself.
+// CallerOf resolves known full ids, displayed shorthands and unambiguous prefixes, else keeps ref itself.
 // A session that continued under another id stands for the one it continued in.
 func (c *Core) CallerOf(ref string) (Caller, error) {
 	b, err := c.Board()
@@ -70,26 +76,26 @@ func (c *Core) CallerOf(ref string) (Caller, error) {
 	for _, s := range b.Sessions {
 		keys = append(keys, s.Key())
 	}
+	for _, l := range b.Launched {
+		keys = append(keys, l.Session)
+	}
+	for _, p := range b.Projects {
+		for _, d := range p.Dormant {
+			keys = append(keys, d.Session)
+		}
+	}
+	for session := range b.Org.Sessions {
+		keys = append(keys, session)
+	}
 	for old := range b.moved {
 		keys = append(keys, old)
 	}
-	id := ref
-	var hits []string
-	for _, k := range keys {
-		if k == ref {
-			hits = []string{k}
-			break
+	id, err := SessionRef(ref, keys)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return Caller{}, err
 		}
-		if len(ref) >= 6 && strings.HasPrefix(k, ref) && !contains(hits, k) {
-			hits = append(hits, k)
-		}
-	}
-	switch len(hits) {
-	case 0:
-	case 1:
-		id = hits[0]
-	default:
-		return Caller{}, fmt.Errorf("session %q is ambiguous: %s and %s", ref, hits[0], hits[1])
+		id = ref
 	}
 	id = c.Resolve(id)
 	if s, ok := b.Session(id); ok {
@@ -556,7 +562,7 @@ func (b Board) ProjectKey(ref string) (string, error) {
 	for _, p := range b.Projects {
 		match := p.Key == ref || strings.EqualFold(p.Name, ref)
 		for _, s := range p.Sessions {
-			match = match || s.Key() == ref || (len(ref) >= 6 && strings.HasPrefix(s.Key(), ref))
+			match = match || SessionMatches(s.Key(), ref)
 		}
 		if match {
 			hits = append(hits, p.Key)

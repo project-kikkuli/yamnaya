@@ -72,7 +72,7 @@ func TestACodexManagerIsKeyedByTheThreadCodexRecordsOnStartAndOnStartingOver(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Session != "019a0000-0000-7000-8000-000000000001" || !strings.Contains(st.Message, "019a0000") {
+	if st.Session != "019a0000-0000-7000-8000-000000000001" || !strings.Contains(st.Message, core.Short(st.Session)) {
 		t.Fatalf("started %+v, want the thread codex recorded", st)
 	}
 

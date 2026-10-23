@@ -167,7 +167,7 @@ func NewRoot() *cobra.Command {
 // remoteWait is how long a one-shot command waits for a host ym remote reached; the board never waits.
 const remoteWait = 8 * time.Second
 
-// caller is the session ym was run from: --session, else the nearest claude or codex ancestor process.
+// caller uses --session, else the harness's calling session from ancestry and Codex's thread environment.
 func (e *env) caller() (core.Caller, error) {
 	if e.session != "" {
 		return e.core.CallerOf(e.session)
