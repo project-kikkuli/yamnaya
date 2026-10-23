@@ -319,7 +319,9 @@ func printLaunch(w io.Writer, rec launch.Record, name, socket string) {
 }
 
 // detach runs ym with args in the background, outliving this ym.
-func detach(args ...string) error {
+var detach = detachSelf
+
+func detachSelf(args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
