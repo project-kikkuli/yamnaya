@@ -70,8 +70,8 @@ func Fresh(root string) (string, error) {
 }
 
 // Create adds worktree slug to the repository dir belongs to with wt, on a new branch slug from the freshly fetched
-// remote default branch, whatever the main checkout has checked out.
-func Create(dir, slug string) (Worktree, error) {
+// remote default branch, whatever the main checkout has checked out, numbering slug past any path held reports a record keeps.
+func Create(dir, slug string, held func(path string) bool) (Worktree, error) {
 	root, err := MainRoot(dir)
 	if err != nil {
 		return Worktree{}, err
@@ -86,7 +86,7 @@ func Create(dir, slug string) (Worktree, error) {
 	}
 	slug = Free(root, slug, func(p string) bool {
 		_, err := os.Stat(p)
-		return err == nil
+		return err == nil || held(p)
 	}, func(b string) bool {
 		_, err := git(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+b)
 		return err == nil || remote[b]

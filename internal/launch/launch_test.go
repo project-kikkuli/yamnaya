@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -214,7 +215,7 @@ func TestCreateBranchesFromFreshRemoteBaseNotTheCheckout(t *testing.T) {
 			t.Setenv("YAMNAYA_WT_BIN", bin)
 			t.Setenv("PATH", filepath.Dir(gitBin)+":/bin:/usr/bin")
 			checkout := Head(repo)
-			w, err := Create(repo, "task")
+			w, err := Create(repo, "task", func(string) bool { return false })
 			if !c.remote {
 				if err == nil {
 					t.Fatalf("Create without a remote = %+v, want an error", w)
@@ -237,14 +238,16 @@ func TestCreateBranchesFromFreshRemoteBaseNotTheCheckout(t *testing.T) {
 	}
 }
 
-func TestCreateSkipsBranchNamesOriginHas(t *testing.T) {
+func TestCreateSkipsBranchNamesOriginHasAndKeysRecordsKeep(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		pushed []string
+		held   []string
 		want   string
 	}{
-		{"free on origin", nil, "task"},
-		{"another clone pushed it and its successor", []string{"task", "task-2"}, "task-3"},
+		{"free on origin", nil, nil, "task"},
+		{"another clone pushed it and its successor", []string{"task", "task-2"}, nil, "task-3"},
+		{"landed records keep it and its successor", nil, []string{"task", "task-2"}, "task-3"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -259,7 +262,10 @@ func TestCreateSkipsBranchNamesOriginHas(t *testing.T) {
 			run(t, base, "git", "clone", "-q", "origin.git", "repo")
 			t.Setenv("YAMNAYA_WT_BIN", "")
 			t.Setenv("PATH", "/bin:/usr/bin:"+os.Getenv("PATH"))
-			w, err := Create(filepath.Join(base, "repo"), "task")
+			repo := filepath.Join(base, "repo")
+			w, err := Create(repo, "task", func(p string) bool {
+				return slices.ContainsFunc(c.held, func(s string) bool { return p == WorktreePath(repo, s) })
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
