@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
@@ -229,34 +230,39 @@ func (b Board) Session(key string) (Live, bool) {
 	if next, ok := b.moved[key]; ok {
 		key = next
 	}
-	if b.index != nil {
-		if i, ok := b.index[key]; ok && i >= 0 {
-			return b.Sessions[i], true
-		}
-		return Live{}, false
+	if b.index == nil {
+		b.indexSessions()
 	}
-	for _, s := range b.Sessions {
-		if s.Ref() == key || s.Key() == key {
-			return s, true
-		}
+	if i, ok := b.index[key]; ok && i >= 0 {
+		return b.Sessions[i], true
 	}
 	return Live{}, false
 }
 
 func (b *Board) indexSessions() {
 	b.index = make(map[string]int, len(b.Sessions))
+	bind := func(key string, i int) {
+		if prev, ok := b.index[key]; ok {
+			if prev >= 0 {
+				a, s := b.Sessions[prev], b.Sessions[i]
+				if a.Harness != s.Harness || profile.ID(a.Profile) != profile.ID(s.Profile) || a.Remote != s.Remote {
+					b.index[key] = -1
+				}
+			}
+			return
+		}
+		b.index[key] = i
+	}
 	for i, s := range b.Sessions {
 		ref := s.Ref()
+		explicit := s.Harness + ":" + profile.ID(s.Profile) + "@" + s.Key()
 		if s.Remote != "" {
 			ref = RemoteKey(s.Remote, ref)
+			explicit = RemoteKey(s.Remote, explicit)
 		}
-		b.index[ref] = i
-		key := s.Key()
-		if prev, ok := b.index[key]; ok && prev >= 0 && b.Sessions[prev].Ref() != s.Ref() {
-			b.index[key] = -1
-		} else if !ok {
-			b.index[key] = i
-		}
+		bind(explicit, i)
+		bind(ref, i)
+		bind(s.Key(), i)
 	}
 
 	b.projects = make(map[string]int, len(b.Projects))

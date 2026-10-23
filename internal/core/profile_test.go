@@ -2,6 +2,29 @@ package core
 
 import "testing"
 
+func TestConversationAliasesNeverOverwriteProfileScopedBoardEntries(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		rows := []Live{{Session: Session{Harness: "codex", ID: "same-conversation", Profile: "work"}}, {Session: Session{Harness: "codex", ID: "same-conversation", Profile: "default"}}, {Session: Session{Harness: "codex", ID: "same-conversation", Profile: "work"}, Remote: "another-host"}}
+		if reverse {
+			rows[0], rows[2] = rows[2], rows[0]
+		}
+		b := Board{Sessions: rows}
+		for _, indexed := range []bool{false, true} {
+			if indexed {
+				b.indexSessions()
+			}
+			if _, ok := b.Session("same-conversation"); ok {
+				t.Fatal("ambiguous native conversation overwrote a profile entry")
+			}
+			for _, ref := range []string{"codex:default@same-conversation", "codex:work@same-conversation", "another-host/codex:work@same-conversation"} {
+				if _, ok := b.Session(ref); !ok {
+					t.Fatalf("qualified session lost: %s", ref)
+				}
+			}
+		}
+	}
+}
+
 type selectedLaunches struct{ *fakeLaunches }
 
 func (l selectedLaunches) Start(n NewLaunch) (Started, error) {
