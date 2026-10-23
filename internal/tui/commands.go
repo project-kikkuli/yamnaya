@@ -2,6 +2,7 @@ package tui
 
 // Commands maps each ym command the owner runs to the board key that does the same.
 var Commands = map[string]string{
+	"ym profiles":       "U",
 	"ym item answer":    "a",
 	"ym item go":        "g",
 	"ym item dismiss":   "x",

@@ -17,6 +17,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/health"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
@@ -28,10 +29,23 @@ func Wire(path string) (*core.Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	cl, cx := claude.New(), codex.New()
-	cl.Cache, cx.Cache = st, st
+	cl := &profileHarness{name: claude.Name, dir: filepath.Dir(path), cache: st}
+	cx := &profileHarness{name: codex.Name, dir: filepath.Dir(path), cache: st}
+	if _, err := profile.Load(filepath.Dir(path)); err != nil {
+		st.Close()
+		return nil, err
+	}
 	srv := tmux.NewServer()
 	c := &core.Core{
+		ProfileList: func() []core.LoginProfile {
+			ps, _ := profile.Load(filepath.Dir(path))
+			var out []core.LoginProfile
+			limits := profileLimits(filepath.Dir(path))
+			for _, p := range ps {
+				out = append(out, core.LoginProfile{Host: p.Host, State: profileStatus(p, limits), Harness: p.Harness, ID: p.ID, Label: p.Label, Account: p.Account})
+			}
+			return out
+		},
 		Store:     st,
 		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), srv},
@@ -52,6 +66,7 @@ func Wire(path string) (*core.Core, error) {
 	if l, err := newLauncher(); err == nil {
 		l.core, l.srv = c, srv
 		c.Launches = l
+		c.PreparePort = l.prepareProfilePort
 		c.BackgroundSend = func(s core.Live, text string) error { _, err := l.sendFrom(s, text, false); return err }
 	}
 	return c, c.ScopeItems()
@@ -130,6 +145,7 @@ func NewRoot() *cobra.Command {
 		docsCmd(with),
 		serviceCmd(),
 		slotCmd(),
+		profilesCmd(with),
 		goalCmd(with, withHosts),
 		chiefCmd(with, withHosts),
 		itemCmd(with, routed),

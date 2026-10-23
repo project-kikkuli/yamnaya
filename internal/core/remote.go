@@ -23,7 +23,9 @@ type Remotes interface {
 
 // RemoteBoard is one host's board as ym last read it over ssh.
 type RemoteBoard struct {
-	Host string
+	Profiles []LoginProfile
+	Usage    *Fleet
+	Host     string
 	// At is when the host last answered; zero while the first read is still running.
 	At       time.Time
 	Err      error

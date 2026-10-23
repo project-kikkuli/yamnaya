@@ -18,7 +18,11 @@ func limitsLine(ym string) string {
 // wireStatusline makes Claude Code's statusline under home record limits with ym: it adds a statusline when there is none,
 // and otherwise adds the record line to the statusline's script right after it reads its input.
 func wireStatusline(home, ym string) (string, error) {
-	settings := filepath.Join(home, ".claude", "settings.json")
+	return wireStatuslineAt(filepath.Join(home, ".claude"), home, ym)
+}
+
+func wireStatuslineAt(root, home, ym string) (string, error) {
+	settings := filepath.Join(root, "settings.json")
 	doc := map[string]any{}
 	b, err := os.ReadFile(settings)
 	switch {
@@ -32,7 +36,7 @@ func wireStatusline(home, ym string) (string, error) {
 	line := limitsLine(ym)
 	sl, _ := doc["statusLine"].(map[string]any)
 	if sl == nil {
-		script := filepath.Join(home, ".claude", "statusline-ym.sh")
+		script := filepath.Join(root, "statusline-ym.sh")
 		if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
 			return "", err
 		}

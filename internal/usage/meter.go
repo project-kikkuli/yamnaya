@@ -1,7 +1,9 @@
 package usage
 
 import (
+	"encoding/json"
 	"maps"
+
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +14,9 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
 // Stats describes one scan.
@@ -29,27 +34,29 @@ type Stats struct {
 type Meter struct {
 	ClaudeDir string
 	CodexHome string
+	Profiles  []profile.Profile
 	StateDir  string
 	// Every is the least time between scans that Fleet starts.
 	Every time.Duration
 	// Fetch downloads a trimmed price file; nil keeps prices offline.
 	Fetch func() ([]byte, error)
 
-	scanMu  sync.Mutex
-	mu      sync.Mutex
-	ledger  *ledger
-	files   map[string]*file
-	byID    map[int64]*file
-	nextID  int64
-	sums    map[sumKey]core.Tokens
-	slices  map[sliceKey]core.Tokens
-	limits  map[string]core.Limit
-	edges   map[string]string
-	prices  *Prices
-	fleet   core.Fleet
-	running bool
-	last    time.Time
-	err     error
+	scanMu      sync.Mutex
+	mu          sync.Mutex
+	ledger      *ledger
+	files       map[string]*file
+	byID        map[int64]*file
+	nextID      int64
+	sums        map[sumKey]core.Tokens
+	slices      map[sliceKey]core.Tokens
+	exhaustions map[string]core.Exhaustion
+	limits      map[string]core.Limit
+	edges       map[string]string
+	prices      *Prices
+	fleet       core.Fleet
+	running     bool
+	last        time.Time
+	err         error
 }
 
 func New(stateDir string) *Meter {
@@ -61,6 +68,17 @@ func New(stateDir string) *Meter {
 	codex := os.Getenv("CODEX_HOME")
 	if codex == "" {
 		codex = filepath.Join(home, ".codex")
+	}
+	if ps, err := profile.Load(stateDir); err == nil {
+		for _, p := range ps {
+			if p.ID == "default" {
+				if p.Harness == claudeName {
+					claude = p.Root
+				} else {
+					codex = p.Root
+				}
+			}
+		}
 	}
 	return &Meter{ClaudeDir: claude, CodexHome: codex, StateDir: stateDir, Every: 5 * time.Second, Fetch: FetchPrices}
 }
@@ -123,6 +141,19 @@ func (m *Meter) open(now time.Time) error {
 		m.byID[f.ID] = f
 		m.nextID = max(m.nextID, f.ID)
 	}
+	m.exhaustions = map[string]core.Exhaustion{}
+	rows, err := m.ledger.db.Query(`SELECT key,body FROM ym_usage_exhaustions`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var key, body string
+		var e core.Exhaustion
+		if rows.Scan(&key, &body) == nil && json.Unmarshal([]byte(body), &e) == nil {
+			m.exhaustions[key] = e
+		}
+	}
+	rows.Close()
 	m.prices = loadPrices(m.StateDir)
 	if m.Fetch != nil {
 		go m.refreshPrices()
@@ -132,11 +163,14 @@ func (m *Meter) open(now time.Time) error {
 
 // parsed is what reading one file's new lines produced.
 type parsed struct {
-	f      *file
-	reset  bool
-	claude claudeChunk
-	codex  codexChunk
-	bytes  int64
+	f           *file
+	reset       bool
+	claude      claudeChunk
+	codex       codexChunk
+	bytes       int64
+	imports     []profile.Import
+	err         error
+	exhaustions []core.Exhaustion
 }
 
 // Scan reads every new transcript line, stores what it adds and rebuilds the fleet view.
@@ -145,31 +179,83 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	defer m.scanMu.Unlock()
 	start := time.Now()
 	var st Stats
+	if _, err := os.Stat(m.StateDir); err != nil {
+		return st, err
+	}
 	if err := m.open(now); err != nil {
 		return st, err
 	}
-	var srcs []source
-	for _, s := range claudeSources(m.ClaudeDir) {
-		s.Harness = claudeName
-		srcs = append(srcs, s)
+	owners := map[string]string{}
+	if records, err := (launch.Records{Dir: filepath.Join(m.StateDir, "launches")}).All(); err == nil {
+		for _, r := range records {
+			if r.Session != "" && r.NativePID > 0 && proc.ConfigRoot(r.NativePID, "YAMNAYA_LAUNCH_KEY") == r.Key {
+				owners[r.Harness+"/"+profile.ID(r.Profile)+"/"+r.Session] = r.Account
+			}
+		}
 	}
-	for _, s := range codexSources(m.CodexHome) {
-		s.Harness = codexName
-		srcs = append(srcs, s)
+	ps := m.Profiles
+	if ps == nil {
+		var err error
+		ps, err = profile.Load(m.StateDir)
+		if err != nil {
+			return st, err
+		}
+		for i := range ps {
+			if ps[i].ID == "default" {
+				if ps[i].Harness == claudeName {
+					ps[i].Root = m.ClaudeDir
+				} else {
+					ps[i].Root = m.CodexHome
+				}
+			}
+		}
+	}
+	var srcs []source
+	for _, p := range ps {
+		var sources []source
+		if p.Harness == claudeName {
+			sources = claudeSources(p.Root)
+		} else {
+			sources = codexSources(p.Root)
+		}
+		for _, s := range sources {
+			s.ConfigRoot = p.Root
+			s.Harness = p.Harness
+			s.Profile = p.ID
+			s.ProfileLabel = p.Label
+			s.Account = p.Account
+			if account, known := owners[s.Harness+"/"+profile.ID(s.Profile)+"/"+s.Session]; known {
+				s.Account = account
+			}
+			epochs, err := m.accountSources(s)
+			if err != nil {
+				return st, err
+			}
+			srcs = append(srcs, epochs...)
+		}
 	}
 	st.Files = len(srcs)
 	var work []*parsed
 	for _, s := range srcs {
 		old := m.files[s.Path]
-		if old != nil && old.Size == s.Size && old.MTime == s.MTime {
+		if old != nil && old.Size == s.Size && old.MTime == s.MTime && old.Profile == s.Profile && old.Account == s.Account {
 			continue
 		}
 		f := &file{source: s}
 		p := &parsed{f: f}
+		var err error
+		p.imports, err = profile.Imports(m.StateDir, s.physical())
+		if err != nil {
+			return st, err
+		}
+		if err = profile.ValidateImports(s.physical(), p.imports); err != nil {
+			return st, err
+		}
 		switch {
 		case old == nil:
 			m.nextID++
 			f.ID = m.nextID
+			f.Offset = f.EpochStart
 		case s.Size >= old.Offset:
 			f.ID, f.Offset, f.Cursor, f.Cost = old.ID, old.Offset, old.Cursor, old.Cost
 		default:
@@ -181,6 +267,11 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	t0 := time.Now()
 	sort.Slice(work, func(i, j int) bool { return work[i].f.Size-work[i].f.Offset > work[j].f.Size-work[j].f.Offset })
 	m.parse(work)
+	for _, p := range work {
+		if p.err != nil {
+			return st, p.err
+		}
+	}
 	st.Parse = time.Since(t0)
 	sort.Slice(work, func(i, j int) bool { return work[i].f.Path < work[j].f.Path })
 	b, err := m.merge(work, bucketOf(now.Add(-keepSlices).Unix()))
@@ -193,13 +284,26 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	}
 	t0 = time.Now()
 	if len(work) > 0 {
+		if err := m.observeEpochs(work); err != nil {
+			return st, err
+		}
 		if err := m.ledger.commit(b); err != nil {
 			return st, err
 		}
 	}
 	st.Commit = time.Since(t0)
 	m.apply(b)
-	m.edges = codexEdges(m.CodexHome)
+	if err = m.saveExhaustions(work); err != nil {
+		return st, err
+	}
+	m.edges = map[string]string{}
+	for _, p := range ps {
+		if p.Harness == codexName {
+			for child, parent := range codexEdges(p.Root) {
+				m.edges[profile.SessionKey(codexName, p.ID, child)] = profile.SessionKey(codexName, p.ID, parent)
+			}
+		}
+	}
 	f := m.build(now)
 	m.mu.Lock()
 	m.fleet, m.last = f, now
@@ -217,13 +321,49 @@ func (m *Meter) parse(work []*parsed) {
 			defer wg.Done()
 			for p := range jobs {
 				from := p.f.Offset
-				if p.f.Harness == claudeName {
-					p.f.Offset, _ = readLines(p.f.Path, from, func(line []byte) { parseClaude(line, &p.claude) })
-					p.f.Cost = max(p.f.Cost, p.claude.cost)
-				} else {
-					p.codex.limits = map[string]core.Limit{}
-					p.f.Offset, _ = readLines(p.f.Path, from, func(line []byte) { parseCodex(line, &p.f.Cursor, &p.codex) })
+				p.codex.limits = map[string]core.Limit{}
+				if from == p.f.EpochStart && p.f.Harness == codexName {
+					seed, err := rolloutSeed(p.f.ConfigRoot, p.f.physical(), from, map[string]bool{})
+					if err != nil {
+						p.err = err
+						continue
+					}
+					p.f.Cursor = seed
 				}
+				position := from
+				p.f.Offset, p.err = readLines(p.f.physical(), from, func(line []byte) {
+					start := position
+					position += int64(len(line))
+					if position > p.f.Size {
+						return
+					}
+					imported := false
+					for _, r := range p.imports {
+						if start >= r.Start && position <= r.End {
+							imported = true
+							if position == r.End && len(r.Seed) > 0 {
+								if err := json.Unmarshal(r.Seed, &p.f.Cursor); err != nil {
+									p.err = err
+								}
+							}
+							break
+						}
+					}
+					if imported {
+						return
+					}
+					if e := exhaustionEvent(line, p.f.Harness, p.f.Cursor.Model); e != nil {
+						p.exhaustions = append(p.exhaustions, *e)
+					}
+					if p.f.Harness == claudeName {
+						parseClaude(line, &p.claude)
+					} else {
+						parseCodex(line, &p.f.Cursor, &p.codex)
+					}
+				})
+				p.f.Offset = min(p.f.Offset, p.f.Size)
+				p.f.Cost = max(p.f.Cost, p.claude.cost)
+
 				p.bytes = p.f.Offset - from
 			}
 		}()
@@ -246,6 +386,9 @@ func (m *Meter) merge(work []*parsed, from int64) (batch, error) {
 		}
 		for _, r := range p.claude.responses {
 			ids = append(ids, r.ID)
+		}
+		for _, t := range p.codex.turns {
+			ids = append(ids, "codex/"+p.f.Session+"/"+t.ID)
 		}
 	}
 	known, err := m.ledger.responses(ids)
@@ -286,10 +429,20 @@ func (m *Meter) merge(work []*parsed, from int64) (batch, error) {
 			add(s.sumKey, r.At, r.Tokens)
 		}
 		for _, t := range p.codex.turns {
-			add(sumKey{File: p.f.ID, Model: t.Model, Day: t.Day, Class: t.Class}, t.At, t.Tokens)
+			id := "codex/" + p.f.Session + "/" + t.ID
+			if _, ok := known[id]; ok {
+				continue
+			}
+			value := &stored{sumKey: sumKey{File: p.f.ID, Model: t.Model, Day: t.Day, Class: t.Class}, Tokens: t.Tokens}
+			known[id] = value
+			b.responses[id] = value
+			add(value.sumKey, t.At, t.Tokens)
 		}
 		for _, l := range p.codex.limits {
-			key := l.Harness + "/" + l.Name
+			l.Profile = p.f.Profile
+			l.ProfileLabel = p.f.ProfileLabel
+			l.Account = p.f.Account
+			key := l.Key()
 			if old, ok := m.limits[key]; ok && old.Seen.After(l.Seen) {
 				continue
 			}
@@ -330,7 +483,7 @@ func (m *Meter) apply(b batch) {
 		m.byID[f.ID] = f
 	}
 	for _, l := range b.limits {
-		key := l.Harness + "/" + l.Name
+		key := l.Key()
 		if old, ok := m.limits[key]; !ok || !old.Seen.After(l.Seen) {
 			m.limits[key] = l
 		}
@@ -340,14 +493,22 @@ func (m *Meter) apply(b batch) {
 // build prices every sum and rolls subagents and child threads into their sessions.
 func (m *Meter) build(now time.Time) core.Fleet {
 	f := core.Fleet{Ready: true, At: now, Sessions: map[string]core.SessionSpend{}, Agents: map[string]core.Spend{}, Windows: map[string]time.Time{}}
+	for _, e := range m.exhaustions {
+		if !e.Recovered {
+			f.Exhaustions = append(f.Exhaustions, e)
+		}
+	}
 	today := day(now)
 	weekStart := day(now.AddDate(0, 0, -6))
 	sessions := map[string]*core.SessionSpend{}
 	get := func(fl *file) *core.SessionSpend {
-		s := sessions[fl.Session]
+		s := sessions[profile.SessionKey(fl.Harness, fl.Profile, fl.Session)]
 		if s == nil {
-			s = &core.SessionSpend{Harness: fl.Harness, ID: fl.Session, ByModel: map[string]core.Spend{}}
-			sessions[fl.Session] = s
+			s = &core.SessionSpend{Harness: fl.Harness, ID: fl.Session, Profile: fl.Profile, ProfileLabel: fl.ProfileLabel, Account: fl.Account, ByAccount: map[string]core.Spend{}, ByModel: map[string]core.Spend{}}
+			sessions[profile.SessionKey(fl.Harness, fl.Profile, fl.Session)] = s
+		}
+		if s.Account != fl.Account {
+			s.Account = ""
 		}
 		return s
 	}
@@ -356,7 +517,7 @@ func (m *Meter) build(now time.Time) core.Fleet {
 		if fl.Root {
 			s.Reported = max(s.Reported, fl.Cost)
 			if fl.Cursor.Parent != "" {
-				s.Parent = fl.Cursor.Parent
+				s.Parent = profile.SessionKey(fl.Harness, fl.Profile, fl.Cursor.Parent)
 			}
 		}
 		if t := time.Unix(0, fl.MTime); t.After(s.Last) {
@@ -376,12 +537,13 @@ func (m *Meter) build(now time.Time) core.Fleet {
 		}
 		s := get(fl)
 		s.Total = s.Total.Plus(sp)
+		s.ByAccount[fl.Account] = s.ByAccount[fl.Account].Plus(sp)
 		if fl.Root {
 			s.Own = s.Own.Plus(sp)
 		}
 		s.ByModel[k.Model] = s.ByModel[k.Model].Plus(sp)
 		if !fl.Root && fl.Harness == claudeName {
-			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.Path), "agent-"), ".jsonl")
+			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.physical()), "agent-"), ".jsonl")
 			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
 		}
 		if k.Day == today {
@@ -404,7 +566,7 @@ func (m *Meter) build(now time.Time) core.Fleet {
 		if fl.Root {
 			s.Own = s.Own.Plus(sp)
 		} else if fl.Harness == claudeName {
-			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.Path), "agent-"), ".jsonl")
+			agent := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(fl.physical()), "agent-"), ".jsonl")
 			f.Agents[fl.Session+"/"+agent] = f.Agents[fl.Session+"/"+agent].Plus(sp)
 		}
 	}
@@ -454,7 +616,7 @@ func (m *Meter) shares(windows []core.Limit, now time.Time) map[int64]map[string
 		}
 		usd, priced := 0.0, false
 		for _, w := range windows {
-			if w.Harness != fl.Harness || (k.Bucket+1)*bucketSecs <= w.Start().Unix() {
+			if w.Harness != fl.Harness || (w.Account != "" && w.Account != fl.Account) || (w.Account == "" && profile.ID(w.Profile) != profile.ID(fl.Profile)) || (k.Bucket+1)*bucketSecs <= w.Start().Unix() {
 				continue
 			}
 			if !priced {

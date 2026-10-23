@@ -33,6 +33,10 @@ func TrustCodexDir(dir string) error {
 	if err != nil {
 		return err
 	}
+	return trustCodexAt(home, dir)
+}
+
+func trustCodexAt(home, dir string) error {
 	path := filepath.Join(home, "config.toml")
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return err
@@ -107,4 +111,21 @@ func Trust(harnessName, dir string) error {
 		return fmt.Errorf("mark %s trusted for %s: %w", dir, harnessName, err)
 	}
 	return nil
+}
+
+func TrustRoot(harness, root, dir string, explicit bool) error {
+	if root == "" {
+		return Trust(harness, dir)
+	}
+	if harness == "codex" {
+		return trustCodexAt(root, dir)
+	}
+	if !explicit {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		return trustClaudeAt(filepath.Join(home, ".claude.json"), dir)
+	}
+	return trustClaudeAt(filepath.Join(root, ".claude.json"), dir)
 }

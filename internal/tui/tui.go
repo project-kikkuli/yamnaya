@@ -50,6 +50,7 @@ const (
 	inDismissStale
 	inAdopt
 	inSend
+	inProfile
 	inNew
 	inNewRepo
 	inPhases
@@ -941,6 +942,22 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return msg[strings.LastIndex(msg, "\n")+1:], err
 				}))
 		}
+	case "B":
+		if switcher, ok := m.core.Launches.(interface {
+			SwitchProfile(string, string) (string, error)
+		}); ok && switcher != nil {
+			if s := m.sessionOf(r); s != nil {
+				ref := s.Ref()
+				if s.Remote != "" {
+					ref = core.RemoteKey(s.Remote, ref)
+				}
+				m.startInput(inProfile, ref, "", "", false)
+				m.inLabel = s.Label()
+			} else if r.dormant != nil {
+				m.startInput(inProfile, r.dormant.Key, "", "", false)
+				m.inLabel = r.dormant.Title
+			}
+		}
 	case "T":
 		if s := m.sessionOf(r); s != nil {
 			live, to := *s, core.Other(s.Harness)
@@ -1233,9 +1250,15 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.nextTarget()
 		}
 		return m, nil
+	case "shift+tab":
+		if m.launching() {
+			m.nextLaunchProfile()
+		}
+		return m, nil
 	case "tab":
 		if m.launching() {
 			m.newL.Harness = core.Other(m.newL.Harness)
+			m.newL.Profile = ""
 		}
 		if m.inKind == inSteer && m.steerHasChief() {
 			m.subtree = !m.subtree
@@ -1249,6 +1272,18 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.adopt(m.inItem)
 		case inGoal, inChief, inRemit, inSteer:
 			return m.goalInput(text)
+		case inProfile:
+			if text == "" {
+				return m, nil
+			}
+			ref := m.inItem
+			switcher, ok := m.core.Launches.(interface {
+				SwitchProfile(string, string) (string, error)
+			})
+			if !ok {
+				return m, nil
+			}
+			return m, m.do(func() (string, error) { return switcher.SwitchProfile(ref, text) })
 		case inSend:
 			if text == "" {
 				return m, nil
@@ -1572,4 +1607,29 @@ func revision() string {
 		return "build " + at
 	}
 	return rev
+}
+
+func (m *Model) nextLaunchProfile() {
+	ps := m.board.Profiles
+	if m.launchOn != "" {
+		ps = nil
+		for _, r := range m.board.Remotes {
+			if r.Host == m.launchOn {
+				ps = r.Profiles
+			}
+		}
+	}
+	ids := []string{""}
+	for _, p := range ps {
+		if p.Harness == m.newL.Harness {
+			ids = append(ids, p.ID)
+		}
+	}
+	for i, id := range ids {
+		if id == m.newL.Profile {
+			m.newL.Profile = ids[(i+1)%len(ids)]
+			return
+		}
+	}
+	m.newL.Profile = ""
 }

@@ -7,11 +7,15 @@ import (
 
 // Dormant is a session ym launched whose agent no longer runs; reviving it resumes it in its worktree.
 type Dormant struct {
-	Key     string
-	Harness string
-	Session string
-	Parent  string
-	Cwd     string
+	Profile      string
+	ProfileLabel string
+	Account      string
+	ConfigRoot   string
+	Key          string
+	Harness      string
+	Session      string
+	Parent       string
+	Cwd          string
 	// RepoKey is the git common dir of the repository its worktree belongs to.
 	RepoKey string
 	// RepoID is the repository's identity across clones and hosts, derived from RepoKey when empty.
@@ -74,9 +78,11 @@ func (l Live) Unadoptable() string {
 
 // NewLaunch asks for a new agent on Prompt in a fresh worktree of the repository Repo lies in.
 type NewLaunch struct {
-	Prompt  string
-	Harness string
-	Repo    string
+	Profile    string
+	ConfigRoot string
+	Prompt     string
+	Harness    string
+	Repo       string
 	// Slug names the worktree and branch; empty derives it from Prompt.
 	Slug string
 	// Parent is the session that spawned this one, or empty.
@@ -90,6 +96,7 @@ type NewLaunch struct {
 // Started is a session Start launched: its launch key, its session id once known, and the lines that tell the owner where it runs.
 type Started struct {
 	Key, Session, Message string
+	Profile, ConfigRoot   string
 }
 
 // Launched is one session ym launched and how its pane stands: running, exited with a status, or gone.
@@ -100,11 +107,14 @@ const LaunchUnknown = "unknown"
 func (l Launched) MayRun() bool { return l.State == "running" || l.State == LaunchUnknown }
 
 type Launched struct {
-	Key     string
-	Harness string
-	Session string
-	State   string
-	Path    string
+	Profile      string
+	ProfileLabel string
+	Account      string
+	Key          string
+	Harness      string
+	Session      string
+	State        string
+	Path         string
 	// Parent is the session that spawned it, or empty.
 	Parent string
 	// Landed is when ym landed it, or zero while it is not landed; Killed is when ym kill stopped it, or zero.

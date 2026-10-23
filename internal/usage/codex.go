@@ -1,9 +1,13 @@
 package usage
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"io/fs"
 	"net/url"
 	"path/filepath"
@@ -18,19 +22,27 @@ import (
 // codexSources lists every rollout under sessions/, keyed to the thread id that ends its name.
 func codexSources(home string) []source {
 	var out []source
-	walk(filepath.Join(home, "sessions"), func(path string, d fs.DirEntry) {
-		name := d.Name()
-		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, ".jsonl") {
-			return
-		}
-		id := strings.TrimSuffix(name, ".jsonl")
-		if len(id) < 36 {
-			return
-		}
-		if s, ok := stat(path, id[len(id)-36:], true); ok {
-			out = append(out, s)
-		}
-	})
+	for _, dir := range []string{"sessions", "archived_sessions"} {
+		walk(filepath.Join(home, dir), func(path string, d fs.DirEntry) {
+			name := d.Name()
+			if !strings.HasPrefix(name, "rollout-") || !nativefile.IsTranscript(name) {
+				return
+			}
+			id := rolloutConversation(path)
+			if id == "" {
+				id = strings.TrimSuffix(nativefile.PlainName(name), ".jsonl")
+				if len(id) >= 36 {
+					id = id[len(id)-36:]
+				}
+			}
+			if len(id) < 36 {
+				return
+			}
+			if s, ok := stat(path, id, true); ok {
+				out = append(out, s)
+			}
+		})
+	}
 	return out
 }
 
@@ -114,6 +126,8 @@ var (
 )
 
 func parseCodex(line []byte, cur *codexCursor, c *codexChunk) {
+	sum := sha256.Sum256(bytes.TrimSpace(line))
+	eventID := hex.EncodeToString(sum[:])
 	head := line[:min(len(line), 120)]
 	isMeta := bytes.Contains(head, sessionMeta)
 	if !isMeta && !bytes.Contains(head, turnContext) && !bytes.Contains(line, tokenCount) {
@@ -164,7 +178,7 @@ func parseCodex(line []byte, cur *codexCursor, c *codexChunk) {
 		if d.Input == 0 && d.Output == 0 {
 			return
 		}
-		c.turns = append(c.turns, response{
+		c.turns = append(c.turns, response{ID: eventID,
 			Model:  cur.Model,
 			Day:    day(r.Timestamp),
 			At:     r.Timestamp.Unix(),
@@ -183,4 +197,26 @@ func windowName(minutes int64) string {
 		return strconv.FormatInt((minutes+1)/60, 10) + "h"
 	}
 	return strconv.FormatInt(minutes, 10) + "m"
+}
+
+func rolloutConversation(path string) string {
+	f, err := nativefile.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	line, err := bufio.NewReader(f).ReadBytes('\n')
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID string `json:"id"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(line, &meta) != nil || meta.Type != "session_meta" {
+		return ""
+	}
+	return meta.Payload.ID
 }

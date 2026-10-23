@@ -44,6 +44,13 @@ func TrustClaudeDir(dir string) error {
 	if err != nil {
 		return err
 	}
+	return trustClaudeAt(path, dir)
+}
+
+func trustClaudeAt(path, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
 	lock, err := os.OpenFile(path+".ym.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err

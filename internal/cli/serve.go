@@ -19,6 +19,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/intake"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
+	"github.com/project-kikkuli/yamnaya/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +59,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if err != nil {
 			return err
 		}
+		meter := usage.New(dir)
+		defer meter.Close()
+		e.core.Meter = meter
 		self, _ := os.Executable()
 		started, _ := os.Stat(self)
 		lockPath := filepath.Join(dir, "work-service.lock")
@@ -189,7 +193,7 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 		failures = append(failures, err)
 	}
 	if l, ok := c.Launches.(launcher); ok {
-		failures = append(failures, l.unstall(time.Now()))
+		failures = append(failures, l.RecoverProfiles(b), l.Failover(b), l.unstall(time.Now()))
 	}
 	if err = relayHosts(c); err != nil {
 		failures = append(failures, err)

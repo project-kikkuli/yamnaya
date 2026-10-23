@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,13 +19,29 @@ import (
 
 // Record is one agent session ym launched: where it runs and how to bring it back.
 type Record struct {
-	Key      string   `json:"key"`
-	Harness  string   `json:"harness"`
-	Session  string   `json:"session,omitempty"`
-	Parent   string   `json:"parent,omitempty"`
-	Prompt   string   `json:"prompt"`
-	Worktree Worktree `json:"worktree"`
-	Head     string   `json:"head,omitempty"`
+	RootValue        string    `json:"root_value,omitempty"`
+	RootSet          bool      `json:"root_set,omitempty"`
+	SQLiteEnv        string    `json:"sqlite_env,omitempty"`
+	SQLiteEnvSet     bool      `json:"sqlite_env_set,omitempty"`
+	Handoff          string    `json:"handoff,omitempty"`
+	AttachedAt       time.Time `json:"attached_at,omitzero"`
+	Account          string    `json:"account,omitempty"`
+	NativePID        int       `json:"native_pid,omitempty"`
+	Dedicated        bool      `json:"dedicated,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	Profile          string    `json:"profile,omitempty"`
+	ConfigRoot       string    `json:"config_root,omitempty"`
+	SQLiteRoot       string    `json:"sqlite_root,omitempty"`
+	ConfigExplicit   bool      `json:"config_explicit,omitempty"`
+	SecureStorage    string    `json:"secure_storage,omitempty"`
+	SecureStorageSet bool      `json:"secure_storage_set,omitempty"`
+	Key              string    `json:"key"`
+	Harness          string    `json:"harness"`
+	Session          string    `json:"session,omitempty"`
+	Parent           string    `json:"parent,omitempty"`
+	Prompt           string    `json:"prompt"`
+	Worktree         Worktree  `json:"worktree"`
+	Head             string    `json:"head,omitempty"`
 	// Repo is the repository's identity across clones, so a revive finds another clone once this one is gone.
 	Repo    string    `json:"repo,omitempty"`
 	Started time.Time `json:"started"`
@@ -59,11 +76,7 @@ func (r Records) Save(rec Record) error {
 	if err != nil {
 		return err
 	}
-	tmp := r.path(rec.Key) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, r.path(rec.Key))
+	return profile.Write(r.path(rec.Key), data)
 }
 
 // Has reports whether a record, landed or not, holds key.
@@ -134,15 +147,23 @@ func (r Records) Find(ref string) (Record, bool) {
 	return rec, err == nil
 }
 
-// Lookup matches keys, branch slugs and unambiguous session references, preferring an unlanded record of the same session.
 func (r Records) Lookup(ref string) (Record, error) {
 	all, err := r.All()
 	if err != nil {
 		return Record{}, err
 	}
+	scope := ""
+	if before, after, ok := strings.Cut(ref, "@"); ok {
+		scope, ref = before, after
+	}
 	var exact []Record
 	var ids []string
+	var candidates []Record
 	for _, rec := range all {
+		if scope != "" && rec.Harness+":"+profile.ID(rec.Profile) != scope {
+			continue
+		}
+		candidates = append(candidates, rec)
 		if rec.Key == ref || rec.Worktree.Branch == ref {
 			exact = append(exact, rec)
 		}
@@ -153,12 +174,18 @@ func (r Records) Lookup(ref string) (Record, error) {
 		if err != nil {
 			return Record{}, err
 		}
-		for _, rec := range all {
+		for _, rec := range candidates {
 			if rec.Session == id {
 				exact = append(exact, rec)
 			}
 		}
 	}
+	for _, rec := range exact[1:] {
+		if rec.Harness != exact[0].Harness || profile.ID(rec.Profile) != profile.ID(exact[0].Profile) {
+			return Record{}, fmt.Errorf("%w %q: use harness:profile@session", core.ErrAmbiguous, ref)
+		}
+	}
+
 	var live []Record
 	for _, rec := range exact {
 		if !rec.IsLanded() {

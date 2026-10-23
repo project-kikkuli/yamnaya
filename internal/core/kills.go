@@ -36,3 +36,8 @@ func (s *Store) kills(since time.Time) (map[string]time.Time, error) {
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) ClearKill(session string) error {
+	_, err := s.db.Exec(`DELETE FROM ym_kills WHERE session=?`, session)
+	return err
+}

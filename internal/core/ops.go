@@ -157,7 +157,7 @@ func (t Target) Advice() string {
 func (c *Core) Targets(b Board, key, harnessName string) []Target {
 	var out []Target
 	for _, s := range b.Sessions {
-		if s.Key() != key {
+		if s.Key() != key && s.Ref() != key {
 			continue
 		}
 		if s.Remote != "" {
@@ -168,7 +168,7 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 			if h, host := c.locate(cp.TTY); host != nil && !cp.Background {
 				t.Handle = &h
 			} else if !cp.Background {
-				t.Resume = c.resume(cp.Harness, cp.ID)
+				t.Resume = c.resumeProfile(cp)
 			}
 			out = append(out, t)
 		}
@@ -586,4 +586,16 @@ func (b Board) ProjectKey(ref string) (string, error) {
 		return hits[0], nil
 	}
 	return "", fmt.Errorf("project %q is ambiguous: %s", ref, strings.Join(hits, ", "))
+}
+
+func (c *Core) resumeProfile(s Session) []string {
+	for _, h := range c.Harnesses {
+		if h.Name() == s.Harness {
+			if scoped, ok := h.(interface{ ResumeProfile(string, string) []string }); ok {
+				return scoped.ResumeProfile(s.ID, s.Profile)
+			}
+			return h.Resume(s.ID)
+		}
+	}
+	return nil
 }

@@ -46,6 +46,7 @@ func (m Model) launchedHere(kind, harness string) error {
 func (m *Model) nextTarget() {
 	ts := m.launchTargets()
 	m.launchOn = ts[(slices.Index(ts, m.launchOn)+1)%len(ts)]
+	m.newL.Profile = ""
 }
 
 func (m Model) launching() bool {
@@ -110,6 +111,9 @@ func (m Model) remoteArgs(text string) ([]string, error) {
 			}
 			args = append(args, "--over", strings.Join(over, ","))
 		}
+	}
+	if m.newL.Profile != "" {
+		args = append(args, "--profile", m.newL.Profile)
 	}
 	if m.newL.Repo != "" {
 		args = append(args, "--repo", filepath.Base(m.newL.Repo))

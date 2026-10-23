@@ -2,7 +2,10 @@
 package codex
 
 import (
+	"bufio"
 	"database/sql"
+	"encoding/json"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	_ "modernc.org/sqlite"
 )
 
@@ -23,8 +27,9 @@ const Name = "codex"
 const staleAfter = 15 * time.Minute
 
 type Adapter struct {
-	Home string
-	Bin  string
+	Home      string
+	StateHome string
+	Bin       string
 	// OpenFiles lists the files a process holds open.
 	OpenFiles func(pid int) []string
 	Cwd       func(pid int) string
@@ -74,18 +79,48 @@ func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "resume", 
 
 // Transcript is the path of thread id's rollout, empty when Codex keeps none.
 func (a *Adapter) Transcript(id string) string {
-	db, ok := a.db()
-	if !ok {
-		return ""
+	if db, ok := a.db(); ok {
+		var path string
+		err := db.QueryRow(`SELECT rollout_path FROM threads WHERE id=?`, id).Scan(&path)
+		if err == nil {
+			if _, err = os.Stat(path); err == nil {
+				return path
+			}
+			return ""
+		}
+		if err != sql.ErrNoRows {
+			return ""
+		}
 	}
-	t, ok := threadByID(db, id)
-	if !ok || t.rollout == "" {
-		return ""
+	var paths []string
+	for _, dir := range []string{"sessions", "archived_sessions"} {
+		filepath.WalkDir(filepath.Join(a.Home, dir), func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !nativefile.IsTranscript(path) {
+				return nil
+			}
+			f, err := nativefile.Open(path)
+			if err != nil {
+				return nil
+			}
+			line, _ := bufio.NewReader(f).ReadBytes('\n')
+			f.Close()
+			var doc struct {
+				Type    string `json:"type"`
+				Payload struct {
+					ID string `json:"id"`
+				} `json:"payload"`
+			}
+			if json.Unmarshal(line, &doc) == nil && doc.Type == "session_meta" && doc.Payload.ID == id {
+				paths = append(paths, path)
+			}
+			return nil
+		})
 	}
-	if _, err := os.Stat(t.rollout); err != nil {
-		return ""
+	sort.Strings(paths)
+	if len(paths) > 0 {
+		return paths[len(paths)-1]
 	}
-	return t.rollout
+	return ""
 }
 
 type thread struct {
@@ -111,7 +146,7 @@ func argThread(args []string) string {
 }
 
 func (a *Adapter) db() (*sql.DB, bool) {
-	matches, _ := filepath.Glob(filepath.Join(a.Home, "state_*.sqlite"))
+	matches, _ := filepath.Glob(filepath.Join(a.sqliteHome(), "state_*.sqlite"))
 	if len(matches) == 0 {
 		return nil, false
 	}
@@ -219,8 +254,11 @@ func (a *Adapter) heldThreads(pid int) []string {
 		base := filepath.Base(f)
 		id := ""
 		switch {
-		case strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl"):
-			if name := strings.TrimSuffix(base, ".jsonl"); len(name) >= 36 {
+		case strings.HasPrefix(base, "rollout-") && nativefile.IsTranscript(base):
+			if name := strings.TrimSuffix(nativefile.PlainName(base), ".jsonl"); len(name) >= 36 {
+				if before, _, ok := strings.Cut(name, "_"); ok {
+					name = before
+				}
 				id = name[len(name)-36:]
 			}
 		case filepath.Base(filepath.Dir(f)) == "thread-writer-locks" && strings.HasSuffix(base, ".lock"):
@@ -409,4 +447,26 @@ func (a *Adapter) SessionCwd(session string) string {
 	}
 	t, _ := threadByID(db, session)
 	return t.cwd
+}
+
+func (a *Adapter) sqliteHome() string {
+	if a.StateHome != "" {
+		return a.StateHome
+	}
+	return profile.SQLiteHome(a.Home)
+}
+
+func (a *Adapter) ConversationArtifacts(id string) map[string]string {
+	out := map[string]string{}
+	if path := a.Transcript(id); path != "" {
+		out[id] = path
+	}
+	if db, ok := a.db(); ok {
+		for _, child := range spawned(db, id) {
+			if path := a.Transcript(child.id); path != "" {
+				out[child.id] = path
+			}
+		}
+	}
+	return out
 }

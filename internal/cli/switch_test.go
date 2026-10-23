@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -144,6 +145,16 @@ func TestRelaunchTakesOverTheLaunchRecordInTheSessionsDirectory(t *testing.T) {
 				t.Fatalf("took over %s; records %+v, want %+v", rec.Key, got, c.want)
 			}
 			for _, w := range c.want {
+				if w.Harness == "codex" {
+					w.Profile = "default"
+					root, err := filepath.EvalSymlinks(os.Getenv("CODEX_HOME"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					w.ConfigRoot = root
+					w.SQLiteRoot = root
+					w.ConfigExplicit = true
+				}
 				if g, ok := got[w.Key]; !ok || !reflect.DeepEqual(g, w) {
 					t.Fatalf("record %s = %+v, want %+v", w.Key, g, w)
 				}

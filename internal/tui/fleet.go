@@ -17,11 +17,20 @@ func fleetLine(f core.Fleet, host string, now time.Time) string {
 		return pal.dim.Render(" usage: reading transcripts…")
 	}
 	var parts []string
-	for _, h := range []string{"claude", "codex"} {
+	labels := []string{}
+	seenLabels := map[string]bool{}
+	for _, l := range f.Limits {
+		label := l.IdentityLabel()
+		if !seenLabels[label] {
+			seenLabels[label] = true
+			labels = append(labels, label)
+		}
+	}
+	for _, h := range labels {
 		var ws []string
 		var seen time.Time
 		for _, l := range f.Limits {
-			if l.Harness != h {
+			if l.IdentityLabel() != h {
 				continue
 			}
 			w := fmt.Sprintf("%s %.0f%% ↻%s", l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)))
@@ -56,4 +65,11 @@ func spendText(f core.Fleet, s core.Spend) string {
 		return s.Dollars() + " " + pal.dim.Render(sh)
 	}
 	return s.Dollars()
+}
+
+func profileDisplay(h, id string) string {
+	if id == "" || id == "default" {
+		return h
+	}
+	return h + "/" + id
 }

@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -18,9 +19,15 @@ const (
 
 // source is one transcript file and the session it counts toward.
 type source struct {
-	Path    string
-	Harness string
-	Session string
+	PhysicalPath string
+	EpochStart   int64
+	ConfigRoot   string
+	Profile      string
+	ProfileLabel string
+	Account      string
+	Path         string
+	Harness      string
+	Session      string
 	// Root marks the session's own transcript, as opposed to a subagent's.
 	Root  bool
 	Size  int64
@@ -61,6 +68,9 @@ func claudeSources(dir string) []source {
 
 func stat(path, session string, root bool) (source, bool) {
 	info, err := lstat(path)
+	if err == nil && strings.HasSuffix(path, ".zst") {
+		info, err = nativefile.Stat(path)
+	}
 	if err != nil {
 		return source{}, false
 	}

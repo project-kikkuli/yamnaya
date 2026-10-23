@@ -2,7 +2,9 @@ package core
 
 import (
 	"fmt"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -32,6 +34,8 @@ type Spend struct {
 	// Share is this spend's fraction of the API-priced usage seen inside each current limit window, keyed by Limit.Key.
 	Share map[string]float64
 }
+
+func (s SessionSpend) Key() string { return profile.SessionKey(s.Harness, s.Profile, s.ID) }
 
 func (s Spend) Plus(o Spend) Spend {
 	out := Spend{s.USD + o.USD, s.Tokens.Plus(o.Tokens), s.Unpriced + o.Unpriced, s.Share}
@@ -79,13 +83,18 @@ func Span(d time.Duration) string {
 
 // SessionSpend is one session's spend alone (Own) and with every subagent and child thread it started (Total).
 type SessionSpend struct {
-	Harness string
-	ID      string
+	Profile      string
+	ProfileLabel string
+	Account      string
+	Host         string
+	Harness      string
+	ID           string
 	// Parent is the session that started this one, as the harness records it.
-	Parent  string
-	Own     Spend
-	Total   Spend
-	ByModel map[string]Spend
+	Parent    string
+	Own       Spend
+	Total     Spend
+	ByAccount map[string]Spend
+	ByModel   map[string]Spend
 	// Reported is the harness's own running cost total for the session, 0 when it records none.
 	Reported float64
 	Last     time.Time
@@ -93,31 +102,59 @@ type SessionSpend struct {
 
 // Limit is one subscription rate-limit window as a harness last reported it.
 type Limit struct {
-	Harness  string
-	Name     string
-	Used     float64
-	Window   time.Duration
-	ResetsAt time.Time
-	Plan     string
-	Seen     time.Time
+	Profile      string
+	ProfileLabel string
+	Account      string
+	Host         string
+	Harness      string
+	Name         string
+	Used         float64
+	Window       time.Duration
+	ResetsAt     time.Time
+	Plan         string
+	Seen         time.Time
 }
 
 // Label names the window without repeating the harness: Codex limit ids start with "codex".
 func (l Limit) Label() string { return strings.TrimPrefix(l.Name, "codex ") }
 
-func (l Limit) Key() string { return l.Harness + "/" + l.Name }
+func (l Limit) Key() string {
+	scope := l.Harness
+	if l.Account != "" {
+		return l.Account + "/" + l.Name
+	}
+	if profile.ID(l.Profile) != "default" || l.Host != "" {
+		scope += "/" + l.Host + "/" + profile.ID(l.Profile)
+	}
+	return scope + "/" + l.Name
+}
+func (l Limit) IdentityLabel() string {
+	label := l.Harness
+	if l.Profile != "" && l.Profile != "default" {
+		label += "/" + l.Profile
+		if l.ProfileLabel != "" && l.ProfileLabel != l.Profile {
+			label += " (" + l.ProfileLabel + ")"
+		}
+	}
+	if l.Host != "" {
+		label = l.Host + "/" + label
+	}
+	return label
+}
 
 // Start is when the window began.
 func (l Limit) Start() time.Time { return l.ResetsAt.Add(-l.Window) }
 
 // Fleet is what every session costs and how close each subscription is to its limits.
 type Fleet struct {
-	Ready    bool
-	At       time.Time
-	Limits   []Limit
-	Today    Spend
-	Week     Spend
-	Sessions map[string]SessionSpend
+	Exhaustions []Exhaustion
+	Failovers   []FailoverState
+	Ready       bool
+	At          time.Time
+	Limits      []Limit
+	Today       Spend
+	Week        Spend
+	Sessions    map[string]SessionSpend
 	// Agents is each Claude subagent's own spend, keyed "<session>/<agent id>".
 	Agents map[string]Spend
 	// Windows is the start of each limit window that Spend.Share measured, keyed by Limit.Key.
@@ -162,7 +199,7 @@ type Meter interface {
 func projectSpend(p Project, f Fleet) Spend {
 	in := map[string]bool{}
 	for _, s := range p.Sessions {
-		in[s.Key()] = true
+		in[s.UsageKey()] = true
 	}
 	var out Spend
 	for key := range in {
@@ -192,4 +229,71 @@ func ThisHost() string {
 		h = h[:i]
 	}
 	return h
+}
+
+type LoginProfile struct {
+	State   string `json:"state,omitempty"`
+	Host    string `json:"host,omitempty"`
+	Harness string `json:"harness"`
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Account string `json:"account,omitempty"`
+}
+
+func (s Session) Ref() string { return profile.SessionKey(s.Harness, s.Profile, s.Key()) }
+func (s Live) UsageKey() string {
+	key := profile.SessionKey(s.Harness, s.Profile, s.ID)
+	if s.Remote != "" {
+		return RemoteKey(s.Remote, key)
+	}
+	return key
+}
+func MergeFleet(local Fleet, remotes []RemoteBoard) Fleet {
+	out := local
+	out.Sessions = map[string]SessionSpend{}
+	for k, v := range local.Sessions {
+		out.Sessions[k] = v
+	}
+	out.Limits = append([]Limit(nil), local.Limits...)
+	seen := map[string]bool{}
+	for _, r := range remotes {
+		if seen[func() string {
+			if r.Self != "" {
+				return r.Self
+			}
+			return r.Host
+		}()] || r.Usage == nil || !r.Usage.Ready {
+			continue
+		}
+		origin := r.Self
+		if origin == "" {
+			origin = r.Host
+		}
+		seen[origin] = true
+		out.Today = out.Today.Plus(r.Usage.Today)
+		out.Week = out.Week.Plus(r.Usage.Week)
+		for k, v := range r.Usage.Sessions {
+			v.Host = r.Host
+			if v.Parent != "" {
+				v.Parent = RemoteKey(r.Host, v.Parent)
+			}
+			out.Sessions[RemoteKey(r.Host, k)] = v
+		}
+		for _, l := range r.Usage.Limits {
+			l.Host = r.Host
+			out.Limits = append(out.Limits, l)
+		}
+	}
+	newest := map[string]Limit{}
+	for _, l := range out.Limits {
+		if old, ok := newest[l.Key()]; !ok || old.Seen.Before(l.Seen) {
+			newest[l.Key()] = l
+		}
+	}
+	out.Limits = nil
+	for _, l := range newest {
+		out.Limits = append(out.Limits, l)
+	}
+	sort.Slice(out.Limits, func(i, j int) bool { return out.Limits[i].Key() < out.Limits[j].Key() })
+	return out
 }

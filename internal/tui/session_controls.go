@@ -47,6 +47,9 @@ func (m Model) sessionHints() string {
 	} else if ids, _ := m.stoppedTargets(r); len(ids) > 0 {
 		hints = append(hints, "K archive")
 	}
+	if r.dormant != nil {
+		hints = append(hints, "B subscription")
+	}
 	refs, _ := m.landingTargets(r)
 	if len(refs) > 0 && m.core.Launches != nil {
 		hints = append(hints, "L land", "F forget")
@@ -55,7 +58,7 @@ func (m Model) sessionHints() string {
 		if s.ID != "" && m.core.Launches != nil {
 			hints = append(hints, "s send")
 		}
-		hints = append(hints, "T switch")
+		hints = append(hints, "T switch", "B subscription")
 	}
 	return strings.Join(hints, "   ")
 }

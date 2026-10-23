@@ -8,7 +8,6 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
-	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
 // trustPrompt is the line Claude Code's folder trust dialog offers to accept.
@@ -43,7 +42,7 @@ func (l launcher) unstall(now time.Time) error {
 		}
 		argv, err := startArgv(rec)
 		if err == nil {
-			err = launch.Trust(rec.Harness, rec.Worktree.Path)
+			err = trustRecord(rec)
 		}
 		if err == nil {
 			err = l.srv.Respawn(name, rec.Worktree.Path, argv)

@@ -18,7 +18,7 @@ import (
 )
 
 func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo string
+	var repo, selected string
 	var useCodex bool
 	cmd := &cobra.Command{
 		Use:   "goal [--codex] [--repo NAME|PATH] <ask>",
@@ -29,7 +29,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			g, m, err := e.core.NewGoal(args[0], dir, harnessFlag(useCodex))
+			g, m, err := e.core.NewGoal(args[0], dir, harnessFlag(useCodex), selected)
 			if err != nil {
 				return err
 			}
@@ -45,6 +45,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		}),
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
+	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
@@ -597,7 +598,7 @@ func goalAuthorityCmd(with func(runFunc) func(*cobra.Command, []string) error) *
 }
 
 func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo, remit, over string
+	var repo, remit, over, selected string
 	var useCodex bool
 	cmd := &cobra.Command{
 		Use:   "chief [--codex] [--repo R] [--remit TEXT] [--over ID,ID] <name>",
@@ -612,7 +613,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 			if over != "" {
 				children = strings.Split(over, ",")
 			}
-			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, harnessFlag(useCodex), children)
+			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, harnessFlag(useCodex), children, selected)
 			if err != nil {
 				return err
 			}
@@ -630,6 +631,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the chief's session runs in (default: the current directory's)")
 	cmd.Flags().StringVar(&remit, "remit", "", "what the chief oversees, in your words")
 	cmd.Flags().StringVar(&over, "over", "", "managers, goals or chiefs it starts over, comma separated")
+	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the chief")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the chief on codex instead of claude")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "attach <child> <chief>",

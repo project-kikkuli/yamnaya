@@ -211,6 +211,19 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	for _, column := range []string{"profile", "config_root"} {
+		var count int
+		if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('ym_managers') WHERE name=?", column).Scan(&count); err != nil {
+			db.Close()
+			return nil, err
+		}
+		if count == 0 {
+			if _, err := db.Exec("ALTER TABLE ym_managers ADD COLUMN " + column + " TEXT NOT NULL DEFAULT ''"); err != nil {
+				db.Close()
+				return nil, err
+			}
+		}
+	}
 	if err := scopeItems(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate items: %w", err)
