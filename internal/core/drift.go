@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ func (c *Core) placeDrift(found []Session, now time.Time) {
 		if s.Status == Done || s.Status == Moved {
 			s.Drift = nil
 		} else if sign, ok := c.offRepoOnce(*s, now); ok {
-			s.Drift = append(s.Drift, sign)
+			s.Drift = append(slices.Clip(s.Drift), sign)
 		}
 		for j := range s.Crew {
 			if s.Crew[j].Status != Busy {

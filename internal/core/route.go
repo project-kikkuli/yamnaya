@@ -118,13 +118,20 @@ func (o Org) Managed(session string, parents map[string]string) (Manager, bool) 
 }
 
 // Subtree lists id and every manager and chief below it.
-func (o Org) Subtree(id string) []Manager {
-	var out []Manager
+func (o Org) Subtree(id string) []Manager { return o.subtree(o.reports(), id) }
+
+// reports maps each manager or chief to the ones reporting to it, in order.
+func (o Org) reports() map[string][]string {
 	reports := map[string][]string{}
 	for _, child := range o.order {
 		parent := o.Managers[child].ParentID
 		reports[parent] = append(reports[parent], child)
 	}
+	return reports
+}
+
+func (o Org) subtree(reports map[string][]string, id string) []Manager {
+	var out []Manager
 	var walk func(string, map[string]bool)
 	walk = func(id string, seen map[string]bool) {
 		if seen[id] {

@@ -359,6 +359,7 @@ type gitCache struct {
 	info  map[string]gitEntry
 	tops  map[string]string
 	drift map[string]offRepoRead
+	crew  map[string]crewPlace
 	// gen counts changes to any directory's place.
 	gen uint64
 }
@@ -424,6 +425,35 @@ func (c *Core) worktreeOf(path string) string {
 		c.gc.tops[d] = top
 	}
 	return top
+}
+
+type crewPlace struct {
+	files    int
+	last     string
+	worktree string
+}
+
+// crewWorktree is worktree of the member's files, worked out again only after the member writes another file.
+func (c *Core) crewWorktree(session string, m Member) string {
+	last := ""
+	if len(m.Files) > 0 {
+		last = m.Files[len(m.Files)-1]
+	}
+	key := session + "\x00" + m.ID
+	c.gc.mu.Lock()
+	p, ok := c.gc.crew[key]
+	c.gc.mu.Unlock()
+	if ok && p.files == len(m.Files) && p.last == last {
+		return p.worktree
+	}
+	w := c.worktree(m.Files)
+	c.gc.mu.Lock()
+	if c.gc.crew == nil {
+		c.gc.crew = map[string]crewPlace{}
+	}
+	c.gc.crew[key] = crewPlace{files: len(m.Files), last: last, worktree: w}
+	c.gc.mu.Unlock()
+	return w
 }
 
 // worktree is the checkout most of the member's written files sit in.

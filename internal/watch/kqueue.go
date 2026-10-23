@@ -74,3 +74,10 @@ func (k *kernel) watch(path string) bool {
 	k.fds[path], k.paths[fd] = fd, path
 	return true
 }
+
+func (k *kernel) close() {
+	for fd := range k.paths {
+		syscall.Close(fd)
+	}
+	syscall.Close(k.kq)
+}

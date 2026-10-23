@@ -120,3 +120,14 @@ func (s *Stats) Stat(path string) (os.FileInfo, error) {
 	s.known[path] = look{info: info, err: err, on: on, gen: gen}
 	return info, err
 }
+
+// Close stops watching and lets go of every descriptor; Stat then just stats.
+func (s *Stats) Close() {
+	if s == nil || s.k == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.k.close()
+	s.k = nil
+}

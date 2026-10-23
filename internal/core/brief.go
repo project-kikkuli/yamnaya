@@ -221,7 +221,7 @@ func (f Freshness) String() string {
 
 // freshness compares m's newest brief with the meaningful events since: the goal's events, the adoption of a steer, and for a
 // chief, a report's newer brief.
-func freshness(o Org, m Manager, briefs map[string]Brief, steers map[string]Steer, events []stamped) Freshness {
+func freshness(o Org, reports map[string][]string, m Manager, briefs map[string]Brief, steers map[string]Steer, events []stamped) Freshness {
 	f := Freshness{}
 	if b, ok := briefs[m.ID]; ok {
 		f.Brief = &b
@@ -242,7 +242,7 @@ func freshness(o Org, m Manager, briefs map[string]Brief, steers map[string]Stee
 		note(e.At, e.What)
 	}
 	if m.Role == RoleChief {
-		for _, r := range o.Subtree(m.ID) {
+		for _, r := range o.subtree(reports, m.ID) {
 			if b, ok := briefs[r.ID]; ok && r.ID != m.ID {
 				note(b.CreatedAt, fmt.Sprintf("%s brief v%d", r.ID, b.Version))
 			}
@@ -275,8 +275,9 @@ func (c *Core) Freshness(o Org) (map[string]Freshness, error) {
 		return nil, err
 	}
 	out := map[string]Freshness{}
+	reports := o.reports()
 	for _, m := range o.Ordered() {
-		out[m.ID] = freshness(o, m, briefs, steers, events[m.ID])
+		out[m.ID] = freshness(o, reports, m, briefs, steers, events[m.ID])
 	}
 	return out, nil
 }

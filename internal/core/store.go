@@ -15,6 +15,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/project-kikkuli/yamnaya/internal/watch"
 )
 
 const (
@@ -269,7 +271,7 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open scan cache: %w", err)
 	}
-	return &Store{db: db, scans: scans}, nil
+	return &Store{db: db, scans: scans, memo: memo{files: []string{path, path + "-wal"}, watch: watch.New()}}, nil
 }
 
 func (s *Store) Close() error {
@@ -294,20 +296,35 @@ type Phases struct {
 }
 
 func (s *Store) Phases(project string) (Phases, error) {
-	return remembered(s, "phases "+project, asIs[Phases], func() (Phases, error) { return s.phases(project) })
+	all, err := s.AllPhases()
+	return all[project], err
 }
 
-func (s *Store) phases(project string) (Phases, error) {
-	var p Phases
-	var raw string
-	err := s.db.QueryRow(`SELECT phases, idx FROM ym_phases WHERE project = ?`, project).Scan(&raw, &p.Current)
-	if errors.Is(err, sql.ErrNoRows) {
-		return p, nil
-	}
+// AllPhases is every project's phases by project key; the map is shared, so callers only read it.
+func (s *Store) AllPhases() (map[string]Phases, error) {
+	return remembered(s, "phases", asIs[map[string]Phases], s.allPhases)
+}
+
+// allPhases reads every project's phases at once, so a board of a thousand projects asks the database once.
+func (s *Store) allPhases() (map[string]Phases, error) {
+	rows, err := s.db.Query(`SELECT project, phases, idx FROM ym_phases`)
 	if err != nil {
-		return p, err
+		return nil, err
 	}
-	return p, json.Unmarshal([]byte(raw), &p.Names)
+	defer rows.Close()
+	out := map[string]Phases{}
+	for rows.Next() {
+		var project, raw string
+		var p Phases
+		if err := rows.Scan(&project, &raw, &p.Current); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(raw), &p.Names); err != nil {
+			return nil, err
+		}
+		out[project] = p
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) SetPhases(project string, names []string) (Phases, error) {

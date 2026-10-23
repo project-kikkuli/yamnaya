@@ -6,6 +6,8 @@ import (
 	"maps"
 	"slices"
 	"sync"
+
+	"github.com/project-kikkuli/yamnaya/internal/watch"
 )
 
 // memo keeps what the board reads from the database while the database is unchanged, as SQLite's data_version tells on a
@@ -15,19 +17,36 @@ type memo struct {
 	conn    *sql.Conn
 	version int64
 	vals    map[string]any
+	// files are the database and its write-ahead log; while the kernel reports neither touched since stamp, read stands.
+	files []string
+	watch *watch.Stats
+	stamp uint64
+	read  int64
 }
 
 func (m *memo) close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.watch.Close()
 	if m.conn != nil {
 		m.conn.Close()
 		m.conn = nil
 	}
 }
 
-// current is the database's data_version, false when it cannot be read and nothing may be kept.
+// current is the database's data_version, false when it cannot be read and nothing may be kept. Every commit writes the
+// write-ahead log, so while the kernel reports neither file touched the last data_version stands without asking SQLite.
 func (m *memo) current(db *sql.DB) (int64, bool) {
+	if m.watch.Watching() && m.conn != nil {
+		m.watch.Refresh()
+		if m.watch.Quiet(m.files, m.stamp) {
+			return m.read, true
+		}
+	}
+	stamp := m.watch.Changes()
+	for _, f := range m.files {
+		m.watch.Stat(f)
+	}
 	if m.conn == nil {
 		c, err := db.Conn(context.Background())
 		if err != nil {
@@ -41,6 +60,7 @@ func (m *memo) current(db *sql.DB) (int64, bool) {
 		m.conn = nil
 		return 0, false
 	}
+	m.stamp, m.read = stamp, v
 	return v, true
 }
 

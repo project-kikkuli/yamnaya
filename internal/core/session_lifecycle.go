@@ -3,6 +3,16 @@ package core
 import "time"
 
 func freshSessions(sessions []Live, stops map[string]time.Time, observed time.Time) []Live {
+	stale := false
+	for _, s := range sessions {
+		if stop := stops[s.Key()]; !stop.IsZero() && !observed.After(stop) {
+			stale = true
+			break
+		}
+	}
+	if !stale {
+		return sessions
+	}
 	var out []Live
 	for _, s := range sessions {
 		if stop := stops[s.Key()]; stop.IsZero() || observed.After(stop) {

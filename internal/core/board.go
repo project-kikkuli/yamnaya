@@ -361,6 +361,7 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	table := proc.Index(procs)
+	b.Sessions = make([]Live, 0, len(found))
 	b.moved = map[string]string{}
 	for _, s := range found {
 		if s.Status == Moved {
@@ -436,11 +437,13 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
+	phases, err := c.Store.AllPhases()
+	if err != nil {
+		return b, err
+	}
 	for i := range b.Projects {
 		p := &b.Projects[i]
-		if p.Phases, err = c.Store.Phases(p.Key); err != nil {
-			return b, err
-		}
+		p.Phases = phases[p.Key]
 		p.Vibes = b.VibesOf(vibes, p.Key)
 		for j := range p.Sessions {
 			p.Sessions[j].Project = p.Key
@@ -503,13 +506,15 @@ func (c *Core) place(found []Session, now time.Time) {
 	wanted := map[string]bool{}
 	for i := range found {
 		s := &found[i]
+		// a harness may hand back the crew it keeps between reads, so filling it in starts from a copy
+		s.Crew = slices.Clone(s.Crew)
 		if !wanted[s.Cwd] {
 			wanted[s.Cwd] = true
 			want = append(want, s.Cwd)
 		}
 		for j := range s.Crew {
 			if s.Crew[j].Worktree == "" {
-				s.Crew[j].Worktree = c.worktree(s.Crew[j].Files)
+				s.Crew[j].Worktree = c.crewWorktree(s.Key(), s.Crew[j])
 			}
 			if w := s.Crew[j].Worktree; w != "" && !wanted[w] {
 				wanted[w] = true

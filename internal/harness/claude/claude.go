@@ -4,7 +4,6 @@ package claude
 import (
 	"bufio"
 	"encoding/json"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -45,7 +44,7 @@ type Adapter struct {
 	gen   atomic.Uint64
 
 	discovering sync.Mutex
-	kept        map[int]kept
+	kept        map[int]*kept
 	// collect gathers the paths one process's read stats, while Discover reads it.
 	collecting sync.Mutex
 	collect    []string
@@ -199,12 +198,12 @@ func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	a.watch.Refresh()
 	changes := a.watch.Changes()
 	out := make([]core.Session, 0, len(procs))
-	next := map[int]kept{}
+	next := make(map[int]*kept, len(procs))
 	for _, p := range procs {
 		if k, ok := a.kept[p.PID]; ok && slices.Equal(k.proc.Args, p.Args) && k.proc.TTY == p.TTY && k.proc.PPID == p.PPID &&
 			!now.Before(k.at) && now.Before(k.until) && a.watch.Quiet(k.paths, k.changes) {
 			next[p.PID] = k
-			out = append(out, cloneSession(k.session))
+			out = append(out, k.session)
 			continue
 		}
 		a.collecting.Lock()
@@ -218,7 +217,7 @@ func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 		a.collecting.Unlock()
 		out = append(out, s)
 		if ok && a.watch.Watching() {
-			next[p.PID] = kept{proc: p, paths: paths, changes: changes, at: now, until: flips(s, now, now.Add(discoverRecheck)), session: cloneSession(s)}
+			next[p.PID] = &kept{proc: p, paths: paths, changes: changes, at: now, until: flips(s, now, now.Add(discoverRecheck)), session: s}
 		}
 	}
 	a.kept = next
@@ -239,15 +238,6 @@ func flips(s core.Session, now, limit time.Time) time.Time {
 		soon(m.Last.Add(staleAfter))
 	}
 	return limit
-}
-
-// cloneSession copies what callers fill in place, so a kept read never shares it.
-func cloneSession(s core.Session) core.Session {
-	s.Crew = slices.Clone(s.Crew)
-	s.Tools = maps.Clone(s.Tools)
-	s.PRs = slices.Clone(s.PRs)
-	s.Drift = slices.Clone(s.Drift)
-	return s
 }
 
 var nonPathChars = regexp.MustCompile(`[^A-Za-z0-9]`)

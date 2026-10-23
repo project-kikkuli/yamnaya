@@ -42,6 +42,7 @@ func Measure(b *testing.B, op func()) {
 		defer func() { pprof.StopCPUProfile(); f.Close() }()
 	}
 	before := cpu()
+	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
 		op()
