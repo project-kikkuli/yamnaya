@@ -2,12 +2,39 @@ package cli
 
 import (
 	"encoding/json"
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
+
+type profileRemote struct{ calls []string }
+
+func (r *profileRemote) Hosts() []string            { return []string{"user@owner-host"} }
+func (r *profileRemote) Boards() []core.RemoteBoard { return nil }
+func (r *profileRemote) Run(host string, args ...string) (string, error) {
+	r.calls = append([]string{host}, args...)
+	return "switched on owner host", nil
+}
+func (r *profileRemote) Attach(string, ...string) *exec.Cmd { return nil }
+
+func TestRemoteSwitchResolvesProfileOnOwningHost(t *testing.T) {
+	for _, h := range []string{"claude", "codex"} {
+		r := &profileRemote{}
+		l := launcher{core: &core.Core{Remotes: r}}
+		ref := h + ":work@" + profileConversation
+		if _, err := l.SwitchProfile("user@owner-host/"+ref, "personal"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"user@owner-host", "switch", ref, "--profile", "personal"}
+		if !reflect.DeepEqual(r.calls, want) {
+			t.Fatalf("remote control lost scope or forwarded a root: %q", r.calls)
+		}
+	}
+}
 
 func TestRemoteProfileIdentityAndSharedSubscriptionSnapshots(t *testing.T) {
 	now := time.Now()
