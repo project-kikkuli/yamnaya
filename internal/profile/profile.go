@@ -305,10 +305,12 @@ func defaultsAt(dir string) ([]Profile, error) {
 	if dir == "" {
 		return defaults, nil
 	}
-	path := filepath.Join(dir, "profile-defaults.json")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return defaults, nil
+	} else if err != nil {
 		return nil, err
 	}
+	path := filepath.Join(dir, "profile-defaults.json")
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -347,9 +349,6 @@ func defaultsAt(dir string) ([]Profile, error) {
 				defaults[i].SQLiteRoot = sqliteHome(defaults[i].Root, false)
 			}
 		}
-	}
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {

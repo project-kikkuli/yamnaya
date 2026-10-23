@@ -851,10 +851,11 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 	}
 	seen := map[string]bool{}
 	for _, s := range sessions {
-		if seen[s.Key()] {
+		identity := s.Harness + "/" + s.UsageKey()
+		if seen[identity] {
 			continue
 		}
-		seen[s.Key()] = true
+		seen[identity] = true
 		p := get(projectOf(s.Key(), parents, lin))
 		p.Sessions = append(p.Sessions, s)
 	}

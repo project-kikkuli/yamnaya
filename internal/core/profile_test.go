@@ -9,6 +9,10 @@ func TestConversationAliasesNeverOverwriteProfileScopedBoardEntries(t *testing.T
 			rows[0], rows[2] = rows[2], rows[0]
 		}
 		b := Board{Sessions: rows}
+		projects := group(rows, nil, map[string]string{}, Lineage{}, nil)
+		if len(projects) != 1 || len(projects[0].Sessions) != 3 {
+			t.Fatalf("profile copies disappeared from project: %#v", projects)
+		}
 		for _, indexed := range []bool{false, true} {
 			if indexed {
 				b.indexSessions()
