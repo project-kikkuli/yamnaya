@@ -83,7 +83,11 @@ func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
 		return Pane{}, fmt.Errorf("tmux -L %s new-session %s: %w: %s", h.socketName(), name, err, strings.TrimSpace(string(out)))
 	}
 	h.forget()
-	return parsePane(name, strings.TrimRight(string(out), "\n"))
+	if p, err := parsePane(name, strings.TrimRight(string(out), "\n")); err == nil {
+		return p, nil
+	}
+	// A loaded host can end the tmux client before it writes all of -P's line, though the session started.
+	return h.Pane(name)
 }
 
 // Respawn restarts a session's pane with argv in cwd, killing whatever still runs there.
