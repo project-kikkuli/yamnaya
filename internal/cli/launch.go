@@ -213,7 +213,7 @@ func (l launcher) boilerplate(n core.NewLaunch) []string {
 }
 
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
-func (l launcher) Start(n core.NewLaunch) (string, error) {
+func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	slug := launch.NormalizeSlug(n.Slug)
 	if slug == "" {
 		slug = launch.Unique(launch.Slug(launch.Strip(n.Prompt, l.boilerplate(n))))
@@ -228,47 +228,64 @@ func (l launcher) Start(n core.NewLaunch) (string, error) {
 			rec.Session = uuid.NewString()
 		}
 	default:
-		return "", fmt.Errorf("unknown harness %q", n.Harness)
+		return core.Started{}, fmt.Errorf("unknown harness %q", n.Harness)
 	}
 	if _, err := bin(rec.Harness); err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	var err error
 	if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	rec.Key, rec.Head, rec.Repo = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path), core.RepoID(rec.Worktree.GitDir)
 	argv, err := startArgv(rec)
 	if err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	rec.Starting = true
 	if err := l.records.Save(rec); err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	name := tmux.SessionName(rec.Key)
 	if _, err := l.srv.Start(l.conf, name, rec.Worktree.Path, argv); err != nil {
-		return "", err
+		return core.Started{}, err
 	}
 	rec.Starting = false
 	if err := l.records.Save(rec); err != nil {
-		return "", err
+		return core.Started{}, err
+	}
+	if n.Await {
+		if rec, err = l.await(rec); err != nil {
+			return core.Started{}, err
+		}
 	}
 	if rec.Parent != "" {
 		if rec.Session != "" {
 			if err := l.core.Store.Link(rec.Session, rec.Parent); err != nil {
-				return "", err
+				return core.Started{}, err
 			}
 		} else if err := detach("launch-link", rec.Key); err != nil {
-			return "", err
+			return core.Started{}, err
 		}
 	}
 	var b strings.Builder
 	printLaunch(&b, rec, name, l.srv.Socket)
-	return strings.TrimRight(b.String(), "\n"), nil
+	return core.Started{Key: rec.Key, Session: rec.Session, Message: strings.TrimRight(b.String(), "\n")}, nil
+}
+
+// await waits until Codex records rec's thread; a session that records none in time is ended, so no agent runs that ym cannot name.
+func (l launcher) await(rec launch.Record) (launch.Record, error) {
+	for deadline := time.Now().Add(core.StartGrace); rec.Session == ""; time.Sleep(250 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			l.Forget(rec.Key)
+			return rec, fmt.Errorf("codex in %s recorded no thread within %s, so ym ended it", rec.Key, core.StartGrace)
+		}
+		rec = l.settle(rec)
+	}
+	return rec, nil
 }
 
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -488,10 +505,10 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 
 // Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript
 // is gone, starts it over in its worktree on start, or on its first prompt when start is empty.
-func (l launcher) Resume(session, prompt, start string) (bool, error) {
+func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	rec, ok := l.records.Find(session)
 	if !ok || rec.Session != session {
-		return false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
+		return "", false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
 	}
 	resumed := transcript(rec) != ""
 	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
@@ -512,7 +529,12 @@ func (l launcher) Resume(session, prompt, start string) (bool, error) {
 		}
 		return startArgv(fresh)
 	})
-	return resumed, err
+	if err != nil || resumed || rec.Harness != codex.Name {
+		return session, resumed, err
+	}
+	rec, _ = l.records.Find(rec.Key)
+	rec, err = l.await(rec)
+	return rec.Session, resumed, err
 }
 
 // Bring resumes s, a session that ran outside ym's server, on ym's server in its own directory and conversation, with prompt as

@@ -27,7 +27,7 @@ Press `o` on the goal to open the manager and talk to it like any session.
                   chiefs (optional, any depth) -> you
 
 - **Goal**: one ask, in your words. States: moving, quiet, adrift (its manager or an agent is busy going nowhere), down (manager died, being relaunched), verifying, stuck, done.
-- **Manager**: an interactive Claude session with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
+- **Manager**: an interactive Claude session, or Codex with `ym goal --codex` (`tab` on the board), with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
 - **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message reaches the manager once.
 - **Chiefs**: a chief groups managers and other chiefs. It reads their briefs, steers them and hears their state changes. Work never waits on a chief. On the board, `C` starts one: check its reports in a list of every goal and chief, then type its name and remit. `c` on a goal or chief picks the chief it reports to from a list, and `D` detaches it so it reports to you. From a shell, `ym chief "<name>" --over <id>,<id>` does the same as `C`.
 - **Steering**: `S` on a goal or chief, or `ym goal steer <id>` (opens `$EDITOR`; `--file F` or piped stdin also work), saves a new plan as the next numbered revision. The manager is woken with it and runs `ym goal adopt <id> --revision N`; until then the row shows `steer rN not adopted`. ym nudges it every 10 minutes, twice, then tells whoever steered (a queue row for you, a message for a chief). A chief steers only what is below it. Steering a verifying goal calls verification off; the next verifier judges against the new plan. `ym goal context <id>` prints the revisions.
@@ -38,7 +38,7 @@ The loop is code in `ym serve`, not instructions in a prompt:
 
 1. **Notice.** ym records goal events without a model: agent finished, asked, stopped, hung or adrift, PR opened, CI red or green, a merge conflict with the base, review thread or decision, merged or closed, stuck, verifying, verified, failed verification.
 2. **Act.** Once per cycle the manager gets everything new in one message. A manager that ends a turn with nothing in flight (no busy agent, no PR awaiting CI, no wake set, no ask waiting) is nudged at once. Managers set their own timers with `ym goal wake 30m "<why>"`.
-3. **Verify.** `ym goal done` moves the goal to verifying. ym checks the facts first, for every PR the manager claims or the goal's agents opened (exited agents' included): merged, CI green on the merge commit, no unresolved review threads. Checks still running are rechecked every minute for up to 2 hours, then the goal shows stuck. Then a fresh Claude session, not the worker, gets your original ask and the evidence and records a verdict; ym takes it only from that session's own process, so no manager passes its own goal. A fail puts the goal back to active and hands the findings to the manager in its next wake. A verifier that dies, or runs 30 minutes without a verdict, is replaced; after 3 in a row the goal shows stuck. `ym goal show <goal>` prints every attempt with its checks and findings.
+3. **Verify.** `ym goal done` moves the goal to verifying. ym checks the facts first, for every PR the manager claims or the goal's agents opened (exited agents' included): merged, CI green on the merge commit, no unresolved review threads. Checks still running are rechecked every minute for up to 2 hours, then the goal shows stuck. Then a fresh session on the manager's harness, not the worker, gets your original ask and the evidence and records a verdict; ym takes it only from that session's own process, so no manager passes its own goal. A fail puts the goal back to active and hands the findings to the manager in its next wake. A verifier that dies, or runs 30 minutes without a verdict, is replaced; after 3 in a row the goal shows stuck. `ym goal show <goal>` prints every attempt with its checks and findings.
 4. **Report.** Only a pass reaches you as done. Managers post progress lines with `ym goal update "<line>"`; they show in the goal's feed.
 
 Nothing goes dark. A manager with no turns, brief edits or agent activity for 30 minutes is nudged; after two nudges the goal shows stuck in your queue with evidence. A session busy for 15 minutes with no tool call or reply while the machine is awake counts as hung: a hung manager is relaunched, and a hung or exited agent becomes a goal event, so its manager hears it once in its next wake with the `ym revive` that resumes it, and its chiefs and the goal's feed see it too.
@@ -72,7 +72,7 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | Key | Does |
 | --- | --- |
 | `n` / `N` | new goal in the selected row's repository / pick the repository first |
-| `+` | new session of your own, no manager; `tab` switches claude and codex |
+| `+` | new session of your own, no manager |
 | `enter` / `esc` | open or drill in / go back |
 | `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
 | `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
@@ -89,6 +89,7 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `t` | goals as the chief tree, each chief's reports indented under it, or by repository |
 | `I` `U` `E` `h` | every item, usage and limits, everything ym launched, agents adrift now and weekly health |
 | `A` | hide or show the mountains |
+| `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `C` and `+` starts on the harness it used last |
 | `/` `?` `q` | filter, all keys, back or quit |
 
 Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**, and an idle one whose last reply asks you shows as a `waiting:` row you can answer with `a`.
@@ -150,7 +151,7 @@ Hosts talk through relays:
 
 After a restart:
 
-- A manager or chief resumes in its own session and conversation, told it stopped and what it missed. If its transcript is gone, it starts over under the same id from its prompt and brief. `ym goal relaunch` still starts a fresh session.
+- A manager or chief resumes in its own session and conversation, told it stopped and what it missed. If its transcript is gone, it starts over from its prompt and brief, under the same id on Claude and under the new thread Codex records on Codex. `ym goal relaunch` still starts a fresh session.
 - Every session ym launched whose agent was running when its pane went, without `ym kill` or `ym land`, resumes in its own conversation instead of landing, whether or not it works for a goal. A goal's manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped. A session whose transcript holds no turn starts over on its first prompt.
 - Sessions you had running in terminals outside ym's server when the host went down resume on ym's server in their own directories and conversations. `ym serve` keeps the list in `alive.json` in the state directory.
 - The default state directory's `ym serve` unloads and removes any other `io.yamnaya.ym-serve-*` LaunchAgent whose ym binary or state directory is gone, as a rehearsal in a deleted scratch directory leaves, so launchd stops retrying it at login.
@@ -175,7 +176,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym sessions [--local] [--json]` | every live session on this host and remembered hosts |
 | | `ym waiting [--json]` | idle sessions whose last reply asks you |
 | | `ym board` | this host's state as JSON, for another host's ym |
-| Goals | `ym goal [--repo P] "<ask>"` | start a goal and its manager; the ask is one quoted argument, so a subcommand this binary lacks is refused instead of becoming a goal |
+| Goals | `ym goal [--codex] [--repo P] "<ask>"` | start a goal and its manager, on codex with `--codex`, whose verifiers run on the same harness; the ask is one quoted argument, so a subcommand this binary lacks is refused instead of becoming a goal |
 | | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs, and under each goal every agent still working for it, sessions its manager started and Claude subagents inside the manager or those sessions: busy, waiting, idle, hung or adrift, its latest tool call, reply or question, its branch's commits and its PRs; the count says how many more finished |
 | | `ym goal show <id>` / `feed <id>` | one goal with its verifications / its event feed |
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
@@ -183,7 +184,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
 | | `ym goal ack <goal>` | clear a done or stuck goal from your queue |
 | | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
-| | `ym chief [--over ID,ID] [--remit T] "<name>"` | start a chief; `attach <child> <chief>`, `detach <child>` |
+| | `ym chief [--codex] [--over ID,ID] [--remit T] "<name>"` | start a chief, on codex with `--codex`; `attach <child> <chief>`, `detach <child>` |
 | Manager | `ym goal update "<line>"` | post where the goal stands |
 | | `ym goal wake <when> <why>` | wake me at `30m`, `2h`, `15:04` |
 | | `ym goal done --summary "<line>" [--evidence "<line>"]...` | hand the goal to verification |

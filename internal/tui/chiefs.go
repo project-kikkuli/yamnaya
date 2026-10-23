@@ -84,7 +84,7 @@ func (m Model) optKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.startInput(inChief, "", "", "", false)
-			m.inLabel = fmt.Sprintf("new chief over %s", plural(len(m.inPicks), "report"))
+			m.inLabel = fmt.Sprintf("chief over %s", plural(len(m.inPicks), "report"))
 			return m, nil
 		}
 		if m.optCur >= len(m.opts) {

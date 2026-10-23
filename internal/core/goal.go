@@ -18,11 +18,9 @@ func (c *Core) NewGoal(ask, repo, harness string) (Goal, Manager, error) {
 	if ask == "" {
 		return Goal{}, Manager{}, errors.New("a goal needs the ask in your words")
 	}
-	if harness == "" {
-		harness = "claude"
-	}
-	if harness != "claude" {
-		return Goal{}, Manager{}, fmt.Errorf("managers run on claude, not %s", harness)
+	harness, err := managerHarness(harness)
+	if err != nil {
+		return Goal{}, Manager{}, err
 	}
 	repo = MainCheckout(repo)
 	g, err := c.Store.AddGoal(Goal{Ask: ask, Repo: repo, CreatedAt: c.now()})
@@ -53,14 +51,29 @@ func (c *Core) NewGoal(ask, repo, harness string) (Goal, Manager, error) {
 	return g, m, nil
 }
 
-// NewChief records a chief over children, managers or chiefs by id, and starts its session in repo.
-func (c *Core) NewChief(name, remit, repo string, children []string) (Manager, error) {
+// managerHarness is the harness a manager or chief runs on, claude when unnamed.
+func managerHarness(harness string) (string, error) {
+	switch harness {
+	case "":
+		return "claude", nil
+	case "claude", "codex":
+		return harness, nil
+	}
+	return "", fmt.Errorf("a manager runs on claude or codex, not %s", harness)
+}
+
+// NewChief records a chief over children, managers or chiefs by id, and starts its session in repo on harness.
+func (c *Core) NewChief(name, remit, repo, harness string, children []string) (Manager, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Manager{}, errors.New("a chief needs a name")
 	}
+	harness, err := managerHarness(harness)
+	if err != nil {
+		return Manager{}, err
+	}
 	repo = MainCheckout(repo)
-	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Repo: repo, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Harness: harness, Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}
@@ -367,7 +380,6 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 		m.LastError = err.Error()
 		return m
 	}
-	session := uuid.NewString()
 	waiting := c.waitingFor(o, m)
 	events, heard := c.missed(o, m)
 	prompt := c.prompt(m, o, waiting)
@@ -385,7 +397,8 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 			return resumed
 		}
 	}
-	_, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name), Session: session})
+	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name),
+		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()
 		c.Store.SaveManager(m)
@@ -395,7 +408,7 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 		c.Store.Claim(msg.Seq, MsgInbox)
 	}
 	heard(c.now())
-	m.Session, m.LastError = session, ""
+	m.Session, m.LastError = st.Session, ""
 	c.Store.SaveManager(m)
 	return m
 }

@@ -241,7 +241,8 @@ func (m Model) footer() []string {
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
-			inGoal: "new goal in " + repo + ", in your words", inChief: m.inLabel + ", its name", inRemit: "chief " + m.chiefName + ", its remit in your words (empty: none)",
+			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
+			inRemit: "new " + m.newL.Harness + " chief " + m.chiefName + ", its remit in your words (empty: none)",
 			inSteer: "send to " + m.inLabel}[m.inKind]
 		if m.inKind == inSteer && m.steerHasChief() {
 			if m.subtree {
@@ -250,7 +251,7 @@ func (m Model) footer() []string {
 				label += pal.dim.Render(" [tab: whole subtree]")
 			}
 		}
-		if m.inKind == inNew || (m.inKind == inNewRepo && !m.forGoal) {
+		if m.launching() {
 			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "]")
 		}
 		if m.launchOn != "" && m.launching() {
@@ -1423,8 +1424,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    n            new goal in the selected row's repository: type it in your words; a manager starts on it
    N            new goal in any repository: pick it first, then the goal
    +            new session in the selected row's repository, run by you, no manager: type the prompt;
-                the worktree is named from it; tab switches claude and codex
-                n, N, + and C start on the host the last one used; ctrl+t picks this one or a remembered host
+                the worktree is named from it
+                n, N, + and C: tab switches claude and codex, and each starts on the harness and host the last
+                one used; ctrl+t picks this one or a remembered host
    space        select a goal or chief row; s and c then act on every selected one
    s            on a goal or chief: send it your message (every selected one); tab widens a chief's to its
                 whole subtree. On a session: send it a follow-up, typed in on ym's server even mid-turn

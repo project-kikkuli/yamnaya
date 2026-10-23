@@ -20,9 +20,9 @@ const ResumePace = 10 * time.Second
 // Resumer continues the sessions ym launched, each in its own worktree.
 type Resumer interface {
 	// Resume continues session in its own conversation with prompt as its next message or, when its transcript is gone, starts it
-	// over on start in the same worktree, or on its first prompt when start is empty; resumed says which. ErrNotFound when ym
-	// launched no such session.
-	Resume(session, prompt, start string) (resumed bool, err error)
+	// over on start in the same worktree, or on its first prompt when start is empty; resumed says which, and now is the session
+	// it runs as, a new id when Codex starts over. ErrNotFound when ym launched no such session.
+	Resume(session, prompt, start string) (now string, resumed bool, err error)
 	// Bring resumes s, a session that ran outside ym's server, on ym's server in its own directory and conversation.
 	Bring(s Live, prompt string) error
 }
@@ -101,7 +101,7 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 	if !can || m.Session == "" {
 		return m, false
 	}
-	resumed, err := r.Resume(m.Session, resumeText(o, m, waiting, events), start)
+	now, resumed, err := r.Resume(m.Session, resumeText(o, m, waiting, events), start)
 	if errors.Is(err, ErrNotFound) {
 		return m, false
 	}
@@ -117,7 +117,7 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 		return m, true
 	}
 	c.note(resumeNote{who: who, session: m.Session, fresh: !resumed})
-	m.LastError = ""
+	m.Session, m.LastError = now, ""
 	c.Store.SaveManager(m)
 	return m, true
 }
@@ -192,12 +192,12 @@ func (c *Core) ReviveWork(b Board) error {
 		}
 		if !ok {
 			who := "session " + Short(l.Session) + " (" + l.Key + ")"
-			resumed, err := r.Resume(l.Session, workResumeText, "")
+			_, resumed, err := r.Resume(l.Session, workResumeText, "")
 			c.noteResult(who, l.Session, resumed, err)
 			continue
 		}
 		who := "agent " + Short(l.Session) + " (" + l.Key + ")"
-		resumed, err := r.Resume(l.Session, workResumeText, "")
+		_, resumed, err := r.Resume(l.Session, workResumeText, "")
 		c.noteResult(who, l.Session, resumed, err)
 		if err != nil {
 			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,

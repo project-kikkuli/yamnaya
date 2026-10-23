@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-// resumes is ym's launcher with resuming: a session it launched comes back as itself, its conversation kept unless lost is set.
+// resumes is ym's launcher with resuming: a session it launched comes back as itself, its conversation kept unless lost is set,
+// when a Codex one starts over under a new thread.
 type resumes struct {
 	*fakeLaunches
 	lost    map[string]bool
@@ -31,19 +32,22 @@ func (r *resumes) Bring(s Live, prompt string) error {
 	return nil
 }
 
-func (r *resumes) Resume(session, prompt, start string) (bool, error) {
-	known := slices.ContainsFunc(r.launched, func(l Launched) bool { return l.Session == session }) ||
-		slices.ContainsFunc(r.starts, func(n NewLaunch) bool { return n.Session == session })
+func (r *resumes) Resume(session, prompt, start string) (string, bool, error) {
+	known := slices.ContainsFunc(r.launched, func(l Launched) bool { return l.Session == session }) || r.harnessOf[session] != ""
 	if !known {
-		return false, fmt.Errorf("no launch of %s: %w", session, ErrNotFound)
+		return "", false, fmt.Errorf("no launch of %s: %w", session, ErrNotFound)
 	}
 	if err := r.fail[session]; err != nil {
-		return false, err
+		return "", false, err
 	}
 	r.resumed = append(r.resumed, resumeCall{session, prompt, start})
-	r.w.spawn(session, "")
-	r.state(session, "running")
-	return !r.lost[session], nil
+	now := session
+	if r.lost[session] && r.harnessOf[session] == "codex" {
+		now = session + "-over"
+	}
+	r.w.spawn(now, "")
+	r.state(now, "running")
+	return now, !r.lost[session], nil
 }
 
 func (r *resumes) state(session, st string) {
@@ -77,6 +81,7 @@ func TestARestartedManagerOrChiefComesBackInItsOwnConversation(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		chief    bool
+		harness  string
 		lost     bool
 		unknown  bool
 		resumed  bool
@@ -86,6 +91,8 @@ func TestARestartedManagerOrChiefComesBackInItsOwnConversation(t *testing.T) {
 		{name: "a manager whose transcript survived", resumed: true, sameID: true},
 		{name: "a chief whose transcript survived", chief: true, resumed: true, sameID: true},
 		{name: "a manager whose transcript is gone starts over as itself", lost: true, resumed: true, sameID: true},
+		{name: "a codex manager whose transcript survived", harness: "codex", resumed: true, sameID: true},
+		{name: "a codex manager whose transcript is gone starts over under the thread codex records", harness: "codex", lost: true, resumed: true},
 		{name: "a manager ym never launched starts fresh", unknown: true, freshRun: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,12 +102,15 @@ func TestARestartedManagerOrChiefComesBackInItsOwnConversation(t *testing.T) {
 			if tc.chief {
 				m = w.chief(t, "platform")
 			} else {
-				g, m = w.goal(t, "ship the importer", "/repo/august")
+				var err error
+				if g, m, err = w.core.NewGoal("ship the importer", "/repo/august", tc.harness); err != nil {
+					t.Fatal(err)
+				}
 			}
 			w.supervise(t)
 			r.state(m.Session, "running")
 			if tc.unknown {
-				r.launched, r.starts = nil, nil
+				r.launched, r.starts, r.harnessOf = nil, nil, nil
 			}
 			r.lost[m.Session] = tc.lost
 			if !tc.chief {

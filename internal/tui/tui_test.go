@@ -390,12 +390,12 @@ func (l *launches) Relaunch(from core.Live, harness, id string) (string, error) 
 	return "revived adopt-" + id, nil
 }
 
-func (l *launches) Start(n core.NewLaunch) (string, error) {
+func (l *launches) Start(n core.NewLaunch) (core.Started, error) {
 	l.started = append(l.started, n)
 	if l.startErr != nil {
-		return "", l.startErr
+		return core.Started{}, l.startErr
 	}
-	return n.Harness + " " + n.Slug + "\nopen: ym open " + n.Slug, nil
+	return core.Started{Key: n.Slug, Session: n.Session, Message: n.Harness + " " + n.Slug + "\nopen: ym open " + n.Slug}, nil
 }
 
 func (l *launches) Land(ref string) (string, error) {

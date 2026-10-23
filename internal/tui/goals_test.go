@@ -56,11 +56,11 @@ func told(t *testing.T, c *core.Core, text string, ms ...core.Manager) []string 
 
 func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *testing.T) {
 	m, c, ms := goalSetup(t, "make the importer handle CSV", "rotate the signing keys", "page on call")
-	platform, err := c.NewChief("platform", "", t.TempDir(), []string{ms[0].ID, ms[1].ID})
+	platform, err := c.NewChief("platform", "", t.TempDir(), "", []string{ms[0].ID, ms[1].ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	lead, err := c.NewChief("lead", "", t.TempDir(), []string{platform.ID, ms[2].ID})
+	lead, err := c.NewChief("lead", "", t.TempDir(), "", []string{platform.ID, ms[2].ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,15 +210,15 @@ func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "goal one", "goal two")
-			x, err := c.NewChief("x", "", t.TempDir(), []string{ms[0].ID})
+			x, err := c.NewChief("x", "", t.TempDir(), "", []string{ms[0].ID})
 			if err != nil {
 				t.Fatal(err)
 			}
-			y, err := c.NewChief("y", "", t.TempDir(), nil)
+			y, err := c.NewChief("y", "", t.TempDir(), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			z, err := c.NewChief("z", "", t.TempDir(), nil)
+			z, err := c.NewChief("z", "", t.TempDir(), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -245,7 +245,7 @@ func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
 	}{{"y", false}, {"n", true}} {
 		t.Run("D answered "+tc.answer, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "goal one")
-			x, err := c.NewChief("x", "", t.TempDir(), []string{ms[0].ID})
+			x, err := c.NewChief("x", "", t.TempDir(), "", []string{ms[0].ID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -283,7 +283,7 @@ func TestSendReachesEverySelectedManagerAndTabWidensAChiefToItsSubtree(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "goal one", "goal two")
-			chief, err := c.NewChief("lead", "", t.TempDir(), []string{ms[0].ID, ms[1].ID})
+			chief, err := c.NewChief("lead", "", t.TempDir(), "", []string{ms[0].ID, ms[1].ID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -339,6 +339,43 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 	}
 	if m = refresh(t, m); !slices.ContainsFunc(m.rows(), func(r row) bool { return r.node != nil && r.node.Goal.Ask == "make login faster" }) {
 		t.Fatalf("the new goal is not on the board:\n%s", m.View().Content)
+	}
+}
+
+func TestTabPicksTheHarnessOfAGoalOrChiefAndTheNextOneStartsOnIt(t *testing.T) {
+	goal, chief := []string{"n"}, []string{"C", "enter"}
+	for _, c := range []struct {
+		name         string
+		open, finish []string
+		tabs         int
+		want         string
+	}{
+		{"goal on claude", goal, nil, 0, "claude"},
+		{"goal on codex", goal, nil, 1, "codex"},
+		{"goal picked back to claude", goal, nil, 2, "claude"},
+		{"chief on codex", chief, []string{"enter"}, 1, "codex"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			l := &launches{}
+			k.Launches = l
+			m = to(t, place(t, m, k), mission("lead"))
+			m = press(t, m, c.open...)
+			for range c.tabs {
+				m = press(t, m, "tab")
+			}
+			if v := ansi.Strip(strings.Join(m.footer(), "\n")); !strings.Contains(v, "new "+c.want+" ") || !strings.Contains(v, "[tab: "+core.Other(c.want)+"]") {
+				t.Fatalf("prompt does not show %s and the switch:\n%s", c.want, v)
+			}
+			m = press(t, m, strings.Split("ship it", "")...)
+			m = press(t, m, append([]string{"enter"}, c.finish...)...)
+			if len(l.started) != 1 || l.started[0].Harness != c.want {
+				t.Fatalf("started %s, want one on %s", fmtLaunches(l.started), c.want)
+			}
+			if m = press(t, refresh(t, m), c.open...); m.newL.Harness != c.want {
+				t.Fatalf("the next %s starts on %s, want %s as last time", c.open, m.newL.Harness, c.want)
+			}
+		})
 	}
 }
 

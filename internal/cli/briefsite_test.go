@@ -24,7 +24,7 @@ func TestBriefPagesShowEachVersionAndRollReportsUpUnderTheirChief(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	chief, err := c.NewChief("data", "", dir, []string{m.ID})
+	chief, err := c.NewChief("data", "", dir, "", []string{m.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

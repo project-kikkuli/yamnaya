@@ -156,9 +156,9 @@ type startOnly struct {
 	started []NewLaunch
 }
 
-func (s *startOnly) Start(n NewLaunch) (string, error) {
+func (s *startOnly) Start(n NewLaunch) (Started, error) {
 	s.started = append(s.started, n)
-	return "started", nil
+	return Started{Message: "started"}, nil
 }
 
 func TestStartedReposComeFirstMostRecentFirstAsTheirMainCheckout(t *testing.T) {

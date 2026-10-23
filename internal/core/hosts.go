@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS ym_launch_target (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	host TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_launch_harness (
+	kind TEXT PRIMARY KEY,
+	harness TEXT NOT NULL
+);
 `
 
 // KnownHost is a host ym remote reached, which the board reads beside this one.
@@ -89,6 +93,22 @@ func (s *Store) LaunchTarget() (string, error) {
 // SetLaunchTarget remembers host, "" for this one, as where the board starts sessions by default.
 func (s *Store) SetLaunchTarget(host string) error {
 	_, err := s.db.Exec(`INSERT INTO ym_launch_target(id,host) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET host=excluded.host`, host)
+	return err
+}
+
+// LaunchHarness is the harness the board last started a kind of launch on, such as a goal or a chief, "claude" before any.
+func (s *Store) LaunchHarness(kind string) (string, error) {
+	harness := "claude"
+	err := s.db.QueryRow(`SELECT harness FROM ym_launch_harness WHERE kind=?`, kind).Scan(&harness)
+	if errors.Is(err, sql.ErrNoRows) {
+		return harness, nil
+	}
+	return harness, err
+}
+
+// SetLaunchHarness remembers harness as where the board starts a kind of launch by default.
+func (s *Store) SetLaunchHarness(kind, harness string) error {
+	_, err := s.db.Exec(`INSERT INTO ym_launch_harness(kind,harness) VALUES(?,?) ON CONFLICT(kind) DO UPDATE SET harness=excluded.harness`, kind, harness)
 	return err
 }
 

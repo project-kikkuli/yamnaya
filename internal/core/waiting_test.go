@@ -22,7 +22,7 @@ type sends struct{ sent []string }
 func (l *sends) Dormant() []Dormant                            { return nil }
 func (l *sends) Revive(string) (string, error)                 { return "", nil }
 func (l *sends) Adopt(Live, func(string)) (Target, error)      { return Target{}, nil }
-func (l *sends) Start(NewLaunch) (string, error)               { return "", nil }
+func (l *sends) Start(NewLaunch) (Started, error)              { return Started{}, nil }
 func (l *sends) Land(string) (string, error)                   { return "", nil }
 func (l *sends) Forget(string) (string, error)                 { return "", nil }
 func (l *sends) GC() (string, error)                           { return "", nil }

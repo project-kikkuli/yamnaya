@@ -14,11 +14,13 @@ import (
 // fakeLaunches starts fake Claude sessions in the world instead of tmux panes, or fails every start while fail is set.
 type fakeLaunches struct {
 	sends
-	w        *world
-	fail     error
-	starts   []NewLaunch
-	forgot   []string
-	launched []Launched
+	w      *world
+	fail   error
+	starts []NewLaunch
+	// harnessOf is the harness each started session runs on, by the id its launch reported.
+	harnessOf map[string]string
+	forgot    []string
+	launched  []Launched
 	// during runs while a start is in progress, as another ym process may.
 	during func()
 }
@@ -31,17 +33,25 @@ func (l *fakeLaunches) Forget(ref string) (string, error) {
 
 func (l *fakeLaunches) Launched() []Launched { return l.launched }
 
-func (l *fakeLaunches) Start(n NewLaunch) (string, error) {
+func (l *fakeLaunches) Start(n NewLaunch) (Started, error) {
 	l.starts = append(l.starts, n)
 	if during := l.during; during != nil {
 		l.during = nil
 		during()
 	}
 	if l.fail != nil {
-		return "", l.fail
+		return Started{}, l.fail
 	}
-	l.w.spawn(n.Session, "")
-	return "started " + n.Session, nil
+	id := n.Session
+	if n.Harness == "codex" {
+		id = fmt.Sprintf("thread-%d", len(l.starts))
+	}
+	if l.harnessOf == nil {
+		l.harnessOf = map[string]string{}
+	}
+	l.harnessOf[id] = n.Harness
+	l.w.spawn(id, "")
+	return Started{Session: id, Message: "started " + id}, nil
 }
 
 type orgWorld struct {
@@ -109,7 +119,7 @@ func (w *orgWorld) goal(t *testing.T, ask, repo string) (Goal, Manager) {
 
 func (w *orgWorld) chief(t *testing.T, name string, over ...string) Manager {
 	t.Helper()
-	m, err := w.core.NewChief(name, "", "/repo/august", over)
+	m, err := w.core.NewChief(name, "", "/repo/august", "", over)
 	if err != nil {
 		t.Fatal(err)
 	}

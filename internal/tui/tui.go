@@ -1234,7 +1234,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "tab":
-		if (m.inKind == inNew || m.inKind == inNewRepo) && !m.forGoal {
+		if m.launching() {
 			m.newL.Harness = core.Other(m.newL.Harness)
 		}
 		if m.inKind == inSteer && m.steerHasChief() {
@@ -1388,7 +1388,7 @@ func (m Model) startNew() (tea.Model, tea.Cmd) {
 	return m, m.do(func() (string, error) {
 		msg, err := c.StartNew(n)
 		if err == nil {
-			err = c.Store.SetLaunchTarget("")
+			err = m.launchedHere("session", n.Harness)
 		}
 		first, _, _ := strings.Cut(msg, "\n")
 		return "started " + first, err

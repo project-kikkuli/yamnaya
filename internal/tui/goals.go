@@ -487,10 +487,10 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.message = "ym's launcher is unavailable"
 			return m, nil, true
 		}
-		m.newL = core.NewLaunch{Harness: "claude"}
+		m.newL, m.forGoal = core.NewLaunch{}, key == "N"
 		m.loadTarget()
-		if key == "N" {
-			m.forGoal = true
+		m.loadHarness("goal")
+		if m.forGoal {
 			m.openRepoPicker()
 			return m, m.scanRepos(), true
 		}
@@ -503,8 +503,9 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.forGoal = false
-		m.newL = core.NewLaunch{Harness: "claude", Repo: core.MainCheckout(m.repoOf(r))}
+		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
 		m.loadTarget()
+		m.loadHarness("session")
 		m.startInput(inNew, "", "", "", false)
 		return m, nil, true
 	case "t":
@@ -515,6 +516,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "C":
 		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
 		m.loadTarget()
+		m.loadHarness("chief")
 		m.openOverPicker()
 		return m, nil, true
 	}
@@ -757,11 +759,11 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		repo := m.newL.Repo
+		repo, harness := m.newL.Repo, m.newL.Harness
 		return m, m.do(func() (string, error) {
-			g, mg, err := m.core.NewGoal(text, repo, "")
+			g, mg, err := m.core.NewGoal(text, repo, harness)
 			if err == nil {
-				err = m.core.Store.SetLaunchTarget("")
+				err = m.launchedHere("goal", harness)
 			}
 			if err == nil && mg.LastError != "" {
 				return g.ID + " recorded; its manager did not start: " + mg.LastError, nil
@@ -779,12 +781,12 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		if m.launchOn != "" {
 			return m.launchRemote(text)
 		}
-		name, repo, over := m.chiefName, m.newL.Repo, m.inPicks
+		name, repo, harness, over := m.chiefName, m.newL.Repo, m.newL.Harness, m.inPicks
 		m.picked = nil
 		return m, m.do(func() (string, error) {
-			c, err := m.core.NewChief(name, text, repo, over)
+			c, err := m.core.NewChief(name, text, repo, harness, over)
 			if err == nil {
-				err = m.core.Store.SetLaunchTarget("")
+				err = m.launchedHere("chief", harness)
 			}
 			return "chief " + c.ID + " over " + plural(len(over), "report"), err
 		})
@@ -816,7 +818,7 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func (m Model) pickLabel() string {
 	if m.forGoal {
-		return "new goal, repository"
+		return "new " + m.newL.Harness + " goal, repository"
 	}
 	return "new " + m.newL.Harness + " session, repository"
 }

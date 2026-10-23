@@ -238,11 +238,11 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 	if c.Launches == nil {
 		return "", errors.New("ym's launcher is unavailable")
 	}
-	msg, err := c.Launches.Start(n)
+	st, err := c.Launches.Start(n)
 	if err != nil {
-		return msg, err
+		return st.Message, err
 	}
-	return msg, c.Store.PickRepo(MainCheckout(n.Repo), time.Now())
+	return st.Message, c.Store.PickRepo(MainCheckout(n.Repo), time.Now())
 }
 
 // PickRepo records that repo was just picked for a new session.

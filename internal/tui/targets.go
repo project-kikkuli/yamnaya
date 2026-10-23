@@ -27,6 +27,22 @@ func (m *Model) loadTarget() {
 	}
 }
 
+// loadHarness starts the launch input on the harness the board last started kind on: a session, goal or chief.
+func (m *Model) loadHarness(kind string) {
+	m.newL.Harness = "claude"
+	if h, err := m.core.Store.LaunchHarness(kind); err == nil {
+		m.newL.Harness = h
+	}
+}
+
+// launchedHere remembers this host and harness as where the board next starts kind.
+func (m Model) launchedHere(kind, harness string) error {
+	if err := m.core.Store.SetLaunchTarget(""); err != nil {
+		return err
+	}
+	return m.core.Store.SetLaunchHarness(kind, harness)
+}
+
 func (m *Model) nextTarget() {
 	ts := m.launchTargets()
 	m.launchOn = ts[(slices.Index(ts, m.launchOn)+1)%len(ts)]
@@ -68,8 +84,14 @@ func (m Model) remoteArgs(text string) ([]string, error) {
 		}
 	case inGoal:
 		args = []string{"goal"}
+		if m.newL.Harness == "codex" {
+			args = append(args, "--codex")
+		}
 	case inRemit:
 		args = []string{"chief"}
+		if m.newL.Harness == "codex" {
+			args = append(args, "--codex")
+		}
 		if text != "" {
 			args = append(args, "--remit", text)
 		}
@@ -103,6 +125,7 @@ func (m Model) launchRemote(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	host, tag, c := m.launchOn, m.hostTag(m.launchOn), m.core
+	kind, harness := map[inputKind]string{inNew: "session", inGoal: "goal", inChief: "chief", inRemit: "chief"}[m.inKind], m.newL.Harness
 	m.picked = nil
 	m.message = "starting on " + tag + "…"
 	return m, m.do(func() (string, error) {
@@ -111,6 +134,9 @@ func (m Model) launchRemote(text string) (tea.Model, tea.Cmd) {
 			return "", err
 		}
 		first, _, _ := strings.Cut(out, "\n")
+		if err := c.Store.SetLaunchHarness(kind, harness); err != nil {
+			return "", err
+		}
 		return "started on " + tag + ": " + first, c.Store.SetLaunchTarget(host)
 	})
 }

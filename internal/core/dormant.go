@@ -40,7 +40,7 @@ type Launches interface {
 	// Send types text into s on ym's server, or leaves it for the agent's next ym item inbox.
 	Send(s Live, text string) (string, error)
 	// Start launches a new agent in its own worktree on ym's server.
-	Start(n NewLaunch) (string, error)
+	Start(n NewLaunch) (Started, error)
 	// Land ends a launched session and removes its worktree, only when its branch is clean and merged or pushed.
 	Land(ref string) (string, error)
 	// Forget ends a launched session and drops its record, leaving its worktree and branch.
@@ -81,8 +81,15 @@ type NewLaunch struct {
 	Slug string
 	// Parent is the session that spawned this one, or empty.
 	Parent string
-	// Session is the id a Claude session starts with; empty picks a fresh one.
+	// Session is the id a Claude session starts with; empty picks a fresh one. Codex picks its own.
 	Session string
+	// Await has Start wait until a Codex session has recorded its id, so Started carries it.
+	Await bool
+}
+
+// Started is a session Start launched: its launch key, its session id once known, and the lines that tell the owner where it runs.
+type Started struct {
+	Key, Session, Message string
 }
 
 // Launched is one session ym launched and how its pane stands: running, exited with a status, or gone.

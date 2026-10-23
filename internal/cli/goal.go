@@ -13,12 +13,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 )
 
 func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var repo string
+	var useCodex bool
 	cmd := &cobra.Command{
-		Use:   "goal [--repo NAME|PATH] <ask>",
+		Use:   "goal [--codex] [--repo NAME|PATH] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -26,7 +28,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			g, m, err := e.core.NewGoal(args[0], dir, "")
+			g, m, err := e.core.NewGoal(args[0], dir, harnessFlag(useCodex))
 			if err != nil {
 				return err
 			}
@@ -42,6 +44,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		}),
 	}
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
+	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with))
@@ -61,6 +64,14 @@ func goalArgs(cmd *cobra.Command, args []string) error {
 		subs = append(subs, c.Name())
 	}
 	return fmt.Errorf(`ym goal has no subcommand %q (it has %s); to start a goal, quote the whole ask: ym goal "<ask>"`, args[0], strings.Join(subs, ", "))
+}
+
+// harnessFlag is the harness --codex picks, empty for the default.
+func harnessFlag(useCodex bool) string {
+	if useCodex {
+		return codex.Name
+	}
+	return ""
 }
 
 func (e *env) repoArg(repo string) (string, error) {
@@ -586,8 +597,9 @@ func goalAuthorityCmd(with func(runFunc) func(*cobra.Command, []string) error) *
 
 func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var repo, remit, over string
+	var useCodex bool
 	cmd := &cobra.Command{
-		Use:   "chief [--repo R] [--remit TEXT] [--over ID,ID] <name>",
+		Use:   "chief [--codex] [--repo R] [--remit TEXT] [--over ID,ID] <name>",
 		Short: "Start a chief that oversees managers and other chiefs, reads their briefs and steers them",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
@@ -599,7 +611,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 			if over != "" {
 				children = strings.Split(over, ",")
 			}
-			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, children)
+			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, harnessFlag(useCodex), children)
 			if err != nil {
 				return err
 			}
@@ -617,6 +629,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the chief's session runs in (default: the current directory's)")
 	cmd.Flags().StringVar(&remit, "remit", "", "what the chief oversees, in your words")
 	cmd.Flags().StringVar(&over, "over", "", "managers, goals or chiefs it starts over, comma separated")
+	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the chief on codex instead of claude")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "attach <child> <chief>",
 		Short: "Put a manager or chief under a chief; either may run on another host, named host/id",

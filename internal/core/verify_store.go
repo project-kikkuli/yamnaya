@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS ym_goal_verifications_goal ON ym_goal_verifications (
 `
 
 // Verification is one attempt at proving a goal done: the manager's claim, the deterministic facts ym checked, and the verdict of
-// a fresh Claude session that is neither the manager nor one of its agents.
+// a fresh session, on the manager's harness, that is neither the manager nor one of its agents.
 type Verification struct {
 	ID      int64
 	Goal    string
