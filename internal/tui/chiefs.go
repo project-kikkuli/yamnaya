@@ -58,7 +58,27 @@ func (m *Model) openChiefPicker(ids []string, parent string) {
 	}
 	m.inPicks = ids
 	m.startInput(inAttach, "", "", "", false)
-	m.inLabel = strings.Join(ids, ", ")
+	m.inLabel = m.ownerNames(ids)
+}
+
+// ownerName is a manager as the owner knows it: a goal's id, or "chief" and the chief's name.
+func (m Model) ownerName(id string) string {
+	n, ok := m.board.Node(id)
+	switch {
+	case !ok:
+		return id
+	case n.Goal != nil:
+		return m.goalName(*n.Goal)
+	}
+	return "chief " + n.Manager.Name
+}
+
+func (m Model) ownerNames(ids []string) string {
+	names := make([]string, len(ids))
+	for i, id := range ids {
+		names[i] = m.ownerName(id)
+	}
+	return strings.Join(names, ", ")
 }
 
 func (m Model) optKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -98,6 +118,7 @@ func (m Model) optKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // attach puts every id under chief, or under the owner when chief is "".
 func (m Model) attach(ids []string, chief string) (tea.Model, tea.Cmd) {
 	m.picked = nil
+	names, to := m.ownerNames(ids), m.ownerName(chief)
 	return m, m.do(func() (string, error) {
 		for _, id := range ids {
 			if err := m.core.Attach(id, chief); err != nil {
@@ -105,9 +126,9 @@ func (m Model) attach(ids []string, chief string) (tea.Model, tea.Cmd) {
 			}
 		}
 		if chief == "" {
-			return strings.Join(ids, ", ") + " report to you", nil
+			return names + " report to you", nil
 		}
-		return strings.Join(ids, ", ") + " report to " + chief, nil
+		return names + " report to " + to, nil
 	})
 }
 
@@ -116,7 +137,7 @@ func (m Model) optsView() string {
 	if m.inKind == inOver {
 		b.WriteString(pal.bold.Render(" NEW CHIEF") + pal.dim.Render("  check the goals and chiefs it oversees") + "\n")
 	} else {
-		b.WriteString(pal.bold.Render(" PUT "+m.inLabel+" UNDER") + pal.dim.Render("  the chief it reports to, or you") + "\n")
+		b.WriteString(pal.bold.Render(" PUT "+m.inLabel+" UNDER") + pal.dim.Render("  "+strings.Join(m.inPicks, ", ")+"  the chief it reports to, or you") + "\n")
 	}
 	if len(m.opts) == 0 {
 		b.WriteString(pal.dim.Render("   no goals or chiefs yet; enter starts a chief over none") + "\n")

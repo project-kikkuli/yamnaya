@@ -232,6 +232,11 @@ func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
 					t.Fatalf("the picker for %s offers %s, which is itself, a goal or below it", id, o.id)
 				}
 			}
+			title := ansi.Strip(strings.SplitN(m.optsView(), "\n", 2)[0])
+			if strings.Contains(title, "PUT mgr") || !strings.Contains(title, "UNDER  "+id) {
+				t.Fatalf("picker title %q should name %s as the owner knows it, its manager id after", title, id)
+			}
+			t.Log(title)
 			pick, keys := tc.keys(ms, x, y)
 			m = press(t, toOpt(t, m, pick), keys...)
 			if got, want := parentOf(t, c, id), tc.parent(ms, x, y); got != want {
