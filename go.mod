@@ -36,3 +36,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// ultraviolet whose renderer jumps over unchanged cells instead of resending them; builds from embedded source drop it.
+replace github.com/charmbracelet/ultraviolet => ./third_party/ultraviolet

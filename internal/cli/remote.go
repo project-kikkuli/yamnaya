@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -190,21 +191,54 @@ func buildFor(goos, goarch string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	src := filepath.Join(cache, "yamnaya", "src")
-	if err := os.RemoveAll(src); err != nil {
+	dir := filepath.Join(cache, "yamnaya")
+	if err := buildSource(gobin, dir, goos, goarch); err != nil {
 		return nil, err
+	}
+	return os.ReadFile(filepath.Join(dir, "ym-"+goos+"-"+goarch))
+}
+
+// buildSource builds ym for goos/goarch from the embedded source into dir, with the module's directory replaces, which the
+// embedded source cannot carry, dropped for their upstream modules.
+func buildSource(gobin, dir, goos, goarch string) error {
+	src := filepath.Join(dir, "src")
+	if err := os.RemoveAll(src); err != nil {
+		return err
 	}
 	if err := os.CopyFS(src, yamnaya.Source); err != nil {
-		return nil, err
+		return err
 	}
-	dst := filepath.Join(cache, "yamnaya", "ym-"+goos+"-"+goarch)
-	c := exec.Command(gobin, "build", "-trimpath", "-o", dst, "./cmd/ym")
-	c.Dir = src
-	c.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod")
-	if out, err := c.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("go build for %s/%s: %w: %s", goos, goarch, err, bytes.TrimSpace(out))
+	env := append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0", "GOWORK=off", "GOFLAGS=-mod=mod")
+	run := func(args ...string) ([]byte, error) {
+		c := exec.Command(gobin, args...)
+		c.Dir, c.Env = src, env
+		out, err := c.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("go %s for %s/%s: %w: %s", args[0], goos, goarch, err, bytes.TrimSpace(out))
+		}
+		return out, nil
 	}
-	return os.ReadFile(dst)
+	out, err := run("mod", "edit", "-json")
+	if err != nil {
+		return err
+	}
+	var mod struct {
+		Replace []struct {
+			Old, New struct{ Path, Version string }
+		}
+	}
+	if err := json.Unmarshal(out, &mod); err != nil {
+		return err
+	}
+	for _, r := range mod.Replace {
+		if r.New.Version == "" {
+			if _, err := run("mod", "edit", "-dropreplace="+r.Old.Path); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = run("build", "-trimpath", "-o", filepath.Join(dir, "ym-"+goos+"-"+goarch), "./cmd/ym")
+	return err
 }
 
 // shellQuote quotes s for a POSIX shell.
