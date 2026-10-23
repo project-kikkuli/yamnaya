@@ -111,7 +111,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 Goals across hosts:
 
-- A goal runs on the host where it starts, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there. `ym remote install` also keeps it running across reboots with a systemd user timer (`ym service keep`: `ym-serve.timer` for the default state directory, a name of its own for any other), so a remote goal moves with no board open anywhere.
+- A goal runs on the host where it starts, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there. `ym remote install` also keeps it running across reboots (`ym service keep`, see Background service), so a remote goal moves with no board open anywhere.
 - The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A remote goal's feed shows on the board, and its done or stuck notification appears on the host you sit at.
 - A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, and it and every chief above it hear its goals' state changes. `ym goal send`, `relaunch`, `drop`, `ack` and `feed` take remote ids.
 - A chief may steer a goal any number of hosts below it. When the chain leaves the goal's host, `ym goal steer` says the steer lands once the next chief's host confirms the steerer is above it; a chief the goal does not report to is told the steer was refused.
@@ -126,16 +126,25 @@ Hosts talk through relays:
 
 `ym serve` runs the loop above, refreshes pull request status, polls your GitHub review requests every five minutes, sweeps Notion and delivers answers.
 
-- GitHub: pull request status, checks and review threads come from `gh api graphql`, 50 pull requests to a query, at most every two minutes per open PR. A pull request missing from a batch's answer is read alone; a batch that fails ends that cycle's reads. Reads slow as the account's hourly GraphQL budget falls, so your own tools keep their share: full pace above half left, stretching to every 30 minutes at a tenth, and none below a tenth until the budget resets. Pull requests no active goal tracks drop to every 30 minutes below a quarter, so managers keep their CI and review events longest. Every ym instance reads the same account budget. While reads are slowed, stopped or failing, the board's header says so, with the budget left and when it resets.
+- GitHub: pull request status, checks and review threads come from `gh api graphql`, 50 pull requests to a query, at most every two minutes per open PR. A pull request missing from a batch's answer is read alone; a batch that fails ends that cycle's reads. A pull request GitHub answers 404 for shows `pull request not found on GitHub` on its row and is read again hourly. Reads slow as the account's hourly GraphQL budget falls, so your own tools keep their share: full pace above half left, stretching to every 30 minutes at a tenth, and none below a tenth until the budget resets. Pull requests no active goal tracks drop to every 30 minutes below a quarter, so managers keep their CI and review events longest. Every ym instance reads the same account budget. While reads are slowed, stopped or failing, the board's header says so, with the budget left and when it resets.
 - Files: ym watches Claude Code's files through kernel notifications (kqueue on macOS), so an untouched file costs nothing, and rereads a session only when one of its files changes. A board whose inputs (processes, files, database, git, launches, remote hosts) did not change is reused for up to ten seconds, so a change only time causes, like a goal going quiet, shows within ten seconds. The transcript scan cache is `ym-scans.db` beside `ym.db`.
 - The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
-- Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did. One whose worktree and repository are both gone lands at once; `ym launched --landed` still lists it.
-- A serve on a state directory other than the default (`YAMNAYA_STATE_DIR`) that sees the directory deleted ends the tmux server it launched agents on, unless that is ym's default server, and stops. A rehearsal or second ym that deletes its state directory takes its agents with it. Your default state directory and ym's default tmux server are never torn down this way.
+- Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did.
 - A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
+
+**Restarts.** `ym service keep` keeps `ym serve` running across logouts and reboots. On macOS it writes and loads a LaunchAgent (`~/Library/LaunchAgents/io.yamnaya.ym-serve.plist` for the default state directory, `io.yamnaya.ym-serve-<hash>.plist` for any other) that starts it at login and again whenever it exits, in the login shell's environment, logging to `work-service.log` in the state directory. On Linux it writes a systemd user timer (`ym-serve.timer`, or a name of its own for another state directory). The board and `ym install` set it up for the default state directory, so you never run it. `ym service unkeep` removes it; `ym service status` shows `kept` and `kept_pid` when loaded.
+
+After a restart:
+
+- A manager or chief resumes in its own session and conversation, told it stopped and what it missed. If its transcript is gone, it starts over under the same id from its prompt and brief. `ym goal relaunch` still starts a fresh session.
+- A goal's agent whose pane went without `ym kill` or `ym land` resumes in its own conversation instead of landing. Its manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped.
+- Resumes go one at a time, at most one every 10 seconds. Once every launched session found gone has come back or failed, one desktop notification says what resumed, what started over and what could not.
 
     ym service status     heartbeat and last error
     ym service restart    restart it with this shell's environment
+    ym service keep       keep it running across reboots (unkeep undoes it)
+    ym serve --wait       wait for a running serve to exit, then take over
 
 Answers reach a Claude session as its next prompt through its messaging socket, busy or idle; otherwise an idle agent in a tmux pane gets them typed in, and anything else reads them with `ym item inbox` on its next turn.
 
@@ -183,9 +192,9 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |
 | Drift | `ym health drift [--since D] [file...]` | replay this machine's transcripts and list each time an agent was busy going nowhere |
 | Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
-| | `ym relay [drop <seq>]` / `ym service keep` | what this host still has to carry, or stop carrying a refused one / keep `ym serve` running here |
+| | `ym relay [drop <seq>]` | what this host still has to carry, or stop carrying a refused one |
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
-| | `ym service status\|restart` / `ym docs [connect <email>]` | background service / Notion |
+| | `ym service status\|restart\|keep\|unkeep` / `ym docs [connect <email>]` | background service / Notion |
 
 Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; `--session` overrides. State lives in `~/.local/state/yamnaya/ym.db` (`YAMNAYA_STATE_DIR` overrides).
 
