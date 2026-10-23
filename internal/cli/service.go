@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -127,11 +129,11 @@ func serviceCmd() *cobra.Command {
 	}}, &cobra.Command{Use: "ensure", Short: "Start background reconciliation unless it already runs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		return ensureWorkService()
 	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		dir, err := keepWorkService()
+		dir, unit, err := keepWorkService()
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s/ym-serve.timer\n", dir)
+		fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s/%s.timer\n", dir, unit)
 		return nil
 	}})
 	return root
@@ -139,48 +141,73 @@ func serviceCmd() *cobra.Command {
 
 // keepWorkService installs and starts a systemd user timer that starts ym serve at boot and every minute it is not running, so a
 // host's goals keep moving with no board open anywhere. An ssh command has no XDG_RUNTIME_DIR, which systemctl --user needs.
-func keepWorkService() (string, error) {
+func keepWorkService() (string, string, error) {
 	if _, err := exec.LookPath("systemctl"); err != nil {
-		return "", fmt.Errorf("keeping ym serve running needs systemd: %w", err)
+		return "", "", fmt.Errorf("keeping ym serve running needs systemd: %w", err)
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	state, err := stateDir()
+	if err != nil {
+		return "", "", err
+	}
+	unit, err := serveUnit(state)
+	if err != nil {
+		return "", "", err
 	}
 	config, err := os.UserConfigDir()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	dir := filepath.Join(config, "systemd", "user")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", "", err
 	}
 	env := "Environment=" + strconv.Quote("PATH="+filepath.Dir(self)+":"+os.Getenv("PATH")) + "\n"
-	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET"} {
+	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_TMUX_SOCKET", "YAMNAYA_BRIEFS_ADDR"} {
 		if v := os.Getenv(k); v != "" {
 			env += "Environment=" + strconv.Quote(k+"="+v) + "\n"
 		}
 	}
 	units := map[string]string{
-		"ym-serve.service": "[Unit]\nDescription=Start ym serve unless it runs\n\n[Service]\nType=oneshot\nKillMode=process\n" + env +
+		unit + ".service": "[Unit]\nDescription=Start ym serve unless it runs\n\n[Service]\nType=oneshot\nKillMode=process\n" + env +
 			"ExecStart=" + self + " service ensure\n",
-		"ym-serve.timer": "[Unit]\nDescription=Keep ym serve running\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n",
+		unit + ".timer": "[Unit]\nDescription=Keep ym serve running\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=1min\n\n[Install]\nWantedBy=timers.target\n",
 	}
 	for name, text := range units {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	bus := os.Environ()
 	if os.Getenv("XDG_RUNTIME_DIR") == "" {
 		bus = append(bus, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", os.Getuid()))
 	}
-	for _, args := range [][]string{{"--user", "daemon-reload"}, {"--user", "enable", "--now", "ym-serve.timer"}, {"--user", "start", "ym-serve.service"}} {
+	for _, args := range [][]string{{"--user", "daemon-reload"}, {"--user", "enable", "--now", unit + ".timer"}, {"--user", "start", unit + ".service"}} {
 		c := exec.Command("systemctl", args...)
 		c.Env = bus
 		if out, err := c.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+			return "", "", fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
-	return dir, nil
+	return dir, unit, nil
+}
+
+// serveUnit names the systemd units that keep ym serve running for the state directory state: ym-serve for the default one, and a
+// name of its own for any other, so keeping a second ym's serve never replaces the first's.
+func serveUnit(state string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if state, err = filepath.Abs(state); err != nil {
+		return "", err
+	}
+	if state == filepath.Join(home, ".local", "state", "yamnaya") {
+		return "ym-serve", nil
+	}
+	sum := sha256.Sum256([]byte(state))
+	return "ym-serve-" + hex.EncodeToString(sum[:4]), nil
 }
