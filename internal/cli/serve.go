@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/intake"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
@@ -79,6 +81,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			err := serveCycle(e.core, site.observe)
 			if discover {
 				err = errors.Join(err, reviews.poll(ctx, e.core), docSweepErrors(e.core.Store))
+			}
+			if abandoned(dir) {
+				return endAbandoned(e.core, dir, cmd.ErrOrStderr())
 			}
 			message := ""
 			if err != nil {
@@ -244,4 +249,25 @@ func startWorkService() error {
 		return err
 	}
 	return p.Process.Release()
+}
+
+// abandoned reports whether dir is a state directory other than the owner's that was deleted, as a finished rehearsal deletes its own.
+func abandoned(dir string) bool {
+	home, err := os.UserHomeDir()
+	if abs, _ := filepath.Abs(dir); err != nil || abs == filepath.Join(home, ".local", "state", "yamnaya") {
+		return false
+	}
+	_, err = os.Stat(dir)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// endAbandoned ends the agents ym launched for a deleted state directory, unless they share the owner's tmux server, then stops serving it.
+func endAbandoned(c *core.Core, dir string, log io.Writer) error {
+	l, ok := c.Launches.(launcher)
+	if !ok || l.srv.Socket == tmux.Server {
+		fmt.Fprintf(log, "%s was deleted; ym serve stops\n", dir)
+		return nil
+	}
+	fmt.Fprintf(log, "%s was deleted; ym serve ends tmux -L %s and its agents, then stops\n", dir, l.srv.Socket)
+	return l.srv.KillServer()
 }
