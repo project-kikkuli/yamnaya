@@ -76,6 +76,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 		}
 		defer lock.Close()
+		e.core.Log = func(line string) { fmt.Fprintln(cmd.ErrOrStderr(), line) }
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		upgraded := make(chan bool, 1)

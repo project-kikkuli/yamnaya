@@ -3,7 +3,9 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestQueuedAnswersReachTheirSessionOnceItIsReachable(t *testing.T) {
@@ -84,5 +86,88 @@ func TestQueuedAnswersReachASessionAsOneNotice(t *testing.T) {
 	want := fmt.Sprintf("[s: re %s: go; re %s: dismissed: stale]", ids[0], ids[1])
 	if fmt.Sprint(w.claude.handed) != want {
 		t.Errorf("handed %q, want %s", w.claude.handed, want)
+	}
+}
+
+func TestPendingMessagesAreTypedOnceTheirSessionSitsIdleAtAnEmptyPrompt(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  Status
+		box     string
+		pane    bool
+		age     time.Duration
+		typed   []string
+		pending int
+		logged  string
+	}{
+		{"idle at an empty prompt", Idle, "> ", true, time.Minute, []string{"%2: first\n\nsecond"}, 0, ""},
+		{"busy", Busy, "> ", true, time.Minute, nil, 2, ""},
+		{"idle with the owner's draft in the box", Idle, "> half a thought", true, time.Minute, nil, 2, ""},
+		{"behind a permission dialog", Idle, "DIALOG Bash", true, time.Minute, nil, 2, ""},
+		{"older than an hour", Idle, "> ", true, 2 * time.Hour, nil, 2, ""},
+		{"idle with no terminal ym can type into", Idle, "> ", false, time.Minute, nil, 2, "2 messages for s not delivered: no terminal ym can type into"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.run(20, 1, "/dev/t2", "claude", "s", c.status)
+			if c.pane {
+				w.tmux.ttys["/dev/t2"] = "%2"
+				w.tmux.screens["%2"] = c.box
+			}
+			var logged []string
+			w.core.Log = func(line string) { logged = append(logged, line) }
+			for _, text := range []string{"first", "second"} {
+				if _, err := w.core.Store.AddMessage("s", text, MsgPending); err != nil {
+					t.Fatal(err)
+				}
+			}
+			at := time.Now().Add(c.age)
+			w.core.Now = func() time.Time { return at }
+			for range 2 {
+				if _, err := w.core.Redeliver(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fmt.Sprint(w.tmux.typed) != fmt.Sprint(c.typed) {
+				t.Errorf("typed %q, want %q", w.tmux.typed, c.typed)
+			}
+			if left, _ := w.core.Store.PendingMessages(); len(left) != c.pending {
+				t.Errorf("%d messages still pending, want %d", len(left), c.pending)
+			}
+			var want []string
+			if c.logged != "" {
+				want = []string{c.logged}
+			}
+			if fmt.Sprint(logged) != fmt.Sprint(want) {
+				t.Errorf("logged %q, want %q once per message", logged, want)
+			}
+		})
+	}
+}
+
+func TestAnAnswerThatCannotReachAnIdleAgentSaysWhyOnce(t *testing.T) {
+	w := newWorld(t)
+	w.run(20, 1, "/dev/t2", "claude", "s", Idle)
+	var logged []string
+	w.core.Log = func(line string) { logged = append(logged, line) }
+	it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.core.Answer(w.board(t), it.ID, "go"); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := w.core.Redeliver(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "answer to "+it.ID+" for s not delivered: no terminal ym can type into") {
+		t.Fatalf("logged %q, want one line saying why", logged)
+	}
+	w.tmux.ttys["/dev/t2"] = "%2"
+	w.tmux.screens["%2"] = "> "
+	if n, err := w.core.Redeliver(w.board(t)); err != nil || n != 1 {
+		t.Fatalf("Redeliver once a terminal shows = %d, %v; want 1", n, err)
 	}
 }

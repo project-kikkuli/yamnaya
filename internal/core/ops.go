@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
@@ -287,7 +288,8 @@ func notice(it Item) string {
 }
 
 // Redeliver hands the answered and dismissed items still queued to their agents once the session carrying them runs on the board,
-// one notice per session; it returns how many items reached their sessions.
+// one notice per session, then types each idle session's recent pending messages; it returns how many items and messages arrived.
+// Why one could not be delivered goes to c.Log each time the reason changes.
 func (c *Core) Redeliver(b Board) (int, error) {
 	items, err := c.Store.Items(ItemFilter{Undelivered: true})
 	if err != nil {
@@ -311,11 +313,111 @@ func (c *Core) Redeliver(b Board) (int, error) {
 	}
 	n := 0
 	for _, key := range order {
-		if d := c.deliver(b, key, bySession[key]); d != Queued {
+		d, why := c.deliverWhy(b, key, bySession[key])
+		var ids []string
+		for _, it := range bySession[key] {
+			ids = append(ids, it.Spoken())
+		}
+		c.noteUndelivered("answer to "+strings.Join(ids, ", ")+" for "+Short(key), why)
+		if d != Queued {
+			n += len(bySession[key])
+		}
+	}
+	m, err := c.typePending(b, o)
+	return n + m, err
+}
+
+// pendingFresh is how old a pending message may be for ym serve to type it in; older ones wait for ym item inbox.
+const pendingFresh = time.Hour
+
+// typePending types each idle session's pending messages from the last pendingFresh into its empty input box, all in one paste.
+func (c *Core) typePending(b Board, o Org) (int, error) {
+	msgs, err := c.Store.PendingMessages()
+	if err != nil {
+		return 0, err
+	}
+	now := c.now()
+	bySession := map[string][]Message{}
+	var order []string
+	for _, m := range msgs {
+		if now.Sub(m.CreatedAt) > pendingFresh {
+			continue
+		}
+		s, ok := b.Session(c.carrier(o, m.Session))
+		if !ok {
+			continue
+		}
+		if _, seen := bySession[s.Key()]; !seen {
+			order = append(order, s.Key())
+		}
+		bySession[s.Key()] = append(bySession[s.Key()], m)
+	}
+	n := 0
+	for _, key := range order {
+		s, _ := b.Session(key)
+		why := c.typeMessages(s, bySession[key])
+		c.noteUndelivered(fmt.Sprintf("%d messages for %s", len(bySession[key]), Short(key)), why)
+		if why == "" {
 			n += len(bySession[key])
 		}
 	}
 	return n, nil
+}
+
+// typeMessages types msgs into s when it sits idle at an empty prompt, and says why not otherwise.
+func (c *Core) typeMessages(s Live, msgs []Message) string {
+	if s.Status != Idle {
+		return ""
+	}
+	if s.Handle == nil {
+		return "no terminal ym can type into"
+	}
+	host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
+	if host == nil || hn == nil {
+		return "no terminal ym can type into"
+	}
+	if box, ok := composing(host, *s.Handle, hn, s.PID); !ok || strings.TrimSpace(box) != "" {
+		return ""
+	}
+	var claimed []Message
+	var texts []string
+	for _, m := range msgs {
+		if ok, err := c.Store.Claim(m.Seq, MsgTyped); err == nil && ok {
+			claimed = append(claimed, m)
+			texts = append(texts, m.Text)
+		}
+	}
+	if len(claimed) == 0 {
+		return ""
+	}
+	if err := Type(host, *s.Handle, hn, s.PID, strings.Join(texts, "\n\n")); err != nil {
+		for _, m := range claimed {
+			c.Store.Unclaim(m.Seq)
+		}
+		return "typing failed: " + err.Error()
+	}
+	return ""
+}
+
+// noteUndelivered logs why what is queued stays undelivered whenever the reason changes; an empty why clears it.
+func (c *Core) noteUndelivered(what, why string) {
+	key := what
+	c.undeliveredMu.Lock()
+	defer c.undeliveredMu.Unlock()
+	if c.undelivered == nil {
+		c.undelivered = map[string]string{}
+	}
+	if c.undelivered[key] == why {
+		return
+	}
+	if why == "" {
+		delete(c.undelivered, key)
+		return
+	}
+	c.undelivered[key] = why
+	if c.Log != nil {
+		c.Log(fmt.Sprintf("%s not delivered: %s", what, why))
+	}
 }
 
 func (c *Core) Snooze(id string) (Item, error) {
@@ -336,12 +438,21 @@ func (c *Core) Reopen(id string) (Item, error) {
 
 // deliver hands the items' notices to session as one message, claiming each first so no other delivery repeats them.
 func (c *Core) deliver(b Board, session string, items []Item) Delivery {
+	d, _ := c.deliverWhy(b, session, items)
+	return d
+}
+
+// deliverWhy is deliver, with why the items stay queued when they do and the agent is not simply busy.
+func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, string) {
 	if o, err := c.LoadOrg(); err == nil {
 		session = c.carrier(o, session)
 	}
 	s, ok := b.Session(c.Resolve(session))
-	if !ok || len(s.Copies) > 1 {
-		return Queued
+	if !ok {
+		return Queued, ""
+	}
+	if len(s.Copies) > 1 {
+		return Queued, "its conversation runs in several processes"
 	}
 	var claimed []Item
 	var notices []string
@@ -352,7 +463,7 @@ func (c *Core) deliver(b Board, session string, items []Item) Delivery {
 		}
 	}
 	if len(claimed) == 0 {
-		return Queued
+		return Queued, ""
 	}
 	text := strings.Join(notices, "; ")
 	owner := true
@@ -362,23 +473,32 @@ func (c *Core) deliver(b Board, session string, items []Item) Delivery {
 	err := c.message(s.Session, text, owner)
 	switch {
 	case err == nil:
-		return Sent
+		return Sent, ""
 	case errors.Is(err, ErrPendingApproval):
 		for _, it := range claimed {
 			c.Store.MarkHeld(it.Seq)
 		}
-		return Held
+		return Held, ""
 	}
-	if s.Status == Idle && s.Handle != nil {
-		host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
-		if host != nil && hn != nil && Type(host, *s.Handle, hn, s.PID, text) == nil {
-			return Typed
+	why := ""
+	if s.Status == Idle {
+		why = "no terminal ym can type into"
+		if s.Handle != nil {
+			host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
+			if host != nil && hn != nil {
+				terr := Type(host, *s.Handle, hn, s.PID, text)
+				if terr == nil {
+					return Typed, ""
+				}
+				why = "typing failed: " + terr.Error()
+			}
 		}
+		why += "; its inbox: " + err.Error()
 	}
 	for _, it := range claimed {
 		c.Store.Undeliver(it.Seq)
 	}
-	return Queued
+	return Queued, why
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

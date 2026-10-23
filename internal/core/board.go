@@ -43,6 +43,10 @@ type Core struct {
 	Signal         func(pid int, sig syscall.Signal) error
 	KillGrace      time.Duration
 	BackgroundSend func(Live, string) error
+	// Log takes what ym serve should record, such as why a queued answer or message did not reach its agent.
+	Log           func(string)
+	undeliveredMu sync.Mutex
+	undelivered   map[string]string
 	// Notify raises a desktop notification for the owner; nil raises none.
 	Notify    func(title, body string) error
 	KeepAlive func() error
