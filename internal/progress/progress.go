@@ -180,6 +180,10 @@ func PRUnit(pr core.PR) Unit {
 		u.Detail = "status not fetched yet"
 		return u
 	}
+	if st.State == core.PRNotFound {
+		u.Detail = st.String()
+		return u
+	}
 	u.Branch = st.Head
 	if st.State == "MERGED" {
 		u.Met = [len(Gates)]bool{true, true, true, true, true, true}

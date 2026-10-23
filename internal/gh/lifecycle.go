@@ -30,6 +30,9 @@ func (s *Source) PRStatus(url string) (core.PRStatus, error) {
 		return core.PRStatus{}, err
 	}
 	out, err := s.REST(fmt.Sprintf("repos/%s/pulls/%d", prs[0].Repo, prs[0].Number))
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		return core.PRStatus{State: core.PRNotFound, Fetched: s.Now()}, nil
+	}
 	if err != nil {
 		return core.PRStatus{}, err
 	}

@@ -27,6 +27,12 @@ type PRStatus struct {
 // PRGone is the state of a pull request link into a repository GitHub does not have, such as one from a test fixture.
 const PRGone = "GONE"
 
+// PRNotFound is the state of a pull request GitHub answers 404 for, as when its repository was deleted; it is read again
+// only every PRNotFoundRecheck, in case it comes back.
+const PRNotFound = "NOT_FOUND"
+
+const PRNotFoundRecheck = time.Hour
+
 // Closed reports whether the pull request can no longer change.
 func (s PRStatus) Closed() bool {
 	return s.State == "MERGED" || s.State == "CLOSED" || s.State == PRGone
@@ -46,6 +52,9 @@ func (s PRStatus) CI() string {
 }
 
 func (s PRStatus) String() string {
+	if s.State == PRNotFound {
+		return "pull request not found on GitHub"
+	}
 	out := s.State
 	if s.Closed() {
 		return out
@@ -164,7 +173,8 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		st, ok := known[url]
 		stale := prStale(left, goal[url])
 		switch {
-		case stale == 0, ok && (st.Closed() || now.Sub(st.Fetched) < stale):
+		case stale == 0, ok && (st.Closed() || now.Sub(st.Fetched) < stale),
+			ok && st.State == PRNotFound && now.Sub(st.Fetched) < PRNotFoundRecheck:
 		case goal[url]:
 			due = append(due, url)
 		default:
