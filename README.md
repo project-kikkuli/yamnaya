@@ -94,6 +94,8 @@ Sessions you start yourself (`+`, or `ym new` from your own shell) have no manag
 
 A repository is its `origin` remote, so every clone of it, under any directory name and on any host, and every worktree of those clones, shares one repository row and one mountain range, with each session's host shown on its own row. A clone without an `origin` is a repository of its own. `--repo NAME` matches a clone's directory name or its origin's name, and picks the most recently used clone when several clones of one repository match.
 
+`ym new` names the worktree and branch after the prompt's first words past any sentences the agent already reads in its instruction files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.agents/AGENTS.md`, the repository's `CLAUDE.md` and `AGENTS.md`, and files they include with an `@` line) or in earlier prompts from the same parent, and ends the name with a random tag. Launches in different clones never share a branch. `--slug S` names it exactly. A pull request whose head is a same-named branch of another clone is not counted as the session's.
+
 The fleet line shows each Claude and Codex limit window and today's and this week's spend at API prices.
 
 ## Mountains

@@ -49,12 +49,14 @@ func (c *Core) Notice(b Board) error {
 		} else if s.Title != "" {
 			who += " (" + oneLine(s.Title) + ")"
 		}
+		places := s.prPlaces()
 		for _, pr := range s.AllPRs() {
-			if seen[g.ID+pr.URL] {
+			st, fetched := statuses[pr.URL]
+			p := places[pr.URL]
+			if seen[g.ID+pr.URL] || !fetched || !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
 				continue
 			}
 			seen[g.ID+pr.URL] = true
-			st, fetched := statuses[pr.URL]
 			title := pr.URL
 			if fetched && st.Title != "" {
 				title = fmt.Sprintf("%q %s", st.Title, pr.URL)

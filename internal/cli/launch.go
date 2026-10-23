@@ -172,11 +172,27 @@ func (e *env) openLaunched(w io.Writer, ref string) (bool, error) {
 	return true, e.core.Focus(t)
 }
 
+// boilerplate is text a new session's prompt may open with that says nothing of its task: the instruction files its
+// agent reads anyway and the earlier prompts of the session launching it.
+func (l launcher) boilerplate(n core.NewLaunch) []string {
+	out := launch.Instructions(core.MainCheckout(n.Repo))
+	if n.Parent == "" {
+		return out
+	}
+	recs, _ := l.records.All()
+	for _, r := range recs {
+		if r.Parent == n.Parent {
+			out = append(out, r.Prompt)
+		}
+	}
+	return out
+}
+
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
 func (l launcher) Start(n core.NewLaunch) (string, error) {
 	slug := launch.NormalizeSlug(n.Slug)
 	if slug == "" {
-		slug = launch.Slug(n.Prompt)
+		slug = launch.Unique(launch.Slug(launch.Strip(n.Prompt, l.boilerplate(n))))
 	}
 	rec := launch.Record{Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Started: time.Now()}
 	switch n.Harness {

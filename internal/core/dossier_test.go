@@ -124,7 +124,7 @@ func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 	}
 	got, _ := w.core.Store.Item(two.Key())
 	if c := got.Dossier.Changes; got.Dossier.Since.IsZero() || has(c, "CI failed on \"signer\"") || has(c, one.Key()) || has(c, two.Key()) ||
-		!has(c, "merged \"signer\"") || !has(c, "opened "+second) || !has(c, "CI failed on \"verifier\"") {
+		!has(c, "merged \"signer\"") || !has(c, "opened \"verifier\" "+second) || !has(c, "CI failed on \"verifier\"") {
 		t.Fatalf("since %v changes %q; want only the merge and the new PR's red CI, after the owner's answer", got.Dossier.Since, got.Dossier.Changes)
 	}
 

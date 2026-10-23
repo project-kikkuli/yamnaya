@@ -305,6 +305,9 @@ func agentPRChecked(t *testing.T, exited bool) {
 	w.spawn("agent", w.manager.Session)
 	w.set("agent", func(s *Session) { s.Status = Busy; s.PRs = []PR{{URL: pr1, Repo: "acme/august", Number: 7}} })
 	w.landings[pr1] = Landing{State: "OPEN"}
+	if err := w.core.Store.SavePRStatus(pr1, PRStatus{State: "OPEN", Fetched: w.clock}); err != nil {
+		t.Fatal(err)
+	}
 	if exited {
 		w.tick(t, time.Second)
 		w.stop("agent")

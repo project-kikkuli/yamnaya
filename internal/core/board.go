@@ -532,11 +532,15 @@ func (c *Core) attachPRs(sessions []Live) {
 	if err != nil || len(known) == 0 {
 		return
 	}
-	set := func(prs []PR) []PR {
+	now := c.now()
+	set := func(prs []PR, worktree, branch string, ahead int) []PR {
 		var out []PR
 		for _, pr := range prs {
 			if st, ok := known[pr.URL]; ok {
 				if st.State == PRGone {
+					continue
+				}
+				if !ownsPR(worktree, branch, ahead, st, now) {
 					continue
 				}
 				pr.Status = &st
@@ -546,10 +550,11 @@ func (c *Core) attachPRs(sessions []Live) {
 		return out
 	}
 	for i := range sessions {
-		sessions[i].PRs = set(sessions[i].PRs)
-		crew := append([]Member(nil), sessions[i].Crew...)
+		s := &sessions[i]
+		s.PRs = set(s.PRs, s.Worktree, s.Branch, s.Ahead)
+		crew := append([]Member(nil), s.Crew...)
 		for j := range crew {
-			crew[j].PRs = set(crew[j].PRs)
+			crew[j].PRs = set(crew[j].PRs, crew[j].Worktree, crew[j].Branch, crew[j].Ahead)
 		}
 		sessions[i].Crew = crew
 	}
