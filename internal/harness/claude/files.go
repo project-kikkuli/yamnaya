@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/watch"
 )
 
 type listing struct {
@@ -22,11 +24,14 @@ type jsonFile struct {
 
 // glob lists dir's entries matching pattern, reading the directory again only after its modification time changes.
 func (a *Adapter) glob(dir, pattern string) []string {
-	info, err := os.Stat(dir)
+	info, err := a.stat(dir)
 	a.files.Lock()
 	defer a.files.Unlock()
 	if err != nil || !info.IsDir() {
-		delete(a.listings, dir+"\x00"+pattern)
+		if _, ok := a.listings[dir+"\x00"+pattern]; ok {
+			a.gen.Add(1)
+			delete(a.listings, dir+"\x00"+pattern)
+		}
 		return nil
 	}
 	key := dir + "\x00" + pattern
@@ -43,6 +48,7 @@ func (a *Adapter) glob(dir, pattern string) []string {
 	if a.listings == nil {
 		a.listings = map[string]listing{}
 	}
+	a.gen.Add(1)
 	a.listings[key] = listing{modified: info.ModTime(), paths: paths}
 	return paths
 }
@@ -57,11 +63,14 @@ func (a *Adapter) meta(path string) (agentMeta, bool) {
 // parsed decodes the JSON file at path into v, opening it again only after its size, modification time or identity changes:
 // a stat costs far less than an open on a machine that scans every file opened.
 func (a *Adapter) parsed(path string, v any) (modified time.Time, ok bool) {
-	info, err := os.Stat(path)
+	info, err := a.stat(path)
 	a.files.Lock()
 	defer a.files.Unlock()
 	if err != nil {
-		delete(a.jsons, path)
+		if _, ok := a.jsons[path]; ok {
+			a.gen.Add(1)
+			delete(a.jsons, path)
+		}
 		return time.Time{}, false
 	}
 	if f, ok := a.jsons[path]; ok && f.size == info.Size() && f.modified.Equal(info.ModTime()) && os.SameFile(f.info, info) {
@@ -74,6 +83,23 @@ func (a *Adapter) parsed(path string, v any) (modified time.Time, ok bool) {
 	if a.jsons == nil {
 		a.jsons = map[string]jsonFile{}
 	}
+	a.gen.Add(1)
 	a.jsons[path] = f
 	return f.modified, f.ok && json.Unmarshal(f.raw, v) == nil
+}
+
+// Generation counts every change the adapter read in Claude Code's files: a state or meta file rewritten, a directory listing
+// changed, a transcript grown, replaced or gone.
+func (a *Adapter) Generation() uint64 { return a.gen.Load() }
+
+// stat is os.Stat answered from the kernel's notifications where it can: a file nothing touched since the last Discover began
+// costs no system call.
+func (a *Adapter) stat(path string) (os.FileInfo, error) {
+	a.watchOnce.Do(func() { a.watch = watch.New() })
+	a.collecting.Lock()
+	if a.collect != nil {
+		a.collect = append(a.collect, path)
+	}
+	a.collecting.Unlock()
+	return a.watch.Stat(path)
 }

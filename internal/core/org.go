@@ -210,6 +210,10 @@ func (s *Store) Goal(id string) (Goal, error) {
 }
 
 func (s *Store) Goals() ([]Goal, error) {
+	return remembered(s, "goals", cloneSlice[Goal], s.goals)
+}
+
+func (s *Store) goals() ([]Goal, error) {
 	rows, err := s.db.Query(`SELECT ` + goalCols + ` FROM ym_goals ORDER BY num`)
 	if err != nil {
 		return nil, err
@@ -292,6 +296,10 @@ func (s *Store) Manager(id string) (Manager, error) {
 
 // Managers lists every manager and chief, retired ones too, oldest first.
 func (s *Store) Managers() ([]Manager, error) {
+	return remembered(s, "managers", cloneSlice[Manager], s.managers)
+}
+
+func (s *Store) managers() ([]Manager, error) {
 	rows, err := s.db.Query(`SELECT ` + managerCols + ` FROM ym_managers ORDER BY num`)
 	if err != nil {
 		return nil, err
@@ -310,6 +318,10 @@ func (s *Store) Managers() ([]Manager, error) {
 
 // ManagerSessions maps every session a manager has ever run as to that manager.
 func (s *Store) ManagerSessions() (map[string]string, error) {
+	return remembered(s, "manager sessions", cloneMap[string, string], s.managerSessions)
+}
+
+func (s *Store) managerSessions() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT session, manager FROM ym_manager_sessions`)
 	if err != nil {
 		return nil, err
@@ -385,6 +397,10 @@ func (s *Store) SyncReviews(reqs []ReviewRequest) error {
 }
 
 func (s *Store) OpenReviews() ([]ReviewRequest, error) {
+	return remembered(s, "reviews", cloneSlice[ReviewRequest], s.openReviews)
+}
+
+func (s *Store) openReviews() ([]ReviewRequest, error) {
 	rows, err := s.db.Query(`SELECT url, updated FROM ym_review_requests WHERE state = 'open' ORDER BY seen_at`)
 	if err != nil {
 		return nil, err
@@ -412,6 +428,10 @@ func (s *Store) DismissQueue(keys ...string) error {
 }
 
 func (s *Store) queueDismissed() (map[string]bool, error) {
+	return remembered(s, "dismissed", cloneMap[string, bool], s.readDismissed)
+}
+
+func (s *Store) readDismissed() (map[string]bool, error) {
 	rows, err := s.db.Query(`SELECT key FROM ym_queue_dismissed`)
 	if err != nil {
 		return nil, err

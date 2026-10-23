@@ -12,10 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/watch"
 )
 
 const Name = "claude"
@@ -39,8 +41,17 @@ type Adapter struct {
 	mu    sync.Mutex
 	scans map[string]*scan
 	dirs  map[string]string
-	idle  map[int]idleRead
 	found map[string]found
+	gen   atomic.Uint64
+
+	discovering sync.Mutex
+	kept        map[int]kept
+	// collect gathers the paths one process's read stats, while Discover reads it.
+	collecting sync.Mutex
+	collect    []string
+
+	watchOnce sync.Once
+	watch     *watch.Stats
 
 	files    sync.Mutex
 	listings map[string]listing
@@ -165,22 +176,78 @@ func (a *Adapter) Resume(id string) []string {
 	return []string{a.Bin, "--dangerously-skip-permissions", "--resume", id}
 }
 
+// discoverRecheck is how long a read of unchanged files stands, for what changes with time alone.
+const discoverRecheck = 10 * time.Second
+
+// kept is one process's last read and the files it came from.
+type kept struct {
+	proc    proc.Proc
+	paths   []string
+	changes uint64
+	at      time.Time
+	until   time.Time
+	session core.Session
+}
+
+// Discover reads each process's session again only when a file it was read from changed, by the kernel's notifications, or
+// a status it shows can turn by time alone.
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
+	a.discovering.Lock()
+	defer a.discovering.Unlock()
 	now := a.Now()
+	a.watchOnce.Do(func() { a.watch = watch.New() })
+	a.watch.Refresh()
+	changes := a.watch.Changes()
 	out := make([]core.Session, 0, len(procs))
-	running := map[int]bool{}
+	next := map[int]kept{}
 	for _, p := range procs {
-		out = append(out, a.read(p, now))
-		running[p.PID] = true
-	}
-	a.mu.Lock()
-	for pid := range a.idle {
-		if !running[pid] {
-			delete(a.idle, pid)
+		if k, ok := a.kept[p.PID]; ok && slices.Equal(k.proc.Args, p.Args) && k.proc.TTY == p.TTY && k.proc.PPID == p.PPID &&
+			!now.Before(k.at) && now.Before(k.until) && a.watch.Quiet(k.paths, k.changes) {
+			next[p.PID] = k
+			out = append(out, cloneSession(k.session))
+			continue
+		}
+		a.collecting.Lock()
+		a.collect = []string{}
+		a.collecting.Unlock()
+		st, _, ok := a.stateAt(p.PID)
+		s := a.readFresh(p, st, ok, now)
+		a.collecting.Lock()
+		paths := a.collect
+		a.collect = nil
+		a.collecting.Unlock()
+		out = append(out, s)
+		if ok && a.watch.Watching() {
+			next[p.PID] = kept{proc: p, paths: paths, changes: changes, at: now, until: flips(s, now, now.Add(discoverRecheck)), session: cloneSession(s)}
 		}
 	}
-	a.mu.Unlock()
+	a.kept = next
 	return out
+}
+
+// flips is the first moment after now the session's status, read from unchanged files, turns by time alone, no later than
+// limit: a busy transcript going stale, a subagent's turn counting as cut.
+func flips(s core.Session, now, limit time.Time) time.Time {
+	soon := func(t time.Time) {
+		if t.After(now) && t.Before(limit) {
+			limit = t
+		}
+	}
+	soon(s.Since.Add(staleAfter))
+	for _, m := range s.Crew {
+		soon(m.Last.Add(2 * time.Minute))
+		soon(m.Last.Add(staleAfter))
+	}
+	return limit
+}
+
+// cloneSession copies what callers fill in place, so a kept read never shares it.
+func cloneSession(s core.Session) core.Session {
+	s.Crew = slices.Clone(s.Crew)
+	s.Tools = maps.Clone(s.Tools)
+	s.PRs = slices.Clone(s.PRs)
+	s.Drift = slices.Clone(s.Drift)
+	return s
 }
 
 var nonPathChars = regexp.MustCompile(`[^A-Za-z0-9]`)
@@ -190,7 +257,7 @@ func encodeCwd(cwd string) string { return nonPathChars.ReplaceAllString(cwd, "-
 func (a *Adapter) transcript(cwd, id string) string {
 	if cwd != "" {
 		p := filepath.Join(a.Dir, "projects", encodeCwd(cwd), id+".jsonl")
-		if _, err := os.Stat(p); err == nil {
+		if _, err := a.stat(p); err == nil {
 			a.remember(id, found{path: p})
 			return p
 		}
@@ -200,7 +267,7 @@ func (a *Adapter) transcript(cwd, id string) string {
 	f, ok := a.found[id]
 	a.mu.Unlock()
 	if ok && f.path != "" {
-		if _, err := os.Stat(f.path); err == nil {
+		if _, err := a.stat(f.path); err == nil {
 			return f.path
 		}
 	} else if ok && now.Before(f.retry) {
@@ -222,6 +289,9 @@ func (a *Adapter) remember(id string, f found) {
 	if a.found == nil {
 		a.found = map[string]found{}
 	}
+	if a.found[id].path != f.path {
+		a.gen.Add(1)
+	}
 	a.found[id] = f
 }
 
@@ -237,48 +307,6 @@ type found struct {
 	path  string
 	retry time.Time
 	wait  time.Duration
-}
-
-// An idle session finishes its transcript within a second of Claude Code writing its state file idle, then writes nothing the
-// board shows until the state file changes again. One read idleSettle after that write stands for idleRecheck.
-const (
-	idleSettle  = 5 * time.Second
-	idleRecheck = 10 * time.Second
-)
-
-type idleRead struct {
-	state   state
-	tty     string
-	at      time.Time
-	session core.Session
-}
-
-func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
-	st, wrote, ok := a.stateAt(p.PID)
-	a.mu.Lock()
-	last, seen := a.idle[p.PID]
-	a.mu.Unlock()
-	if ok && st.Status == "idle" && seen && last.state == st && last.tty == p.TTY && last.at.Sub(wrote) >= idleSettle && now.Sub(last.at) >= 0 && now.Sub(last.at) < idleRecheck {
-		s := last.session
-		s.Crew = slices.Clone(s.Crew)
-		s.Tools = maps.Clone(s.Tools)
-		return s
-	}
-	s := a.readFresh(p, st, ok, now)
-	a.mu.Lock()
-	if a.idle == nil {
-		a.idle = map[int]idleRead{}
-	}
-	if ok && st.Status == "idle" {
-		kept := s
-		kept.Crew = slices.Clone(s.Crew)
-		kept.Tools = maps.Clone(s.Tools)
-		a.idle[p.PID] = idleRead{state: st, tty: p.TTY, at: now, session: kept}
-	} else {
-		delete(a.idle, p.PID)
-	}
-	a.mu.Unlock()
-	return s
 }
 
 func (a *Adapter) readFresh(p proc.Proc, st state, ok bool, now time.Time) core.Session {

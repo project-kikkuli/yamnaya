@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -89,6 +90,9 @@ type Event struct {
 // Store keeps items, phases, vibes, lineage links, project names and merges.
 type Store struct {
 	db *sql.DB
+	// scans holds the transcript scan cache apart, so reading transcripts changes nothing the board's memo watches.
+	scans *sql.DB
+	memo  memo
 }
 
 const schema = `
@@ -253,10 +257,21 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate doc pages: %w", err)
 	}
-	return &Store{db: db}, nil
+	scans, err := sql.Open("sqlite", "file:"+strings.TrimSuffix(path, ".db")+"-scans.db?"+q.Encode())
+	if err == nil {
+		_, err = scans.Exec(`CREATE TABLE IF NOT EXISTS ym_scans (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, data BLOB NOT NULL)`)
+	}
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open scan cache: %w", err)
+	}
+	return &Store{db: db, scans: scans}, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	s.memo.close()
+	return errors.Join(s.scans.Close(), s.db.Close())
+}
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
@@ -275,6 +290,10 @@ type Phases struct {
 }
 
 func (s *Store) Phases(project string) (Phases, error) {
+	return remembered(s, "phases "+project, asIs[Phases], func() (Phases, error) { return s.phases(project) })
+}
+
+func (s *Store) phases(project string) (Phases, error) {
 	var p Phases
 	var raw string
 	err := s.db.QueryRow(`SELECT phases, idx FROM ym_phases WHERE project = ?`, project).Scan(&raw, &p.Current)
@@ -333,6 +352,12 @@ type Lineage struct {
 }
 
 func (s *Store) Lineage() (Lineage, error) {
+	return remembered(s, "lineage", func(l Lineage) Lineage {
+		return Lineage{Parent: maps.Clone(l.Parent), Name: maps.Clone(l.Name), Merged: maps.Clone(l.Merged)}
+	}, s.lineage)
+}
+
+func (s *Store) lineage() (Lineage, error) {
 	l := Lineage{Parent: map[string]string{}, Name: map[string]string{}, Merged: map[string]string{}}
 	for q, m := range map[string]map[string]string{
 		`SELECT child, parent FROM ym_links`:          l.Parent,
@@ -393,23 +418,30 @@ func (s *Store) Split(project string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// LoadScan reads the scan cache, falling back to the table older ym kept in the main database.
 func (s *Store) LoadScan(path string) (int64, []byte, bool) {
 	var off int64
 	var data []byte
-	if s.db.QueryRow(`SELECT offset, data FROM ym_scans WHERE path = ?`, path).Scan(&off, &data) != nil {
-		return 0, nil, false
+	for _, db := range []*sql.DB{s.scans, s.db} {
+		if db.QueryRow(`SELECT offset, data FROM ym_scans WHERE path = ?`, path).Scan(&off, &data) == nil {
+			return off, data, true
+		}
 	}
-	return off, data, true
+	return 0, nil, false
 }
 
 func (s *Store) SaveScan(path string, offset int64, data []byte) error {
-	_, err := s.db.Exec(`INSERT INTO ym_scans (path, offset, data) VALUES (?, ?, ?)
+	_, err := s.scans.Exec(`INSERT INTO ym_scans (path, offset, data) VALUES (?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, data = excluded.data`, path, offset, data)
 	return err
 }
 
 // PRStatuses returns the last fetched status of every pull request ym knows.
 func (s *Store) PRStatuses() (map[string]PRStatus, error) {
+	return remembered(s, "prs", cloneMap[string, PRStatus], s.prStatuses)
+}
+
+func (s *Store) prStatuses() (map[string]PRStatus, error) {
 	rows, err := s.db.Query(`SELECT url, state, title, review, passed, failed, pending, head, commits, threads, unresolved, fetched_at, merge_details FROM ym_prs`)
 	if err != nil {
 		return nil, err

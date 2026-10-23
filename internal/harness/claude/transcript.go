@@ -371,12 +371,15 @@ func (a *Adapter) advance(path string) *scan {
 		}
 		a.scans[path] = t
 	}
-	info, err := os.Stat(path)
+	info, err := a.stat(path)
 	if err != nil {
 		return t
 	}
 	if info.Size() < t.Offset || t.file != nil && !os.SameFile(t.file, info) {
 		*t = scan{V: scanFormat}
+	}
+	if t.file == nil || !t.modified.Equal(info.ModTime()) || info.Size() != t.Offset {
+		a.gen.Add(1)
 	}
 	t.file, t.modified = info, info.ModTime()
 	if info.Size() == t.Offset {
@@ -447,7 +450,7 @@ func (a *Adapter) crew(dir string, sessionBusy bool, now time.Time) []core.Membe
 			m.Name = meta.AgentType
 		}
 		pending := false
-		if _, err := os.Stat(base + ".jsonl"); err == nil {
+		if _, err := a.stat(base + ".jsonl"); err == nil {
 			sc := a.scan(base + ".jsonl")
 			m.Last, m.Brief, m.Facts = sc.modified, sc.Brief, sc.Facts
 			m.Task = firstLine(sc.Brief)

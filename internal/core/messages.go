@@ -70,6 +70,10 @@ func (s *Store) Message(seq int64) (Message, error) {
 
 // Messages lists the messages sent to any of sessions, oldest first.
 func (s *Store) Messages(sessions ...string) ([]Message, error) {
+	return remembered(s, "messages "+strings.Join(sessions, ","), cloneSlice[Message], func() ([]Message, error) { return s.messagesOf(sessions) })
+}
+
+func (s *Store) messagesOf(sessions []string) ([]Message, error) {
 	if len(sessions) == 0 {
 		return nil, nil
 	}

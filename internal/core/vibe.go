@@ -60,6 +60,10 @@ func (s *Store) AddVibe(v Vibe) (Vibe, error) {
 
 // Vibes lists every vibe, newest first.
 func (s *Store) Vibes() ([]Vibe, error) {
+	return remembered(s, "vibes", cloneSlice[Vibe], s.vibes)
+}
+
+func (s *Store) vibes() ([]Vibe, error) {
 	rows, err := s.db.Query(`SELECT place, why, session, harness, target, at FROM ym_vibes ORDER BY seq DESC`)
 	if err != nil {
 		return nil, err

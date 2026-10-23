@@ -133,6 +133,10 @@ func (s *Store) AddGoalEvent(e GoalEvent) (GoalEvent, bool, error) {
 
 // GoalPRs maps each goal to the pull requests opened for it, in the order they opened.
 func (s *Store) GoalPRs() (map[string][]string, error) {
+	return remembered(s, "goal prs", cloneMap[string, []string], s.goalPRs)
+}
+
+func (s *Store) goalPRs() (map[string][]string, error) {
 	rows, err := s.db.Query(`SELECT goal, key FROM ym_goal_events WHERE kind = ? ORDER BY seq`, EventPROpened)
 	if err != nil {
 		return nil, err
@@ -273,6 +277,10 @@ const feedRecent = 30
 
 // Feeds is every goal's feed.
 func (s *Store) Feeds() (map[string]Feed, error) {
+	return remembered(s, "feeds", cloneMap[string, Feed], s.feeds)
+}
+
+func (s *Store) feeds() (map[string]Feed, error) {
 	events, err := scanEvents(s.db.Query(`SELECT `+eventCols+` FROM (SELECT *, row_number() OVER (PARTITION BY goal ORDER BY seq DESC) AS n
 		FROM ym_goal_events) WHERE n <= ? OR (seen_by_owner IS NULL AND kind IN ('`+strings.Join(keys(ownerKinds), "', '")+`')) ORDER BY seq DESC`, feedRecent))
 	if err != nil {

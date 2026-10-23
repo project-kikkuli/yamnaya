@@ -339,6 +339,10 @@ type ItemFilter struct {
 }
 
 func (s *Store) Items(f ItemFilter) ([]Item, error) {
+	return remembered(s, fmt.Sprintf("items %+v", f), cloneSlice[Item], func() ([]Item, error) { return s.items(f) })
+}
+
+func (s *Store) items(f ItemFilter) ([]Item, error) {
 	q := `SELECT ` + itemCols + ` FROM ym_items WHERE 1=1`
 	var args []any
 	in := func(col string, vals []string) {

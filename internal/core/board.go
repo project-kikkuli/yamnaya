@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,8 +55,10 @@ type Core struct {
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
 
-	gc gitCache
-	fw forwardedSet
+	gc      gitCache
+	fw      forwardedSet
+	prompts promptCache
+	reuse   boardReuse
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -332,6 +335,10 @@ func (c *Core) Board() (Board, error) {
 		}()
 	}
 	wg.Wait()
+	fp, reusable := c.fingerprint(stamp, len(procs), byHarness)
+	if prev, ok := c.reuse.get(fp, reusable, b.At); ok {
+		return c.again(prev, b.At), nil
+	}
 	var found []Session
 	for _, d := range discovered {
 		found = append(found, d...)
@@ -363,13 +370,16 @@ func (c *Core) Board() (Board, error) {
 		if host != nil {
 			l.Handle = &h
 			if (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
-				if screen, err := host.Screen(h); err == nil {
-					if hn := harnessOf[s.Harness]; hn != nil {
-						if p, ok := hn.ParsePrompt(screen); ok {
-							l.Prompt = &p
+				l.Prompt = c.prompts.on(l.Session, h, b.At, func() *Prompt {
+					if screen, err := host.Screen(h); err == nil {
+						if hn := harnessOf[s.Harness]; hn != nil {
+							if p, ok := hn.ParsePrompt(screen); ok {
+								return &p
+							}
 						}
 					}
-				}
+					return nil
+				})
 			}
 		}
 		b.Sessions = append(b.Sessions, l)
@@ -405,10 +415,8 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	dormant := c.dormant(b.Sessions, b.moved)
-	if c.Launches != nil {
-		b.Launched = c.Launches.Launched()
-	}
+	dormant := c.dormant(fp.dormant, b.Sessions, b.moved)
+	b.Launched = slices.Clone(fp.launched)
 	if c.ShowRemotes {
 		b.addRemotes(c.remoteBoards(), parents, &items, &dormant)
 	}
@@ -471,7 +479,11 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	b.Needs = collapse(append(append(b.Needs, wait...), b.remoteWaiting()...), b.Org, b)
-	return b, c.queue(&b, b.Org)
+	if err := c.queue(&b, b.Org); err != nil {
+		return b, err
+	}
+	c.reuse.put(fp, reusable, b)
+	return b, nil
 }
 
 // gitReaders bounds how many directories place reads at once, so a thousand stale checkouts do not start a thousand threads.
@@ -742,10 +754,7 @@ func projectOf(key string, parents map[string]string, lin Lineage) string {
 }
 
 // dormant lists launched sessions that exited and run nowhere else, placed in their repos.
-func (c *Core) dormant(live []Live, moved map[string]string) []Dormant {
-	if c.Launches == nil {
-		return nil
-	}
+func (c *Core) dormant(all []Dormant, live []Live, moved map[string]string) []Dormant {
 	running := map[string]bool{}
 	for _, s := range live {
 		running[s.Key()] = true
@@ -754,7 +763,7 @@ func (c *Core) dormant(live []Live, moved map[string]string) []Dormant {
 		running[old] = true
 	}
 	var out []Dormant
-	for _, d := range c.Launches.Dormant() {
+	for _, d := range all {
 		if !running[d.ID()] {
 			out = append(out, d)
 		}

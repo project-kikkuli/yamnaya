@@ -355,9 +355,12 @@ func readStable(path string) ([]byte, error) {
 const gitTTL = 30 * time.Second
 
 type gitCache struct {
-	mu   sync.Mutex
-	info map[string]gitEntry
-	tops map[string]string
+	mu    sync.Mutex
+	info  map[string]gitEntry
+	tops  map[string]string
+	drift map[string]offRepoRead
+	// gen counts changes to any directory's place.
+	gen uint64
 }
 
 type gitEntry struct {
@@ -384,6 +387,9 @@ func (c *Core) gitFor(dir string, now time.Time) GitInfo {
 	c.gc.mu.Lock()
 	if c.gc.info == nil {
 		c.gc.info = map[string]gitEntry{}
+	}
+	if old, ok := c.gc.info[dir]; !ok || old.GitInfo != g {
+		c.gc.gen++
 	}
 	c.gc.info[dir] = gitEntry{g, now}
 	c.gc.mu.Unlock()

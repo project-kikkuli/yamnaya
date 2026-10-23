@@ -9,6 +9,17 @@ func (s *Store) RecordKill(session string, at time.Time) error {
 }
 
 func (s *Store) Kills(since time.Time) (map[string]time.Time, error) {
+	all, err := remembered(s, "kills", asIs[map[string]time.Time], func() (map[string]time.Time, error) { return s.kills(time.Time{}) })
+	out := map[string]time.Time{}
+	for id, at := range all {
+		if !at.Before(since) {
+			out[id] = at
+		}
+	}
+	return out, err
+}
+
+func (s *Store) kills(since time.Time) (map[string]time.Time, error) {
 	rows, err := s.db.Query(`SELECT session,at FROM ym_kills WHERE at>=?`, since.UnixNano())
 	if err != nil {
 		return nil, err

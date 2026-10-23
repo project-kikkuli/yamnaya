@@ -113,6 +113,10 @@ func (s *Store) Briefs(manager string) ([]Brief, error) {
 
 // LatestBriefs maps each manager that wrote a brief to its newest version.
 func (s *Store) LatestBriefs() (map[string]Brief, error) {
+	return remembered(s, "briefs", cloneMap[string, Brief], s.latestBriefs)
+}
+
+func (s *Store) latestBriefs() (map[string]Brief, error) {
 	rows, err := s.db.Query(`SELECT ` + briefCols + ` FROM ym_briefs b WHERE version = (SELECT max(version) FROM ym_briefs WHERE manager = b.manager)`)
 	if err != nil {
 		return nil, err

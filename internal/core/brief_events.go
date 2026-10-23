@@ -11,6 +11,10 @@ var briefKinds = []string{EventFinished, EventAgentStopped, EventAgentHung, Even
 
 // meaningfulEvents maps each manager to the newest event of its goal that a brief must not predate.
 func (c *Core) meaningfulEvents() (map[string][]stamped, error) {
+	return remembered(c.Store, "brief events", cloneMap[string, []stamped], c.readMeaningfulEvents)
+}
+
+func (c *Core) readMeaningfulEvents() (map[string][]stamped, error) {
 	args := make([]any, len(briefKinds))
 	for i, k := range briefKinds {
 		args[i] = k

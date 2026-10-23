@@ -106,6 +106,10 @@ func (s *Store) Steers(manager string) ([]Steer, error) {
 
 // LatestSteers maps each steered manager to its newest revision.
 func (s *Store) LatestSteers() (map[string]Steer, error) {
+	return remembered(s, "steers", cloneMap[string, Steer], s.latestSteers)
+}
+
+func (s *Store) latestSteers() (map[string]Steer, error) {
 	rows, err := s.db.Query(`SELECT ` + steerCols + ` FROM ym_steers s WHERE revision = (SELECT max(revision) FROM ym_steers WHERE manager = s.manager)`)
 	if err != nil {
 		return nil, err

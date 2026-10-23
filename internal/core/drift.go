@@ -22,7 +22,7 @@ func (c *Core) placeDrift(found []Session, now time.Time) {
 		s := &found[i]
 		if s.Status == Done || s.Status == Moved {
 			s.Drift = nil
-		} else if sign, ok := c.offRepo(*s, now); ok {
+		} else if sign, ok := c.offRepoOnce(*s, now); ok {
 			s.Drift = append(s.Drift, sign)
 		}
 		for j := range s.Crew {
@@ -31,6 +31,39 @@ func (c *Core) placeDrift(found []Session, now time.Time) {
 			}
 		}
 	}
+}
+
+type offRepoRead struct {
+	repo, key, name string
+	doing           time.Time
+	files           int
+	last            string
+	at              time.Time
+	sign            drift.Sign
+	ok              bool
+}
+
+// offRepoOnce is offRepo, worked out again only after the session writes another file, does something new, changes repository,
+// or gitTTL passes.
+func (c *Core) offRepoOnce(s Session, now time.Time) (drift.Sign, bool) {
+	last := ""
+	if len(s.Files) > 0 {
+		last = s.Files[len(s.Files)-1]
+	}
+	c.gc.mu.Lock()
+	r, seen := c.gc.drift[s.Key()]
+	c.gc.mu.Unlock()
+	if seen && r.repo == s.RepoID && r.key == s.RepoKey && r.name == s.Repo && r.doing.Equal(s.Doing.At) && r.files == len(s.Files) && r.last == last && now.Sub(r.at) >= 0 && now.Sub(r.at) < gitTTL {
+		return r.sign, r.ok
+	}
+	sign, ok := c.offRepo(s, now)
+	c.gc.mu.Lock()
+	if c.gc.drift == nil {
+		c.gc.drift = map[string]offRepoRead{}
+	}
+	c.gc.drift[s.Key()] = offRepoRead{repo: s.RepoID, key: s.RepoKey, name: s.Repo, doing: s.Doing.At, files: len(s.Files), last: last, at: now, sign: sign, ok: ok}
+	c.gc.mu.Unlock()
+	return sign, ok
 }
 
 // offRepo reports a session that wrote OffRepoFiles or more files in repositories other than the one it runs in; another clone of its
@@ -151,8 +184,17 @@ func agentHomes() []string {
 }
 
 func within(path string, dirs []string) bool {
+	if !filepath.IsAbs(path) {
+		for _, d := range dirs {
+			if rel, err := filepath.Rel(d, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				return true
+			}
+		}
+		return false
+	}
+	path = filepath.Clean(path)
 	for _, d := range dirs {
-		if rel, err := filepath.Rel(d, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+		if path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
 			return true
 		}
 	}
