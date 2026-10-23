@@ -2,17 +2,40 @@ package tmux
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
+
+func TestPaneExitSignalsHaveTheSameNamesAcrossTmuxPlatforms(t *testing.T) {
+	for _, tc := range []struct {
+		signal string
+		want   string
+	}{
+		{"", ""},
+		{"kill", "kill"},
+		{"term", "term"},
+		{fmt.Sprint(int(syscall.SIGKILL)), "kill"},
+		{fmt.Sprint(int(syscall.SIGTERM)), "term"},
+		{fmt.Sprint(int(syscall.SIGINT)), "int"},
+	} {
+		t.Run(tc.signal, func(t *testing.T) {
+			p, err := parsePane("task", "%1\t/dev/tty1\t1\t\t123\t"+tc.signal)
+			if err != nil || !p.Dead || p.Signal != tc.want {
+				t.Fatalf("pane = %+v, %v; want dead with signal %q", p, err, tc.want)
+			}
+		})
+	}
+}
 
 func TestSocketOf(t *testing.T) {
 	for _, c := range []struct{ env, want string }{
