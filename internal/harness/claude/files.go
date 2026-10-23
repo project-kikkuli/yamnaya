@@ -12,10 +12,11 @@ type listing struct {
 	paths    []string
 }
 
-type metaFile struct {
+type jsonFile struct {
 	size     int64
 	modified time.Time
-	meta     agentMeta
+	info     os.FileInfo
+	raw      []byte
 	ok       bool
 }
 
@@ -46,25 +47,33 @@ func (a *Adapter) glob(dir, pattern string) []string {
 	return paths
 }
 
-// meta reads a subagent's meta file, parsing it again only after its size or modification time changes.
+// meta reads a subagent's meta file.
 func (a *Adapter) meta(path string) (agentMeta, bool) {
+	var m agentMeta
+	_, ok := a.parsed(path, &m)
+	return m, ok
+}
+
+// parsed decodes the JSON file at path into v, opening it again only after its size, modification time or identity changes:
+// a stat costs far less than an open on a machine that scans every file opened.
+func (a *Adapter) parsed(path string, v any) (modified time.Time, ok bool) {
 	info, err := os.Stat(path)
 	a.files.Lock()
 	defer a.files.Unlock()
 	if err != nil {
-		delete(a.metas, path)
-		return agentMeta{}, false
+		delete(a.jsons, path)
+		return time.Time{}, false
 	}
-	if m, ok := a.metas[path]; ok && m.size == info.Size() && m.modified.Equal(info.ModTime()) {
-		return m.meta, m.ok
+	if f, ok := a.jsons[path]; ok && f.size == info.Size() && f.modified.Equal(info.ModTime()) && os.SameFile(f.info, info) {
+		return f.modified, f.ok && json.Unmarshal(f.raw, v) == nil
 	}
-	m := metaFile{size: info.Size(), modified: info.ModTime()}
-	if b, err := os.ReadFile(path); err == nil {
-		m.ok = json.Unmarshal(b, &m.meta) == nil
+	f := jsonFile{size: info.Size(), modified: info.ModTime(), info: info}
+	if b, err := os.ReadFile(path); err == nil && json.Valid(b) {
+		f.raw, f.ok = b, true
 	}
-	if a.metas == nil {
-		a.metas = map[string]metaFile{}
+	if a.jsons == nil {
+		a.jsons = map[string]jsonFile{}
 	}
-	a.metas[path] = m
-	return m.meta, m.ok
+	a.jsons[path] = f
+	return f.modified, f.ok && json.Unmarshal(f.raw, v) == nil
 }

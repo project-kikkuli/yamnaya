@@ -2,6 +2,7 @@ package core
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,11 +30,15 @@ func (c *Core) ForwardIdle(b Board) error {
 			continue
 		}
 		id := key + "\x00" + s.ResultAt.UTC().Format(time.RFC3339Nano) + "\x00" + replyKey(s.Result)
+		if c.fw.has(id) {
+			continue
+		}
 		var seen int
 		if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_forwarded WHERE id = ?`, id).Scan(&seen); err != nil {
 			return err
 		}
 		if seen > 0 {
+			c.fw.add(id)
 			continue
 		}
 		if g, ok := b.Org.Goals[m.GoalID]; ok {
@@ -48,6 +53,7 @@ func (c *Core) ForwardIdle(b Board) error {
 		if _, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, id, now()); err != nil {
 			return err
 		}
+		c.fw.add(id)
 	}
 	return nil
 }
@@ -59,4 +65,25 @@ func idleText(s Live) string {
 		from += " (" + oneLine(s.Title) + ")"
 	}
 	return "ym: " + from + " is idle. Its last message, verbatim: " + strings.TrimSpace(s.Result)
+}
+
+// forwardedSet remembers replies known forwarded, so a reply already handed on costs no query on later cycles.
+type forwardedSet struct {
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+func (f *forwardedSet) has(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ids[id]
+}
+
+func (f *forwardedSet) add(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ids == nil {
+		f.ids = map[string]bool{}
+	}
+	f.ids[id] = true
 }

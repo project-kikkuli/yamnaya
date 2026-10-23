@@ -55,6 +55,7 @@ type Core struct {
 	RunSelf func(args ...string) (string, error)
 
 	gc gitCache
+	fw forwardedSet
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -186,6 +187,8 @@ type Board struct {
 	lin     Lineage
 	// moved maps each live process's session that continued under another id to the session carrying it now.
 	moved map[string]string
+	// index is each session key's first place in Sessions, once Sessions is final.
+	index map[string]int
 }
 
 // Session is the live session key names, or the one key's conversation continued in.
@@ -193,12 +196,27 @@ func (b Board) Session(key string) (Live, bool) {
 	if next, ok := b.moved[key]; ok {
 		key = next
 	}
+	if b.index != nil {
+		if i, ok := b.index[key]; ok {
+			return b.Sessions[i], true
+		}
+		return Live{}, false
+	}
 	for _, s := range b.Sessions {
 		if s.Key() == key {
 			return s, true
 		}
 	}
 	return Live{}, false
+}
+
+func (b *Board) indexSessions() {
+	b.index = make(map[string]int, len(b.Sessions))
+	for i, s := range b.Sessions {
+		if _, ok := b.index[s.Key()]; !ok {
+			b.index[s.Key()] = i
+		}
+	}
 }
 
 func (b Board) Repo(key string) (Repo, bool) {
@@ -420,6 +438,7 @@ func (c *Core) Board() (Board, error) {
 	if err := c.projectSessionStops(&b); err != nil {
 		return b, err
 	}
+	b.indexSessions()
 	if b.Org, err = c.LoadOrg(); err != nil {
 		return b, err
 	}
@@ -443,30 +462,47 @@ func (c *Core) Board() (Board, error) {
 	return b, c.queue(&b, b.Org)
 }
 
-// place fills each session's repository and its crew's worktrees, asking git once per directory at a time.
+// gitReaders bounds how many directories place reads at once, so a thousand stale checkouts do not start a thousand threads.
+const gitReaders = 8
+
+// place fills each session's repository and its crew's worktrees, reading each directory's git files at most gitReaders at a time.
 func (c *Core) place(found []Session, now time.Time) {
 	var want []string
+	wanted := map[string]bool{}
 	for i := range found {
 		s := &found[i]
-		if !contains(want, s.Cwd) {
+		if !wanted[s.Cwd] {
+			wanted[s.Cwd] = true
 			want = append(want, s.Cwd)
 		}
 		for j := range s.Crew {
 			if s.Crew[j].Worktree == "" {
 				s.Crew[j].Worktree = c.worktree(s.Crew[j].Files)
 			}
-			if w := s.Crew[j].Worktree; w != "" && !contains(want, w) {
+			if w := s.Crew[j].Worktree; w != "" && !wanted[w] {
+				wanted[w] = true
 				want = append(want, w)
 			}
 		}
 	}
-	dirs := map[string]GitInfo{}
+	dirs := make(map[string]GitInfo, len(want))
+	var stale []string
+	for _, d := range want {
+		if g, ok := c.gitFresh(d, now); ok {
+			dirs[d] = g
+		} else {
+			stale = append(stale, d)
+		}
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, d := range want {
+	sem := make(chan struct{}, gitReaders)
+	for _, d := range stale {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
+			defer func() { <-sem }()
 			g := c.gitFor(d, now)
 			mu.Lock()
 			dirs[d] = g

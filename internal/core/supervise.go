@@ -66,12 +66,13 @@ func (c *Core) Supervise(b Board) error {
 			o.Sessions[m.Session] = m.ID
 		}
 	}
+	act := c.activity(b, o)
 	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
 		if hasGoal && (g.State == GoalDone || g.State == GoalDropped) {
 			continue
 		}
-		if err := c.supervise(b, o, m, g, hasGoal); err != nil {
+		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
 		}
 	}
@@ -102,7 +103,7 @@ func (c *Core) Supervise(b Board) error {
 	return errors.Join(errs...)
 }
 
-func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error {
+func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoal bool) error {
 	now := c.now()
 	alive := b.Alive(m)
 	starting := !m.LaunchedAt.IsZero() && now.Sub(m.LaunchedAt) < StartGrace && m.LastError == ""
@@ -159,13 +160,13 @@ func (c *Core) supervise(b Board, o Org, m Manager, g Goal, hasGoal bool) error 
 	if !alive || hung || g.State == GoalVerifying {
 		return nil
 	}
-	return c.watchQuiet(b, o, m, g)
+	return c.watchQuiet(b, act, m, g)
 }
 
 // watchQuiet moves the goal's clock on anything that moved and nudges, then flags, a manager whose goal stopped moving.
-func (c *Core) watchQuiet(b Board, o Org, m Manager, g Goal) error {
+func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 	now := c.now()
-	if moved := c.lastMoved(b, o, m, g); moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) {
+	if moved := c.lastMoved(act, m); moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) {
 		g.LastMovedAt = moved
 		if g.State == GoalStuck && strings.HasPrefix(g.Evidence, quietEvidence) {
 			g.State, g.Evidence = GoalActive, ""
@@ -219,9 +220,33 @@ func (c *Core) saveStuck(g Goal, was string) error {
 	return err
 }
 
+// activity is what Supervise reads once per cycle to tell whether each manager's goal moved: the sessions in each manager's tree,
+// and the managers with an ask waiting on the owner.
+type activity struct {
+	sessions map[string][]*Live
+	asking   map[string]bool
+}
+
+func (c *Core) activity(b Board, o Org) activity {
+	act := activity{sessions: map[string][]*Live{}, asking: map[string]bool{}}
+	for i := range b.Sessions {
+		if owner, ok := o.Managed(b.Sessions[i].Key(), b.parents); ok {
+			act.sessions[owner.ID] = append(act.sessions[owner.ID], &b.Sessions[i])
+		}
+	}
+	if items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen}}); err == nil {
+		for _, it := range items {
+			if it.Recipient == Owner && o.Sessions[it.Session] != "" {
+				act.asking[o.Sessions[it.Session]] = true
+			}
+		}
+	}
+	return act
+}
+
 // lastMoved is the latest sign of life in m's goal: its session or its agents' turns, its brief, or now while any of them works or
 // it waits on the owner.
-func (c *Core) lastMoved(b Board, o Org, m Manager, g Goal) time.Time {
+func (c *Core) lastMoved(act activity, m Manager) time.Time {
 	now := c.now()
 	var latest time.Time
 	seen := func(t time.Time) {
@@ -229,10 +254,7 @@ func (c *Core) lastMoved(b Board, o Org, m Manager, g Goal) time.Time {
 			latest = t
 		}
 	}
-	for _, s := range b.Sessions {
-		if owner, ok := o.Managed(s.Key(), b.parents); !ok || owner.ID != m.ID {
-			continue
-		}
+	for _, s := range act.sessions[m.ID] {
 		if (s.Status == Busy && !s.Hung(now, c.Woke)) || s.Status == Waiting {
 			return now
 		}
@@ -241,12 +263,8 @@ func (c *Core) lastMoved(b Board, o Org, m Manager, g Goal) time.Time {
 	if info, err := os.Stat(m.BriefPath); err == nil {
 		seen(info.ModTime())
 	}
-	if items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen}}); err == nil {
-		for _, it := range items {
-			if it.Recipient == Owner && o.Sessions[it.Session] == m.ID {
-				return now
-			}
-		}
+	if act.asking[m.ID] {
+		return now
 	}
 	return latest
 }

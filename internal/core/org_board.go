@@ -109,12 +109,15 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	if err != nil {
 		return err
 	}
+	ordered := o.Ordered()
 	shown := map[string]bool{}
-	for _, m := range o.Ordered() {
+	reports := map[string][]Manager{}
+	for _, m := range ordered {
 		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || (g.State == GoalDone && !g.AckedAt.IsZero())) {
 			continue
 		}
 		shown[m.ID] = true
+		reports[m.ParentID] = append(reports[m.ParentID], m)
 	}
 	var build func(Manager, map[string]bool) Node
 	build = func(m Manager, seen map[string]bool) Node {
@@ -133,8 +136,8 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 		if s, ok := b.Session(m.Session); ok {
 			n.Live = &s
 		}
-		for _, child := range o.Ordered() {
-			if child.ParentID == m.ID && shown[child.ID] && !seen[child.ID] {
+		for _, child := range reports[m.ID] {
+			if !seen[child.ID] {
 				n.Children = append(n.Children, build(child, seen))
 			}
 		}
@@ -142,7 +145,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 		return n
 	}
 	seen := map[string]bool{}
-	for _, m := range o.Ordered() {
+	for _, m := range ordered {
 		if !shown[m.ID] || (m.ParentID != "" && shown[m.ParentID]) {
 			continue
 		}

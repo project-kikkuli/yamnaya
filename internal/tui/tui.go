@@ -157,6 +157,8 @@ type Model struct {
 	self    *binaryWatch
 	restart bool
 	out     *output
+	// slots are the board's project hues while one view is drawn.
+	slots map[string]int
 }
 
 func New(c *core.Core) Model {

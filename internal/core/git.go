@@ -96,7 +96,7 @@ func OriginKey(url string) string {
 
 // originOf reads origin's URL from the repository's config file.
 func originOf(common string) string {
-	b, err := os.ReadFile(filepath.Join(common, "config"))
+	b, err := readStable(filepath.Join(common, "config"))
 	if err != nil {
 		return ""
 	}
@@ -248,7 +248,7 @@ func revParse(dir string) GitInfo {
 
 // originHead reads the default branch from the symref a clone leaves at origin/HEAD.
 func originHead(common string) string {
-	b, err := os.ReadFile(filepath.Join(common, "refs", "remotes", "origin", "HEAD"))
+	b, err := readStable(filepath.Join(common, "refs", "remotes", "origin", "HEAD"))
 	if err != nil {
 		return ""
 	}
@@ -268,7 +268,7 @@ func readGitFiles(dir string) (GitInfo, bool) {
 		if err == nil {
 			gitDir := dot
 			if !info.IsDir() {
-				b, err := os.ReadFile(dot)
+				b, err := readStable(dot)
 				line := strings.TrimSpace(string(b))
 				if err != nil || !strings.HasPrefix(line, "gitdir: ") {
 					return GitInfo{}, false
@@ -279,13 +279,13 @@ func readGitFiles(dir string) (GitInfo, bool) {
 				}
 			}
 			common := gitDir
-			if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+			if b, err := readStable(filepath.Join(gitDir, "commondir")); err == nil {
 				common = strings.TrimSpace(string(b))
 				if !filepath.IsAbs(common) {
 					common = filepath.Join(gitDir, common)
 				}
 			}
-			head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+			head, err := readStable(filepath.Join(gitDir, "HEAD"))
 			if err != nil {
 				return GitInfo{}, false
 			}
@@ -316,6 +316,42 @@ func ahead(dir, def string) int {
 	return n
 }
 
+type stableFile struct {
+	info os.FileInfo
+	data []byte
+}
+
+var (
+	stableMu    sync.Mutex
+	stableFiles = map[string]stableFile{}
+)
+
+// readStable reads a small git file, opening it again only after its size, time or identity changes: a stat costs far less than
+// an open on a machine that scans every file opened.
+func readStable(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		stableMu.Lock()
+		delete(stableFiles, path)
+		stableMu.Unlock()
+		return nil, err
+	}
+	stableMu.Lock()
+	f, ok := stableFiles[path]
+	stableMu.Unlock()
+	if ok && f.info.Size() == info.Size() && f.info.ModTime().Equal(info.ModTime()) && os.SameFile(f.info, info) {
+		return f.data, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	stableMu.Lock()
+	stableFiles[path] = stableFile{info, data}
+	stableMu.Unlock()
+	return data, nil
+}
+
 const gitTTL = 30 * time.Second
 
 type gitCache struct {
@@ -329,15 +365,20 @@ type gitEntry struct {
 	at time.Time
 }
 
-func (c *Core) gitFor(dir string, now time.Time) GitInfo {
+// gitFresh is dir's place when read within gitTTL.
+func (c *Core) gitFresh(dir string, now time.Time) (GitInfo, bool) {
 	if dir == "" || c.Git == nil {
-		return GitInfo{}
+		return GitInfo{}, true
 	}
 	c.gc.mu.Lock()
 	e, ok := c.gc.info[dir]
 	c.gc.mu.Unlock()
-	if ok && now.Sub(e.at) < gitTTL {
-		return e.GitInfo
+	return e.GitInfo, ok && now.Sub(e.at) < gitTTL
+}
+
+func (c *Core) gitFor(dir string, now time.Time) GitInfo {
+	if g, ok := c.gitFresh(dir, now); ok {
+		return g
 	}
 	g := c.Git(dir)
 	c.gc.mu.Lock()

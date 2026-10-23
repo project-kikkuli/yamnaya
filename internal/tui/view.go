@@ -28,6 +28,7 @@ func (m Model) View() tea.View {
 
 func (m Model) prepareView() viewPage {
 	bodyModel := m
+	bodyModel.slots = m.hueSlots()
 	bodyModel.width = m.tableWidth()
 	var body viewPage
 	switch m.mode {

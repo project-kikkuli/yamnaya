@@ -4,9 +4,11 @@ package claude
 import (
 	"bufio"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,11 +39,12 @@ type Adapter struct {
 	mu    sync.Mutex
 	scans map[string]*scan
 	dirs  map[string]string
-	paths map[string]string
+	idle  map[int]idleRead
+	found map[string]found
 
 	files    sync.Mutex
 	listings map[string]listing
-	metas    map[string]metaFile
+	jsons    map[string]jsonFile
 }
 
 func New() *Adapter {
@@ -102,15 +105,18 @@ type state struct {
 }
 
 func (a *Adapter) state(pid int) (state, bool) {
-	b, err := os.ReadFile(filepath.Join(a.Dir, "sessions", strconv.Itoa(pid)+".json"))
-	if err != nil {
-		return state{}, false
-	}
+	st, _, ok := a.stateAt(pid)
+	return st, ok
+}
+
+// stateAt is the state file and when Claude Code last wrote it.
+func (a *Adapter) stateAt(pid int) (state, time.Time, bool) {
 	var st state
-	if json.Unmarshal(b, &st) != nil || st.PID != pid || st.SessionID == "" {
-		return state{}, false
+	at, ok := a.parsed(filepath.Join(a.Dir, "sessions", strconv.Itoa(pid)+".json"), &st)
+	if !ok || st.PID != pid || st.SessionID == "" {
+		return state{}, time.Time{}, false
 	}
-	return st, true
+	return st, at, true
 }
 
 // liveCwd is the cwd a running process gives for session id, "" when none runs it.
@@ -162,9 +168,18 @@ func (a *Adapter) Resume(id string) []string {
 func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	now := a.Now()
 	out := make([]core.Session, 0, len(procs))
+	running := map[int]bool{}
 	for _, p := range procs {
 		out = append(out, a.read(p, now))
+		running[p.PID] = true
 	}
+	a.mu.Lock()
+	for pid := range a.idle {
+		if !running[pid] {
+			delete(a.idle, pid)
+		}
+	}
+	a.mu.Unlock()
 	return out
 }
 
@@ -179,28 +194,83 @@ func (a *Adapter) transcript(cwd, id string) string {
 			return p
 		}
 	}
+	now := time.Now()
 	a.mu.Lock()
-	p, ok := a.paths[id]
+	f, ok := a.found[id]
 	a.mu.Unlock()
-	if ok {
-		return p
-	}
-	matches, _ := filepath.Glob(filepath.Join(a.Dir, "projects", "*", id+".jsonl"))
-	if len(matches) == 0 {
+	if ok && f.path != "" {
+		if _, err := os.Stat(f.path); err == nil {
+			return f.path
+		}
+	} else if ok && now.Sub(f.at) < missRetry {
 		return ""
 	}
-	a.mu.Lock()
-	if a.paths == nil {
-		a.paths = map[string]string{}
+	matches, _ := filepath.Glob(filepath.Join(a.Dir, "projects", "*", id+".jsonl"))
+	f = found{at: now}
+	if len(matches) > 0 {
+		f.path = matches[0]
 	}
-	a.paths[id] = matches[0]
+	a.mu.Lock()
+	if a.found == nil {
+		a.found = map[string]found{}
+	}
+	a.found[id] = f
 	a.mu.Unlock()
-	return matches[0]
+	return f.path
+}
+
+// missRetry is how long a session id no project directory holds is taken as missing before every project directory is listed again.
+const missRetry = 30 * time.Second
+
+type found struct {
+	path string
+	at   time.Time
+}
+
+// An idle session finishes its transcript within a second of Claude Code writing its state file idle, then writes nothing the
+// board shows until the state file changes again. One read idleSettle after that write stands for idleRecheck.
+const (
+	idleSettle  = 5 * time.Second
+	idleRecheck = 10 * time.Second
+)
+
+type idleRead struct {
+	state   state
+	tty     string
+	at      time.Time
+	session core.Session
 }
 
 func (a *Adapter) read(p proc.Proc, now time.Time) core.Session {
+	st, wrote, ok := a.stateAt(p.PID)
+	a.mu.Lock()
+	last, seen := a.idle[p.PID]
+	a.mu.Unlock()
+	if ok && st.Status == "idle" && seen && last.state == st && last.tty == p.TTY && last.at.Sub(wrote) >= idleSettle && now.Sub(last.at) >= 0 && now.Sub(last.at) < idleRecheck {
+		s := last.session
+		s.Crew = slices.Clone(s.Crew)
+		s.Tools = maps.Clone(s.Tools)
+		return s
+	}
+	s := a.readFresh(p, st, ok, now)
+	a.mu.Lock()
+	if a.idle == nil {
+		a.idle = map[int]idleRead{}
+	}
+	if ok && st.Status == "idle" {
+		kept := s
+		kept.Crew = slices.Clone(s.Crew)
+		kept.Tools = maps.Clone(s.Tools)
+		a.idle[p.PID] = idleRead{state: st, tty: p.TTY, at: now, session: kept}
+	} else {
+		delete(a.idle, p.PID)
+	}
+	a.mu.Unlock()
+	return s
+}
+
+func (a *Adapter) readFresh(p proc.Proc, st state, ok bool, now time.Time) core.Session {
 	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY}
-	st, ok := a.state(p.PID)
 	if ok {
 		s.ID, s.Cwd, s.Background = st.SessionID, st.Cwd, st.Kind == "bg"
 	} else {

@@ -64,10 +64,19 @@ type PRSource interface {
 	PRStatus(url string) (PRStatus, error)
 }
 
+// PRBatch is a PRSource that reads many pull requests in one request; one it could not read is missing from the result.
+type PRBatch interface {
+	PRStatuses(urls []string) (map[string]PRStatus, error)
+}
+
+// PRBatchSize is how many pull requests RefreshPRs asks a PRBatch for at once.
+const PRBatchSize = 50
+
 // PRStale is how long a fetched status of an open pull request stays good.
 const PRStale = 2 * time.Minute
 
-// RefreshPRs fetches every pull request on the board whose status is missing or stale, a few at a time.
+// RefreshPRs fetches every pull request on the board whose status is missing or stale: in batches from a PRBatch, then one at a
+// time, a few at once, for any a batch could not read.
 // It never runs on the render path; callers start it in the background.
 func (c *Core) RefreshPRs(b Board) (int, error) {
 	if c.PRs == nil {
@@ -107,10 +116,32 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			}
 		}
 	}
-	var wg sync.WaitGroup
-	var mu sync.Mutex
 	var firstErr error
 	n := 0
+	if batch, ok := c.PRs.(PRBatch); ok {
+		var left []string
+		for start := 0; start < len(due); start += PRBatchSize {
+			chunk := due[start:min(start+PRBatchSize, len(due))]
+			got, _ := batch.PRStatuses(chunk)
+			for _, url := range chunk {
+				st, ok := got[url]
+				if !ok {
+					left = append(left, url)
+					continue
+				}
+				if err := c.Store.SavePRStatus(url, st); err != nil {
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%s: %w", url, err)
+					}
+					continue
+				}
+				n++
+			}
+		}
+		due = left
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	sem := make(chan struct{}, 4)
 	for _, url := range due {
 		wg.Add(1)

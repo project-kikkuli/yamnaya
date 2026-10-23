@@ -19,6 +19,8 @@ type Source struct {
 	viewerMu sync.Mutex
 	viewer   string
 	Run      func(url string) ([]byte, error)
+	// Batch runs one GraphQL query with string variables; nil reads each pull request alone.
+	Batch func(query string, vars map[string]string) ([]byte, error)
 	// Repo reports whether GitHub has repository owner/name.
 	Repo func(repo string) (bool, error)
 	Now  func() time.Time
@@ -26,7 +28,9 @@ type Source struct {
 	LandingRun func(url string) ([]byte, error)
 }
 
-func New() *Source { return &Source{Run: query, REST: rest, Repo: repoExists, Now: time.Now} }
+func New() *Source {
+	return &Source{Run: query, Batch: graphQL, REST: rest, Repo: repoExists, Now: time.Now}
+}
 
 func repoExists(repo string) (bool, error) {
 	out, err := exec.Command("gh", "api", "repos/"+repo, "--silent").CombinedOutput()
@@ -36,7 +40,7 @@ func repoExists(repo string) (bool, error) {
 	return err == nil, err
 }
 
-const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
+const prFields = `... on PullRequest {
   state title reviewDecision headRefName headRefOid isDraft mergeable mergeStateStatus
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
@@ -45,15 +49,80 @@ const prQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
   last: commits(last: 1) { nodes { commit { statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
   baseRef { target { ... on Commit { statusCheckRollup { state } } } }
-} } }`
+}`
+
+const prQuery = `query($url: URI!) { resource(url: $url) { ` + prFields + ` } }`
 
 func query(url string) ([]byte, error) {
-	out, err := exec.Command("gh", "api", "graphql", "-f", "url="+url, "-f", "query="+prQuery).Output()
+	out, err := graphQL(prQuery, map[string]string{"url": url})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// graphQL runs a query with gh; on a failed query it still returns what GitHub answered, which names each part that failed.
+func graphQL(q string, vars map[string]string) ([]byte, error) {
+	args := []string{"api", "graphql", "-f", "query=" + q}
+	for k, v := range vars {
+		args = append(args, "-f", k+"="+v)
+	}
+	out, err := exec.Command("gh", args...).Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && len(exit.Stderr) > 0 {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
+		return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exit.Stderr)))
 	}
 	return out, err
+}
+
+// PRStatuses reads up to core.PRBatchSize pull requests and the signed-in account in one GraphQL query. A pull request the query
+// could not read is missing from the result; the caller reads it alone.
+func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
+	if s.Batch == nil {
+		return nil, errors.New("no batch query")
+	}
+	var q strings.Builder
+	q.WriteString("query(")
+	vars := map[string]string{}
+	for i, u := range urls {
+		if i > 0 {
+			q.WriteString(", ")
+		}
+		fmt.Fprintf(&q, "$u%d: URI!", i)
+		vars[fmt.Sprintf("u%d", i)] = u
+	}
+	q.WriteString(") { viewer { login }")
+	for i := range urls {
+		fmt.Fprintf(&q, " p%d: resource(url: $u%d) { %s }", i, i, prFields)
+	}
+	q.WriteString(" }")
+	out, err := s.Batch(q.String(), vars)
+	var v struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if jerr := json.Unmarshal(out, &v); jerr != nil || v.Data == nil {
+		return nil, errors.Join(err, jerr, errors.New("no data in the batch reply"))
+	}
+	var viewer struct{ Login string }
+	if raw, ok := v.Data["viewer"]; ok {
+		_ = json.Unmarshal(raw, &viewer)
+	}
+	if viewer.Login != "" {
+		s.viewerMu.Lock()
+		s.viewer = viewer.Login
+		s.viewerMu.Unlock()
+	}
+	got := map[string]core.PRStatus{}
+	for i, u := range urls {
+		var pr *prJSON
+		if raw, ok := v.Data[fmt.Sprintf("p%d", i)]; !ok || json.Unmarshal(raw, &pr) != nil || pr == nil || pr.State == "" {
+			continue
+		}
+		st := s.status(pr)
+		st.Merge.Author, st.Merge.Viewer = pr.Author.Login, viewer.Login
+		got[u] = st
+	}
+	return got, nil
 }
 
 type count struct {
@@ -138,6 +207,10 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 		}
 		return core.PRStatus{}, errors.New("no pull request at " + url)
 	}
+	return s.status(pr), nil
+}
+
+func (s *Source) status(pr *prJSON) core.PRStatus {
 	st := core.PRStatus{Merge: core.PRMergeFacts{OID: pr.HeadRefOID, Draft: pr.Draft, Mergeable: pr.Mergeable, MergeState: pr.MergeState}, State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
 		Commits: pr.Commits.TotalCount, Threads: pr.ReviewThreads.TotalCount, Fetched: s.Now()}
 	for _, t := range pr.ReviewThreads.Nodes {
@@ -175,7 +248,7 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 	if st.Passed+st.Failed+st.Pending == 0 && pr.State == "OPEN" && pr.Mergeable != "CONFLICTING" && pr.BaseRef != nil && pr.BaseRef.Target.Rollup != nil {
 		st.Pending = 1
 	}
-	return st, nil
+	return st
 }
 
 // result folds a check run or status context state into pass, fail or pending.

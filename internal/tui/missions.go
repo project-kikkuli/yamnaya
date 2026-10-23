@@ -141,14 +141,22 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 
 // hue is the project's color on this board, apart from every other project's while there are colors to spare.
 func (m Model) hue(key string) lipgloss.Style {
+	slots := m.slots
+	if slots == nil {
+		slots = m.hueSlots()
+	}
+	if i, ok := slots[key]; ok {
+		return pal.hues[i]
+	}
+	return pal.hue(key)
+}
+
+func (m Model) hueSlots() map[string]int {
 	keys := make([]string, len(m.board.Projects))
 	for i, p := range m.board.Projects {
 		keys[i] = p.Key
 	}
-	if i, ok := hueSlots(keys)[key]; ok {
-		return pal.hues[i]
-	}
-	return pal.hue(key)
+	return hueSlots(keys)
 }
 
 // phaseCell is the current phase's name and one dot per phase, each part clipped to its own width, blank without phases.
