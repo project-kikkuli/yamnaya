@@ -187,8 +187,8 @@ type Board struct {
 	lin     Lineage
 	// moved maps each live process's session that continued under another id to the session carrying it now.
 	moved map[string]string
-	// index is each session key's first place in Sessions, once Sessions is final.
-	index map[string]int
+	// index and projects are each session's and project's first place in Sessions and Projects, once those are final.
+	index, projects map[string]int
 }
 
 // Session is the live session key names, or the one key's conversation continued in.
@@ -217,6 +217,12 @@ func (b *Board) indexSessions() {
 			b.index[s.Key()] = i
 		}
 	}
+	b.projects = make(map[string]int, len(b.Projects))
+	for i, p := range b.Projects {
+		if _, ok := b.projects[p.Key]; !ok {
+			b.projects[p.Key] = i
+		}
+	}
 }
 
 func (b Board) Repo(key string) (Repo, bool) {
@@ -229,6 +235,12 @@ func (b Board) Repo(key string) (Repo, bool) {
 }
 
 func (b Board) Project(key string) (Project, bool) {
+	if b.projects != nil {
+		if i, ok := b.projects[key]; ok {
+			return b.Projects[i], true
+		}
+		return Project{}, false
+	}
 	for _, p := range b.Projects {
 		if p.Key == key {
 			return p, true
