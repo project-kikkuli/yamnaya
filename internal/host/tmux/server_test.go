@@ -2,13 +2,13 @@ package tmux
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
@@ -46,8 +46,7 @@ func ymServer(t *testing.T) (*Host, string) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	h := &Host{Socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano()), Kind: Server}
-	t.Cleanup(func() { exec.Command("tmux", "-L", h.Socket, "kill-server").Run() })
+	h := &Host{Socket: tmuxtest.Socket(t), Kind: Server}
 	conf := filepath.Join(t.TempDir(), "tmux.conf")
 	if err := os.WriteFile(conf, []byte(ServerConf), 0o644); err != nil {
 		t.Fatal(err)

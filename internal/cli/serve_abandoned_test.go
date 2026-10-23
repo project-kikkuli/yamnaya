@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 )
 
 func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
@@ -27,11 +27,10 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			base := t.TempDir()
 			state := filepath.Join(base, "state")
-			socket := fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano())
+			socket := tmuxtest.Socket(t)
 			t.Setenv("YAMNAYA_STATE_DIR", state)
 			t.Setenv("YAMNAYA_YM_SOCKET", socket)
 			srv := &tmux.Host{Socket: socket, Kind: tmux.Server}
-			t.Cleanup(func() { exec.Command("tmux", "-L", socket, "kill-server").Run() })
 			conf := filepath.Join(base, "tmux.conf")
 			if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
 				t.Fatal(err)

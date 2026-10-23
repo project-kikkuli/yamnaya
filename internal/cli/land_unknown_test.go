@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
@@ -39,8 +39,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 			}
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-			socket := fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano())
-			t.Cleanup(func() { exec.Command(real, "-L", socket, "kill-server").Run() })
+			socket := tmuxtest.Socket(t)
 			conf := filepath.Join(base, "tmux.conf")
 			os.WriteFile(conf, []byte(tmux.ServerConf), 0o644)
 			srv := &tmux.Host{Socket: socket, Kind: tmux.Server}
