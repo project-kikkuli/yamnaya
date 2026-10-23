@@ -43,6 +43,8 @@ type RemoteBoard struct {
 	Standing        map[string]string
 	// Feeds are its goals' news for the owner.
 	Feeds map[string]Feed
+	// Fresh is each of its managers' and chiefs' latest brief and whether it is behind, by its own reading.
+	Fresh map[string]Freshness
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
 	Stale bool
 	// FailingSince is when reads of the host started failing, zero while the last read answered.
@@ -97,6 +99,14 @@ func ParseStatus(s string) Status {
 		}
 	}
 	return Unknown
+}
+
+// shownRemotes are the other hosts' boards when this board shows them, the only time their managers join its org.
+func (c *Core) shownRemotes() []RemoteBoard {
+	if !c.ShowRemotes {
+		return nil
+	}
+	return c.remoteBoards()
 }
 
 func (c *Core) remoteBoards() []RemoteBoard {

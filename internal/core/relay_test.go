@@ -514,3 +514,30 @@ func TestARelayRefusedOverAndOverReachesTheOwnersQueueUntilDropped(t *testing.T)
 		})
 	}
 }
+
+func TestAnotherHostsGoalShowsTheBriefThatHostKeeps(t *testing.T) {
+	at := newOrgWorld(t).clock
+	brief := &Brief{Manager: "mgr1", Version: 3, Assessment: "caesar chain is the long pole", CreatedAt: at}
+	for _, c := range []struct {
+		name  string
+		fresh map[string]Freshness
+		want  string
+	}{
+		{"fresh brief there", map[string]Freshness{"mgr1": {Brief: brief}}, "brief v3"},
+		{"brief behind there", map[string]Freshness{"mgr1": {Brief: brief, Behind: at, BehindWhat: "a merge"}}, "brief v3 stale"},
+		{"none written there", nil, "no brief"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", At: w.clock, Self: "box",
+				Managers: []Manager{{ID: "mgr1", Role: RoleManager, Name: "ship it", GoalID: "goal1"}},
+				Goals:    []Goal{{ID: "goal1", Ask: "ship it", ManagerID: "mgr1", State: GoalActive, LastMovedAt: w.clock}},
+				Fresh:    c.fresh}}}
+			w.core.ShowRemotes = true
+			n, ok := w.board(t).Node("box/mgr1")
+			if !ok || !strings.HasPrefix(n.Fresh.String(), c.want) {
+				t.Errorf("box/mgr1 brief %q, want it to start %q", n.Fresh.String(), c.want)
+			}
+		})
+	}
+}

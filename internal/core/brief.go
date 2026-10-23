@@ -279,6 +279,13 @@ func (c *Core) Freshness(o Org) (map[string]Freshness, error) {
 	for _, m := range o.Ordered() {
 		out[m.ID] = freshness(o, reports, m, briefs, steers, events[m.ID])
 	}
+	for _, r := range c.shownRemotes() {
+		for id, f := range r.Fresh {
+			if key := RemoteKey(r.Host, id); o.Managers[key].Host == r.Host {
+				out[key] = f
+			}
+		}
+	}
 	return out, nil
 }
 

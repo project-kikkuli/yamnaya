@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,12 +66,14 @@ func (s *briefSite) listen(ctx context.Context, addr string) error {
 
 type briefNode struct {
 	ID, Title, Kind, Repo, Standing, Artifact, Session string
-	Plan                                               *core.Steer
-	Fresh                                              core.Freshness
-	Shown                                              *core.Brief
-	Versions                                           []core.Brief
-	Reports                                            []briefNode
-	Now                                                time.Time
+	// Remote says which host the brief is from and how old the read is.
+	Remote   string
+	Plan     *core.Steer
+	Fresh    core.Freshness
+	Shown    *core.Brief
+	Versions []core.Brief
+	Reports  []briefNode
+	Now      time.Time
 }
 
 func (n briefNode) Age(t time.Time) string {
@@ -133,6 +136,10 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return n
 	}
 	ref := strings.TrimPrefix(r.URL.Path, "/b/")
+	if host, rest, ok := core.SplitRemote(ref); ok && ref != r.URL.Path {
+		s.serveRemote(w, r, host, rest)
+		return
+	}
 	if r.URL.Path == "/" {
 		var roots []briefNode
 		seen := map[string]bool{}
@@ -169,6 +176,68 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+	}
+	render(w, briefPage, n)
+}
+
+// remoteRead bounds how long a brief page waits on another host before showing what ym last read from it.
+const remoteRead = 5 * time.Second
+
+// serveRemote shows the brief of manager or goal ref on host, read from the snapshot that host's ym serve keeps, or from the
+// last one ym read when the host does not answer in time.
+func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, ref string) {
+	known, err := s.core.Store.KnownHosts()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !slices.ContainsFunc(known, func(h core.KnownHost) bool { return h.Name == host }) {
+		http.NotFound(w, r)
+		return
+	}
+	st := s.core.Store
+	hosts := newRemoteHosts([]string{host}, remoteRead, func(h string, at time.Time, raw []byte) { st.KeepBoard(h, at, raw) })
+	hosts.timeout = remoteRead
+	if at, raw, ok, _ := st.KeptBoard(host); ok {
+		hosts.keep(host, at, raw)
+	}
+	rb := hosts.Boards()[0]
+	id := strings.ToLower(ref)
+	for _, g := range rb.Goals {
+		if g.ID == id {
+			id = g.ManagerID
+		}
+	}
+	var m *core.Manager
+	for i := range rb.Managers {
+		if rb.Managers[i].ID == id {
+			m = &rb.Managers[i]
+		}
+	}
+	if m == nil {
+		http.Error(w, fmt.Sprintf("%s: no goal or chief %s on %s as of %s", rb.StateAt(time.Now()), ref, host, rb.At.Local().Format(time.Kitchen)), http.StatusNotFound)
+		return
+	}
+	n := briefNode{ID: core.RemoteKey(host, m.ID), Title: m.Name, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
+		Fresh: rb.Fresh[m.ID], Now: time.Now()}
+	for _, g := range rb.Goals {
+		if g.ID == m.GoalID {
+			n.Kind, n.Title, n.Repo = core.RemoteKey(host, g.ID), g.Ask, g.Repo
+			if g.ArtifactURL != "" {
+				n.Artifact = g.ArtifactURL
+			}
+		}
+	}
+	n.Remote = fmt.Sprintf("On %s, as its ym serve saw it %s.", host, n.Age(rb.At))
+	if rb.Err != nil || rb.Late(n.Now) {
+		n.Remote += " " + host + ": " + rb.StateAt(n.Now)
+	}
+	if n.Shown = n.Fresh.Brief; n.Shown != nil {
+		n.Versions = []core.Brief{*n.Shown}
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("v")); err == nil && (n.Shown == nil || n.Shown.Version != v) {
+		http.Error(w, fmt.Sprintf("only the latest brief of %s is read from %s", n.ID, host), http.StatusNotFound)
+		return
 	}
 	render(w, briefPage, n)
 }
@@ -227,6 +296,7 @@ var briefPage = template.Must(template.New("brief").Parse(tags + `<!doctype html
 <h1>{{if eq .Kind "chief"}}Chief {{.Title}}{{else}}{{.Kind}}: {{.Title}}{{end}}</h1>
 <p class="meta">{{.ID}}{{if .Repo}} · {{.Repo}}{{end}}{{if .Artifact}} · <a href="{{.Artifact}}">artifact</a>{{end}}</p>
 <p>{{template "tags" .}}</p>
+{{if .Remote}}<p class="meta">{{.Remote}}</p>{{end}}
 {{if .Fresh.Stale}}{{if .Fresh.Brief}}<p class="meta">This brief predates {{.Fresh.BehindWhat}} ({{.Age .Fresh.Behind}}); its manager has been asked to refresh it.</p>{{end}}{{end}}
 {{if .Plan}}<h2>Plan, revision {{.Plan.Revision}} by {{.Plan.By}}{{if not .Plan.Adopted}}, not adopted yet{{end}}</h2><div class="plan">{{.Plan.Text}}</div>{{end}}
 {{with .Shown}}<div class="card"><p class="meta">Brief v{{.Version}}, {{$.Age .CreatedAt}}</p>{{range .Sections}}<h2>{{index . 0}}</h2><p class="sec">{{index . 1}}</p>{{end}}</div>

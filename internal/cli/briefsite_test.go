@@ -2,11 +2,13 @@ package cli
 
 import (
 	"io"
+	"os"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -123,5 +125,85 @@ func TestBriefSiteAnswersOnlyRequestsToAnAddress(t *testing.T) {
 		if rec.Code != tc.want {
 			t.Errorf("Host %s: status %d, want %d", tc.host, rec.Code, tc.want)
 		}
+	}
+}
+
+func TestARemoteGoalsBriefOpensFromItsHostsSnapshotOrTheLastOneRead(t *testing.T) {
+	far := t.TempDir()
+	fst, err := core.OpenStore(filepath.Join(far, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fst.Close()
+	fc := &core.Core{Store: fst, StateDir: far, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+	g, m, err := fc.NewGoal("cut CI to five minutes", far, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Session = "far-manager"
+	if err := fst.SaveManager(m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fc.WriteBrief("far-manager", core.Brief{Assessment: "caesar chain is the long pole", Changed: "x", Uncertainty: "none", Next: "split shards", WaitingOn: "CI"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := fc.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSnapshot(fc, far, b); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _ := os.ReadFile(snapshotPath(far))
+	ssh := filepath.Join(t.TempDir(), "ssh")
+	answer := func(script string) {
+		if err := os.WriteFile(ssh, []byte("#!/bin/sh\n"+script+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("YAMNAYA_SSH_BIN", ssh)
+	near := t.TempDir()
+	st, err := core.OpenStore(filepath.Join(near, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.RecordHost("box", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	site := &briefSite{core: &core.Core{Store: st, StateDir: near, Procs: func() ([]proc.Proc, error) { return nil, nil }}}
+	for _, c := range []struct {
+		name, ssh, path string
+		kept            bool
+		code            int
+		want            []string
+	}{
+		{"host answers, by goal", "exec cat " + snapshotPath(far), "/b/box/" + g.ID, false, 200, []string{"caesar chain is the long pole", "On box, as its ym serve saw it just now."}},
+		{"host answers, by manager", "exec cat " + snapshotPath(far), "/b/box/" + m.ID, false, 200, []string{"caesar chain is the long pole"}},
+		{"host down, last read kept", "exit 255", "/b/box/" + g.ID, true, 200, []string{"caesar chain is the long pole", "box: no answer"}},
+		{"no such goal there", "exec cat " + snapshotPath(far), "/b/box/goal99", false, 404, nil},
+		{"host ym never reached", "exec cat " + snapshotPath(far), "/b/elsewhere/" + g.ID, false, 404, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			answer(c.ssh)
+			if c.kept {
+				if err := st.KeepBoard("box", time.Now().Add(-3*time.Minute), snapshot); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := httptest.NewRequest(http.MethodGet, c.path, nil)
+			req.Host = "127.0.0.1:7477"
+			rec := httptest.NewRecorder()
+			site.ServeHTTP(rec, req)
+			body, _ := io.ReadAll(rec.Body)
+			if rec.Code != c.code {
+				t.Fatalf("status %d, want %d: %s", rec.Code, c.code, body)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(string(body), w) {
+					t.Errorf("page lacks %q:\n%s", w, body)
+				}
+			}
+		})
 	}
 }

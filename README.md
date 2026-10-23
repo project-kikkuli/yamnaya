@@ -121,6 +121,7 @@ Goals across hosts:
 
 - A goal runs on the host where it starts, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there. `ym remote install` also keeps it running across reboots (`ym service keep`, see Background service), so a remote goal moves with no board open anywhere.
 - The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A remote goal's feed shows on the board, and its done or stuck notification appears on the host you sit at.
+- A remote goal's brief shows on the board and in `ym goal list` with its version and whether it is behind, as that host's snapshot gives it. `B` shows it, and `W` opens its page at `http://127.0.0.1:7477/b/<host>/<id>`, read from that host within five seconds or else from the last snapshot ym read, with its age. Only the latest version comes from another host.
 - A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, and it and every chief above it hear its goals' state changes. `ym goal send`, `relaunch`, `drop`, `ack` and `feed` take remote ids.
 - A chief may steer a goal any number of hosts below it. When the chain leaves the goal's host, `ym goal steer` says the steer lands once the next chief's host confirms the steerer is above it; a chief the goal does not report to is told the steer was refused.
 

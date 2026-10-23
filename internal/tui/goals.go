@@ -609,6 +609,10 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "B":
 		if host, rest, ok := core.SplitRemote(n.Manager.ID); ok && n.Manager.Host != "" {
 			head := " " + pal.bold.Render(m.tagged(host, n.Manager.Label())) + pal.dim.Render("  "+briefOf(n)) + "\n\n"
+			if f := n.Fresh.Brief; f != nil {
+				m.show("B", head+pal.dim.Render(briefMeta(m.board.At, n)+", as "+m.hostTag(host)+" last told this board")+"\n\n"+f.Markdown(n.Manager.Label()))
+				return m, nil, true
+			}
 			m.show("B", head+pal.dim.Render("reading it from "+m.hostTag(host)+"…"))
 			c := m.core
 			return m, func() tea.Msg {
@@ -624,10 +628,6 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.show("B", " "+pal.bold.Render(n.Manager.Label())+pal.dim.Render("  "+briefOf(n))+"\n\n"+string(text))
 		return m, nil, true
 	case "W":
-		if n.Manager.Host != "" {
-			m.message = "the brief page of " + n.Manager.ID + " is served on " + m.hostTag(n.Manager.Host) + "; B shows the brief here"
-			return m, nil, true
-		}
 		url, open := core.BriefURL(n.Manager.ID), m.openURL
 		return m, m.do(func() (string, error) { return "opened " + url, open(url) }), true
 	case "S":
