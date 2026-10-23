@@ -76,7 +76,10 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		}
 		argv := []string{"auth", "login", "--claudeai"}
 		if p.Harness == "codex" {
-			argv = []string{"-c", "sqlite_home=" + fmt.Sprintf("%q", p.Root), "login"}
+			argv = []string{"login"}
+			if p.ID != "default" {
+				argv = []string{"-c", "sqlite_home=" + fmt.Sprintf("%q", p.Root), "login"}
+			}
 		}
 		child := exec.Command(b, argv...)
 		child.Env = p.Environment(os.Environ())
@@ -234,7 +237,7 @@ func provisionProfile(p profile.Profile) error {
 			return err
 		}
 		home, _ := os.UserHomeDir()
-		if _, err = wireStatuslineAt(p.Root, home, self); err != nil {
+		if _, err = wireProfileStatusline(p.Root, home, self); err != nil {
 			return err
 		}
 	}

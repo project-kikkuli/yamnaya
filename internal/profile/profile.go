@@ -141,8 +141,15 @@ func validate(p Profile) error {
 	return nil
 }
 func canonical(root string) string {
+	if absolute, err := filepath.Abs(root); err == nil {
+		root = absolute
+	}
 	if real, err := filepath.EvalSymlinks(root); err == nil {
 		return real
+	}
+	parent := filepath.Dir(root)
+	if parent != root {
+		return filepath.Join(canonical(parent), filepath.Base(root))
 	}
 	return filepath.Clean(root)
 }
@@ -297,11 +304,6 @@ func defaultsAt(dir string) ([]Profile, error) {
 	defaults := Defaults()
 	if dir == "" {
 		return defaults, nil
-	}
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return defaults, nil
-	} else if err != nil {
-		return nil, err
 	}
 	path := filepath.Join(dir, "profile-defaults.json")
 	if err := os.MkdirAll(dir, 0700); err != nil {

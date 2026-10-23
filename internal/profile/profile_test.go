@@ -85,6 +85,26 @@ func TestArbitraryProfilesAndPhysicalRootIsolation(t *testing.T) {
 		t.Fatal("symlink credential alias accepted as independent root")
 	}
 }
+
+func TestRegistrationCanonicalizesRootsThatDoNotExistYet(t *testing.T) {
+	dir := isolated(t)
+	parent := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(parent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Add(dir, Profile{Harness: "codex", ID: "fresh", Root: filepath.Join(link, "missing", "root")}); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Find(ps, "codex", "fresh")
+	if err != nil || p.Root != filepath.Join(canonical(parent), "missing", "root") {
+		t.Fatalf("root is not canonical: %#v %v", p, err)
+	}
+}
 func TestNamedEnvironmentSelectsNativeCredentialsWithoutLeakingParent(t *testing.T) {
 	for _, h := range []string{"claude", "codex"} {
 		t.Run(h, func(t *testing.T) {
