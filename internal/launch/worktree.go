@@ -2,7 +2,9 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,13 +126,14 @@ func remoteHeads(root string) (map[string]bool, error) {
 }
 
 // Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too,
-// or at the freshly fetched default branch when head is gone as well.
+// or at the freshly fetched default branch when head is gone as well. With the repository gone too it makes a plain directory at
+// the same path, where the conversation still resumes.
 func Restore(w Worktree, head string) error {
 	if _, err := os.Stat(w.Path); err == nil {
 		return nil
 	}
-	if w.GitDir == "" || w.Branch == "" {
-		return fmt.Errorf("%s is gone and no git branch was recorded to recreate it", w.Path)
+	if _, err := os.Stat(w.GitDir); w.GitDir == "" || w.Branch == "" || errors.Is(err, fs.ErrNotExist) {
+		return os.MkdirAll(w.Path, 0o755)
 	}
 	gd := "--git-dir=" + w.GitDir
 	exec.Command("git", gd, "worktree", "prune").Run()

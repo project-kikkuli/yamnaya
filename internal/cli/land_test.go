@@ -47,28 +47,33 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		tree   bool
 		branch bool
 		goal   bool
+		// deleted removes the worktree, its repository and the repository's origin.
+		deleted bool
 	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false},
-		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true, false},
-		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true, false},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false},
-		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true, false},
-		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false},
-		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true, false},
-		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true, false},
-		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true, false},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true, false},
-		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false},
-		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false},
-		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false},
-		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true, false},
-		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true, false},
-		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true, false},
-		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true},
-		{"gone after ym kill a day ago, merged, a goal's agent", "", day, "", merged, true, false, false, true, false, false, true},
-		{"exit 0, pushed, a goal's agent", "exit 0", 0, "", push, false, false, false, true, false, true, true},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false, false},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false, false},
+		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true, false, false},
+		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true, false, false},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false, false},
+		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true, false, false},
+		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false, false},
+		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false, false},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true, false, false},
+		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true, false, false},
+		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true, false, false},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true, false, false},
+		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false, false},
+		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false, false},
+		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false, false},
+		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true, false, false},
+		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true, false, false},
+		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true, false, false},
+		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true, false},
+		{"gone after ym kill a day ago, merged, a goal's agent", "", day, "", merged, true, false, false, true, false, false, true, false},
+		{"exit 0, pushed, a goal's agent", "exit 0", 0, "", push, false, false, false, true, false, true, true, false},
+		{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "sigterm", commit, false, false, false, false, false, false, false, true},
+		{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "exited 0", dirty, true, false, false, false, false, false, false, true},
+		{"gone after ym kill today, repository deleted", "", 0, "gone", commit, true, false, false, false, false, false, false, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -120,6 +125,11 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 					if time.Now().After(end) {
 						t.Fatal("the agent never exited")
 					}
+				}
+			}
+			if c.deleted {
+				for _, dir := range []string{wt, repo, filepath.Join(base, "origin.git")} {
+					os.RemoveAll(dir)
 				}
 			}
 			if c.forget {
@@ -178,6 +188,7 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 		{"pushed, branch kept", "HEAD", false, "head"},
 		{"merged, branch deleted", "HEAD:main", false, "head"},
 		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main"},
+		{"repository and origin deleted", "HEAD", false, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -221,14 +232,24 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 				}
 			}
 
+			if c.want == "" {
+				os.RemoveAll(repo)
+				os.RemoveAll(filepath.Join(base, "origin.git"))
+			}
 			if _, err := l.Revive(rec.Key); err != nil {
 				t.Fatal(err)
+			}
+			back, _ := l.records.Find(rec.Key)
+			if _, st := l.state(back); c.want == "" {
+				if fi, err := os.Stat(wt); err != nil || !fi.IsDir() || back.IsLanded() || st != "running" {
+					t.Fatalf("directory %v, still landed %v, pane %s; want the conversation resumed at %s", err, back.IsLanded(), st, wt)
+				}
+				return
 			}
 			want := head
 			if c.want != "head" {
 				want = rev(t, repo, c.want)
 			}
-			back, _ := l.records.Find(rec.Key)
 			_, st := l.state(back)
 			if got := rev(t, wt, "HEAD"); got != want || back.IsLanded() || st != "running" {
 				t.Fatalf("worktree at %s, still landed %v, pane %s; want %s, revived, running", got, back.IsLanded(), st, want)
