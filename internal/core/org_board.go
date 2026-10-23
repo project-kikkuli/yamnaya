@@ -220,6 +220,15 @@ func (c *Core) queue(b *Board, o Org) error {
 		return err
 	}
 	seen := map[string]bool{}
+	cleared := map[string]bool{}
+	canMerge := func(repo string) bool {
+		ok, known := cleared[repo]
+		if !known {
+			ok, _ = c.Store.CanMerge(repo)
+			cleared[repo] = ok
+		}
+		return ok
+	}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
 		m, managed := o.Managed(s.Key(), b.parents)
@@ -229,7 +238,7 @@ func (c *Core) queue(b *Board, o Org) error {
 				continue
 			}
 			seen[pr.URL] = true
-			if cleared, _ := c.Store.CanMerge(prRepoName(pr)); cleared && managed {
+			if canMerge(prRepoName(pr)) && managed {
 				continue
 			}
 			pr.Status = &st
