@@ -215,6 +215,8 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 
 Commands that act for an agent find its session by walking up the process tree to the nearest `claude` or `codex` process; `--session` overrides. State lives in `~/.local/state/yamnaya/ym.db` (`YAMNAYA_STATE_DIR` overrides).
 
+ym starts Codex as the platform binary its npm package ships rather than through its node wrapper, since endpoint security such as SentinelOne kills a node process whose command line carries a long prompt, as every manager's does. `YAMNAYA_STATE_DIR`, `YAMNAYA_YM_SOCKET` and `YAMNAYA_NO_SERVE` reach Codex's shells, so `ym` run there acts on the same state and tmux server.
+
 ## Development
 
     ym slot -- go test -p 2 ./internal/<package>/...

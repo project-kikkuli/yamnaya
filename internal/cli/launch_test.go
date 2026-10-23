@@ -22,6 +22,7 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 	}
 	t.Setenv("PATH", bins)
 	t.Setenv("YAMNAYA_STATE_DIR", state)
+	t.Setenv("YAMNAYA_YM_SOCKET", "ymtest")
 	src := t.TempDir()
 	gitDir, admin := filepath.Join(src, "app", ".git"), filepath.Join(src, "app", ".git", "worktrees", "app-wt-x")
 	wt := launch.Worktree{Path: filepath.Join(src, "app-wt-x"), Branch: "x", GitDir: gitDir}
@@ -69,7 +70,8 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 					dirs[argv[i+1]] = true
 				}
 			}
-			passes := slices.Contains(argv, "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(state))
+			passes := slices.Contains(argv, "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(state)) &&
+				slices.Contains(argv, "shell_environment_policy.set.YAMNAYA_YM_SOCKET="+strconv.Quote("ymtest"))
 			got := dirs[state] && passes
 			for _, d := range commits {
 				got = got && dirs[d]

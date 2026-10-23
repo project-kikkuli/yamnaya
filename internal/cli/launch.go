@@ -60,6 +60,9 @@ func bin(harnessName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s not found on PATH: %w", name, err)
 	}
+	if harnessName == codex.Name {
+		return codex.Native(path), nil
+	}
 	return path, nil
 }
 
@@ -110,14 +113,16 @@ func transcript(rec launch.Record) string {
 }
 
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
-// A state dir set by $YAMNAYA_STATE_DIR is passed to Codex's shells, which drop most of the environment.
+// The state dir, tmux server and serve choice set in ym's environment are passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
 	var args []string
 	if path, err := core.DefaultStorePath(); err == nil {
 		args = append(args, "--add-dir", filepath.Dir(path))
 	}
-	if dir := os.Getenv("YAMNAYA_STATE_DIR"); dir != "" {
-		args = append(args, "-c", "shell_environment_policy.set.YAMNAYA_STATE_DIR="+strconv.Quote(dir))
+	for _, key := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_NO_SERVE"} {
+		if v := os.Getenv(key); v != "" {
+			args = append(args, "-c", "shell_environment_policy.set."+key+"="+strconv.Quote(v))
+		}
 	}
 	for _, dir := range commitDirs(rec.Worktree) {
 		args = append(args, "--add-dir", dir)
