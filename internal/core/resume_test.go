@@ -169,6 +169,7 @@ func TestAGoalAgentWhosePaneWentIsResumedUnlessItWasStopped(t *testing.T) {
 		{name: "its agent exited", state: "exited 1"},
 		{name: "tmux could not say", state: LaunchUnknown},
 		{name: "no goal above it", state: "gone", edit: func(w *orgWorld, l *Launched, g Goal) { l.Parent = "someone-else" }},
+		{name: "it runs in a terminal, never on ym's server", state: "gone", edit: func(w *orgWorld, l *Launched, g Goal) { l.Outside = true }},
 		{name: "its goal is done", state: "gone", edit: func(w *orgWorld, l *Launched, g Goal) {
 			g.State = GoalDone
 			w.core.Store.SaveGoal(g)

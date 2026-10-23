@@ -112,23 +112,68 @@ func TestLandOnlyWhenNothingIsLost(t *testing.T) {
 	}
 }
 
-func TestRestoreRecreatesWorktreeAndBranch(t *testing.T) {
-	base, _ := filepath.EvalSymlinks(t.TempDir())
-	run(t, base, "git", "init", "-q", "-b", "main", "repo")
-	repo := filepath.Join(base, "repo")
-	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
-	w := Worktree{Path: WorktreePath(repo, "f"), Branch: "f", GitDir: filepath.Join(repo, ".git")}
-	run(t, repo, "git", "worktree", "add", "-q", "-b", "f", w.Path)
-	run(t, w.Path, "git", "commit", "-q", "--allow-empty", "-m", "work")
-	head := Head(w.Path)
-	os.RemoveAll(w.Path)
-	run(t, repo, "git", "worktree", "prune")
-	run(t, repo, "git", "branch", "-q", "-D", "f")
-	if err := Restore(w, head); err != nil {
-		t.Fatal(err)
+func TestRestoreBringsBackWhatSurvivesOfARemovedWorktree(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// gone removes what the worktree came from once the worktree itself is removed.
+		gone  func(t *testing.T, repo, clone string)
+		clone bool
+		code  bool
+		lost  string
+	}{
+		{"repo kept, branch deleted", func(t *testing.T, repo, _ string) { run(t, repo, "git", "branch", "-q", "-D", "f") }, false, true, ""},
+		{"repo deleted, no other clone", func(t *testing.T, repo, _ string) { os.RemoveAll(repo) }, false, false, RepoGone},
+		{"repo deleted, another clone of it kept", func(t *testing.T, repo, _ string) { os.RemoveAll(repo) }, true, true, ""},
+		{"repo deleted, the other clone holds only main", func(t *testing.T, repo, clone string) {
+			os.RemoveAll(repo)
+			run(t, clone, "git", "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+			run(t, clone, "git", "branch", "-q", "-D", "-r", "origin/f")
+			run(t, clone, "git", "reflog", "expire", "--expire=now", "--all")
+			run(t, clone, "git", "gc", "-q", "--prune=now")
+		}, true, true, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
+			run(t, base, "git", "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo := filepath.Join(base, "repo")
+			run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
+			run(t, repo, "git", "push", "-q", "origin", "main")
+			w := Worktree{Path: WorktreePath(repo, "f"), Branch: "f", GitDir: filepath.Join(repo, ".git")}
+			run(t, repo, "git", "worktree", "add", "-q", "-b", "f", w.Path)
+			run(t, w.Path, "git", "commit", "-q", "--allow-empty", "-m", "work")
+			run(t, w.Path, "git", "push", "-q", "origin", "f")
+			head := Head(w.Path)
+			var clones []string
+			clone := filepath.Join(base, "other")
+			if c.clone {
+				run(t, base, "git", "clone", "-q", filepath.Join(base, "origin.git"), "other")
+				clones = []string{filepath.Join(clone, ".git")}
+			}
+			os.RemoveAll(w.Path)
+			run(t, repo, "git", "worktree", "prune")
+			c.gone(t, repo, clone)
+
+			back, lost, err := Restore(w, head, clones)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fi, statErr := os.Stat(w.Path)
+			if statErr != nil || !fi.IsDir() || lost != c.lost || (Head(w.Path) == head) != c.code {
+				t.Fatalf("dir %v, lost %q, at %q; want a directory, lost %q, code back %v", statErr, lost, Head(w.Path), c.lost, c.code)
+			}
+			if c.clone && back.GitDir != clones[0] {
+				t.Fatalf("restored into %s, want the surviving clone %s", back.GitDir, clones[0])
+			}
+		})
 	}
-	if got := Head(w.Path); got != head {
-		t.Errorf("restored at %q, want %q", got, head)
+}
+
+func TestRestoreMakesAnEmptyDirectoryForAGoneDirectoryThatWasNoRepo(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "notes")
+	_, lost, err := Restore(Worktree{Path: dir}, "", nil)
+	if fi, statErr := os.Stat(dir); err != nil || statErr != nil || !fi.IsDir() || lost != DirGone {
+		t.Fatalf("err %v, dir %v, lost %q; want an empty directory and %q", err, statErr, lost, DirGone)
 	}
 }
 

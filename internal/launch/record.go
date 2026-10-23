@@ -15,16 +15,20 @@ import (
 
 // Record is one agent session ym launched: where it runs and how to bring it back.
 type Record struct {
-	Key      string    `json:"key"`
-	Harness  string    `json:"harness"`
-	Session  string    `json:"session,omitempty"`
-	Parent   string    `json:"parent,omitempty"`
-	Prompt   string    `json:"prompt"`
-	Worktree Worktree  `json:"worktree"`
-	Head     string    `json:"head,omitempty"`
-	Started  time.Time `json:"started"`
+	Key      string   `json:"key"`
+	Harness  string   `json:"harness"`
+	Session  string   `json:"session,omitempty"`
+	Parent   string   `json:"parent,omitempty"`
+	Prompt   string   `json:"prompt"`
+	Worktree Worktree `json:"worktree"`
+	Head     string   `json:"head,omitempty"`
+	// Repo is the repository's identity across clones, so a revive finds another clone once this one is gone.
+	Repo    string    `json:"repo,omitempty"`
+	Started time.Time `json:"started"`
 	// Adopted records a session ym moved in from another terminal; its directory is not ym's to remove.
 	Adopted bool `json:"adopted,omitempty"`
+	// Seen is when the board last saw this session ym never ran running elsewhere, kept so ym revive resumes it once it ends.
+	Seen time.Time `json:"seen,omitzero"`
 	// Killed is when ym kill ended the agent, so its exit waits out the same day of grace a signal death gets.
 	Killed time.Time `json:"killed,omitzero"`
 	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.

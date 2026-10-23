@@ -231,7 +231,7 @@ func (l launcher) Start(n core.NewLaunch) (string, error) {
 	if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
 		return "", err
 	}
-	rec.Key, rec.Head = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path)
+	rec.Key, rec.Head, rec.Repo = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path), core.RepoID(rec.Worktree.GitDir)
 	argv, err := startArgv(rec)
 	if err != nil {
 		return "", err
@@ -422,7 +422,7 @@ func (l launcher) Launched() []core.Launched {
 			l.records.Save(rec)
 		}
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path,
-			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})
+			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive, Outside: !rec.Seen.IsZero()})
 	}
 	return out
 }
@@ -445,7 +445,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	var landed bool
 	cmd := &cobra.Command{
 		Use:   "launched [--landed]",
-		Short: "List sessions ym launched, and whether each agent still runs",
+		Short: "List sessions ym launched or saw running elsewhere, and whether each agent still runs",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if e.core.Launches == nil {
@@ -465,7 +465,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
-	argv, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+	argv, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if rec.Session != "" {
 			return resumeArgv(*rec, "")
 		}
@@ -473,6 +473,9 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	})
 	if err != nil {
 		return "", err
+	}
+	if lost != "" {
+		return fmt.Sprintf("revived %s (%s) in %s: %s", rec.Key, lost, rec.Worktree.Path, strings.Join(argv[1:], " ")), nil
 	}
 	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
 }
@@ -485,7 +488,7 @@ func (l launcher) Resume(session, prompt, start string) (bool, error) {
 		return false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
 	}
 	resumed := transcript(rec) != ""
-	_, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
 			return resumeArgv(*rec, prompt)
 		}
@@ -516,29 +519,36 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 	if transcript(rec) == "" {
 		return fmt.Errorf("its conversation's transcript is gone")
 	}
-	_, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, prompt) })
+	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, prompt) })
 	return err
 }
 
 // restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
-func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, error) {
+func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, string, error) {
 	pane, st := l.state(rec)
 	if st == "running" {
-		return nil, fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
+		return nil, "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
 	}
 	if st == core.LaunchUnknown {
-		return nil, fmt.Errorf("tmux could not say whether %s still runs; try again", rec.Key)
+		return nil, "", fmt.Errorf("tmux could not say whether %s still runs; try again", rec.Key)
 	}
-	if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
-		return nil, err
-	}
-	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
-		return nil, err
+	if !rec.Seen.IsZero() && l.core != nil {
+		if s, err := l.core.Find(rec.Session); err == nil && s.Remote == "" {
+			return nil, "", fmt.Errorf("%s still runs outside ym in %s; ym open %s", rec.Key, s.Location(), core.Short(rec.Session))
+		}
 	}
 	was := rec
+	back, lost, err := launch.Restore(rec.Worktree, rec.Head, l.clones(rec))
+	if err != nil {
+		return nil, "", err
+	}
+	rec.Worktree = back
+	if err := launch.Trust(rec.Harness, rec.Worktree.Path); err != nil {
+		return nil, "", err
+	}
 	args, err := argv(&rec)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	name := tmux.SessionName(rec.Key)
 	if pane.ID != "" {
@@ -547,20 +557,20 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		_, err = l.srv.Start(l.conf, name, rec.Worktree.Path, args)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	rec.Landed, rec.Killed, rec.Revive = time.Time{}, time.Time{}, false
+	rec.Landed, rec.Killed, rec.Revive, rec.Seen = time.Time{}, time.Time{}, false, time.Time{}
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	if rec.Harness == codex.Name && rec.Session != "" {
 		if err := detach("resume-watch", name); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	return args, nil
+	return args, lost, nil
 }
 
 // landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
@@ -570,6 +580,8 @@ func landsAlone(rec launch.Record, state string, now time.Time, work func(sessio
 	switch {
 	case state == "running", state == core.LaunchUnknown:
 		return false
+	case !rec.Seen.IsZero():
+		return now.Sub(rec.Seen) >= seenKeep
 	case !rec.Killed.IsZero():
 		return now.Sub(rec.Killed) >= 24*time.Hour
 	case strings.HasPrefix(state, "sig"):
@@ -590,6 +602,12 @@ func (l launcher) Dormant() []core.Dormant {
 	panes, listErr := l.srv.Panes()
 	var out []core.Dormant
 	for _, rec := range all {
+		if rec.Repo == "" && rec.Worktree.GitDir != "" {
+			if _, err := os.Stat(rec.Worktree.GitDir); err == nil {
+				rec.Repo = core.RepoID(rec.Worktree.GitDir)
+				l.records.Save(rec)
+			}
+		}
 		if rec.IsLanded() {
 			continue
 		}
@@ -606,6 +624,11 @@ func (l launcher) Dormant() []core.Dormant {
 			if !errors.As(err, &unlandable{}) {
 				st = "land failed: " + err.Error()
 			}
+		}
+		if lost := codeGone(rec); lost != "" && st == "gone" && rec.Killed.IsZero() {
+			st = lost
+		} else if st == "gone" && !rec.Seen.IsZero() {
+			st = "ended outside ym"
 		}
 		if st != "running" && st != core.LaunchUnknown {
 			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
@@ -646,9 +669,10 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	return &cobra.Command{
-		Use:   "revive <key|session>",
-		Short: "Resume an exited or landed launched session in its worktree, recreating the worktree and branch when they are gone",
-		Args:  cobra.ExactArgs(1),
+		Use: "revive <key|session>",
+		Short: ("Resume an exited or landed session, or one ym saw running elsewhere, in its directory, recreating the worktree and branch " +
+			"when they are gone, from another clone when its own is gone, else as an empty directory holding only the conversation"),
+		Args: cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			l, err := newLauncher()
 			if err != nil {
@@ -733,6 +757,9 @@ func (l launcher) Forget(ref string) (string, error) {
 
 // landUnused lands rec unless a process in dirs works in its worktree, as an agent resumed outside ym's pane does.
 func (l launcher) landUnused(rec launch.Record, dirs func() []string) (string, error) {
+	if lost := codeGone(rec); lost != "" && !rec.Adopted {
+		return "", unlandable{rec.Key, rec.Worktree.Path, "is gone with its repository; ym revive resumes its conversation"}
+	}
 	if !rec.Adopted {
 		if path, err := filepath.EvalSymlinks(rec.Worktree.Path); err == nil {
 			if user := launch.Inside(path, dirs()); user != "" {

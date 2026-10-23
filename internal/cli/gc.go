@@ -18,7 +18,7 @@ import (
 // sweepEvery is how often the board starts a background ym gc.
 const sweepEvery = time.Hour
 
-// landedKeep is how long ym gc keeps a landed session's record for ym revive.
+// landedKeep is how long ym gc keeps a landed session's record for ym revive once its conversation's transcript is gone too.
 const landedKeep = 14 * 24 * time.Hour
 
 // sweepSoon starts ym gc in the background when the last one began over sweepEvery ago.
@@ -47,7 +47,7 @@ func cwds() []string {
 }
 
 // gc sweeps every repository in repos, those of launch records and those with linked worktrees under ~/dev, marking the
-// records of worktrees it removes landed, then drops the records landed over landedKeep ago and says how many.
+// records of worktrees it removes landed, then drops the records landed over landedKeep ago whose transcripts are gone, and says how many.
 func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	seen := map[string]bool{}
 	if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
@@ -89,7 +89,7 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	}
 	pruned := 0
 	for _, rec := range recs {
-		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep {
+		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep && transcript(rec) == "" {
 			pruned++
 			if !dry {
 				l.records.Delete(rec.Key)
@@ -143,7 +143,7 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 		}
 	}
 	if pruned > 0 {
-		fmt.Fprintf(w, "%s %d landed launch records older than %d days\n", del, pruned, int(landedKeep.Hours()/24))
+		fmt.Fprintf(w, "%s %d landed launch records older than %d days whose conversations are gone\n", del, pruned, int(landedKeep.Hours()/24))
 	}
 	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d active, %d in use, %d locked or missing, %d unreadable\n",
 		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepActive],
@@ -154,7 +154,8 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 	cmd := &cobra.Command{
 		Use: "gc [--dry-run]",
 		Short: ("Remove worktrees of known repositories and those under ~/dev that are clean, on a remote or squash-merged, " +
-			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago"),
+			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago " +
+			"whose conversation transcripts are gone"),
 		Args: cobra.NoArgs,
 	}
 	dry := cmd.Flags().Bool("dry-run", false, "print what gc would remove and delete, changing nothing")

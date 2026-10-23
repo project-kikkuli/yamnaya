@@ -2,9 +2,7 @@
 package launch
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,29 +123,57 @@ func remoteHeads(root string) (map[string]bool, error) {
 	return heads, nil
 }
 
-// Restore recreates a removed worktree from its repository and branch, recreating the branch at head when that is gone too,
-// or at the freshly fetched default branch when head is gone as well. With the repository gone too it makes a plain directory at
-// the same path, where the conversation still resumes.
-func Restore(w Worktree, head string) error {
+// RepoGone and DirGone are what a revive says when a worktree came back as an empty directory holding only the conversation.
+const (
+	RepoGone = "repo gone: conversation only, no code"
+	DirGone  = "directory gone: conversation only, no files"
+)
+
+// Restore recreates a removed worktree from its repository, or from clones, git dirs of other clones of it, when the
+// repository is gone. It uses the branch, else head, else the branch on origin, else the freshly fetched default branch.
+// With no repository left it makes an empty directory at the path, so the conversation still resumes there, and says so in lost.
+func Restore(w Worktree, head string, clones []string) (back Worktree, lost string, err error) {
 	if _, err := os.Stat(w.Path); err == nil {
-		return nil
+		return w, "", nil
 	}
-	if _, err := os.Stat(w.GitDir); w.GitDir == "" || w.Branch == "" || errors.Is(err, fs.ErrNotExist) {
-		return os.MkdirAll(w.Path, 0o755)
+	if w.GitDir == "" {
+		return w, DirGone, os.MkdirAll(w.Path, 0o755)
 	}
-	gd := "--git-dir=" + w.GitDir
-	exec.Command("git", gd, "worktree", "prune").Run()
-	add := []string{gd, "worktree", "add", w.Path, w.Branch}
-	if exec.Command("git", gd, "show-ref", "--verify", "--quiet", "refs/heads/"+w.Branch).Run() != nil {
-		if head == "" || exec.Command("git", gd, "cat-file", "-e", head+"^{commit}").Run() != nil {
-			var err error
-			if head, err = Fresh(filepath.Dir(w.GitDir)); err != nil {
-				return fmt.Errorf("%s and its branch %s are gone with no recorded commit to recreate them from: %w", w.Path, w.Branch, err)
-			}
+	for _, gd := range append([]string{w.GitDir}, clones...) {
+		if _, err := os.Stat(gd); err == nil {
+			back = w
+			back.GitDir = gd
+			return back, "", recreate(back, head)
 		}
-		add = []string{gd, "worktree", "add", "-b", w.Branch, w.Path, head}
 	}
-	if out, err := exec.Command("git", add...).CombinedOutput(); err != nil {
+	return w, RepoGone, os.MkdirAll(w.Path, 0o755)
+}
+
+func recreate(w Worktree, head string) error {
+	gd := "--git-dir=" + w.GitDir
+	has := func(args ...string) bool { return exec.Command("git", append([]string{gd}, args...)...).Run() == nil }
+	exec.Command("git", gd, "worktree", "prune").Run()
+	headOK := head != "" && has("cat-file", "-e", head+"^{commit}")
+	var add []string
+	switch {
+	case w.Branch == "" && headOK:
+		add = []string{"--detach", w.Path, head}
+	case w.Branch == "":
+		return fmt.Errorf("%s is gone and neither its branch nor its commit was recorded to recreate it", w.Path)
+	case has("show-ref", "--verify", "--quiet", "refs/heads/"+w.Branch):
+		add = []string{w.Path, w.Branch}
+	case headOK:
+		add = []string{"-b", w.Branch, w.Path, head}
+	case has("fetch", "--quiet", "origin", "+refs/heads/"+w.Branch+":refs/remotes/origin/"+w.Branch):
+		add = []string{"-b", w.Branch, w.Path, "refs/remotes/origin/" + w.Branch}
+	default:
+		fresh, err := Fresh(filepath.Dir(w.GitDir))
+		if err != nil {
+			return fmt.Errorf("%s and its branch %s are gone with no recorded commit to recreate them from: %w", w.Path, w.Branch, err)
+		}
+		add = []string{"-b", w.Branch, w.Path, fresh}
+	}
+	if out, err := exec.Command("git", append([]string{gd, "worktree", "add"}, add...)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("recreate %s from %s %s: %w: %s", w.Path, w.GitDir, w.Branch, err, strings.TrimSpace(string(out)))
 	}
 	return nil

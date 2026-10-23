@@ -427,6 +427,9 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	dormant := c.dormant(fp.dormant, b.Sessions, b.moved)
+	if s, ok := c.Launches.(interface{ Saw([]Live) }); ok {
+		s.Saw(b.Sessions)
+	}
 	b.Launched = slices.Clone(fp.launched)
 	if c.ShowRemotes {
 		b.addRemotes(c.remoteBoards(), parents, &items, &dormant)

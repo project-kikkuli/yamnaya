@@ -259,20 +259,29 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 func TestGCDropsOnlyRecordsLandedLongAgo(t *testing.T) {
 	day := 24 * time.Hour
 	for _, c := range []struct {
-		name   string
-		landed time.Duration
-		dry    bool
-		pruned int
-		kept   bool
+		name       string
+		landed     time.Duration
+		transcript bool
+		dry        bool
+		pruned     int
+		kept       bool
 	}{
-		{"landed 15 days ago", 15 * day, false, 1, false},
-		{"landed 15 days ago, dry run", 15 * day, true, 1, true},
-		{"landed 13 days ago", 13 * day, false, 0, true},
-		{"never landed", 0, false, 0, true},
+		{"landed 15 days ago", 15 * day, false, false, 1, false},
+		{"landed 15 days ago, dry run", 15 * day, false, true, 1, true},
+		{"landed 15 days ago, its transcript kept", 15 * day, true, false, 0, true},
+		{"landed 13 days ago", 13 * day, false, false, 0, true},
+		{"never landed", 0, false, false, 0, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			conf := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", conf)
 			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: t.TempDir()}}
-			rec := launch.Record{Key: "app-wt-x", Harness: "claude", Started: time.Now().Add(-30 * day)}
+			rec := launch.Record{Key: "app-wt-x", Harness: "claude", Session: "s1", Started: time.Now().Add(-30 * day),
+				Worktree: launch.Worktree{Path: "/gone/app-wt-x"}}
+			if c.transcript {
+				os.MkdirAll(filepath.Join(conf, "projects", "-gone-app-wt-x"), 0o755)
+				os.WriteFile(filepath.Join(conf, "projects", "-gone-app-wt-x", "s1.jsonl"), []byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o644)
+			}
 			if c.landed > 0 {
 				rec.Landed = time.Now().Add(-c.landed)
 			}

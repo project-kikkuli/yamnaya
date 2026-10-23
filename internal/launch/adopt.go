@@ -116,5 +116,6 @@ func Adopted(s core.Live, at time.Time) Record {
 	if title == "" {
 		title = s.Task
 	}
-	return Record{Key: AdoptKey(s.ID), Harness: s.Harness, Session: s.ID, Parent: s.Parent, Prompt: title, Worktree: w, Head: Head(s.Cwd), Started: at, Adopted: true}
+	return Record{Key: AdoptKey(s.ID), Harness: s.Harness, Session: s.ID, Parent: s.Parent, Prompt: title, Worktree: w, Head: Head(s.Cwd),
+		Repo: core.RepoID(w.GitDir), Started: at, Adopted: true}
 }
