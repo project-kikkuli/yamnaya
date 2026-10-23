@@ -29,7 +29,7 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 		git(t, root, "clone", "-q", origin, path)
 		return path
 	}
-	opener, other, fresh, unseen := repo("opener"), repo("other"), repo("fresh"), repo("unseen")
+	opener, other, fresh, unseen, rebased := repo("opener"), repo("other"), repo("fresh"), repo("unseen"), repo("rebased")
 	git(t, opener, "switch", "-q", "-c", "x")
 	git(t, opener, "commit", "-q", "--allow-empty", "-m", "opener's work")
 	git(t, opener, "push", "-q", "origin", "x")
@@ -39,6 +39,10 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 		git(t, dir, "switch", "-q", "-c", "x", "origin/main")
 	}
 	git(t, other, "commit", "-q", "--allow-empty", "-m", "other work")
+	git(t, rebased, "fetch", "-q", "origin")
+	git(t, rebased, "switch", "-q", "x")
+	git(t, rebased, "reset", "-q", "--hard", "origin/main")
+	git(t, rebased, "commit", "-q", "--allow-empty", "-m", "opener's work, amended before its force-push")
 	git(t, unseen, "switch", "-q", "-c", "x")
 	git(t, unseen, "commit", "-q", "--allow-empty", "-m", "unseen work")
 
@@ -54,6 +58,7 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 		{"other-clone", other, false},
 		{"fresh-branch", fresh, false},
 		{"never-fetched", unseen, true},
+		{"rebased-since-push", rebased, true},
 	}
 	for _, s := range sessions {
 		w.spawn(s.id, m.Session)
