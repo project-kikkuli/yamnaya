@@ -162,6 +162,9 @@ func (m Model) header() string {
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
+	if note := m.board.PRPace.Note(m.board.At); note != "" {
+		h += "\n " + pal.yellow.Render(note)
+	}
 	if len(m.board.Remotes) > 0 {
 		var hosts []string
 		for _, r := range m.board.Remotes {

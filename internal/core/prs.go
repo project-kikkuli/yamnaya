@@ -118,12 +118,13 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		return 0, err
 	}
 	now := c.now()
-	left := 1.0
+	pace := PRPace{Left: 1, At: now}
 	if bud, ok := c.PRs.(PRBudget); ok {
 		if f, reset, ok := bud.Budget(); ok && now.Before(reset) {
-			left = f
+			pace.Left, pace.Reset = f, reset
 		}
 	}
+	left := pace.Left
 	goal := map[string]bool{}
 	tracked, err := c.Store.GoalPRs()
 	if err != nil {
@@ -179,7 +180,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			chunk := due[start:min(start+PRBatchSize, len(due))]
 			got, err := batch.PRStatuses(chunk)
 			if err != nil {
-				firstErr = err
+				firstErr, pace.Failed = err, err.Error()
 				break
 			}
 			for _, url := range chunk {
@@ -233,6 +234,9 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		}()
 	}
 	wg.Wait()
+	if err := c.Store.SavePRPace(pace); err != nil && firstErr == nil {
+		firstErr = err
+	}
 	return n, firstErr
 }
 

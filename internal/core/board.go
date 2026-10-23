@@ -185,6 +185,8 @@ type Board struct {
 	Gen uint64
 	// Remotes are the other hosts the board reads, reachable or not.
 	Remotes []RemoteBoard
+	// PRPace is how this host's ym serve last read pull requests.
+	PRPace PRPace
 	// remoteStanding is how each manager and chief on another host stands by that host's reading.
 	remoteStanding map[string]string
 
@@ -461,6 +463,9 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	b.indexSessions()
+	if b.PRPace, err = c.Store.PRPace(); err != nil {
+		return b, err
+	}
 	if b.Org, err = c.LoadOrg(); err != nil {
 		return b, err
 	}
