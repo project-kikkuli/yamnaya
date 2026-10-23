@@ -436,4 +436,6 @@ type sshTo struct {
 	hosts map[string]*orgWorld
 }
 
-func (r *sshTo) Run(host string, args ...string) (string, error) { return r.hosts[host].core.RunSelf(args...) }
+func (r *sshTo) Run(host string, args ...string) (string, error) {
+	return r.hosts[host].core.RunSelf(args...)
+}

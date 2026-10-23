@@ -244,7 +244,7 @@ func (m Model) tick() tea.Cmd {
 func (m Model) Init() tea.Cmd { return m.refresh(true) }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
+	switch b := msg.(type) {
 	case mountainFrame:
 		if wait := time.Until(m.peaks.quiet); wait > 0 {
 			return m, tea.Tick(wait, func(time.Time) tea.Msg { return mountainFrame{} })
@@ -262,7 +262,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b := msg.(boardMsg); b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems {
 			m.board = b.board
 			if b.tick {
 				return m, m.tick()
