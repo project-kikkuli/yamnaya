@@ -11,6 +11,8 @@ const (
 	MsgPending = "pending"
 	// MsgTyped was typed into the session's pane.
 	MsgTyped = "typed"
+	// MsgUncertain owns a paste attempt whose submission is not confirmed; it is never replayed.
+	MsgUncertain = "uncertain"
 	// MsgInbox was handed to the agent by ym item inbox.
 	MsgInbox = "inbox"
 	// MsgSent went straight to the session's own inbox.
@@ -113,7 +115,13 @@ func (s *Store) Claim(seq int64, state string) (bool, error) {
 	return n == 1, err
 }
 
-// Unclaim returns a message whose delivery failed to pending.
+// FinishTyping records the result of the claimed paste attempt.
+func (s *Store) FinishTyping(seq int64, state string) error {
+	_, err := s.db.Exec(`UPDATE ym_messages SET state = ? WHERE seq = ? AND state = ?`, state, seq, MsgUncertain)
+	return err
+}
+
+// Unclaim returns a message to pending only when no paste was attempted.
 func (s *Store) Unclaim(seq int64) error {
 	_, err := s.db.Exec(`UPDATE ym_messages SET state = ?, delivered_at = NULL WHERE seq = ?`, MsgPending, seq)
 	return err

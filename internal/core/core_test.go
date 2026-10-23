@@ -71,6 +71,7 @@ type fakeHost struct {
 	outer   string
 	focused []string
 	typed   []string
+	pasted  []string
 	typeErr error
 	// opens is the dialog that opens on the pane right as a paste lands in it.
 	opens map[string]string
@@ -86,6 +87,7 @@ func (f *fakeHost) Focus(h Handle) (string, error) {
 	return f.outer, nil
 }
 func (f *fakeHost) Paste(h Handle, text string) error {
+	f.pasted = append(f.pasted, text)
 	if f.typeErr != nil {
 		return f.typeErr
 	}
@@ -290,7 +292,7 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 		{"twice", Queued},
 		{"ended", Queued},
 		{"dialog", Queued},
-		{"opens", Queued},
+		{"opens", SubmissionUncertain},
 	}
 	for _, c := range cases {
 		it, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q " + c.session, Session: c.session})
@@ -317,8 +319,8 @@ func TestAnswerTypesIntoIdleAgentAndQueuesOtherwise(t *testing.T) {
 	}
 	w.tmux.typeErr = errors.New("pane gone")
 	it, _ := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindChore, Question: "q", Session: "idle"})
-	if _, d, _ := w.core.Dismiss(w.board(t), it.ID, "not needed"); d != Queued {
-		t.Errorf("failed typing should queue, got %v", d)
+	if _, d, _ := w.core.Dismiss(w.board(t), it.ID, "not needed"); d != SubmissionUncertain {
+		t.Errorf("an attempted paste must stay claimed, got %v", d)
 	}
 }
 

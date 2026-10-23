@@ -231,10 +231,11 @@ const (
 	Sent
 	// Held reached the session's inbox, which shows it to the owner before the agent reads it.
 	Held
+	SubmissionUncertain
 )
 
 func (d Delivery) String() string {
-	return [...]string{"queued for the agent's next turn", "typed into the agent's terminal", "sent to the agent's session inbox", "held in the agent's session for your approval"}[d]
+	return [...]string{"queued for the agent's next turn", "typed into the agent's terminal", "sent to the agent's session inbox", "held in the agent's session for your approval", "paste attempted, submission uncertain; not retyping"}[d]
 }
 
 // Answer records the answer and hands it to the source agent, wherever its conversation runs now: through the session's own inbox,
@@ -382,13 +383,13 @@ func (c *Core) typeMessages(s Live, msgs []Message) string {
 	if host == nil || hn == nil {
 		return "no terminal ym can type into"
 	}
-	if box, ok := composing(host, *s.Handle, hn, s.PID); !ok || strings.TrimSpace(box) != "" {
+	if box, ok := readComposer(host, *s.Handle, hn, s.PID, true); !ok || strings.TrimSpace(box) != "" {
 		return ""
 	}
 	var claimed []Message
 	var texts []string
 	for _, m := range msgs {
-		if ok, err := c.Store.Claim(m.Seq, MsgTyped); err == nil && ok {
+		if ok, err := c.Store.Claim(m.Seq, MsgUncertain); err == nil && ok {
 			claimed = append(claimed, m)
 			texts = append(texts, m.Text)
 		}
@@ -397,10 +398,17 @@ func (c *Core) typeMessages(s Live, msgs []Message) string {
 		return ""
 	}
 	if err := Type(host, *s.Handle, hn, s.PID, strings.Join(texts, "\n\n")); err != nil {
-		for _, m := range claimed {
-			c.Store.Unclaim(m.Seq)
+		if !errors.Is(err, ErrSubmissionUncertain) {
+			for _, m := range claimed {
+				c.Store.Unclaim(m.Seq)
+			}
 		}
 		return "typing failed: " + err.Error()
+	}
+	for _, m := range claimed {
+		if err := c.Store.FinishTyping(m.Seq, MsgTyped); err != nil {
+			return err.Error()
+		}
 	}
 	return ""
 }
@@ -497,6 +505,9 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 					return Typed, ""
 				}
 				why = "typing failed: " + terr.Error()
+				if errors.Is(terr, ErrSubmissionUncertain) {
+					return SubmissionUncertain, why
+				}
 			}
 		}
 		why += "; its inbox: " + err.Error()

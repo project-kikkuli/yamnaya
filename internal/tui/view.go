@@ -1134,10 +1134,13 @@ func (m Model) sessionView() viewPage {
 	if len(s.Messages) > 0 {
 		b.WriteString("\n" + pal.bold.Render(" MESSAGES") + "\n")
 		for _, msg := range s.Messages {
-			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgInbox: "via inbox", core.MsgSent: "sent"}[msg.State]
+			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgUncertain: "submission uncertain (not replayed)", core.MsgInbox: "via inbox", core.MsgSent: "sent"}[msg.State]
 			when := age(m.board.At, msg.CreatedAt)
 			if !msg.Delivered.IsZero() {
 				when = "delivered " + age(m.board.At, msg.Delivered)
+				if msg.State == core.MsgUncertain {
+					when = "attempted " + age(m.board.At, msg.Delivered)
+				}
 			}
 			line := "   " + pad(state, 10) + " " + msg.Text + pal.dim.Render("  "+when)
 			if msg.State != core.MsgPending {

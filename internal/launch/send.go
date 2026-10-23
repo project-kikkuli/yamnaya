@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ type Mailbox interface {
 	Message(seq int64) (core.Message, error)
 	Claim(seq int64, state string) (bool, error)
 	Unclaim(seq int64) error
+	FinishTyping(seq int64, state string) error
 }
 
 // Pane is the terminal on ym's server a session runs in.
@@ -33,10 +35,11 @@ const (
 	Queued
 	// Sent went straight to the session's own inbox, which reads it after the current turn.
 	Sent
+	Uncertain
 )
 
 func (o Outcome) String() string {
-	return [...]string{"typed into its pane", "held until its permission prompt clears", "queued for its next ym item inbox", "sent to its session inbox"}[o]
+	return [...]string{"typed into its pane", "held until its permission prompt clears", "queued for its next ym item inbox", "sent to its session inbox", "paste attempted, submission uncertain; not retyping"}[o]
 }
 
 // Sender delivers follow-up messages: typed into a ym-server pane even mid-turn, else handed to the session's own inbox, else left for ym item inbox.
@@ -67,12 +70,25 @@ func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outc
 		m, err := s.Box.AddMessage(session, text, core.MsgPending)
 		return m, Held, err
 	}
-	if pane.Type(text) != nil {
-		m, err := s.Box.AddMessage(session, text, core.MsgPending)
+	m, err := s.Box.AddMessage(session, text, core.MsgUncertain)
+	if err != nil {
+		return m, Uncertain, err
+	}
+	terr := pane.Type(text)
+	switch {
+	case terr == nil:
+		if err := s.Box.FinishTyping(m.Seq, core.MsgTyped); err != nil {
+			return m, Uncertain, errors.Join(core.ErrSubmissionUncertain, err)
+		}
+		m.State = core.MsgTyped
+	case errors.Is(terr, core.ErrSubmissionUncertain):
+		return m, Uncertain, nil
+	default:
+		err = s.Box.Unclaim(m.Seq)
+		m, _ = s.Box.Message(m.Seq)
 		return m, Held, err
 	}
-	m, err := s.Box.AddMessage(session, text, core.MsgTyped)
-	return m, Typed, err
+	return m, Typed, nil
 }
 
 // Hold types a held message once the pane's permission prompt clears. It gives up, leaving the message to the inbox, when the agent exits, and stops when the inbox took it first.
@@ -87,12 +103,16 @@ func (s Sender) Hold(seq int64, pane Pane) (bool, error) {
 			return false, nil
 		}
 		if !shown {
-			ok, err := s.Box.Claim(seq, core.MsgTyped)
+			ok, err := s.Box.Claim(seq, core.MsgUncertain)
 			if err != nil || !ok {
 				return false, err
 			}
-			if pane.Type(m.Text) == nil {
-				return true, nil
+			terr := pane.Type(m.Text)
+			if terr == nil {
+				return true, s.Box.FinishTyping(seq, core.MsgTyped)
+			}
+			if errors.Is(terr, core.ErrSubmissionUncertain) {
+				return false, terr
 			}
 			if err := s.Box.Unclaim(seq); err != nil {
 				return false, err

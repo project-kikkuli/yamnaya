@@ -116,7 +116,7 @@ func TestAWakeCarriesEachEventInOneShortLineAndYmGoalEventPrintsItWhole(t *testi
 		t.Fatalf("manager woke %d times, want once", len(got))
 	}
 	for _, line := range strings.Split(got[0], "\n") {
-		if n := len([]rune(line)); n > lineMax+40 {
+		if n := len([]rune(line)); n > lineMax {
 			t.Fatalf("a wake line runs %d characters, want at most about %d:\n%s", n, lineMax, line)
 		}
 	}

@@ -155,7 +155,11 @@ func (c *Core) noticeAgent(b Board, o Org, session, kind, text, key string) erro
 		return err
 	}
 	if _, _, remote := SplitRemote(to); remote {
-		return c.tellManager(b, o, to, "ym: "+clip(oneLine(text), lineMax))
+		if err := c.tellManager(b, o, to, "ym: "+clip(oneLine(text), lineMax)); err != nil {
+			return err
+		}
+		_, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, key, now())
+		return err
 	}
 	_, _, err := c.RecordGoalEvent(to, kind, text, key)
 	return err

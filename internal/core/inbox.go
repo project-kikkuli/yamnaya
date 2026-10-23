@@ -72,7 +72,7 @@ func inboxText(head string, events []GoalEvent, host string, label func(GoalEven
 	for _, e := range events {
 		line := eventLine(e, host)
 		if label != nil {
-			line = label(e) + " " + line
+			line = clip(label(e)+" "+line, lineMax-2)
 		}
 		switch {
 		case e.Kind == EventIdleAgain:
@@ -111,7 +111,7 @@ func eventLine(e GoalEvent, host string) string {
 		id = RemoteKey(host, id)
 	}
 	text := strings.Replace(oneLine(e.Payload), " is idle. Its last message, verbatim: ", ": ", 1)
-	return "#" + id + " " + e.Kind + ": " + clip(text, lineMax)
+	return clip("#"+id+" "+e.Kind+": "+text, lineMax-2)
 }
 
 // GoalEvent is the event numbered seq.

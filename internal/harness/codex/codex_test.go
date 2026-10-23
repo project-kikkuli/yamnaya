@@ -313,7 +313,7 @@ func TestComposerReadsTheInputBoxOnlyWhenNoDialogShows(t *testing.T) {
 		box string
 		ok  bool
 	}{
-		"codex-idle":           {"Ask Codex to do anything", true},
+		"codex-idle":           {"", true},
 		"codex-busy-pasted":    {"marker alpha $HOME `pwd` \"quoted\" 'single' end", true},
 		"codex-busy-long":      {"marker alpha $HOME `pwd` \"quoted\" 'single' end[Pasted Content 2289 chars]", true},
 		"codex-approval":       {"", false},
@@ -329,5 +329,29 @@ func TestComposerReadsTheInputBoxOnlyWhenNoDialogShows(t *testing.T) {
 		if box, ok := Composer(string(b)); box != want.box || ok != want.ok {
 			t.Errorf("%s: Composer = %q, %v; want %q, %v", name, box, ok, want.box, want.ok)
 		}
+	}
+}
+
+func TestComposerReadsParagraphsAndIdleDetectionUsesTheLiveTurn(t *testing.T) {
+	for _, c := range []struct {
+		name, screen, box string
+		idle              bool
+	}{
+		{"empty placeholder", "› Ask Codex to do anything\n\n  GPT-6.1-Sol high fast · /repo\n  ← for agents · ? for shortcuts\n", "", true},
+		{"multiple paragraphs", "› audit done\n  \n  - passed locks\n  - reproduced race\n  \n  no credentials changed\n\n  GPT-6.1-Sol high fast · /repo\n  ← for agents · ? for shortcuts\n", "audit done  - passed locks - reproduced race  no credentials changed", true},
+		{"working with normal composer", "• Working (2m • esc to interrupt)\n\n› Ask Codex to do anything\n\n  GPT-6.1-Sol high fast · /repo\n  ← for agents · ? for shortcuts\n", "", false},
+		{"busy queued message", "• Working (2m • esc to interrupt)\n\n› text\n\n  GPT-6.1-Sol high fast · /repo\n  tab to queue message\n", "text", false},
+		{"old working line in scrollback", "• Working (2m • esc to interrupt)\n• Done.\n\n› Ask Codex to do anything\n\n  GPT-6.1-Sol high fast · /repo\n  ← for agents · ? for shortcuts\n", "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			box, ok := Composer(c.screen)
+			if !ok || box != c.box {
+				t.Fatalf("Composer = %q, %v; want %q", box, ok, c.box)
+			}
+			_, idle := (&Adapter{}).IdleComposer(c.screen)
+			if idle != c.idle {
+				t.Fatalf("idle=%v, want %v", idle, c.idle)
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -48,11 +49,18 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 			done := make(chan error, 1)
 			go func() { done <- root.ExecuteContext(ctx) }()
 			for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+				select {
+				case err := <-done:
+					t.Fatalf("ym serve exited before its first cycle: %v", err)
+				default:
+				}
 				if _, err := os.Stat(filepath.Join(state, "work-service.json")); err == nil {
 					break
 				}
 				if time.Now().After(end) {
-					t.Fatal("ym serve never completed a cycle")
+					stack := make([]byte, 1<<20)
+					n := runtime.Stack(stack, true)
+					t.Fatalf("ym serve never completed a cycle; goroutines:\n%s", stack[:n])
 				}
 			}
 			if c.deleted {

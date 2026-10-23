@@ -112,7 +112,7 @@ func TestAProcessHoldingALargeShareOfMemoryReachesItsAgentsManagerOnce(t *testin
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newOrgWorld(t)
-			_, m := w.goal(t, "keep workstations current", "/repo/vibe-apps")
+			g, m := w.goal(t, "keep workstations current", "/repo/vibe-apps")
 			agent := 1000 + len(w.procs)
 			w.spawn("agent", m.Session)
 			w.procs = append(w.procs, proc.Proc{PID: 5000, PPID: agent, Elapsed: 51 * time.Minute, Args: []string{"script", "-qc", "claude", "/dev/null"}})
@@ -134,8 +134,21 @@ func TestAProcessHoldingALargeShareOfMemoryReachesItsAgentsManagerOnce(t *testin
 				}
 				return
 			}
-			if len(got) != 1 || !strings.Contains(got[0], c.want) || !strings.Contains(got[0], "kill 5000") {
-				t.Fatalf("manager heard %q, want once %q with how to end it", got, c.want)
+			if len(got) != 1 || !strings.Contains(got[0], c.want) {
+				t.Fatalf("manager heard %q, want once %q", got, c.want)
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var warnings []GoalEvent
+			for _, e := range events {
+				if e.Kind == EventAgentSwollen {
+					warnings = append(warnings, e)
+				}
+			}
+			if len(warnings) != 1 || !strings.Contains(warnings[0].Payload, "kill 5000") {
+				t.Fatalf("expanded warnings %+v lack the remedy", warnings)
 			}
 		})
 	}

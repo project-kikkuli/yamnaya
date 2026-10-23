@@ -171,3 +171,46 @@ func TestAnAnswerThatCannotReachAnIdleAgentSaysWhyOnce(t *testing.T) {
 		t.Fatalf("Redeliver once a terminal shows = %d, %v; want 1", n, err)
 	}
 }
+
+func TestAnUncertainPasteStaysClaimedAcrossDeliveryCycles(t *testing.T) {
+	for _, answer := range []bool{false, true} {
+		t.Run(fmt.Sprint("answer=", answer), func(t *testing.T) {
+			w := newWorld(t)
+			w.run(20, 1, "/dev/t2", "claude", "s", Idle)
+			w.tmux.ttys["/dev/t2"] = "%2"
+			w.tmux.screens["%2"] = "> "
+			w.tmux.opens = map[string]string{"%2": "Bash"}
+			var it Item
+			var m Message
+			if answer {
+				it, _ = w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "q", Session: "s"})
+				w.core.Answer(w.board(t), it.ID, "go")
+			} else {
+				m, _ = w.core.Store.AddMessage("s", "audit complete", MsgPending)
+			}
+			for range 3 {
+				w.tmux.screens["%2"] = "> "
+				if _, err := w.core.Redeliver(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(w.tmux.pasted) != 1 {
+				t.Fatalf("pasted %d times", len(w.tmux.pasted))
+			}
+			if answer {
+				got, _ := w.core.Store.Item(it.Key())
+				if got.Delivered.IsZero() {
+					t.Fatal("partially typed answer returned to pending")
+				}
+			} else {
+				got, _ := w.core.Store.Message(m.Seq)
+				if got.State != MsgUncertain {
+					t.Fatalf("message state %s", got.State)
+				}
+				if inbox, _ := w.core.TakeMessages("s"); len(inbox) != 0 {
+					t.Fatal("inbox replayed uncertain paste")
+				}
+			}
+		})
+	}
+}

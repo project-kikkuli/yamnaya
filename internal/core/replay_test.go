@@ -28,7 +28,7 @@ func TestReplayInbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	since, _ := time.Parse(time.RFC3339, "2026-10-22T00:00:00Z")
+	since, _ := time.Parse(time.RFC3339, "2026-10-23T00:00:00-04:00")
 	items, err := st.Items(ItemFilter{})
 	if err != nil {
 		t.Fatal(err)
@@ -37,9 +37,17 @@ func TestReplayInbox(t *testing.T) {
 	for _, it := range items {
 		byKey[it.Key()] = it
 	}
+	until := time.Now()
+	if value := os.Getenv("YM_REPLAY_UNTIL"); value != "" {
+		until, err = time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("replay window: %s through %s; characters are Unicode code points", since.Format(time.RFC3339), until.Format(time.RFC3339Nano))
 	var total [6]int
 	t.Logf("%-6s %10s %10s %10s %10s %10s %10s %8s", "goal", "old wakes", "old chars", "old asks", "ask chars", "new wakes", "new chars", "dropped")
-	for _, id := range []string{"goal1", "goal2", "goal3", "goal4", "goal5"} {
+	for _, id := range []string{"goal1", "goal3", "goal6"} {
 		g, err := st.Goal(id)
 		if err != nil {
 			t.Fatal(err)
@@ -59,10 +67,10 @@ func TestReplayInbox(t *testing.T) {
 		for _, e := range events {
 			if m := askedPayload.FindStringSubmatch(e.Payload); e.Kind == EventAsked && m != nil && m[2] == g.ManagerID {
 				asks++
-				askChars += len(oldAskText(byKey[m[3]]))
+				askChars += len([]rune(oldAskText(byKey[m[3]])))
 			}
 		}
-		newWakes, newChars, dropped := replayNew(g, events, byKey)
+		newWakes, newChars, dropped := replayNew(g, events, byKey, until)
 		t.Logf("%-6s %10d %10d %10d %10d %10d %10d %8d", id, oldWakes, oldChars, asks, askChars, newWakes, newChars, dropped)
 		for i, n := range []int{oldWakes, oldChars, asks, askChars, newWakes, newChars} {
 			total[i] += n
@@ -86,7 +94,7 @@ func replayOld(g Goal, events []GoalEvent) (int, int) {
 	}
 	chars := 0
 	for _, at := range order {
-		chars += len("ym: " + oldWakeText(g, groups[at]))
+		chars += len([]rune("ym: " + oldWakeText(g, groups[at])))
 	}
 	return len(order), chars
 }
@@ -94,12 +102,11 @@ func replayOld(g Goal, events []GoalEvent) (int, int) {
 // replayNew runs the events through today's policy: an ask to the manager wakes it, an agent's reply that adds nothing is
 // idle-again, and wakes come a minute after the first urgent event or as a digest. A reply counts as having a new commit when
 // it names a commit the agent never named before, since the database keeps no worktree heads.
-func replayNew(g Goal, events []GoalEvent, items map[string]Item) (wakes, chars, dropped int) {
+func replayNew(g Goal, events []GoalEvent, items map[string]Item, end time.Time) (wakes, chars, dropped int) {
 	type report struct {
-		said  string
-		at    time.Time
-		shas  map[string]bool
-		first bool
+		said string
+		at   time.Time
+		shas map[string]bool
 	}
 	reports := map[string]*report{}
 	var timeline []GoalEvent
@@ -161,10 +168,9 @@ func replayNew(g Goal, events []GoalEvent, items map[string]Item) (wakes, chars,
 	}
 	deliver := func() {
 		wakes++
-		chars += len(wakeText(g, pending))
+		chars += len([]rune(wakeText(g, pending)))
 		pending = nil
 	}
-	end := time.Now()
 	for _, e := range timeline {
 		if at, ok := dueAt(); ok && !at.After(e.Created) {
 			deliver()
@@ -196,7 +202,11 @@ func oldWakeText(g Goal, events []GoalEvent) string {
 // oldAskText is askText as it was before the inbox, without the asking agent's title, which the database does not keep.
 func oldAskText(it Item) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "ym: agent %s asks you (%s %s, %s): %s", Short(it.Session), it.Key(), it.ID, it.Kind, oneLine(it.Question))
+	short := it.Session
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	fmt.Fprintf(&sb, "ym: agent %s asks you (%s %s, %s): %s", short, it.Key(), it.ID, it.Kind, oneLine(it.Question))
 	if it.Rec != "" {
 		fmt.Fprintf(&sb, " Recommended: %s.", oneLine(it.Rec))
 	}

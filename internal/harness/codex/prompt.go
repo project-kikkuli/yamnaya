@@ -42,6 +42,9 @@ func OpenElsewhere(text string) bool {
 func (a *Adapter) Composer(text string) (string, bool) { return Composer(text) }
 
 func Composer(text string) (string, bool) {
+	if _, shown := ParsePrompt(text); shown {
+		return "", false
+	}
 	raw := strings.Split(strings.TrimRight(text, "\n "), "\n")
 	start := -1
 	for i := len(raw) - 1; i >= 0; i-- {
@@ -53,17 +56,49 @@ func Composer(text string) (string, bool) {
 	if start < 0 {
 		return "", false
 	}
-	end := start + 1
-	for end < len(raw) && strings.TrimSpace(raw[end]) != "" && strings.HasPrefix(raw[end], "  ") {
-		end++
+	end := len(raw)
+	for end > start+1 && strings.TrimSpace(raw[end-1]) != "" {
+		end--
 	}
+	if end == start+1 {
+		return "", false
+	}
+	end--
 	footer := screen.Lines(strings.Join(raw[end:], "\n"))
 	if len(footer) > 3 || (end < len(raw) && strings.TrimSpace(raw[end]) != "") || screen.FooterNear(footer, 3, "esc to cancel", "enter continue") {
 		return "", false
 	}
 	box := make([]string, 0, end-start)
-	for _, l := range raw[start:end] {
+	for i, l := range raw[start:end] {
+		if i > 0 && strings.TrimSpace(l) != "" && !strings.HasPrefix(l, "  ") {
+			return "", false
+		}
 		box = append(box, strings.TrimSpace(l))
 	}
-	return strings.TrimSpace(strings.TrimPrefix(strings.Join(box, " "), "›")), true
+	value := strings.TrimSpace(strings.TrimPrefix(strings.Join(box, " "), "›"))
+	if value == "Ask Codex to do anything" {
+		value = ""
+	}
+	return value, true
+}
+
+// IdleComposer excludes a turn that is still working even when the rollout's status is stale.
+func (a *Adapter) IdleComposer(text string) (string, bool) {
+	box, ok := Composer(text)
+	if !ok {
+		return "", false
+	}
+	start := strings.LastIndex(text, "\n› ")
+	before := ""
+	if start >= 0 {
+		before = text[:start]
+	}
+	lines := screen.Lines(before)
+	if len(lines) > 0 && strings.Contains(lines[len(lines)-1], "esc to interrupt") {
+		return "", false
+	}
+	if screen.FooterNear(screen.Lines(text), 3, "tab to queue message") {
+		return "", false
+	}
+	return box, true
 }

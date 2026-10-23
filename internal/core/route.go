@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -255,7 +256,7 @@ func (c *Core) tell(b Board, session, text string, owner bool) error {
 		default:
 			err = errNoMessenger
 		}
-		if err == nil {
+		if err == nil || errors.Is(err, ErrSubmissionUncertain) {
 			return nil
 		}
 	}
