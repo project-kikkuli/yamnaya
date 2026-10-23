@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,7 +34,7 @@ func (c *Core) placeDrift(found []Session, now time.Time) {
 }
 
 // offRepo reports a session that wrote OffRepoFiles or more files in repositories other than the one it runs in; another clone of its
-// own repository counts as its own.
+// own repository counts as its own, and the harnesses' own homes, such as memory under ~/.claude, count as no repository.
 func (c *Core) offRepo(s Session, now time.Time) (drift.Sign, bool) {
 	own := s.RepoID
 	if own == "" {
@@ -44,7 +45,11 @@ func (c *Core) offRepo(s Session, now time.Time) (drift.Sign, bool) {
 	}
 	elsewhere := map[string][]string{}
 	n := 0
+	homes := agentHomes()
 	for _, f := range s.Files {
+		if within(f, homes) {
+			continue
+		}
 		top := c.worktreeOf(f)
 		if top == "" {
 			continue
@@ -134,4 +139,22 @@ var driftAdvice = map[string]string{
 
 func driftText(who string, s drift.Sign) string {
 	return who + " looks adrift, " + s.Kind + ": " + s.Evidence + ". " + driftAdvice[s.Kind]
+}
+
+// agentHomes are where Claude Code, Codex and shared agent skills keep their own state and instructions.
+func agentHomes() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return []string{filepath.Join(home, ".claude"), filepath.Join(home, ".codex"), filepath.Join(home, ".agents")}
+}
+
+func within(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if rel, err := filepath.Rel(d, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
 }

@@ -70,6 +70,9 @@ func TestSigns(t *testing.T) {
 			fail("Bash", "sleep 10 && psql -c 'select 1'", "Exit code 124"), fail("Bash", "psql -c 'select 1'", "Exit code 124"),
 			fail("Bash", "sleep 30; psql -c 'select 1'", "Exit code 124")}, Looping},
 		{"pending CI checks are a wait, not a failure", repeat(6, fail("Bash", "sleep 110 && gh pr checks 12", "Exit code 8\nbuild\tpending")), ""},
+		{"a session limit the agent is woken into is a wait", repeat(6, fail("harness", "", "You've hit your session limit · resets 9am (America/New_York)")), ""},
+		{"the permission classifier being rate limited is a wait", repeat(6, fail("Bash", "git push", "claude-sonnet-5[1m] is temporarily unavailable (rate-limited), so auto mode cannot determine the safety of Bash right now. Wait a moment and try again.")), ""},
+		{"the API limiting requests is a wait", repeat(6, fail("harness", "", "API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited")), ""},
 		{"a search that finds nothing is an answer", repeat(6, fail("Bash", "rg -n '<<<<<<<' src", "Exit code 1")), ""},
 		{"one blocker hit through different tools repeats", []step{
 			fail("Bash", "gh api x", "This agent is isolated in the worktree /w, but this command runs gh"),

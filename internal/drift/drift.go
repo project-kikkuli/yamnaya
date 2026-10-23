@@ -165,6 +165,8 @@ var (
 	waits = regexp.MustCompile(`^(sleep N\s*(;|&&)\s*)+`)
 	// polls are commands whose failure means "not yet", such as CI checks still pending.
 	polls = regexp.MustCompile(`gh pr checks|gh run watch`)
+	// limits are the harness or its API refusing for capacity, which the agent waits out rather than causes.
+	limits = regexp.MustCompile(`hit your (session|weekly|usage) limit|temporarily unavailable \(rate-limited\)|temporarily limiting requests`)
 	// searches exit nonzero with no output when nothing matches, which is an answer, not a failure.
 	searches = regexp.MustCompile(`(^|&&|;|\||\s)(rg|grep|egrep|fgrep)\s`)
 )
@@ -181,11 +183,12 @@ func Norm(s string) string {
 	return s
 }
 
-// Failure is the signature and the readable detail of a failed tool call; sig is "" for a call whose failure is only a poll's "not yet".
+// Failure is the signature and the readable detail of a failed tool call; sig is "" for a call whose failure is only a poll's "not yet"
+// or a capacity limit.
 // The signature is the failure's text, so one blocker hit through different tools repeats; a failure with no text of its own is
 // told apart by its tool and command.
 func Failure(tool, command, text string) (sig, detail string) {
-	if polls.MatchString(command) {
+	if polls.MatchString(command) || limits.MatchString(text) {
 		return "", ""
 	}
 	sig = Norm(text)

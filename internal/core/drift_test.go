@@ -95,8 +95,10 @@ func TestAChiefHearsWhenAManagerUnderItIsAdrift(t *testing.T) {
 
 func TestWritesInAnotherRepositoryShowAsOffRepo(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("HOME", root)
 	home, other, sibling, clone := filepath.Join(root, "app"), filepath.Join(root, "lib"), filepath.Join(root, "app-wt-fix"), filepath.Join(root, "app-copy")
-	for _, d := range []string{home, other, sibling, clone} {
+	memory, agents := filepath.Join(root, ".claude", "projects", "-app", "memory"), filepath.Join(root, ".agents")
+	for _, d := range []string{home, other, sibling, clone, memory, agents} {
 		if err := os.MkdirAll(filepath.Join(d, ".git"), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +108,8 @@ func TestWritesInAnotherRepositoryShowAsOffRepo(t *testing.T) {
 		sibling: {Top: sibling, Common: filepath.Join(home, ".git"), Origin: "github.com/me/app"},
 		clone:   {Top: clone, Common: filepath.Join(clone, ".git"), Origin: "github.com/me/app"},
 		other:   {Top: other, Common: filepath.Join(other, ".git"), Origin: "github.com/me/lib"},
+		memory:  {Top: memory, Common: filepath.Join(memory, ".git")},
+		agents:  {Top: agents, Common: filepath.Join(agents, ".git")},
 	}
 	in := func(dir string, names ...string) []string {
 		var out []string
@@ -125,6 +129,8 @@ func TestWritesInAnotherRepositoryShowAsOffRepo(t *testing.T) {
 		{"another worktree of its own repository", Busy, in(sibling, "x.go", "y.go", "z.go"), false},
 		{"another clone of its own repository", Busy, in(clone, "x.go", "y.go", "z.go"), false},
 		{"files outside any repository", Busy, in(root, "x.go", "y.go", "z.go"), false},
+		{"its harness's memory, kept in a repository of its own", Busy, in(memory, "a.md", "b.md", "c.md"), false},
+		{"shared agent instructions and memory together", Busy, append(in(agents, "AGENTS.md"), in(memory, "a.md", "b.md")...), false},
 		{"a session that ended", Done, in(other, "x.go", "y.go", "z.go"), false},
 	}
 	for _, c := range cases {
@@ -137,8 +143,8 @@ func TestWritesInAnotherRepositoryShowAsOffRepo(t *testing.T) {
 		for _, s := range b.Sessions {
 			signs = append(signs, s.Drift...)
 		}
-		got := len(signs) == 1 && signs[0].Kind == drift.OffRepo && strings.Contains(signs[0].Evidence, "wrote 3 files in lib")
-		if got != c.want {
+		got := len(signs) > 0
+		if got != c.want || (got && (len(signs) != 1 || signs[0].Kind != drift.OffRepo || !strings.Contains(signs[0].Evidence, "wrote 3 files in lib"))) {
 			t.Errorf("%s: signs %v, want off-repo %v", c.name, signs, c.want)
 		}
 	}

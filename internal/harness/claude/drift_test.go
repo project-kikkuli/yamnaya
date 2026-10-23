@@ -18,11 +18,11 @@ func TestRealTranscriptsShowOnlyTheAgentsThatWentNowhere(t *testing.T) {
 		want []string
 	}{
 		{"commit-timeouts", []string{drift.Looping}},
-		{"rate-limited", []string{drift.Looping, drift.Looping}},
 		{"frozen-browser", []string{drift.Looping}},
-		{"session-limit", []string{drift.Looping}},
 		{"compaction-loop", []string{drift.Compacting}},
 		{"ci-poll", nil},
+		{"rate-limited", nil},
+		{"session-limit", nil},
 		{"burst", nil},
 		{"spaced-compactions", nil},
 		{"blocked-but-moving", nil},
