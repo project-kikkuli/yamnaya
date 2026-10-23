@@ -130,8 +130,11 @@ Hosts talk through relays:
 - Files: ym watches Claude Code's files through kernel notifications (kqueue on macOS), so an untouched file costs nothing, and rereads a session only when one of its files changes. A board whose inputs (processes, files, database, git, launches, remote hosts) did not change is reused for up to ten seconds, so a change only time causes, like a goal going quiet, shows within ten seconds. The transcript scan cache is `ym-scans.db` beside `ym.db`.
 - The board starts it detached and leaves it running when you close the board. It reloads after a binary update.
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
-- Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did.
-- `ym revive` (and `o` on an exited launched session) recreates the worktree and branch when the repository exists. When the repository is gone, local clone and origin both, it makes a plain directory at the recorded path and resumes the conversation there, without a checkout; such a session never lands early.
+- Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did. A launch whose pane went while its agent was running, without `ym kill`, never lands by itself; ym resumes it instead (see Restarts). A launch whose worktree and repository are both gone never lands by itself either; its row says `repo gone: conversation only, no code`.
+- A launch counts as starting, not gone, for its first two minutes until its tmux session is up, so a fresh agent is never resumed under itself.
+- `ym revive` (and `o` on an exited launched session) recreates the worktree and branch when the repository exists, from the branch, else the recorded commit, else the branch on origin, else the default branch. When the launch's own clone is gone it uses another clone of the same repository on this host. When no clone is left it makes a plain directory at the recorded path and resumes the conversation there, without a checkout, and says so.
+- A session you run in a terminal, outside ym's server, gets a launch record while the board shows it, so once it ends `ym revive` resumes it on ym's server and it shows as dormant (`ended outside ym`) for a day.
+- `ym gc` keeps a landed record past 14 days while its conversation's transcript is still there.
 - A new launch never takes the worktree name of a launch ym still keeps a record of, landed or not, so starting another session with the same slug gets `<slug>-2` and the landed one stays revivable.
 - A serve on a state directory other than the default (`YAMNAYA_STATE_DIR`) that sees the directory deleted ends the tmux server it launched agents on, unless that is ym's default server, and stops. Your default state directory and ym's default tmux server are never torn down this way.
 - A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
@@ -141,7 +144,9 @@ Hosts talk through relays:
 After a restart:
 
 - A manager or chief resumes in its own session and conversation, told it stopped and what it missed. If its transcript is gone, it starts over under the same id from its prompt and brief. `ym goal relaunch` still starts a fresh session.
-- A goal's agent whose pane went without `ym kill` or `ym land` resumes in its own conversation instead of landing. Its manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped.
+- Every session ym launched whose agent was running when its pane went, without `ym kill` or `ym land`, resumes in its own conversation instead of landing, whether or not it works for a goal. A goal's manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped. A session whose transcript holds no turn starts over on its first prompt.
+- Sessions you had running in terminals outside ym's server when the host went down resume on ym's server in their own directories and conversations. `ym serve` keeps the list in `alive.json` in the state directory.
+- The default state directory's `ym serve` unloads and removes any other `io.yamnaya.ym-serve-*` LaunchAgent whose ym binary or state directory is gone, as a rehearsal in a deleted scratch directory leaves, so launchd stops retrying it at login.
 - Resumes go one at a time, at most one every 10 seconds. Once every launched session found gone has come back or failed, one desktop notification says what resumed, what started over and what could not.
 
     ym service status     heartbeat and last error
