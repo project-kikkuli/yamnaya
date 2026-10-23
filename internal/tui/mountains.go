@@ -28,18 +28,66 @@ type mountains struct {
 	ticking      bool
 	// quiet is when animation may resume after the last key.
 	quiet time.Time
+	// screen is the mountains as sent to the terminal, which follow the scene a frame's worth of bytes at a time.
+	screen *onScreen
 }
+
+type onScreen struct {
+	c *scene.Canvas
+	// left is how many cells still differ from the scene; ver counts changes to c.
+	left, ver int
+}
+
+// cellBytes is about what one changed cell of mountains costs on the wire, colors and cursor moves included.
+const cellBytes = 40
 
 type mountainFrame struct{}
 
 func newMountains() mountains {
-	return mountains{dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now()}
+	return mountains{dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
+}
+
+// settle moves the mountains on screen toward the scene: by what the terminal takes in a frame when step is
+// set, so a key never waits long behind them, and not at all otherwise. Hidden mountains rise again from nothing.
+// With no terminal to pace, the scene is drawn whole.
+func (m *Model) settle(step bool) {
+	sc := m.peaks.screen
+	if sc == nil || m.out == nil {
+		return
+	}
+	if !m.shown() {
+		sc.c, sc.left = nil, 0
+		return
+	}
+	page := m.page
+	if page == nil {
+		prepared := m.prepareView()
+		page = &prepared
+	}
+	goal := scene.Paint(m.sceneOf(), m.width, m.height, m.peaks.frame, tableText(*page))
+	if !sc.c.Fits(m.width, m.height) {
+		sc.c = scene.Blank(m.width, m.height)
+		sc.ver++
+	}
+	n := 0
+	if step {
+		n = max(1, m.out.budget()/cellBytes)
+	}
+	c, left := sc.c.Toward(goal, n)
+	if left != sc.left || n > 0 {
+		sc.c, sc.left = c, left
+		sc.ver++
+	}
 }
 
 // animate schedules the next frame at the scene's own pace, or none when nothing on it moves or nobody can see it.
 func (m *Model) animate() tea.Cmd {
 	if m.peaks.ticking || m.peaks.blurred || !m.shown() {
 		return nil
+	}
+	if sc := m.peaks.screen; sc != nil && sc.left > 0 {
+		m.peaks.ticking = true
+		return tea.Tick(frameTime, func(time.Time) tea.Msg { return mountainFrame{} })
 	}
 	pace := scene.Pace(m.sceneOf())
 	if pace == 0 {
@@ -324,10 +372,19 @@ func shortAsk(ask string, n int) string {
 
 // paint draws the page: alone, or floating over the mountains.
 func (m Model) paint(page viewPage) string {
-	text := page.String()
 	if !m.shown() {
-		return text
+		return page.String()
 	}
-	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", ""), "\t", "    ")
+	text := tableText(page)
+	if sc := m.peaks.screen; sc != nil && m.out != nil {
+		if !sc.c.Fits(m.width, m.height) {
+			sc.c = scene.Blank(m.width, m.height)
+		}
+		return sc.c.Draw(text)
+	}
 	return scene.Frame(m.sceneOf(), m.width, m.height, m.peaks.frame, text)
+}
+
+func tableText(page viewPage) string {
+	return strings.ReplaceAll(strings.ReplaceAll(page.String(), "\r", ""), "\t", "    ")
 }

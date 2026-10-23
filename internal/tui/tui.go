@@ -250,10 +250,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(wait, func(time.Time) tea.Msg { return mountainFrame{} })
 		}
 		if m.out.behind() {
-			return m, tea.Tick(scene.Step, func(time.Time) tea.Msg { return mountainFrame{} })
+			return m, tea.Tick(frameTime, func(time.Time) tea.Msg { return mountainFrame{} })
 		}
 		m.peaks.ticking = false
 		m.peaks.frame = int(time.Since(m.peaks.start) / scene.Step)
+		m.settle(true)
 		return m, m.animate()
 	case tea.BlurMsg:
 		m.peaks.blurred = true
@@ -279,6 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if model, ok := next.(Model); ok {
 		prepared := model.prepareView()
 		model.page = &prepared
+		model.settle(false)
 		return model, tea.Batch(cmd, model.animate())
 	}
 	return next, cmd

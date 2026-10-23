@@ -1,55 +1,8 @@
 package scene
 
-import (
-	"strconv"
-	"strings"
-
-	"github.com/charmbracelet/x/ansi"
-)
+import "strconv"
 
 const reset = "\x1b[0m"
-
-// encode turns pixels into half-block cells, two pixels a cell, and splices the table rows in.
-func (p *painter) encode(lines []string, tw int) string {
-	var b strings.Builder
-	b.Grow(p.w * p.p * 12)
-	rows := p.p / 2
-	for y := range rows {
-		var last string
-		for x := 0; x < p.w; x++ {
-			if p.table.has(x, y) {
-				line := lines[y-p.table.y0]
-				left := (p.table.x1 - p.table.x0 - tw) / 2
-				b.WriteString(reset)
-				b.WriteString(strings.Repeat(" ", left))
-				b.WriteString(line)
-				b.WriteString(reset)
-				b.WriteString(strings.Repeat(" ", p.table.x1-p.table.x0-left-ansi.StringWidth(line)))
-				x, last = p.table.x1-1, ""
-				continue
-			}
-			g := p.cells[y*p.w+x]
-			if g.cont {
-				continue
-			}
-			style, r := p.cell(x, y)
-			if style != last {
-				b.WriteString(style)
-				last = style
-			}
-			if g.s != "" {
-				b.WriteString(g.s)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-		b.WriteString(reset)
-		if y < rows-1 {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
 
 func (p *painter) cell(x, y int) (string, rune) {
 	top, bottom := p.px[2*y*p.w+x], p.px[(2*y+1)*p.w+x]

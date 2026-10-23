@@ -21,7 +21,7 @@ func (m Model) View() tea.View {
 		prepared := m.prepareView()
 		page = &prepared
 	}
-	key := drawn{page: page, frame: m.peaks.frame, width: m.width, height: m.height, gen: m.board.Gen, shown: m.shown(), dark: m.peaks.dark, minute: time.Now().Truncate(time.Minute)}
+	key := drawn{page: page, frame: m.peaks.frame, width: m.width, height: m.height, gen: m.board.Gen, shown: m.shown(), dark: m.peaks.dark, minute: time.Now().Truncate(time.Minute), screen: m.screenVer()}
 	if m.drawn == nil || m.drawn.key != key || page != m.page {
 		text := m.paint(*page)
 		if page == m.page && m.drawn != nil {
@@ -44,6 +44,14 @@ type drawn struct {
 	gen           uint64
 	shown, dark   bool
 	minute        time.Time
+	screen        int
+}
+
+func (m Model) screenVer() int {
+	if m.peaks.screen == nil {
+		return 0
+	}
+	return m.peaks.screen.ver
 }
 
 type lastDraw struct {

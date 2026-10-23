@@ -12,34 +12,56 @@ import (
 // Frame draws the mountains filling width x height with the table floating clean on top, low and centered.
 // The same scene, size and frame always give the same picture.
 func Frame(s Scene, width, height, frame int, table string) string {
-	if width <= 0 || height <= 0 {
+	c := Paint(s, width, height, frame, table)
+	if c == nil {
 		return ""
 	}
-	if reducedMotion {
-		frame = 0
-	}
-	key := fmt.Sprintf("%d %d %d %v %v %v %q %v", width, height, frame, s.Dark, s.Now, s.Ranges, s.Selected, s.Peaks)
 	painted.Lock()
-	if painted.key == key && painted.table == table {
+	if painted.drawn && painted.c == c && painted.table == table {
 		out := painted.out
 		painted.Unlock()
 		return out
 	}
 	painted.Unlock()
-	lines, tw, box := place(table, width, height)
-	p := still(s, width, height).at(frame, box)
-	p.motion()
-	out := p.encode(lines, tw)
+	out := c.Draw(table)
 	painted.Lock()
-	painted.key, painted.table, painted.out = key, table, out
+	painted.c, painted.table, painted.out, painted.drawn = c, table, out, true
 	painted.Unlock()
 	return out
 }
 
-// painted is the last frame drawn, returned as is when nothing that shapes it changed.
+// Paint is the mountains of a frame around where the table floats, cell by cell.
+func Paint(s Scene, width, height, frame int, table string) *Canvas {
+	if width <= 0 || height <= 0 {
+		return nil
+	}
+	if reducedMotion {
+		frame = 0
+	}
+	_, _, box := place(table, width, height)
+	key := fmt.Sprintf("%d %d %d %v %v %v %q %v %v", width, height, frame, s.Dark, s.Now, s.Ranges, s.Selected, s.Peaks, box)
+	painted.Lock()
+	if painted.key == key {
+		c := painted.c
+		painted.Unlock()
+		return c
+	}
+	painted.Unlock()
+	p := still(s, width, height).at(frame, box)
+	p.motion()
+	c := p.canvas()
+	painted.Lock()
+	painted.key, painted.c, painted.drawn = key, c, false
+	painted.Unlock()
+	return c
+}
+
+// painted is the last frame painted and drawn, returned as is when nothing that shapes it changed.
 var painted struct {
 	sync.Mutex
 	key, table, out string
+	c               *Canvas
+	drawn           bool
 }
 
 // light is how finely the time of day moves the sky: once per bucket, so the backdrop is reused in between.
