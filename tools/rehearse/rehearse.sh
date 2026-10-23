@@ -14,7 +14,7 @@ fi
 
 usage() {
 	cat <<'EOF'
-usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF] [--keep]
+usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF]
        tools/rehearse/rehearse.sh --reset-ground
 
 --reset-ground closes the proving ground's open pull requests and puts its main back at its first commit, so the
@@ -22,18 +22,17 @@ scenarios' asks are new work again; run it only while no rehearsal runs.
 
 Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
 Each run clones the proving ground afresh, builds ym from REF (default origin/main) and writes
-~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/timeline.log. --keep leaves the run's tmux server and ym serve up.
+~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/timeline.log. Every run ends its tmux server and ym serve when it ends, by timeout, signal or error; its state dir and logs stay.
 EOF
 }
 
-scenario=clean ask="" timeout=60 ref=origin/main keep=0 reset=0
+scenario=clean ask="" timeout=60 ref=origin/main reset=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--scenario) scenario=$2; shift 2 ;;
 	--ask) ask=$2; shift 2 ;;
 	--timeout) timeout=$2; shift 2 ;;
 	--ref) ref=$2; shift 2 ;;
-	--keep) keep=1; shift ;;
 	--reset-ground) reset=1; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
@@ -134,15 +133,15 @@ cleanup() {
 		touch "$run/thaw"
 		kill -CONT "$(cat "$run/frozen")" 2>/dev/null || true
 	fi
-	if [ "$keep" = 1 ]; then
-		note "kept: tmux -L $YAMNAYA_YM_SOCKET, ym serve pid $serve_pid; YAMNAYA_STATE_DIR=$run/state"
-		return
-	fi
 	[ -n "$serve_pid" ] && kill "$serve_pid" 2>/dev/null || true
 	pkill -f "^$ym serve" 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" kill-server 2>/dev/null || true
+	note "ended tmux -L $YAMNAYA_YM_SOCKET and ym serve; state stays in $run/state"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 "$ym" goal authority yamnaya-proving-ground --merge >/dev/null
 start_serve
