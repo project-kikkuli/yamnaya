@@ -61,3 +61,16 @@ func TestOverloadNoticeSurvivesARestartBetweenRecordingAndSavingState(t *testing
 		t.Fatal(events, err)
 	}
 }
+
+func TestAppServerJobsKeepTheirGoalWhenTheirAgentPaneExits(t *testing.T) {
+	records := []launch.Record{
+		{Key: "agent", Session: "agent", Parent: "manager", Worktree: launch.Worktree{Path: "/repo/agent"}},
+		{Key: "seen", Session: "seen", Seen: time.Now(), Worktree: launch.Worktree{Path: "/repo/seen"}},
+		{Key: "landed", Session: "landed", Landed: time.Now(), Worktree: launch.Worktree{Path: "/repo/landed"}},
+	}
+	org := core.Org{Managers: map[string]core.Manager{"mgr1": {ID: "mgr1", Session: "manager", GoalID: "goal1"}}, Sessions: map[string]string{"manager": "mgr1"}}
+	sessions, dirs := pressureSources(records, org)
+	if len(sessions) != 1 || len(dirs) != 1 || sessions["agent"].Goal != "goal1" || dirs["/repo/agent"].Session != "agent" {
+		t.Fatal(sessions, dirs)
+	}
+}

@@ -17,12 +17,7 @@ import (
 )
 
 func pressureRoots(records []launch.Record, panes map[string]tmux.Pane, org core.Org) map[int]pressure.Owner {
-	parents := map[string]string{}
-	for _, rec := range records {
-		if rec.Session != "" {
-			parents[rec.Session] = rec.Parent
-		}
-	}
+	sessions, _ := pressureSources(records, org)
 	roots := map[int]pressure.Owner{}
 	for _, rec := range records {
 		if rec.IsLanded() || !rec.Seen.IsZero() {
@@ -32,10 +27,7 @@ func pressureRoots(records []launch.Record, panes map[string]tmux.Pane, org core
 		if !ok || pane.Dead || pane.PID <= 0 {
 			continue
 		}
-		owner := pressure.Owner{Session: rec.Session}
-		if m, ok := org.Managed(rec.Session, parents); ok {
-			owner.Goal, owner.Manager = m.GoalID, m.Session
-		}
+		owner := sessions[rec.Session]
 		roots[pane.PID] = owner
 	}
 	return roots
@@ -85,7 +77,7 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 			return err
 		}
 		roots := pressureRoots(records, panes, org)
-		sessions, dirs := pressureSources(records, panes, roots)
+		sessions, dirs := pressureSources(records, org)
 		var jobs map[int]pressure.Owner
 		if state.Holding {
 			table, err := proc.List()
@@ -131,16 +123,21 @@ func recordPressureNotices(c *core.Core, state *pressure.State, dir string) erro
 	return nil
 }
 
-func pressureSources(records []launch.Record, panes map[string]tmux.Pane, roots map[int]pressure.Owner) (map[string]pressure.Owner, map[string]pressure.Owner) {
+func pressureSources(records []launch.Record, org core.Org) (map[string]pressure.Owner, map[string]pressure.Owner) {
+	parents := map[string]string{}
+	for _, rec := range records {
+		if rec.Session != "" {
+			parents[rec.Session] = rec.Parent
+		}
+	}
 	sessions, dirs := map[string]pressure.Owner{}, map[string]pressure.Owner{}
 	for _, rec := range records {
-		pane, ok := panes[tmux.SessionName(rec.Key)]
-		if !ok {
+		if rec.IsLanded() || !rec.Seen.IsZero() {
 			continue
 		}
-		owner, ok := roots[pane.PID]
-		if !ok || owner.Session != rec.Session {
-			continue
+		owner := pressure.Owner{Session: rec.Session}
+		if m, ok := org.Managed(rec.Session, parents); ok {
+			owner.Goal, owner.Manager = m.GoalID, m.Session
 		}
 		if rec.Session != "" {
 			sessions[rec.Session] = owner
