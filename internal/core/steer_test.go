@@ -375,3 +375,26 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 		t.Fatalf("brief after the pull request opened: %+v, want stale behind pr-opened", f)
 	}
 }
+
+func TestAnUnadoptedSteerFromAChiefOnAnotherHostIsRaisedToThatChief(t *testing.T) {
+	f := newFleet(t)
+	chief := f.a.chief(t, "platform")
+	_, mgr := f.b.goal(t, "ship the fix", "/repo/app")
+	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
+		t.Fatal(err)
+	}
+	for _, stranger := range []string{RemoteKey("a", "mgr9"), RemoteKey("c", chief.ID)} {
+		if _, err := f.b.core.SteerContext(f.b.board(t), mgr.ID, "JSON only", stranger); err == nil {
+			t.Fatalf("%s steered %s, which does not report to it", stranger, mgr.ID)
+		}
+	}
+	f.b.steer(t, mgr.ID, "CSV only", RemoteKey("a", chief.ID))
+	for range Nudges + 2 {
+		f.b.clock = f.b.clock.Add(AdoptAfter + time.Minute)
+		f.b.supervise(t)
+		f.sync(t)
+	}
+	if !slices.ContainsFunc(f.a.handedTo(chief.Session), func(s string) bool { return strings.Contains(s, "has not adopted revision") }) {
+		t.Fatalf("chief on a heard %q, want that its steer of %s went unadopted", f.a.handedTo(chief.Session), mgr.ID)
+	}
+}

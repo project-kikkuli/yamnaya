@@ -241,11 +241,17 @@ func raisedTo(o Org, st Steer) string {
 	return o.Above(st.Author)
 }
 
-// below reports whether id reports to chief, directly or through other chiefs.
+// below reports whether id reports to chief, directly or through other chiefs, here or a chief on another host its climb reaches.
 func below(o Org, chief, id string) bool {
-	for _, m := range o.Subtree(chief) {
-		if m.ID == id && id != chief {
-			return true
+	seen := map[string]bool{id: true}
+	for at := o.Managers[id].ParentID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
+		if at == chief {
+			m, ok := o.Managers[at]
+			return !ok || !m.Retired
+		}
+		seen[at] = true
+		if m, ok := o.Managers[at]; !ok || m.Retired {
+			return false
 		}
 	}
 	return false
@@ -347,7 +353,7 @@ func (c *Core) watchSteers(b Board, o Org) error {
 		if up := raisedTo(o, st); up != Owner {
 			text := fmt.Sprintf("ym: %s has not adopted revision %d of %s, which %s sent, after %d nudges. Open it, relaunch it with ym goal relaunch %s, or steer again.",
 				m.Label(), st.Revision, subject(o, m), st.By(), st.Nudges, m.ID)
-			if err := c.tell(b, o.Managers[up].Session, text, false); err != nil {
+			if err := c.tellManager(b, o, up, text); err != nil {
 				errs = append(errs, err)
 				continue
 			}
