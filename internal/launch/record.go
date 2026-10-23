@@ -53,6 +53,12 @@ func (r Records) Save(rec Record) error {
 	return os.Rename(tmp, r.path(rec.Key))
 }
 
+// Has reports whether a record, landed or not, holds key.
+func (r Records) Has(key string) bool {
+	_, err := os.Stat(r.path(key))
+	return err == nil
+}
+
 func (r Records) Delete(key string) error {
 	err := os.Remove(r.path(key))
 	if errors.Is(err, fs.ErrNotExist) {

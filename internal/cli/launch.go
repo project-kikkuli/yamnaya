@@ -228,7 +228,7 @@ func (l launcher) Start(n core.NewLaunch) (string, error) {
 		return "", err
 	}
 	var err error
-	if rec.Worktree, err = launch.Create(n.Repo, slug); err != nil {
+	if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
 		return "", err
 	}
 	rec.Key, rec.Head = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path)

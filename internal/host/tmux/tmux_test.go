@@ -19,8 +19,8 @@ func server(t *testing.T) *Host {
 		t.Skip("tmux not installed")
 	}
 	h := &Host{Socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano())}
-	if err := exec.Command("tmux", "-L", h.Socket, "-f", "/dev/null", "start-server", ";", "set-option", "-g", "exit-empty", "off").Run(); err != nil {
-		t.Fatal(err)
+	if out, err := exec.Command("tmux", "-L", h.Socket, "-f", "/dev/null", "start-server", ";", "set-option", "-g", "exit-empty", "off").CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
 	}
 	t.Cleanup(func() { exec.Command("tmux", "-L", h.Socket, "kill-server").Run() })
 	return h
