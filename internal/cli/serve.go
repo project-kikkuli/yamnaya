@@ -29,8 +29,10 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var briefs string
 	var wait bool
 	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) (err error) {
+		os.Unsetenv(tui.RestartedEnv)
+		var log *serveLog
 		if dir, dirErr := stateDir(); dirErr == nil {
-			if log := openServeLog(cmd.ErrOrStderr(), filepath.Join(dir, "work-service.log")); log != nil {
+			if log = openServeLog(cmd.ErrOrStderr(), filepath.Join(dir, "work-service.log")); log != nil {
 				cmd.SetOut(log)
 				cmd.SetErr(log)
 				defer func() {
@@ -55,18 +57,25 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if err != nil {
 			return err
 		}
-		lock, err := os.OpenFile(filepath.Join(dir, "work-service.lock"), os.O_CREATE|os.O_RDWR, 0600)
-		if err != nil {
-			return err
+		lockPath := filepath.Join(dir, "work-service.lock")
+		lock := inheritedServeLock(lockPath)
+		if lock == nil {
+			if lock, err = os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600); err != nil {
+				return err
+			}
+			how := syscall.LOCK_EX | syscall.LOCK_NB
+			if wait {
+				how = syscall.LOCK_EX
+			}
+			if err = syscall.Flock(int(lock.Fd()), how); err != nil {
+				lock.Close()
+				if log != nil {
+					return nil
+				}
+				return fmt.Errorf("work service already running: %w", err)
+			}
 		}
 		defer lock.Close()
-		how := syscall.LOCK_EX | syscall.LOCK_NB
-		if wait {
-			how = syscall.LOCK_EX
-		}
-		if err = syscall.Flock(int(lock.Fd()), how); err != nil {
-			return fmt.Errorf("work service already running: %w", err)
-		}
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		upgraded := make(chan bool, 1)
@@ -128,6 +137,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				select {
 				case changed := <-upgraded:
 					if changed {
+						if err := keepServeLockAcrossExec(lock); err != nil {
+							fmt.Fprintln(cmd.ErrOrStderr(), "ym serve restarts without its lock:", err)
+						}
 						return tui.ErrRestart
 					}
 				default:

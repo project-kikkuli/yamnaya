@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -168,10 +169,17 @@ func New(c *core.Core) Model {
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
+	if os.Getenv(RestartedEnv) != "" {
+		os.Unsetenv(RestartedEnv)
+		m.message = "restarted into new ym " + revision()
+	}
 	prepared := m.prepareView()
 	m.page = &prepared
 	return m
 }
+
+// RestartedEnv marks a ym that replaced itself with a newer executable, so the board can say so.
+const RestartedEnv = "YAMNAYA_RESTARTED"
 
 // ErrRestart is Run's result when ym's executable changed on disk and the board quit so the new one can run.
 var ErrRestart = errors.New("ym executable changed")
@@ -1527,4 +1535,28 @@ func (m Model) remoteItems() []core.Item {
 		out = append(append(out, r.Items...), r.Closed...)
 	}
 	return out
+}
+
+// revision is the commit this ym was built from, short, or its build time when it carries no commit.
+func revision() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "build"
+	}
+	var rev, at string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.time":
+			at = s.Value
+		}
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	if rev == "" {
+		return "build " + at
+	}
+	return rev
 }

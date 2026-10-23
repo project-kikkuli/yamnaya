@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -837,5 +838,30 @@ func TestHListsTheAgentsAdriftNowAheadOfHealth(t *testing.T) {
 	v := m.View().Content
 	if !strings.Contains(v, "Lead work / Run the tests  looping: failed the same way 6 times") || !strings.Contains(v, "week of  answered") {
 		t.Fatalf("h page lacks the adrift crew member or the health report:\n%s", v)
+	}
+}
+
+func TestABoardThatRestartedIntoANewYmSaysSo(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		restarted bool
+	}{{"after a restart", true}, {"started by hand", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.restarted {
+				t.Setenv(RestartedEnv, "1")
+			}
+			st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			m := New(&core.Core{Store: st, StateDir: t.TempDir()})
+			if got := strings.HasPrefix(m.message, "restarted into new ym "); got != c.restarted {
+				t.Fatalf("message %q, restarted %v", m.message, c.restarted)
+			}
+			if os.Getenv(RestartedEnv) != "" {
+				t.Fatal("the restart mark stayed for the board's children")
+			}
+		})
 	}
 }
