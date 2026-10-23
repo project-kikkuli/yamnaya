@@ -17,6 +17,7 @@ const Nice = 15
 
 type Process struct {
 	PID, PPID, Nice int
+	NiceUnavailable bool `json:",omitempty"`
 	CPU             float64
 	Started         int64
 	Command         string
@@ -196,7 +197,7 @@ func (s *State) Sample(at time.Time, load float64, cores int, procs []Process, r
 	})
 	var failures []error
 	for _, p := range ordered {
-		if !targets[p.PID] || p.Nice >= Nice || recorded[p.PID] {
+		if !targets[p.PID] || p.NiceUnavailable || p.Nice >= Nice || recorded[p.PID] {
 			continue
 		}
 		if err := set(p, Nice); err != nil {

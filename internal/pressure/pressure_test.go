@@ -82,6 +82,7 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 		{PID: 20, PPID: 1, Command: "claude", CPU: 10},
 		{PID: 21, PPID: 20, Command: "compile", CPU: 90, Started: 100},
 		{PID: 22, PPID: 11, Command: "tmux", CPU: 1},
+		{PID: 23, PPID: 11, Command: "realtime", CPU: 1000, NiceUnavailable: true},
 		{PID: 30, PPID: 31, Command: "compile", CPU: 100},
 		{PID: 31, PPID: 30, Command: "compile", CPU: 100},
 	}
@@ -161,5 +162,16 @@ func TestProcessTableKeepsAncestryPriorityCPUAndIdentity(t *testing.T) {
 	}
 	if _, err := parseProcesses("12 10 10\n"); err == nil {
 		t.Fatal("accepted truncated ps output")
+	}
+}
+
+func TestLinuxKernelRowsWithoutNiceValuesPreserveAncestryAndDoNotAbortTheSample(t *testing.T) {
+	raw := "22 2 - 0.0 Fri Oct 16 01:44:04 2026 migration/0\n25 2 - 0.0 Fri Oct 16 01:44:04 2026 migration/1\n827004 2 - 0.0 Fri Oct 23 15:50:47 2026 psimon\n12 10 10 71.3 Fri Oct 23 16:30:22 2026 /bin/compile\n"
+	procs, err := parseProcesses(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 4 || !procs[0].NiceUnavailable || procs[0].PID != 22 || procs[0].PPID != 2 || procs[3].NiceUnavailable || procs[3].Nice != 10 {
+		t.Fatal(procs)
 	}
 }

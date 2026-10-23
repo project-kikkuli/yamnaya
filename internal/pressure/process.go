@@ -35,12 +35,16 @@ func parseProcesses(raw string) ([]Process, error) {
 		pid, e1 := strconv.Atoi(f[0])
 		parent, e2 := strconv.Atoi(f[1])
 		nice, e3 := strconv.Atoi(f[2])
+		unavailable := f[2] == "-"
+		if unavailable {
+			nice, e3 = 0, nil
+		}
 		cpu, e4 := strconv.ParseFloat(f[3], 64)
 		start, e5 := time.ParseInLocation("Mon Jan 2 15:04:05 2006", strings.Join(f[4:9], " "), time.Local)
 		if err := errors.Join(e1, e2, e3, e4, e5); err != nil {
 			return nil, fmt.Errorf("process row: %w", err)
 		}
-		out = append(out, Process{PID: pid, PPID: parent, Nice: nice, CPU: cpu, Started: start.Unix(), Command: strings.Join(f[9:], " ")})
+		out = append(out, Process{PID: pid, PPID: parent, Nice: nice, NiceUnavailable: unavailable, CPU: cpu, Started: start.Unix(), Command: strings.Join(f[9:], " ")})
 	}
 	return out, nil
 }
