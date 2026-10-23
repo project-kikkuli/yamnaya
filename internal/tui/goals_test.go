@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
@@ -50,36 +54,210 @@ func told(t *testing.T, c *core.Core, text string, ms ...core.Manager) []string 
 	return out
 }
 
-func TestAChiefCollapsesToOneRowAndDrillsIntoItsGoals(t *testing.T) {
-	m, c, ms := goalSetup(t, "make the importer handle CSV", "rotate the signing keys")
-	chief, err := c.NewChief("platform", "", t.TempDir(), []string{ms[0].ID, ms[1].ID})
+func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *testing.T) {
+	m, c, ms := goalSetup(t, "make the importer handle CSV", "rotate the signing keys", "page on call")
+	platform, err := c.NewChief("platform", "", t.TempDir(), []string{ms[0].ID, ms[1].ID})
 	if err != nil {
 		t.Fatal(err)
 	}
+	lead, err := c.NewChief("lead", "", t.TempDir(), []string{platform.ID, ms[2].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.WriteBrief(ms[0].Session, core.Brief{Assessment: "CSV parser merged", Changed: "parser", Uncertainty: "none", Next: "TSV", WaitingOn: "none"}); err != nil {
+		t.Fatal(err)
+	}
 	m = refresh(t, m)
-	var nodes []string
+	depth := map[string]int{}
+	lines := map[string]string{}
 	for _, r := range m.rows() {
 		if r.node != nil {
-			nodes = append(nodes, r.node.Manager.ID)
+			depth[r.node.Manager.ID] = r.depth
+			lines[r.node.Manager.ID] = ansi.Strip(m.nodeLines(-1, *r.node, r.depth))
 		}
 	}
-	if !slices.Equal(nodes, []string{chief.ID}) {
-		t.Fatalf("goal rows %v, want the chief alone standing for both goals", nodes)
+	want := map[string]int{lead.ID: 0, platform.ID: 1, ms[0].ID: 2, ms[1].ID: 2, ms[2].ID: 1}
+	if !maps.Equal(depth, want) {
+		t.Fatalf("tree depths %v, want %v", depth, want)
 	}
-	m = press(t, to(t, m, isNode(chief.ID)), "enter")
+	for id, tag := range map[string]string{ms[0].ID: "brief now", ms[1].ID: "no brief", lead.ID: "no brief"} {
+		if !strings.Contains(lines[id], tag) || !strings.Contains(lines[id], standingOf(t, m, id)) {
+			t.Fatalf("row %s lacks its standing or %q:\n%s", id, tag, lines[id])
+		}
+	}
+	m = press(t, to(t, m, isNode(platform.ID)), "enter")
 	if m.mode != modeChief || len(m.rows()) != 2 || !strings.Contains(m.View().Content, "REPORTS (2)") {
 		t.Fatalf("enter on the chief should list its two goals, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, to(t, m, isNode(ms[1].ID)), "enter")
-	if m.mode != modeGoal || !strings.Contains(m.View().Content, "rotate the signing keys") || !strings.Contains(m.View().Content, ms[1].ID) {
+	if m.mode != modeGoal || !strings.Contains(m.View().Content, "rotate the signing keys") {
 		t.Fatalf("enter on a report should open its goal, mode %v:\n%s", m.mode, m.View().Content)
 	}
-	m = press(t, m, "esc")
-	if m.mode != modeChief {
-		t.Fatalf("esc from the goal went to mode %v, want the chief", m.mode)
+	if m = press(t, m, "esc", "esc"); m.mode != modeList {
+		t.Fatalf("esc twice went to mode %v, want the board", m.mode)
 	}
-	if m = press(t, m, "esc"); m.mode != modeList {
-		t.Fatalf("esc from the chief went to mode %v, want the board", m.mode)
+}
+
+func standingOf(t *testing.T, m Model, id string) string {
+	t.Helper()
+	n, ok := m.board.Node(id)
+	if !ok {
+		t.Fatalf("%s is not on the board", id)
+	}
+	return n.Standing
+}
+
+// toOpt moves the picker's cursor to id.
+func toOpt(t *testing.T, m Model, id string) Model {
+	t.Helper()
+	for range len(m.opts) {
+		m = press(t, m, "up")
+	}
+	for range len(m.opts) {
+		if m.opts[m.optCur].id == id {
+			return m
+		}
+		m = press(t, m, "down")
+	}
+	t.Fatalf("%q is not in the picker:\n%s", id, m.View().Content)
+	return m
+}
+
+func parentOf(t *testing.T, c *core.Core, id string) string {
+	t.Helper()
+	mg, err := c.Store.Manager(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mg.ParentID
+}
+
+func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		selects []int
+		checks  []int
+		remit   string
+		want    []int
+	}{
+		{"selected rows start checked", []int{0, 2}, nil, "ship the importer", []int{0, 2}},
+		{"space checks and unchecks in the picker", []int{0}, []int{0, 1}, "", []int{1}},
+		{"over none", nil, nil, "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "goal one", "goal two", "goal three")
+			for _, i := range tc.selects {
+				m = press(t, to(t, m, isNode(ms[i].ID)), " ")
+			}
+			m = press(t, m, "C")
+			for _, i := range tc.checks {
+				m = press(t, toOpt(t, m, ms[i].ID), " ")
+			}
+			m = press(t, m, "enter")
+			m = press(t, m, strings.Split("data team", "")...)
+			m = press(t, m, "enter")
+			m = press(t, m, strings.Split(tc.remit, "")...)
+			m = press(t, m, "enter")
+			m = refresh(t, m)
+			var chief core.Node
+			for _, n := range m.board.Tree {
+				if n.Goal == nil {
+					chief = n
+				}
+			}
+			if chief.Manager.Name != "data team" {
+				t.Fatalf("no chief named data team on the board; message %q", m.message)
+			}
+			for i, mg := range ms {
+				if got, want := parentOf(t, c, mg.ID), slices.Contains(tc.want, i); (got == chief.Manager.ID) != want {
+					t.Fatalf("%s reports to %q, want under the chief %v", mg.ID, got, want)
+				}
+			}
+			brief, err := os.ReadFile(chief.Manager.BriefPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(brief), "# data team\n\n"+tc.remit+"\n") {
+				t.Fatalf("the chief's brief does not hold its remit %q:\n%s", tc.remit, brief)
+			}
+		})
+	}
+}
+
+func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		row    func(ms []core.Manager, x, y core.Manager) string
+		keys   func(ms []core.Manager, x, y core.Manager) (string, []string)
+		parent func(ms []core.Manager, x, y core.Manager) string
+	}{
+		{"a goal under a chief",
+			func(ms []core.Manager, x, y core.Manager) string { return ms[1].ID },
+			func(ms []core.Manager, x, y core.Manager) (string, []string) { return x.ID, []string{"enter"} },
+			func(ms []core.Manager, x, y core.Manager) string { return x.ID }},
+		{"a chief under another",
+			func(ms []core.Manager, x, y core.Manager) string { return x.ID },
+			func(ms []core.Manager, x, y core.Manager) (string, []string) { return y.ID, []string{"enter"} },
+			func(ms []core.Manager, x, y core.Manager) string { return y.ID }},
+		{"you detaches",
+			func(ms []core.Manager, x, y core.Manager) string { return ms[0].ID },
+			func(ms []core.Manager, x, y core.Manager) (string, []string) { return "", []string{"enter"} },
+			func(ms []core.Manager, x, y core.Manager) string { return "" }},
+		{"esc keeps it",
+			func(ms []core.Manager, x, y core.Manager) string { return ms[0].ID },
+			func(ms []core.Manager, x, y core.Manager) (string, []string) { return y.ID, []string{"esc"} },
+			func(ms []core.Manager, x, y core.Manager) string { return x.ID }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "goal one", "goal two")
+			x, err := c.NewChief("x", "", t.TempDir(), []string{ms[0].ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			y, err := c.NewChief("y", "", t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			z, err := c.NewChief("z", "", t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Attach(z.ID, x.ID); err != nil {
+				t.Fatal(err)
+			}
+			id := tc.row(ms, x, y)
+			m = press(t, to(t, refresh(t, m), isNode(id)), "c")
+			for _, o := range m.opts {
+				if n, ok := m.board.Node(o.id); o.id == id || ok && n.Goal != nil || o.id == z.ID && id == x.ID {
+					t.Fatalf("the picker for %s offers %s, which is itself, a goal or below it", id, o.id)
+				}
+			}
+			pick, keys := tc.keys(ms, x, y)
+			m = press(t, toOpt(t, m, pick), keys...)
+			if got, want := parentOf(t, c, id), tc.parent(ms, x, y); got != want {
+				t.Fatalf("%s reports to %q, want %q", id, got, want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		answer string
+		parent bool
+	}{{"y", false}, {"n", true}} {
+		t.Run("D answered "+tc.answer, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "goal one")
+			x, err := c.NewChief("x", "", t.TempDir(), []string{ms[0].ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = press(t, to(t, refresh(t, m), isNode(ms[0].ID)), "D")
+			if m.mode != modeConfirm || !strings.Contains(m.ask, "detach") {
+				t.Fatalf("D should ask before detaching, mode %v ask %q", m.mode, m.ask)
+			}
+			press(t, m, tc.answer)
+			if got := parentOf(t, c, ms[0].ID); (got == x.ID) != tc.parent {
+				t.Fatalf("after %s, %s reports to %q", tc.answer, ms[0].ID, got)
+			}
+		})
 	}
 }
 
@@ -240,7 +418,8 @@ func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m = refresh(t, m)
+	next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
 	if v := m.View().Content; !strings.Contains(v, "2 new") || !strings.Contains(v, "parser merged; TSV next") {
 		t.Fatalf("the goal row should show 2 unread and the newest line:\n%s", v)
 	}

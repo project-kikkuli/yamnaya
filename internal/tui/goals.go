@@ -37,7 +37,7 @@ func (m Model) nodeOf(r row) (core.Node, bool) {
 	return core.Node{}, false
 }
 
-// treeRows are the goal rows of the board: chiefs collapsed to one row, or every manager by repository.
+// treeRows are the goal rows of the board: every chief with its managers and chiefs nested under it, or every manager by repository.
 func (m Model) treeRows() []row {
 	var out []row
 	if m.byRepo {
@@ -65,13 +65,29 @@ func (m Model) treeRows() []row {
 		}
 		return out
 	}
-	for i := range m.board.Tree {
-		n := &m.board.Tree[i]
-		if m.matches(nodeText(*n)) {
-			out = append(out, row{node: n})
+	var walk func([]core.Node, int, bool)
+	walk = func(ns []core.Node, depth int, all bool) {
+		for i := range ns {
+			n := &ns[i]
+			hit := all || m.matches(nodeText(*n))
+			if hit || m.treeMatches(n.Children) {
+				out = append(out, row{node: n, depth: depth})
+				walk(n.Children, depth+1, hit)
+			}
 		}
 	}
+	walk(m.board.Tree, 0, false)
 	return out
+}
+
+// treeMatches reports whether the filter matches any node in ns or below them.
+func (m Model) treeMatches(ns []core.Node) bool {
+	for _, n := range ns {
+		if m.matches(nodeText(n)) || m.treeMatches(n.Children) {
+			return true
+		}
+	}
+	return false
 }
 
 func agentCount(n core.Node) int {
@@ -144,8 +160,8 @@ var standStyle = map[string]func(string) string{
 	core.StandStuck:     func(s string) string { return pal.red.Render(s) },
 }
 
-// nodeLines is a goal or chief row: who owns it, how it stands, and what it is about.
-func (m Model) nodeLines(i int, n core.Node) string {
+// nodeLines is a goal or chief row, indented under its chief: who owns it, how it stands, how fresh its brief is, and what it is about.
+func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	mark := m.mark(i)
 	if m.picked[n.Manager.ID] {
 		mark = mark[:len(mark)-1] + "*"
@@ -171,7 +187,8 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	if n.Feed.Latest != nil {
 		what += pal.dim.Render("  " + n.Feed.Latest.Payload)
 	}
-	line := mark + head + " " + stand + " " + agents + " " + planTags(n)
+	indent := strings.Repeat("  ", depth)
+	line := mark + indent + head + " " + stand + " " + briefTag(m.board.At, n) + " " + agents + " " + planTags(n)
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {
 		return b
@@ -198,17 +215,44 @@ func (m Model) nodeLines(i int, n core.Node) string {
 	if state := m.hostState(host); state != "" {
 		meta = append(meta, "on "+host+": "+state)
 	}
-	keys := "enter open   B brief   W brief page   o session   s send   S steer plan   space select   R relaunch"
+	keys := "enter open   S steer plan   s send   R relaunch   B brief   W brief page   o session   space select   c under chief"
+	if n.Manager.ParentID != "" {
+		keys += "   D detach"
+	}
+	keys += "   C new chief"
 	if n.Goal != nil {
 		keys += "   K drop"
+	} else {
+		keys += "   K retire"
 	}
 	if brief, ok := m.artifact(n); ok && brief != "" {
 		keys += "   V artifact"
 	}
-	return b + pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n" + pal.dim.Render("         "+keys) + "\n"
+	under := "         " + indent
+	b += pal.dim.Render(under+strings.Join(meta, " | ")) + "\n"
+	for _, l := range wrapHints(under, keys, m.width) {
+		b += pal.dim.Render(l) + "\n"
+	}
+	return b
 }
 
-// planTags flag a steer the manager has not adopted, so it shows at a glance; the brief's freshness shows on the selected row.
+// briefTag is how fresh a row's brief is at a glance: its age, stale, or none yet.
+func briefTag(at time.Time, n core.Node) string {
+	f := n.Fresh
+	switch {
+	case f.Brief == nil:
+		return pal.dim.Render(pad("no brief", 11))
+	case f.Stale() && (n.Goal == nil || n.Goal.State != core.GoalDone):
+		return pal.yellow.Render(pad("brief stale", 11))
+	}
+	a := strings.TrimSuffix(age(at, f.Brief.CreatedAt), " ago")
+	if a == "just now" {
+		a = "now"
+	}
+	return pad("brief "+a, 11)
+}
+
+// planTags flag a steer the manager has not adopted, so it shows at a glance.
 func planTags(n core.Node) string {
 	if n.Steer == nil || n.Steer.Adopted() {
 		return ""
@@ -411,7 +455,7 @@ func (m Model) chiefView() viewPage {
 		b.WriteString(pal.dim.Render("   none; c on a goal row puts it under a chief") + "\n")
 	}
 	for i, r := range m.rows() {
-		b.WriteString(m.nodeLines(i, *r.node))
+		b.WriteString(m.nodeLines(i, *r.node, r.depth))
 	}
 	return b
 }
@@ -469,16 +513,9 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 	case "C":
-		var over []string
-		for id := range m.picked {
-			over = append(over, id)
-		}
-		sort.Strings(over)
-		m.inPicks = over
 		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
 		m.loadTarget()
-		m.startInput(inChief, "", "", "", false)
-		m.inLabel = fmt.Sprintf("new chief over %d", len(over))
+		m.openOverPicker()
 		return m, nil, true
 	}
 	if r.need != nil && (r.need.PR != nil || r.need.Review != nil || r.need.Doc != nil) {
@@ -651,14 +688,26 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if r.node == nil {
 			return m, nil, false
 		}
-		m.inPicks = []string{n.Manager.ID}
+		ids := []string{n.Manager.ID}
 		for id := range m.picked {
 			if id != n.Manager.ID {
-				m.inPicks = append(m.inPicks, id)
+				ids = append(ids, id)
 			}
 		}
-		m.startInput(inAttach, "", "", n.Manager.ParentID, false)
-		m.inLabel = strings.Join(m.inPicks, ", ")
+		sort.Strings(ids[1:])
+		m.openChiefPicker(ids, n.Manager.ParentID)
+		return m, nil, true
+	case "D":
+		if r.node == nil || n.Manager.ParentID == "" {
+			return m, nil, false
+		}
+		id, chief := n.Manager.ID, n.Manager.ParentID
+		if c, ok := m.board.Node(chief); ok {
+			chief = c.Manager.Label()
+		}
+		m.confirm("detach "+n.Manager.Label()+" from "+chief+"? it reports to you", m.do(func() (string, error) {
+			return id + " reports to you", m.core.Attach(id, "")
+		}))
 		return m, nil, true
 	}
 	return m, nil, false
@@ -698,9 +747,9 @@ func (m Model) steerPlan(id string) tea.Cmd {
 	})
 }
 
-// goalInput runs what a goal, chief, steer or attach input line asked for.
+// goalInput runs what a goal, chief name, chief remit or steer input line asked for.
 func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
-	if (m.inKind == inGoal || m.inKind == inChief) && text != "" && m.launchOn != "" {
+	if m.inKind == inGoal && text != "" && m.launchOn != "" {
 		return m.launchRemote(text)
 	}
 	switch m.inKind {
@@ -723,28 +772,21 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		repo, over := m.newL.Repo, m.inPicks
+		m.chiefName = text
+		m.startInput(inRemit, "", "", "", false)
+		return m, nil
+	case inRemit:
+		if m.launchOn != "" {
+			return m.launchRemote(text)
+		}
+		name, repo, over := m.chiefName, m.newL.Repo, m.inPicks
 		m.picked = nil
 		return m, m.do(func() (string, error) {
-			c, err := m.core.NewChief(text, "", repo, over)
+			c, err := m.core.NewChief(name, text, repo, over)
 			if err == nil {
 				err = m.core.Store.SetLaunchTarget("")
 			}
 			return "chief " + c.ID + " over " + plural(len(over), "report"), err
-		})
-	case inAttach:
-		ids := m.inPicks
-		m.picked = nil
-		return m, m.do(func() (string, error) {
-			for _, id := range ids {
-				if err := m.core.Attach(id, text); err != nil {
-					return "", err
-				}
-			}
-			if text == "" {
-				return strings.Join(ids, ", ") + " report to you", nil
-			}
-			return strings.Join(ids, ", ") + " report to " + text, nil
 		})
 	case inSteer:
 		if text == "" {

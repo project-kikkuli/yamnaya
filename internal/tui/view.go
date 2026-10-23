@@ -78,6 +78,10 @@ func (m Model) prepareView() viewPage {
 			body = textPage(bodyModel.repoPickView(), "")
 			break
 		}
+		if m.picking() {
+			body = textPage(bodyModel.optsView(), "")
+			break
+		}
 		fallthrough
 	default:
 		switch m.listMode() {
@@ -224,13 +228,20 @@ func (m Model) footer() []string {
 		lines = append(lines, " "+pal.bold.Render(m.ask)+" y/n")
 		return lines
 	}
+	if m.mode == modeInput && m.picking() {
+		keys := " ↑↓ choose   enter put it there   esc cancel"
+		if m.inKind == inOver {
+			keys = " ↑↓ choose   space check   enter go on to its name   esc cancel"
+		}
+		return append(lines, pal.dim.Render(keys))
+	}
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
 			inDismissStale: "dismiss every stale item because", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
-			inGoal: "new goal in " + repo + ", in your words", inChief: m.inLabel + ", its name", inAttach: "put " + m.inLabel + " under chief (empty: you)",
+			inGoal: "new goal in " + repo + ", in your words", inChief: m.inLabel + ", its name", inRemit: "chief " + m.chiefName + ", its remit in your words (empty: none)",
 			inSteer: "send to " + m.inLabel}[m.inKind]
 		if m.inKind == inSteer && m.steerHasChief() {
 			if m.subtree {
@@ -271,16 +282,24 @@ func (m Model) footer() []string {
 	if m.filter != "" {
 		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
 	}
-	line := " "
-	for _, hint := range strings.Split(strings.TrimSpace(m.hints()), "   ") {
-		if ansi.StringWidth(line+hint) > max(20, m.width-1) && strings.TrimSpace(line) != "" {
-			lines = append(lines, pal.dim.Render(strings.TrimRight(line, " ")))
-			line = " "
+	for _, l := range wrapHints(" ", m.hints(), m.width) {
+		lines = append(lines, pal.dim.Render(l))
+	}
+	return lines
+}
+
+// wrapHints breaks hints, keys three spaces apart, into lines of at most width, each starting with indent, never inside a key.
+func wrapHints(indent, hints string, width int) []string {
+	var lines []string
+	line := indent
+	for _, hint := range strings.Split(strings.TrimSpace(hints), "   ") {
+		if ansi.StringWidth(line+hint) > max(20, width-1) && strings.TrimSpace(line) != "" {
+			lines = append(lines, strings.TrimRight(line, " "))
+			line = indent
 		}
 		line += hint + "   "
 	}
-	lines = append(lines, pal.dim.Render(strings.TrimRight(line, " ")))
-	return lines
+	return append(lines, strings.TrimRight(line, " "))
 }
 
 func (m Model) hints() string {
@@ -314,9 +333,21 @@ func (m Model) hints() string {
 	case modeGoal:
 		return controls + "   ↑↓ move   enter open session   o go to session   B brief   W brief page   V artifact   s send   S steer plan   R relaunch   esc back   ? help"
 	case modeChief:
-		return "↑↓ move   enter open   space select   s send   S steer plan   B brief   W brief page   R relaunch   c chief   C new chief   esc back   ? help"
+		return "↑↓ move   enter open   " + m.nodeHints() + "   esc back   ? help"
 	}
-	return controls + "   ↑↓ move   enter open   n goal   N goal in any repo   + session   space select   B brief   a answer   g go ahead   x dismiss   w reply   o go to session   / filter   I items   U usage   h health   A mountains   ? help   q quit"
+	if r, ok := m.selected(); ok && r.node != nil {
+		return "↑↓ move   enter open   " + m.nodeHints() + "   t by repo   n goal   / filter   ? help   q quit"
+	}
+	return controls + "   ↑↓ move   enter open   n goal   N goal in any repo   + session   space select   C new chief   B brief   a answer   g go ahead   x dismiss   w reply   o go to session   / filter   I items   U usage   h health   A mountains   ? help   q quit"
+}
+
+// nodeHints are the keys that act on the selected goal or chief row.
+func (m Model) nodeHints() string {
+	h := "S steer   s send   R relaunch   B brief   W brief page   o session   space select   c under chief"
+	if r, ok := m.selected(); ok && r.node != nil && r.node.Manager.ParentID != "" {
+		h += "   D detach"
+	}
+	return h + "   C new chief   K drop"
 }
 
 func (m Model) mark(i int) string {
@@ -372,7 +403,7 @@ func (m Model) listView() viewPage {
 			}
 			b.WriteString(line + "\n")
 		case r.node != nil:
-			b.WriteString(m.nodeLines(i, *r.node))
+			b.WriteString(m.nodeLines(i, *r.node, r.depth))
 		case r.need != nil:
 			if text, ok := m.queueLines(i, *r.need); ok {
 				b.WriteString(text)
@@ -1376,7 +1407,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  pull requests ready to merge in repos where managers may not merge, reviews GitHub asks of you
  personally, Notion discussions and reviews addressed to you that no goal claims, permission prompts,
  and one row per session you started that asks you something.
- GOALS is the goal tree: a chief collapses to one row with its reports' worst state; enter drills in.
+ GOALS is the goal tree: each chief row has its managers and chiefs indented beneath it, and its standing is
+ its reports' worst. Every row shows its standing and its brief's age, "brief stale" or "no brief"; enter on a
+ chief opens it with its reports.
  A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), adrift (an agent is busy
  going nowhere: the same failure again and again, its context compacted over and over, or writes in
  another repository; ym tells its manager the evidence), down (its manager's
@@ -1401,8 +1434,11 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
    V            open the artifact a manager registered as its richer brief
    R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
-   C            new chief over the selected goals and chiefs
-   c            put the goal or chief (and every selected one) under a chief: type its id, empty for you
+   C            new chief: check the goals and chiefs it oversees (the selected ones start checked) with
+                space, enter, then type its name and its remit in your words (enter leaves it empty)
+   c            put the goal or chief (and every selected one) under a chief: pick it from the list of
+                chiefs, or you to report to no chief
+   D            detach the goal or chief from its chief, so it reports to you (asks y/n)
    t            show goals as the chief tree or by repository
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it

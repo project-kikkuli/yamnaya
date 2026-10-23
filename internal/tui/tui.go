@@ -59,6 +59,9 @@ const (
 	inChief
 	inAttach
 	inSteer
+	// inOver picks a new chief's reports and inRemit asks its remit; inAttach picks the chief to report to.
+	inOver
+	inRemit
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -74,6 +77,8 @@ type row struct {
 	item    *core.Item
 	// stale is the collapsed line standing for every item whose mission has no live session.
 	stale bool
+	// depth is how far below a chief the node row sits in the tree.
+	depth int
 }
 
 // frame is a drill level to return to on esc.
@@ -97,8 +102,13 @@ type Model struct {
 	unfolded map[string]bool
 	byRepo   bool
 	// forGoal sends the repository picker on to a goal instead of a session.
-	forGoal   bool
-	inPicks   []string
+	forGoal bool
+	inPicks []string
+	// opts are the C and c pickers' managers and chiefs, optOn the checked ones.
+	opts      []pickOpt
+	optCur    int
+	optOn     map[string]bool
+	chiefName string
 	steer     []string
 	subtree   bool
 	openURL   func(string) error
@@ -1186,6 +1196,9 @@ func (m *Model) startInput(kind inputKind, item, project, initial string, fresh 
 }
 
 func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.picking() {
+		return m.optKey(k)
+	}
 	switch k.String() {
 	case "esc":
 		m.mode = m.back
@@ -1234,7 +1247,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch m.inKind {
 		case inAdopt:
 			return m.adopt(m.inItem)
-		case inGoal, inChief, inAttach, inSteer:
+		case inGoal, inChief, inRemit, inSteer:
 			return m.goalInput(text)
 		case inSend:
 			if text == "" {
@@ -1354,7 +1367,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // typed adds text typed or pasted into the input.
 func (m Model) typed(text string) Model {
-	if m.inKind == inAdopt {
+	if m.inKind == inAdopt || m.picking() {
 		return m
 	}
 	if m.fresh {

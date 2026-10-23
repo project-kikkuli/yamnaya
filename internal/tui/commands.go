@@ -36,7 +36,7 @@ var Commands = map[string]string{
 	"ym goal ack":       "x",
 	"ym chief":          "C",
 	"ym chief attach":   "c",
-	"ym chief detach":   "c",
+	"ym chief detach":   "D",
 	"ym land":           "L",
 	"ym gc":             "G",
 	"ym kill":           "K",

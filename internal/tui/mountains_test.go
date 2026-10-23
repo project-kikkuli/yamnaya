@@ -157,7 +157,7 @@ func TestGoalsByRepositoryGatherEveryCloneOfARepositoryUnderItsOriginName(t *tes
 	var got []string
 	for i, r := range m.treeRows() {
 		got = append(got, r.node.Goal.ID)
-		if line := ansi.Strip(m.nodeLines(i, *r.node)); r.node.Goal.ID != "g2" && !strings.Contains(line, "yamnaya-proving-ground ask") {
+		if line := ansi.Strip(m.nodeLines(i, *r.node, r.depth)); r.node.Goal.ID != "g2" && !strings.Contains(line, "yamnaya-proving-ground ask") {
 			t.Errorf("row %q does not name the origin's repository", line)
 		}
 	}

@@ -33,7 +33,7 @@ func (m *Model) nextTarget() {
 }
 
 func (m Model) launching() bool {
-	return m.mode == modeInput && (m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inGoal || m.inKind == inChief)
+	return m.mode == modeInput && (m.inKind == inNew || m.inKind == inNewRepo || m.inKind == inGoal || m.inKind == inChief || m.inKind == inRemit)
 }
 
 // targetLine lists the launch targets with the chosen one marked, or "" when this host is the only one.
@@ -68,8 +68,12 @@ func (m Model) remoteArgs(text string) ([]string, error) {
 		}
 	case inGoal:
 		args = []string{"goal"}
-	case inChief:
+	case inRemit:
 		args = []string{"chief"}
+		if text != "" {
+			args = append(args, "--remit", text)
+		}
+		text = m.chiefName
 		if len(m.inPicks) > 0 {
 			var over []string
 			for _, id := range m.inPicks {

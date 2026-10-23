@@ -29,7 +29,7 @@ Press `o` on the goal to open the manager and talk to it like any session.
 - **Goal**: one ask, in your words. States: moving, quiet, adrift (its manager or an agent is busy going nowhere), down (manager died, being relaunched), verifying, stuck, done.
 - **Manager**: an interactive Claude session with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
 - **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message reaches the manager once.
-- **Chiefs**: `ym chief "<name>" --over <id>,<id>` groups managers and other chiefs. A chief reads their briefs, steers them and hears their state changes. Work never waits on a chief.
+- **Chiefs**: a chief groups managers and other chiefs. It reads their briefs, steers them and hears their state changes. Work never waits on a chief. On the board, `C` starts one: check its reports in a list of every goal and chief, then type its name and remit. `c` on a goal or chief picks the chief it reports to from a list, and `D` detaches it so it reports to you. From a shell, `ym chief "<name>" --over <id>,<id>` does the same as `C`.
 - **Steering**: `S` on a goal or chief, or `ym goal steer <id>` (opens `$EDITOR`; `--file F` or piped stdin also work), saves a new plan as the next numbered revision. The manager is woken with it and runs `ym goal adopt <id> --revision N`; until then the row shows `steer rN not adopted`. ym nudges it every 10 minutes, twice, then tells whoever steered (a queue row for you, a message for a chief). A chief steers only what is below it. Steering a verifying goal calls verification off; the next verifier judges against the new plan. `ym goal context <id>` prints the revisions.
 - **Briefs**: managers and chiefs record where they stand with `ym goal brief`: assessment, what changed, uncertainty, next, waiting on. Each call is a new version. `ym serve` serves them at `http://127.0.0.1:7477/b/<id>` (`/` lists all; `--briefs` or `YAMNAYA_BRIEFS_ADDR` moves it; a ym with another `YAMNAYA_STATE_DIR` serves on a port from 7478 to 8477 derived from that directory; a request whose host is a name other than `localhost` gets 403), and a chief's page rolls up its reports. A brief older than the goal's latest meaningful event (agent done, PR, CI, review, merge, stuck, failed verification, adopted steer) is stale: the wake carrying the event asks for a fresh one, and a manager still behind 5 minutes later is nudged once, never mid-turn.
 - **Authority**: a manager decides everything about its goal. It merges its own pull requests only in repositories cleared by `ym goal authority`; elsewhere a green pull request lands in your merge queue. It writes to other people only with a model-name prefix.
@@ -79,13 +79,14 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 | `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item |
 | `B` / `W` / `V` | show the manager's brief / open its served brief page / open its registered artifact |
 | `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
-| `C` / `c` | new chief over the selection / put the selection under a chief |
+| `C` | new chief: check the goals and chiefs it oversees (selected rows start checked), then type its name and remit |
+| `c` / `D` | pick the chief a goal or chief (and the selection) reports to, or you / detach it from its chief (asks y/n) |
 | `R` | relaunch a manager or chief |
 | `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
 | `L` / `F` | land a launched session (remove its worktree when clean and merged) / forget it |
 | `T` | relaunch an idle session in the other harness |
 | `G` | gc old worktrees and merged branches |
-| `t` | goals as the chief tree or by repository |
+| `t` | goals as the chief tree, each chief's reports indented under it, or by repository |
 | `I` `U` `E` `h` | every item, usage and limits, everything ym launched, agents adrift now and weekly health |
 | `A` | hide or show the mountains |
 | `/` `?` `q` | filter, all keys, back or quit |

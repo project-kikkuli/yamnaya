@@ -118,7 +118,8 @@ func TestLaunchesStartWhereTheTargetSaysAndTheNextOneDefaultsThere(t *testing.T)
 		{"codex on the host", []string{"+", "tab", "ctrl+t", "ok", "enter"}, []string{box, "new", "--codex", "--repo", "app", "--", "ok"}, 0, box},
 		{"switching back", []string{"+", "ctrl+t", "ctrl+t", "ok", "enter"}, nil, 1, ""},
 		{"goal on the host", []string{"n", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--repo", "app", "--", "ship"}, 0, box},
-		{"chief on the host", []string{"C", "ctrl+t", "lead", "enter"}, []string{box, "chief", "--repo", "app", "--", "lead"}, 0, box},
+		{"chief on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--repo", "app", "--", "lead"}, 0, box},
+		{"chief with a remit on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "ship", "enter"}, []string{box, "chief", "--remit", "ship", "--repo", "app", "--", "lead"}, 0, box},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, _ := setup(t)
