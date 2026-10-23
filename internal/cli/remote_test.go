@@ -23,6 +23,7 @@ func TestRemoteCommandRunsYmWithItsDirOnPath(t *testing.T) {
 	}{
 		{nil, ""},
 		{[]string{"sessions"}, "[sessions]\n"},
+		{[]string{"profiles", "login", "codex", "personal", "--device-auth"}, "[profiles]\n[login]\n[codex]\n[personal]\n[--device-auth]\n"},
 		{[]string{"item", "add", "it's a $HOME `x`"}, "[item]\n[add]\n[it's a $HOME `x`]\n"},
 	} {
 		c := exec.Command("sh", "-c", remoteCommand(tc.args))

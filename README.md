@@ -248,7 +248,7 @@ ym starts Codex as the platform binary its npm package ships rather than through
 
 ## Login profiles
 
-ym keeps the existing default Claude and Codex login. Register additional native config roots with `ym profiles add claude personal --root /absolute/claude-personal` or `ym profiles add codex personal --root /absolute/codex-personal`. Labels are optional display names. `ym profiles login <harness> <id>` runs the native login inside that root; native provider storage keeps each profile’s credentials separate. On another host, use `ym remote <host> profiles login codex personal`. A host-local root is a path on that host.
+ym keeps the existing default Claude and Codex login. Register additional native config roots with `ym profiles add claude personal --root /absolute/claude-personal` or `ym profiles add codex personal --root /absolute/codex-personal`. Labels are optional display names. `ym profiles login <harness> <id>` runs the native login inside that root; native provider storage keeps each profile’s credentials separate. On a host without a browser, use `ym remote <host> profiles login codex personal --device-auth` and complete the native device authorization in a browser. A host-local root is a path on that host.
 
 Use `--profile <id>` with `ym new`, `ym goal`, and `ym chief`. The board cycles launch profiles with Shift-Tab. Unspecified launches inherit a usable parent profile or choose deterministically among profiles without a known exhausted pool. Profile and subscription identity are separate: aliases of the same provider principal/workspace share quota; missing identity or quota is shown as unknown.
 

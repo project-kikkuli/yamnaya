@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,7 +56,16 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	})}
 	add.Flags().StringVar(&root, "root", "", "native config directory (default: new isolated root in ym state)")
 	add.Flags().StringVar(&label, "label", "", "display label, independent of account identity")
-	login := &cobra.Command{Use: "login <claude|codex> <id>", Short: "Run native login in the selected profile", Args: cobra.ExactArgs(2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+	var deviceAuth bool
+	login := &cobra.Command{Use: "login <claude|codex> <id>", Short: "Run native login in the selected profile", Args: func(cmd *cobra.Command, args []string) error {
+		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+			return err
+		}
+		if deviceAuth && args[0] != "codex" {
+			return fmt.Errorf("--device-auth is supported only for Codex")
+		}
+		return nil
+	}, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		ps, err := profile.Load(e.core.StateDir)
 		if err != nil {
 			return err
@@ -80,14 +90,29 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if p.ID != "default" {
 				argv = []string{"-c", "sqlite_home=" + fmt.Sprintf("%q", p.Root), "login"}
 			}
+			if deviceAuth {
+				argv = append(argv, "--device-auth")
+			}
+		}
+		meter := usage.New(e.core.StateDir)
+		meter.Fetch = nil
+		meter.Profiles = []profile.Profile{p}
+		defer meter.Close()
+		if _, err := meter.Scan(time.Now()); err != nil {
+			return err
 		}
 		child := exec.Command(b, argv...)
 		child.Env = p.Environment(os.Environ())
 		child.Stdin = cmd.InOrStdin()
 		child.Stdout = cmd.OutOrStdout()
 		child.Stderr = cmd.ErrOrStderr()
-		return child.Run()
+		loginErr := child.Run()
+		p.Account = profile.Identity(p)
+		meter.Profiles = []profile.Profile{p}
+		_, scanErr := meter.Scan(time.Now())
+		return errors.Join(loginErr, scanErr)
 	})}
+	login.Flags().BoolVar(&deviceAuth, "device-auth", false, "use Codex device authorization on a host without a browser")
 	cmd.AddCommand(add, login)
 	return cmd
 }
