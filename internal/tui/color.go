@@ -77,7 +77,7 @@ func (p palette) state(s string) lipgloss.Style {
 		return p.green
 	case "waiting":
 		return p.yellow
-	case "adrift":
+	case "adrift", "hung":
 		return p.red
 	case "exited":
 		return p.dim

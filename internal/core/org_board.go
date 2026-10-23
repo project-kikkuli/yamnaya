@@ -25,10 +25,12 @@ var standRank = map[string]int{StandDone: 0, StandVerifying: 1, StandMoving: 1, 
 
 // Node is a manager or chief on the board: its goal, its live session, the agents it runs, and the reports below a chief.
 type Node struct {
-	Manager  Manager
-	Goal     *Goal
-	Live     *Live
-	Agents   []Live
+	Manager Manager
+	Goal    *Goal
+	Live    *Live
+	Agents  []Live
+	// Workers are the agents and subagents working for the goal, as they stand now.
+	Workers  []Worker
 	Children []Node
 	// Repo is the goal's repository's identity, as a mission's Project.Repo names it.
 	Repo     string
@@ -136,6 +138,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 		if s, ok := b.Session(m.Session); ok {
 			n.Live = &s
 		}
+		n.Workers = n.workers(b.At, c.Woke)
 		for _, child := range reports[m.ID] {
 			if !seen[child.ID] {
 				n.Children = append(n.Children, build(child, seen))

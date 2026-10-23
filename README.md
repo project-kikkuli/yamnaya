@@ -163,7 +163,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym waiting [--json]` | idle sessions whose last reply asks you |
 | | `ym board` | this host's state as JSON, for another host's ym |
 | Goals | `ym goal [--repo P] "<ask>"` | start a goal and its manager; the ask is one quoted argument, so a subcommand this binary lacks is refused instead of becoming a goal |
-| | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs |
+| | `ym goal list [--under CHIEF] [--json]` | the goal tree with states and briefs, and under each goal every agent still working for it, sessions its manager started and Claude subagents inside the manager or those sessions: busy, waiting, idle, hung or adrift, its latest tool call, reply or question, its branch's commits and its PRs; the count says how many more finished |
 | | `ym goal show <id>` / `feed <id>` | one goal with its verifications / its event feed |
 | | `ym goal send [--subtree] <id>[,<id>] <text>` | message managers or chiefs |
 | | `ym goal steer [--file F\|-] <id>` / `context [--all] <id>` | change what a goal or chief is about / print its plan revisions |

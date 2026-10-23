@@ -82,7 +82,10 @@ type goalRow struct {
 	Brief    string `json:"brief"`
 	Artifact string `json:"artifact,omitempty"`
 	Agents   int    `json:"agents"`
-	BriefURL string `json:"brief_url"`
+	// Finished counts the subagents that ended.
+	Finished int         `json:"finished"`
+	Workers  []workerRow `json:"workers,omitempty"`
+	BriefURL string      `json:"brief_url"`
 	// BriefVersion is 0 when no brief was recorded.
 	BriefVersion int    `json:"brief_version"`
 	BriefStale   bool   `json:"brief_stale"`
@@ -93,6 +96,18 @@ type goalRow struct {
 	HostState string `json:"host_state,omitempty"`
 	Depth     int    `json:"-"`
 	fresh     core.Freshness
+}
+
+type workerRow struct {
+	Session  string    `json:"session"`
+	Subagent string    `json:"subagent,omitempty"`
+	Name     string    `json:"name"`
+	State    string    `json:"state"`
+	Activity string    `json:"activity,omitempty"`
+	At       time.Time `json:"at"`
+	Branch   string    `json:"branch,omitempty"`
+	Ahead    int       `json:"ahead,omitempty"`
+	PRs      []string  `json:"prs,omitempty"`
 }
 
 func treeRows(b core.Board, under string) []goalRow {
@@ -106,10 +121,25 @@ func treeRows(b core.Board, under string) []goalRow {
 	var walk func(core.Node, int)
 	walk = func(n core.Node, depth int) {
 		m := n.Manager
-		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Agents: len(n.Agents), Depth: depth,
+		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Depth: depth,
 			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host, HostState: away[m.Host]}
 		if m.Host != "" {
 			r.BriefURL = ""
+		}
+		for _, w := range n.Workers {
+			if !w.Active() {
+				r.Finished++
+				continue
+			}
+			r.Agents++
+			wr := workerRow{Session: w.Session, Name: w.Name, State: w.State, Activity: w.Activity, At: w.At, Branch: w.Branch, Ahead: w.Ahead}
+			if w.Member != nil {
+				wr.Subagent = w.Member.ID
+			}
+			for _, pr := range w.PRs {
+				wr.PRs = append(wr.PRs, prLabel(pr))
+			}
+			r.Workers = append(r.Workers, wr)
 		}
 		if n.Fresh.Brief != nil {
 			r.BriefVersion = n.Fresh.Brief.Version
@@ -189,7 +219,65 @@ func printGoalRow(w io.Writer, r goalRow) {
 	if r.Revision > 0 && !r.Adopted {
 		status = append(status, fmt.Sprintf("steer r%d not adopted", r.Revision))
 	}
-	fmt.Fprintf(w, "%s%-14s %-7s %d agents  %s\n%s  %s  %s\n", indent, id, r.State, r.Agents, oneLine(what), indent, strings.Join(status, ", "), r.BriefURL)
+	count := fmt.Sprintf("%d agents", r.Agents)
+	if r.Agents == 1 {
+		count = "1 agent"
+	}
+	if r.Finished > 0 {
+		count += fmt.Sprintf(", %d done", r.Finished)
+	}
+	fmt.Fprintf(w, "%s%-14s %-7s %s  %s\n%s  %s  %s\n", indent, id, r.State, count, oneLine(what), indent, strings.Join(status, ", "), r.BriefURL)
+	for _, a := range r.Workers {
+		name := a.Name
+		if a.Subagent != "" {
+			name = "sub " + name
+		}
+		line := fmt.Sprintf("%s    %-7s %s  %s", indent, a.State, clip(oneLine(name), 40), clip(a.Activity, 90))
+		if !a.At.IsZero() {
+			line += " (" + ago(a.At) + ")"
+		}
+		var marks []string
+		if a.Ahead > 0 {
+			marks = append(marks, fmt.Sprintf("%s +%d", a.Branch, a.Ahead))
+		}
+		marks = append(marks, a.PRs...)
+		if len(marks) > 0 {
+			line += "  " + strings.Join(marks, " ")
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+func prLabel(pr core.PR) string {
+	label := fmt.Sprintf("#%d", pr.Number)
+	if pr.Number == 0 {
+		label = pr.URL
+	}
+	if pr.Status != nil && pr.Status.State != "" {
+		label += " " + strings.ToLower(pr.Status.State)
+	}
+	return label
+}
+
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+func ago(t time.Time) string {
+	d := time.Since(t).Round(time.Minute)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
 func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {

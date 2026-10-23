@@ -75,7 +75,7 @@ func (m Model) treeRows() []row {
 }
 
 func agentCount(n core.Node) int {
-	total := len(n.Agents)
+	total, _ := n.Working()
 	for _, c := range n.Children {
 		total += agentCount(c)
 	}
@@ -361,6 +361,24 @@ func (m Model) goalView() viewPage {
 			label = pal.dim.Render("manager  ")
 		}
 		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + doingText(m.board.At, r.session.Session) + "\n")
+	}
+	var subs []core.Worker
+	finished := 0
+	for _, w := range n.Workers {
+		switch {
+		case w.Member == nil:
+		case w.Active():
+			subs = append(subs, w)
+		default:
+			finished++
+		}
+	}
+	if len(subs)+finished > 0 {
+		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SUBAGENTS (%d running, %d done)", len(subs), finished)) + "\n")
+	}
+	for _, w := range subs {
+		line := "   " + pad(w.Name, 36) + " " + pal.state(w.State).Render(pad(w.State, 8)) + " " + oneLine(w.Activity) + pal.dim.Render(" "+age(m.board.At, w.At))
+		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
 	}
 	return b
 }
