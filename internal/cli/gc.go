@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,20 @@ func (l launcher) sweepSoon() {
 	}
 }
 
+// defaultStateDir reports whether dir is ym's state dir when YAMNAYA_STATE_DIR is unset, the one whose gc may sweep every repository.
+func defaultStateDir(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	have, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	want, err := os.Stat(filepath.Join(home, ".local", "state", "yamnaya"))
+	return err == nil && os.SameFile(have, want)
+}
+
 // cwds are the working directories of every process.
 func cwds() []string {
 	procs, _ := proc.List()
@@ -46,14 +61,22 @@ func cwds() []string {
 	return out
 }
 
-// gc sweeps every repository in repos, those of launch records and those with linked worktrees under ~/dev, marking the
-// records of worktrees it removes landed, then drops the records landed over landedKeep ago whose transcripts are gone, and says how many.
+// gc sweeps the repositories of launch records and, when l.everywhere, every repository in repos and with linked worktrees
+// under ~/dev; otherwise it touches only the worktrees and branches of launch records. It marks the records of worktrees it
+// removes landed, then drops the records landed over landedKeep ago whose transcripts are gone, logs every removal, and says how many.
 func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	seen := map[string]bool{}
-	if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
+	recs, _ := l.records.All()
+	var own *launch.Owned
+	if !l.everywhere {
+		repos, own = nil, &launch.Owned{Paths: map[string]bool{}, Branches: map[string]bool{}}
+		for _, rec := range recs {
+			own.Paths[rec.Worktree.Path] = true
+			own.Branches[rec.Worktree.Branch] = rec.Worktree.Branch != ""
+		}
+	} else if home, err := os.UserHomeDir(); err == nil && l.repos != "" {
 		repos = append(repos, launch.Discovered(filepath.Join(home, "dev"), l.repos, time.Now())...)
 	}
-	recs, _ := l.records.All()
 	for _, rec := range recs {
 		if rec.Worktree.GitDir != "" {
 			repos = append(repos, filepath.Dir(rec.Worktree.GitDir))
@@ -69,11 +92,23 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 		if _, err := os.Stat(root); err != nil {
 			continue
 		}
-		s, err := launch.GC(root, now, dirs, l.squash, dry, sizes)
+		s, err := launch.GC(root, now, dirs, l.squash, own, dry, sizes)
 		if err != nil {
 			s.Errors = append(s.Errors, err.Error())
 		}
 		if !dry {
+			for _, t := range s.Trees {
+				if t.Keep == "" {
+					if err := l.logRemoval("removed worktree", root, t.Path, t.Branch, t.Head, t.Why); err != nil {
+						s.Errors = append(s.Errors, err.Error())
+					}
+				}
+			}
+			for _, b := range s.Branches {
+				if err := l.logRemoval("deleted branch", root, "", b.Name, b.Head, b.Why); err != nil {
+					s.Errors = append(s.Errors, err.Error())
+				}
+			}
 			for _, t := range s.Trees {
 				for _, rec := range recs {
 					if t.Keep == "" && rec.Worktree.Path == t.Path && !rec.IsLanded() {
@@ -91,12 +126,26 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 	for _, rec := range recs {
 		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep && transcript(rec) == "" {
 			pruned++
-			if !dry {
-				l.records.Delete(rec.Key)
+			if !dry && l.records.Delete(rec.Key) == nil {
+				l.logRemoval("dropped record "+rec.Key, filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Path, rec.Worktree.Branch, rec.Head,
+					fmt.Sprintf("landed %s ago and its transcript is gone", now.Sub(rec.Landed).Round(time.Hour)))
 			}
 		}
 	}
 	return out, pruned
+}
+
+// logRemoval appends one line for something gc removed to l.removals, prefixed with its RFC3339 time; empty logs nothing.
+func (l launcher) logRemoval(what, repo, path, branch, head, why string) error {
+	if l.removals == "" {
+		return nil
+	}
+	f, err := os.OpenFile(l.removals, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(f, "%s %s repo=%q path=%q branch=%q head=%q reason=%q\n", time.Now().Format(time.RFC3339), what, repo, path, branch, head, why)
+	return errors.Join(err, f.Close())
 }
 
 func gb(n int64) string { return fmt.Sprintf("%.2f GB", float64(n)/1e9) }
@@ -130,7 +179,7 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 		}
 		for _, b := range s.Branches {
 			branches++
-			fmt.Fprintf(w, "%s branch %s in %s\n", del, b, s.Root)
+			fmt.Fprintf(w, "%s branch %s in %s\n", del, b.Name, s.Root)
 		}
 		for _, e := range s.Errors {
 			fmt.Fprintf(w, "error in %s: %s\n", s.Root, e)
@@ -153,7 +202,7 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "gc [--dry-run]",
-		Short: ("Remove worktrees of known repositories and those under ~/dev that are clean, on a remote or squash-merged, " +
+		Short: ("Remove worktrees of known repositories and those under ~/dev (only ym's own worktrees under a YAMNAYA_STATE_DIR other than the default) that are clean, on a remote or squash-merged, " +
 			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago " +
 			"whose conversation transcripts are gone"),
 		Args: cobra.NoArgs,

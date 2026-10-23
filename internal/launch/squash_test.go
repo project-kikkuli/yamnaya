@@ -121,7 +121,7 @@ func TestGCTreatsSquashMergedWorktreesAsMerged(t *testing.T) {
 				t.Fatalf("Landable = %v (%s), want %v", ok, why, c.keep == "")
 			}
 
-			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, q, false, false)
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, q, nil, false, false)
 			if err != nil || len(s.Errors) > 0 {
 				t.Fatal(err, s.Errors)
 			}
@@ -132,7 +132,7 @@ func TestGCTreatsSquashMergedWorktreesAsMerged(t *testing.T) {
 			if removed := statErr != nil; removed != (c.keep == "") {
 				t.Fatalf("worktree removed %v, want keep %q", removed, c.keep)
 			}
-			if deleted := slices.Contains(s.Branches, "feature"); deleted != (c.keep == "") {
+			if deleted := slices.ContainsFunc(s.Branches, func(d Dropped) bool { return d.Name == "feature" }); deleted != (c.keep == "") {
 				t.Fatalf("deleted branches %v, want feature deleted %v", s.Branches, c.keep == "")
 			}
 		})
@@ -149,8 +149,8 @@ func TestGCDeletesSquashMergedBranchesWithoutWorktrees(t *testing.T) {
 	h := &hub{byBranch: map[string][]PR{"feature": {pr(7, head)}}}
 	q := &Squash{Hub: h, Cache: filepath.Join(t.TempDir(), "squash.json"), Now: time.Now}
 
-	s, err := GC(repo, time.Now(), nil, q, true, false)
-	if err != nil || len(s.Errors) > 0 || !slices.Equal(s.Branches, []string{"feature"}) {
+	s, err := GC(repo, time.Now(), nil, q, nil, true, false)
+	if err != nil || len(s.Errors) > 0 || len(s.Branches) != 1 || s.Branches[0].Name != "feature" || s.Branches[0].Head != head || s.Branches[0].Why != "squash-merged in #7" {
 		t.Fatalf("dry run deletes %v, %v %v; want feature", s.Branches, err, s.Errors)
 	}
 	if ok, err := DropMerged(repo, "feature", q); !ok || err != nil {

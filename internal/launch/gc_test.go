@@ -77,7 +77,7 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 				cwds = []string{filepath.Join(wt, "sub")}
 			}
 
-			s, err := GC(repo, time.Now().Add(c.age), cwds, nil, c.dry, true)
+			s, err := GC(repo, time.Now().Add(c.age), cwds, nil, nil, c.dry, true)
 			if err != nil || len(s.Errors) > 0 {
 				t.Fatal(err, s.Errors)
 			}
@@ -100,8 +100,68 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 			if hasBranch("stale-merged") != c.dry || !hasBranch("stale-unmerged") || !hasBranch("main") {
 				t.Fatalf("branches: stale-merged %v, stale-unmerged %v, main %v", hasBranch("stale-merged"), hasBranch("stale-unmerged"), hasBranch("main"))
 			}
-			if want := "stale-merged"; !slices.Contains(s.Branches, want) {
+			if want := "stale-merged"; !slices.ContainsFunc(s.Branches, func(d Dropped) bool { return d.Name == want }) {
 				t.Fatalf("deleted %v, want %s among them", s.Branches, want)
+			}
+		})
+	}
+}
+
+func TestGCLimitedToOwnedWorktreesLeavesEveryOtherWorktreeAndBranch(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		owned   bool
+		removed []string
+		deleted []string
+	}{
+		{"unlimited", false, []string{"mine", "theirs"}, []string{"mine", "mine-old", "their-old", "theirs"}},
+		{"limited to owned", true, []string{"mine"}, []string{"mine", "mine-old"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
+			repo := filepath.Join(base, "repo")
+			run(t, base, "git", "init", "-q", "-b", "main", "repo")
+			run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
+			run(t, repo, "git", "remote", "add", "origin", filepath.Join(base, "origin.git"))
+			run(t, repo, "git", "push", "-q", "origin", "main")
+			run(t, repo, "git", "fetch", "-q", "origin")
+			run(t, repo, "git", "branch", "mine-old")
+			run(t, repo, "git", "branch", "their-old")
+			trees := map[string]string{}
+			for _, b := range []string{"mine", "theirs"} {
+				trees[b] = WorktreePath(repo, b)
+				run(t, repo, "git", "worktree", "add", "-q", "-b", b, trees[b])
+			}
+			var own *Owned
+			if c.owned {
+				own = &Owned{Paths: map[string]bool{trees["mine"]: true}, Branches: map[string]bool{"mine": true, "mine-old": true}}
+			}
+
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, own, false, false)
+			if err != nil || len(s.Errors) > 0 {
+				t.Fatal(err, s.Errors)
+			}
+			var removed, deleted []string
+			for _, tr := range s.Trees {
+				if tr.Keep == "" && tr.Head != "" && tr.Why != "" {
+					removed = append(removed, tr.Branch)
+				}
+			}
+			for _, d := range s.Branches {
+				if d.Head != "" && d.Why == "merged into origin/main" {
+					deleted = append(deleted, d.Name)
+				}
+			}
+			slices.Sort(removed)
+			slices.Sort(deleted)
+			if !slices.Equal(removed, c.removed) || !slices.Equal(deleted, c.deleted) {
+				t.Fatalf("removed %v and deleted %v, want %v and %v (%+v)", removed, deleted, c.removed, c.deleted, s)
+			}
+			for b, wt := range trees {
+				if _, err := os.Stat(wt); (err != nil) != slices.Contains(c.removed, b) {
+					t.Fatalf("%s worktree on disk: %v", b, err == nil)
+				}
 			}
 		})
 	}

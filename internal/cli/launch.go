@@ -36,6 +36,10 @@ type launcher struct {
 	repos string
 	// landings is the JSON-lines log every landing appends to; empty logs nothing.
 	landings string
+	// removals is the log gc appends a line to for every worktree, branch and record it removes; empty logs nothing.
+	removals string
+	// everywhere lets gc sweep repositories its launch records did not make worktrees in; only the default state dir does.
+	everywhere bool
 }
 
 func newLauncher() (launcher, error) {
@@ -46,10 +50,11 @@ func newLauncher() (launcher, error) {
 	dir := filepath.Dir(path)
 	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf"),
 		stamp: filepath.Join(dir, "gc.stamp"), repos: filepath.Join(dir, "repos.json"), landings: filepath.Join(dir, "landings.jsonl"),
-		squash: &launch.Squash{Hub: launch.GH{}, Cache: filepath.Join(dir, "squash.json"), Now: time.Now}}
+		removals: filepath.Join(dir, "gc.log"), squash: &launch.Squash{Hub: launch.GH{}, Cache: filepath.Join(dir, "squash.json"), Now: time.Now}}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
+	l.everywhere = defaultStateDir(dir)
 	return l, os.WriteFile(l.conf, []byte(tmux.ServerConf), 0o644)
 }
 
