@@ -392,6 +392,11 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		if err := json.Unmarshal([]byte(r.Body), &a); err != nil {
 			return err
 		}
+		if a.Hops == 0 && a.Item != r.Origin {
+			// An ask queued before any host named its origin carries the origin's own host name; name it as this side does.
+			a.Text = strings.ReplaceAll(a.Text, a.Item+"/#", r.Origin+"/#")
+			a.Item = r.Origin
+		}
 		up := o.Above(a.Recipient)
 		if _, _, remote := SplitRemote(up); remote && a.Hops >= maxHops {
 			up = Owner

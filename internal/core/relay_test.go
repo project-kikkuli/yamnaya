@@ -68,11 +68,15 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 		chiefOn, managerOn string
 		// chiefGone retires the chief before the ask, so it climbs past it to the owner.
 		chiefGone bool
+		// unnamed asks before the owner's host has ever named the manager's host, which then knows itself only by its host name.
+		unnamed bool
 	}{
 		{name: "manager on b reports to a chief on a", chiefOn: "a", managerOn: "b"},
 		{name: "manager on a reports to a chief on b", chiefOn: "b", managerOn: "a"},
 		{name: "manager on b reports to a chief on c, two hops through a", chiefOn: "c", managerOn: "b"},
 		{name: "chief on a is retired, so the ask reaches the owner on b", chiefOn: "a", managerOn: "b", chiefGone: true},
+		{name: "manager on b asks before a named b", chiefOn: "a", managerOn: "b", unnamed: true},
+		{name: "manager on b asks before a named b and the chief on a is retired", chiefOn: "a", managerOn: "b", unnamed: true, chiefGone: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFleet(t)
@@ -86,6 +90,11 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 			}
 			if tc.chiefGone {
 				if _, err := cw.core.DropGoal(chief.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.unnamed {
+				if _, err := mw.core.Store.db.Exec(`DELETE FROM ym_relay_self`); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -301,5 +310,46 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 	}
 	if len(notified) != 1 || !strings.HasPrefix(notified[0], "ym: b "+g.ID+" done") {
 		t.Errorf("owner's host notified %q, want b's done goal once", notified)
+	}
+}
+
+func TestAttachingUnderAChiefOnAnotherHostNamesThatChiefHoweverItIsReferred(t *testing.T) {
+	for _, tc := range []struct {
+		ref, parent, refused string
+	}{
+		{ref: "box/mgr9", parent: "box/mgr9"},
+		{ref: "BOX/MGR9", parent: "box/mgr9"},
+		{ref: "box/mgr3", refused: "only a chief has reports"},
+		{ref: "box/goal3", refused: "only a chief has reports"},
+		{ref: "box/mgr7", parent: "box/mgr7"},
+	} {
+		t.Run(tc.ref, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, mgr := w.goal(t, "ship it", "/repo/app")
+			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", At: w.clock, Self: "box",
+				Managers: []Manager{
+					{ID: "mgr9", Role: RoleChief, Name: "platform"},
+					{ID: "mgr3", Role: RoleManager, Name: "port it", GoalID: "goal3"},
+				},
+				Goals: []Goal{{ID: "goal3", Ask: "port it", ManagerID: "mgr3", State: GoalActive}},
+			}}}
+			err := w.core.Attach(mgr.ID, tc.ref)
+			if tc.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("attach under %s = %v, want refused: %s", tc.ref, err, tc.refused)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			o, err := w.core.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := o.Managers[mgr.ID].ParentID; got != tc.parent {
+				t.Errorf("attach under %s left parent %q, want %q", tc.ref, got, tc.parent)
+			}
+		})
 	}
 }

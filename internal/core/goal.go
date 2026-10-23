@@ -111,10 +111,11 @@ func (c *Core) Attach(child, chief string) error {
 		return err
 	}
 	if _, _, remote := SplitRemote(chief); remote {
-		if err := c.checkRemoteChief(m, chief); err != nil {
+		boss, err := c.checkRemoteChief(m, chief)
+		if err != nil {
 			return err
 		}
-		m.ParentID = strings.ToLower(chief)
+		m.ParentID = boss
 		return c.Store.SaveManager(m)
 	}
 	if chief != "" {
@@ -136,31 +137,36 @@ func (c *Core) Attach(child, chief string) error {
 	return c.Store.SaveManager(m)
 }
 
-// checkRemoteChief refuses a chief on another host that the board shows is not a chief or reports to child already.
-func (c *Core) checkRemoteChief(child Manager, chief string) error {
+// checkRemoteChief resolves chief, a manager, chief or goal on another host, to the chief's id, refusing one the board shows is not a
+// chief or reports to child already; a chief the board does not show yet is taken as named.
+func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
+	chief = strings.ToLower(chief)
 	if c.Remotes == nil {
-		return nil
+		return chief, nil
 	}
 	o, err := c.LoadOrg()
 	if err != nil {
-		return err
+		return "", err
 	}
 	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
-	boss, ok := o.Managers[strings.ToLower(chief)]
+	boss, ok := o.Managers[chief]
+	if g, isGoal := o.Goals[chief]; !ok && isGoal {
+		boss, ok = o.Managers[g.ManagerID]
+	}
 	if !ok {
-		return nil
+		return chief, nil
 	}
 	if boss.Role != RoleChief {
-		return fmt.Errorf("%s is a manager; only a chief has reports", chief)
+		return "", fmt.Errorf("%s is a manager; only a chief has reports", chief)
 	}
 	seen := map[string]bool{}
 	for at := boss.ID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
 		seen[at] = true
 		if at == child.ID {
-			return fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.ID)
+			return "", fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.ID)
 		}
 	}
-	return nil
+	return boss.ID, nil
 }
 
 // lookup finds a manager or chief by its id or the id of its goal.
