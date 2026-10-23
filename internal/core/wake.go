@@ -424,7 +424,7 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 		}
 	}
 	for _, l := range b.Launched {
-		if _, shown := b.Session(l.Session); !shown && l.State == "running" && mine(l.Session) {
+		if _, shown := b.Session(l.Session); !shown && l.MayRun() && mine(l.Session) {
 			return true
 		}
 	}

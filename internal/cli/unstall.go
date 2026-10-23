@@ -24,7 +24,10 @@ func (l launcher) unstall(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	panes := l.srv.Panes()
+	panes, err := l.srv.Panes()
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, rec := range all {
 		if rec.Harness != claude.Name || rec.IsLanded() || now.Sub(rec.Started) > unstallWithin {

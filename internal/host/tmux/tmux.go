@@ -3,6 +3,7 @@ package tmux
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,28 +77,58 @@ func (h *Host) run(args ...string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		return "", &runError{args: args, err: err, stderr: strings.TrimSpace(errb.String())}
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
 }
 
+type runError struct {
+	args   []string
+	err    error
+	stderr string
+}
+
+func (e *runError) Error() string {
+	return fmt.Sprintf("tmux %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
+}
+
+func (e *runError) Unwrap() error { return e.err }
+
+// absent reports whether tmux's message says the session it was asked about, or the whole server, does not exist.
+func absent(text string) bool {
+	return strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") ||
+		strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)")
+}
+
+// gone reports whether err is tmux saying the session or server does not exist, rather than tmux failing to answer.
+func gone(err error) bool {
+	var re *runError
+	return errors.As(err, &re) && absent(re.stderr)
+}
+
 // list caches the pane table for a moment so one board refresh runs tmux once.
 func (h *Host) list() map[string]pane {
-	panes, _ := h.table()
+	panes, _, _ := h.table()
 	return panes
 }
 
-// table reads every pane once: live panes by terminal, and the first pane of each session by session name.
-func (h *Host) table() (map[string]pane, map[string]Pane) {
+// table reads every pane once: live panes by terminal, and the first pane of each session by session name. A server that is
+// not running has no panes; any other failure to list them is an error and leaves nothing cached, never an empty table.
+func (h *Host) table() (map[string]pane, map[string]Pane, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.panes != nil && (time.Since(h.at) < 500*time.Millisecond || h.quiet()) {
-		return h.panes, h.sessions
+		return h.panes, h.sessions, nil
 	}
-	h.panes, h.sessions, h.at, h.listed = map[string]pane{}, map[string]Pane{}, time.Now(), h.stamp
+	at, listed := time.Now(), h.stamp
 	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t"+paneFormat)
+	if err != nil && !gone(err) {
+		h.panes, h.sessions = nil, nil
+		return map[string]pane{}, map[string]Pane{}, err
+	}
+	h.panes, h.sessions, h.at, h.listed = map[string]pane{}, map[string]Pane{}, at, listed
 	if err != nil {
-		return h.panes, h.sessions
+		return h.panes, h.sessions, nil
 	}
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.SplitN(line, "\t", 5)
@@ -113,7 +144,7 @@ func (h *Host) table() (map[string]pane, map[string]Pane) {
 			}
 		}
 	}
-	return h.panes, h.sessions
+	return h.panes, h.sessions, nil
 }
 
 // settle is how long after a terminal process changes the pane table is still reread, while tmux catches up with it.

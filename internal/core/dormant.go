@@ -86,6 +86,12 @@ type NewLaunch struct {
 }
 
 // Launched is one session ym launched and how its pane stands: running, exited with a status, or gone.
+// LaunchUnknown is the state of a launch whose pane tmux could not report: it may still run, so nothing is decided on it.
+const LaunchUnknown = "unknown"
+
+// MayRun reports whether the launch's agent runs, or might: tmux could not say.
+func (l Launched) MayRun() bool { return l.State == "running" || l.State == LaunchUnknown }
+
 type Launched struct {
 	Key     string
 	Harness string

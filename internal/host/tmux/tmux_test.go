@@ -115,7 +115,7 @@ func TestPanesAreReadAgainOnlyAfterTerminalProcessesChange(t *testing.T) {
 		t.Fatalf("%d tmux calls, want none once the terminals stayed the same", read())
 	}
 	h.Terminals(2)
-	if _, ok := h.Panes()["cost"]; !ok || read() != 3 {
+	if all, _ := h.Panes(); all["cost"].ID == "" || read() != 3 {
 		t.Fatalf("a terminal process change read tmux %d times, want 3", read())
 	}
 }
@@ -226,6 +226,44 @@ func TestSplitOpensTheTargetBesideYmWithoutMovingAnySessionAndClosesOnDetach(t *
 			})
 			if out := h.must(t, "list-sessions", "-F", "#{session_name}"); out != sessions {
 				t.Errorf("sessions after detach = %q, want %q", out, sessions)
+			}
+		})
+	}
+}
+
+func TestTmuxFailingToListIsNeverAnEmptyTable(t *testing.T) {
+	row := "/dev/ttys006\t%11\tcost:0.0\tcost\t%11\t/dev/ttys006\t0\t0\t412\t"
+	for _, tc := range []struct {
+		name, stderr string
+		wantErr      bool
+		wantGone     bool
+	}{
+		{name: "tmux fails to answer", stderr: "server exited unexpectedly", wantErr: true},
+		{name: "the server is not running", stderr: "no server running on /private/tmp/tmux-501/fake", wantGone: true},
+		{name: "the session is gone", stderr: "can't find session: cost", wantGone: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			fail := filepath.Join(dir, "fail")
+			script := "#!/bin/sh\nif [ -e " + fail + " ]; then cat " + fail + " >&2; exit 1; fi\nprintf '%s\\n' '" + row + "'\n"
+			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			os.WriteFile(fail, []byte(tc.stderr+"\n"), 0o644)
+			h := &Host{Socket: "fake"}
+			all, err := h.Panes()
+			if (err != nil) != tc.wantErr || len(all) != 0 {
+				t.Fatalf("Panes = %v, %v; want error %v and no panes", all, err, tc.wantErr)
+			}
+			_, perr := h.Pane("cost")
+			if errors.Is(perr, core.ErrNotFound) != tc.wantGone || perr == nil {
+				t.Fatalf("Pane = %v; want not found %v, an error either way", perr, tc.wantGone)
+			}
+			os.Remove(fail)
+			all, err = h.Panes()
+			if got := all["cost"].ID; tc.wantErr && (err != nil || got != "%11") {
+				t.Fatalf("after tmux answers again Panes = %v, %v; a failed read must not be cached", all, err)
 			}
 		})
 	}

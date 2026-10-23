@@ -41,7 +41,7 @@ func (b Board) Alive(m Manager) bool {
 		return true
 	}
 	for _, l := range b.Launched {
-		if l.Session == m.Session && l.State == "running" {
+		if l.Session == m.Session && l.MayRun() {
 			return true
 		}
 	}

@@ -69,12 +69,13 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the board's pane table to show the agent exited", func() bool {
-		return h.Panes()["repo-wt-x"].Dead
+		all, err := h.Panes()
+		return err == nil && all["repo-wt-x"].Dead
 	})
 	if p, err = h.Pane("repo-wt-x"); err != nil || !p.Dead || p.Status != 3 {
 		t.Errorf("exited pane %+v, %v, want dead with status 3", p, err)
 	}
-	if all := h.Panes(); all["repo-wt-x"] != p {
+	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != p {
 		t.Errorf("Panes()[repo-wt-x] = %+v, want the exited pane %+v", all["repo-wt-x"], p)
 	}
 	if err := h.Respawn("repo-wt-x", t.TempDir(), []string{"cat"}); err != nil {
@@ -83,7 +84,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if p, err = h.Pane("repo-wt-x"); err != nil || p.Dead {
 		t.Fatalf("after respawn %+v, %v", p, err)
 	}
-	if all := h.Panes(); all["repo-wt-x"] != p {
+	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != p {
 		t.Errorf("Panes()[repo-wt-x] = %+v, want the respawned pane %+v", all["repo-wt-x"], p)
 	}
 	if c := h.Attach(core.Handle{ID: p.ID}); c == nil || !slices.Contains(c.Args, "=repo-wt-x") || slices.ContainsFunc(c.Env, func(kv string) bool { return len(kv) > 5 && kv[:5] == "TMUX=" }) {
@@ -100,7 +101,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if _, err := h.Pane("repo-wt-x"); !errors.Is(err, core.ErrNotFound) {
 		t.Errorf("Pane after Kill = %v, want ErrNotFound", err)
 	}
-	if _, ok := h.Panes()["repo-wt-x"]; ok {
+	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != (Pane{}) {
 		t.Error("Panes still lists the killed session")
 	}
 	if err := h.Kill("repo-wt-x"); err != nil {

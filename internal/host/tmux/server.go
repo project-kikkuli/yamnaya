@@ -101,19 +101,24 @@ func (h *Host) Capture(name string) (string, error) {
 	return h.run("capture-pane", "-p", "-t", "="+name+":")
 }
 
-// Pane reads the pane of session name; ErrNotFound when the session is gone.
+// Pane reads the pane of session name; ErrNotFound when tmux says the session or its server is gone, any other error when tmux
+// could not say.
 func (h *Host) Pane(name string) (Pane, error) {
 	out, err := h.run("list-panes", "-t", "="+name+":", "-F", paneFormat)
-	if err != nil {
+	if gone(err) {
 		return Pane{}, fmt.Errorf("%s: %w", name, core.ErrNotFound)
+	}
+	if err != nil {
+		return Pane{}, err
 	}
 	return parsePane(name, out)
 }
 
-// Panes is the first pane of every session on the server, by session name; none when the server is down.
-func (h *Host) Panes() map[string]Pane {
-	_, sessions := h.table()
-	return maps.Clone(sessions)
+// Panes is the first pane of every session on the server, by session name; none when the server is down, an error when tmux
+// could not list them.
+func (h *Host) Panes() (map[string]Pane, error) {
+	_, sessions, err := h.table()
+	return maps.Clone(sessions), err
 }
 
 func parsePane(name, out string) (Pane, error) {
@@ -134,7 +139,7 @@ func (h *Host) Kill(name string) error {
 		return nil
 	}
 	text := strings.TrimSpace(string(out))
-	if strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") || strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)") {
+	if absent(text) {
 		return nil
 	}
 	return fmt.Errorf("tmux kill-session %s: %w: %s", name, err, text)

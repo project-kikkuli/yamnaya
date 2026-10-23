@@ -326,14 +326,20 @@ func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 // state is how a launched session's pane stands: running, exited with a status, or gone with its tmux session.
 func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	p, err := l.srv.Pane(tmux.SessionName(rec.Key))
-	if err != nil {
+	if errors.Is(err, core.ErrNotFound) {
 		return p, "gone"
+	}
+	if err != nil {
+		return p, core.LaunchUnknown
 	}
 	return p, paneState(p)
 }
 
-// stateIn is a record's state read from a pane table taken once for many records.
-func stateIn(panes map[string]tmux.Pane, rec launch.Record) string {
+// stateIn is a record's state read from a pane table taken once for many records, unknown when tmux could not list it.
+func stateIn(panes map[string]tmux.Pane, listErr error, rec launch.Record) string {
+	if listErr != nil {
+		return core.LaunchUnknown
+	}
 	p, ok := panes[tmux.SessionName(rec.Key)]
 	if !ok {
 		return "gone"
@@ -353,7 +359,7 @@ func paneState(p tmux.Pane) string {
 
 func (l launcher) Launched() []core.Launched {
 	all, _ := l.records.All()
-	panes := l.srv.Panes()
+	panes, listErr := l.srv.Panes()
 	out := make([]core.Launched, 0, len(all))
 	for _, rec := range all {
 		if rec.IsLanded() {
@@ -361,7 +367,7 @@ func (l launcher) Launched() []core.Launched {
 			continue
 		}
 		rec = l.settle(rec)
-		st := stateIn(panes, rec)
+		st := stateIn(panes, listErr, rec)
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path})
 	}
 	return out
@@ -394,6 +400,9 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	pane, st := l.state(rec)
 	if st == "running" {
 		return "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
+	}
+	if st == core.LaunchUnknown {
+		return "", fmt.Errorf("tmux could not say whether %s still runs; try again", rec.Key)
 	}
 	if err := launch.Restore(rec.Worktree, rec.Head); err != nil {
 		return "", err
@@ -435,7 +444,7 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 // and a death by a signal or after ym kill only a day on.
 func landsAlone(rec launch.Record, state string, now time.Time) bool {
 	switch {
-	case state == "running":
+	case state == "running", state == core.LaunchUnknown:
 		return false
 	case !rec.Killed.IsZero():
 		return now.Sub(rec.Killed) >= 24*time.Hour
@@ -450,13 +459,13 @@ func (l launcher) Dormant() []core.Dormant {
 	l.sweepSoon()
 	all, _ := l.records.All()
 	dirs := sync.OnceValue(cwds)
-	panes := l.srv.Panes()
+	panes, listErr := l.srv.Panes()
 	var out []core.Dormant
 	for _, rec := range all {
 		if rec.IsLanded() {
 			continue
 		}
-		st := stateIn(panes, rec)
+		st := stateIn(panes, listErr, rec)
 		if landsAlone(rec, st, time.Now()) {
 			// Landing removes the worktree, so it goes by the pane as it is now, not a table read before the session started.
 			_, st = l.state(rec)
@@ -470,7 +479,7 @@ func (l launcher) Dormant() []core.Dormant {
 				st = "land failed: " + err.Error()
 			}
 		}
-		if st != "running" {
+		if st != "running" && st != core.LaunchUnknown {
 			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
 				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started})
 		}
@@ -651,8 +660,8 @@ func (l launcher) LandAll() string {
 		if rec.IsLanded() {
 			continue
 		}
-		if _, st := l.state(rec); st == "running" {
-			lines = append(lines, fmt.Sprintf("skipped %s: running", rec.Key))
+		if _, st := l.state(rec); st == "running" || st == core.LaunchUnknown {
+			lines = append(lines, fmt.Sprintf("skipped %s: %s", rec.Key, st))
 			continue
 		}
 		msg, err := l.landUnused(rec, dirs)

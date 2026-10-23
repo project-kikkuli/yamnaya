@@ -531,3 +531,12 @@ func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
 		t.Fatalf("the moved manager could not finish its goal: %v", err)
 	}
 }
+
+func TestAManagerWhosePaneTmuxCannotReportIsNotTakenForDead(t *testing.T) {
+	for state, alive := range map[string]bool{"running": true, LaunchUnknown: true, "gone": false, "exited 0": false} {
+		b := Board{Launched: []Launched{{Session: "mgr-session", State: state}}}
+		if got := b.Alive(Manager{Session: "mgr-session"}); got != alive {
+			t.Errorf("launch %q: alive %v, want %v", state, got, alive)
+		}
+	}
+}
