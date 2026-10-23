@@ -89,3 +89,34 @@ func TestBriefPagesShowEachVersionAndRollReportsUpUnderTheirChief(t *testing.T) 
 		t.Fatalf("unknown goal answered %d, want 404", res.StatusCode)
 	}
 }
+
+func TestBriefSiteAnswersOnlyRequestsToAnAddress(t *testing.T) {
+	dir := t.TempDir()
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	site := &briefSite{core: &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}}
+	for _, tc := range []struct {
+		host string
+		want int
+	}{
+		{"127.0.0.1:7477", http.StatusOK},
+		{"localhost:7477", http.StatusOK},
+		{"LOCALHOST", http.StatusOK},
+		{"[::1]:7477", http.StatusOK},
+		{"100.64.0.7:7477", http.StatusOK},
+		{"rebind.example.com:7477", http.StatusForbidden},
+		{"localhost.example.com", http.StatusForbidden},
+		{"127.0.0.1.nip.io:7477", http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = tc.host
+		rec := httptest.NewRecorder()
+		site.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("Host %s: status %d, want %d", tc.host, rec.Code, tc.want)
+		}
+	}
+}

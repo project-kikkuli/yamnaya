@@ -87,6 +87,10 @@ func (n briefNode) Age(t time.Time) string {
 }
 
 func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !directHost(r.Host) {
+		http.Error(w, "briefs answer only a request to an address, not a name", http.StatusForbidden)
+		return
+	}
 	o, err := s.core.LoadOrg()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -167,6 +171,15 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	render(w, briefPage, n)
+}
+
+// directHost reports whether host names the machine by address or as localhost, which no other site's DNS can point here.
+func directHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host) != nil
 }
 
 func findManager(o core.Org, ref string) (core.Manager, bool) {

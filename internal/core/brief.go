@@ -1,7 +1,9 @@
 package core
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -319,12 +321,22 @@ func (f Freshness) reason() string {
 	return fmt.Sprintf("v%d predates %s at %s", f.Brief.Version, f.BehindWhat, f.Behind.Local().Format(time.Kitchen))
 }
 
-// BriefsAddr is where ym serve serves briefs: $YAMNAYA_BRIEFS_ADDR, else 127.0.0.1:7477.
+// BriefsAddr is where ym serve serves briefs: $YAMNAYA_BRIEFS_ADDR, else 127.0.0.1:7477 for the default state directory and a port
+// of its own for any other, so a second ym's serve never takes the owner's page.
 func BriefsAddr() string {
 	if a := os.Getenv("YAMNAYA_BRIEFS_ADDR"); a != "" {
 		return a
 	}
-	return "127.0.0.1:7477"
+	dir, err := DefaultStorePath()
+	if err != nil {
+		return "127.0.0.1:7477"
+	}
+	dir, _ = filepath.Abs(filepath.Dir(dir))
+	if home, err := os.UserHomeDir(); err != nil || dir == filepath.Join(home, ".local", "state", "yamnaya") {
+		return "127.0.0.1:7477"
+	}
+	sum := sha256.Sum256([]byte(dir))
+	return fmt.Sprintf("127.0.0.1:%d", 7478+binary.BigEndian.Uint32(sum[:4])%1000)
 }
 
 // BriefURL is the stable local page of the goal's or chief's brief that id names.
