@@ -28,7 +28,20 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var discover bool
 	var briefs string
 	var wait bool
-	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) (err error) {
+		if dir, dirErr := stateDir(); dirErr == nil {
+			if log := openServeLog(cmd.ErrOrStderr(), filepath.Join(dir, "work-service.log")); log != nil {
+				cmd.SetOut(log)
+				cmd.SetErr(log)
+				defer func() {
+					if err != nil && !errors.Is(err, tui.ErrRestart) {
+						fmt.Fprintln(log, "ym:", err)
+						err = loggedError{err}
+					}
+					log.Close()
+				}()
+			}
+		}
 		if interval <= 0 {
 			return fmt.Errorf("interval must be positive")
 		}

@@ -15,7 +15,9 @@ func main() {
 		err = cli.Restart()
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "ym:", err)
+		if !cli.Logged(err) {
+			fmt.Fprintln(os.Stderr, "ym:", err)
+		}
 		os.Exit(cli.ExitCode(err))
 	}
 }
