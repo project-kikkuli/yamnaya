@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rehearse a real goal end to end: a ym built from origin/main, in its own state dir and tmux server, hands a real claude manager a
-# goal on the proving-ground repository and records everything that happens; a scenario adds one fault and checks it is handled.
+# goal on a private repository made for the run from tools/rehearse/seed and records everything that happens; a scenario adds one
+# fault and checks it is handled. The repository and the run's checkouts are deleted at the end, leaving the logs.
 set -euo pipefail
 
 # Bash reads a script as it runs, so run from a private copy that edits to this file cannot shift under a long rehearsal.
@@ -15,44 +16,36 @@ fi
 usage() {
 	cat <<'EOF'
 usage: tools/rehearse/rehearse.sh [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF]
-       tools/rehearse/rehearse.sh --reset-ground
-
---reset-ground closes the proving ground's open pull requests and puts its main back at its first commit, so the
-scenarios' asks are new work again; run it only while no rehearsal runs.
 
 Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
-Each run clones the proving ground afresh, builds ym from REF (default origin/main) and writes
-~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/timeline.log. Every run ends its tmux server and ym serve when it ends, by timeout, signal or error; its state dir and logs stay.
+Each run builds ym from REF (default origin/main), creates the private repository <you>/ym-rehearsal-<stamp> from
+tools/rehearse/seed, runs there, and when it ends, by timeout, signal or error, ends its tmux server and ym serve, deletes the
+repository and the run's checkouts, and keeps timeline.log, serve.log and brief.md in
+~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/. YM_REHEARSAL_REPO=owner/name runs on an existing repository instead
+and keeps it, so concurrent runs can share one.
 EOF
 }
 
-scenario=clean ask="" timeout=60 ref=origin/main reset=0
+scenario=clean ask="" timeout=60 ref=origin/main
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--scenario) scenario=$2; shift 2 ;;
 	--ask) ask=$2; shift 2 ;;
 	--timeout) timeout=$2; shift 2 ;;
 	--ref) ref=$2; shift 2 ;;
-	--reset-ground) reset=1; shift ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
 done
 
-ground=${YM_REHEARSAL_REPO:-rajatscode/yamnaya-proving-ground}
-if [ "$reset" = 1 ]; then
-	for n in $(gh pr list --repo "$ground" --state open --json number --jq '.[].number'); do
-		gh pr close "$n" --repo "$ground" --delete-branch >/dev/null
-	done
-	tmp=$(mktemp -d)
-	git clone -q "git@github.com:$ground.git" "$tmp/g"
-	git -C "$tmp/g" push -q --force origin "$(git -C "$tmp/g" rev-list --max-parents=0 HEAD):main"
-	rm -rf "$tmp" "${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims"
-	echo "reset $ground: open pull requests closed, main at its first commit"
-	exit 0
-fi
 src=$YM_REHEARSAL_SRC
 stamp=$(date +%Y%m%d-%H%M%S)
+ground=${YM_REHEARSAL_REPO:-}
+owned=0
+if [ -z "$ground" ]; then
+	ground=$(gh api user --jq .login)/ym-rehearsal-$stamp
+	owned=1
+fi
 run=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/$stamp-$scenario
 mkdir -p "$run/bin" "$run/state" "$run/src" "$run/snap"
 log=$run/timeline.log
@@ -92,24 +85,11 @@ upper|Add a -upper flag to cmd/tally that prints the words in upper case, with a
 dedupe-lines|Add a -dedupe-lines flag to cmd/tally that counts each distinct input line once, with table tests in tally.
 first|Add a -first flag to cmd/tally that breaks count ties by first appearance instead of alphabetically, with table tests in tally.
 md|Add a -md flag to cmd/tally that prints a Markdown table of word and count, with a test.'
-if [ -z "$ask" ]; then
-	claims=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims
-	mkdir -p "$claims"
-	main_go=$(gh api "repos/$ground/contents/cmd/tally/main.go" --jq .content | base64 -d)
-	while IFS='|' read -r flag text; do
-		if ! grep -q "\"$flag\"" <<<"$main_go" && mkdir "$claims/$flag" 2>/dev/null; then
-			ask="$text Open a pull request, get CI green, and merge it."
-			break
-		fi
-	done <<<"$features"
-	[ -n "$ask" ] || { echo "every feature is on main or claimed; run --reset-ground and clear $claims" >&2; exit 2; }
-fi
 
 git -C "$src" fetch -q origin
 rev=$(git -C "$src" rev-parse "$ref")
 git -C "$src" archive "$rev" | tar -x -C "$run/src"
 (cd "$run/src" && go build -o "$run/bin/ym" ./cmd/ym)
-git clone -q "git@github.com:$ground.git" "$run/proving-ground"
 
 export YAMNAYA_STATE_DIR=$run/state
 export YAMNAYA_YM_SOCKET=ymr-$stamp
@@ -136,14 +116,47 @@ cleanup() {
 	[ -n "$serve_pid" ] && kill "$serve_pid" 2>/dev/null || true
 	pkill -f "^$ym serve" 2>/dev/null || true
 	tmux -L "$YAMNAYA_YM_SOCKET" kill-server 2>/dev/null || true
-	note "ended tmux -L $YAMNAYA_YM_SOCKET and ym serve; state stays in $run/state"
+	note "ended tmux -L $YAMNAYA_YM_SOCKET and ym serve"
+	if [ "$owned" = 1 ]; then
+		if out=$(gh repo delete "$ground" --yes 2>&1); then
+			note "deleted $ground"
+		else
+			note "could not delete $ground: $out"
+		fi
+		rm -rf "${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims-${ground##*/}"
+	fi
+	find "$run" -mindepth 1 -maxdepth 1 ! -name timeline.log ! -name serve.log ! -name brief.md -exec rm -rf {} +
 }
 trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-"$ym" goal authority yamnaya-proving-ground --merge >/dev/null
+if [ "$owned" = 1 ]; then
+	gh repo create "$ground" --private --description "Throwaway repository for one yamnaya rehearsal" >/dev/null
+	cp -R "$run/src/tools/rehearse/seed" "$run/proving-ground"
+	git -C "$run/proving-ground" init -q -b main
+	git -C "$run/proving-ground" add -A
+	git -C "$run/proving-ground" commit -qm "Count the most frequent words on stdin, with CI"
+	git -C "$run/proving-ground" remote add origin "git@github.com:$ground.git"
+	git -C "$run/proving-ground" push -q -u origin main
+else
+	git clone -q "git@github.com:$ground.git" "$run/proving-ground"
+fi
+if [ -z "$ask" ]; then
+	claims=${YM_REHEARSAL_DIR:-$HOME/tmp/arbiter-work/yamnaya-rehearsal}/claims-${ground##*/}
+	mkdir -p "$claims"
+	main_go=$(cat "$run/proving-ground/cmd/tally/main.go")
+	while IFS='|' read -r flag text; do
+		if ! grep -q "\"$flag\"" <<<"$main_go" && mkdir "$claims/$flag" 2>/dev/null; then
+			ask="$text Open a pull request, get CI green, and merge it."
+			break
+		fi
+	done <<<"$features"
+	[ -n "$ask" ] || { echo "every feature is on main of $ground or claimed in $claims" >&2; exit 2; }
+fi
+
+"$ym" goal authority "${ground##*/}" --merge >/dev/null
 start_serve
 "$ym" goal --repo "$repo" "$ask" | tee -a "$log"
 
