@@ -102,9 +102,24 @@ The fleet line shows each Claude and Codex limit window and today's and this wee
 
 ## Machine slots
 
-Agents share one machine, so ym hands out a fixed number of slots for heavy commands: two cores and 4 GiB each, after leaving two cores and a quarter of memory (at least 4 GiB) to everything else. A 12-core, 24 GiB Mac has 4. `ym slot -- <command> [args...]` waits for a free slot, runs the command at niceness 10 (`--nice N` changes it) in its own process group, and gives the slot back once the command and anything it left running in that group have ended; an interrupt or termination passes to the whole group, and the command's exit status is ym's. Every agent ym starts is told to run test suites, builds and long jobs this way. The slots are the lock files in `~/.local/state/agent-slot` (`$XDG_STATE_HOME/agent-slot`) that the `agent-slot` script also takes, so both draw from one pool; a slot the script holds shows as `agent-slot (no details)`.
+Agents share one machine, so ym limits heavy commands to one slot per two available cores and one per 4 GiB of available memory, using whichever gives fewer slots. It first reserves two cores and a quarter of memory (at least 4 GiB) for the host. A 12-core, 24 GiB Mac has 4. `ym slot -- <command> [args...]` waits for a free slot, runs the command at niceness 10 (`--nice N` changes it) in its own process group, and gives the slot back once the command and anything it left running in that group have ended; an interrupt or termination passes to the whole group, and the command's exit status is ym's. Every agent ym starts is told to run test suites, builds and long jobs this way. The slots are the lock files in `~/.local/state/agent-slot` (`$XDG_STATE_HOME/agent-slot`) that the `agent-slot` script also takes, so both draw from one pool; a slot the script holds shows as `agent-slot (no details)`.
 
-`ym slot --status [--json]` lists the capacity, the load average, each holder with its command, pid, session, how long and where, and each waiter. The board's header and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header turns red, names the load and the three sessions, or programs outside any session, using the most processor time.
+Each slot sets its worker budget to `(physical cores - 2) / slots`, rounded down, with a minimum of one. On the 12-core, 24 GiB Mac, four slots each get two workers, leaving four cores and 8 GiB outside the slot budgets. Smaller inherited limits are kept. Commands inherit these settings:
+
+| Tools | Worker settings |
+| --- | --- |
+| Go | `GOMAXPROCS`, `GOFLAGS=-p=N` |
+| Make and CMake | `MAKEFLAGS=-jN`, `CMAKE_BUILD_PARALLEL_LEVEL` |
+| Cargo and Rayon | `CARGO_BUILD_JOBS`, `RAYON_NUM_THREADS` |
+| pytest-xdist | `PYTEST_XDIST_AUTO_NUM_WORKERS`, for `-n auto` |
+| Node | `UV_THREADPOOL_SIZE`, `NODE_OPTIONS=--v8-pool-size=N`, `npm_config_jobs` |
+| Native and Python builds | `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, `POLARS_MAX_THREADS`, `UV_CONCURRENT_BUILDS`, `MAX_JOBS` |
+
+Existing Go, Make and Node options are retained; inherited Make jobserver descriptors are removed because the slot starts a separate worker budget. These are worker defaults, not a CPU or memory quota. Command-line options and settings inside a shell command can override them. Tools without a worker environment variable need their own flag, such as Jest's `--maxWorkers=2`; use an explicit bounded count for pytest-xdist's `-n` too. The `agent-slot` script shares the locks but does not set these worker limits.
+
+`ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./internal/slot/...` also takes the named lane. Commands using the same lane run one at a time across worktrees. A lane waiter appears in `--status` and waits before taking a machine slot, so other lanes can use the pool. Lanes are released when the command and its process group end, including after interruption.
+
+`ym slot --status [--json]` lists the capacity, workers per slot, the load average, each holder with its command, pid, session, how long and where, and each waiter, including their lane names. The board's header and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header turns red, names the load and the three sessions, or programs outside any session, using the most processor time.
 
 Any process holding more than a quarter of the machine's memory gets a red header line (`memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1`), on another host's board too, tagged with that host. When it runs under an agent, ym tells that agent's manager once, with how to end it. ym never stops it itself.
 
@@ -149,6 +164,7 @@ Hosts talk through relays:
 - `ym revive` (and `o` on an exited launched session) recreates the worktree and branch when the repository exists, from the branch, else the recorded commit, else the branch on origin, else the default branch. When the launch's own clone is gone it uses another clone of the same repository on this host. When no clone is left it makes a plain directory at the recorded path and resumes the conversation there, without a checkout, and says so.
 - A session you run in a terminal, outside ym's server, gets a launch record while the board shows it, so once it ends `ym revive` resumes it on ym's server and it shows as dormant (`ended outside ym`) for a day.
 - `ym gc` keeps a landed record past 14 days while its conversation's transcript is still there.
+- ym's worktree Git commands and their `wt` children disable automatic Git maintenance and garbage collection. Starting or restoring sessions therefore does not launch detached `git gc`, `prune` or reflog expiry. Explicit repository maintenance remains a separate command; run it under a slot.
 - `ym gc` on the default state directory sweeps the repositories of its launches, of sessions it has seen and every repository under `~/dev` with linked worktrees. On any other state directory (`YAMNAYA_STATE_DIR`) it removes only the worktrees and branches its own launches made, so a drill or test never touches your repositories.
 - `ym gc` appends a line to `gc.log` in the state directory for every worktree, branch and launch record it removes: the RFC3339 time, what it removed, then `repo=`, `path=`, `branch=`, `head=` (the commit it pointed at) and `reason=`. The file only grows.
 - A new launch never takes the worktree name of a launch ym still keeps a record of, landed or not, so starting another session with the same slug gets `<slug>-2` and the landed one stays revivable.
@@ -232,7 +248,7 @@ ym starts Codex as the platform binary its npm package ships rather than through
 
 ## Development
 
-    ym slot -- go test -p 2 ./internal/<package>/...
+    ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./internal/<package>/...
     ym slot -- go vet ./...
     staticcheck ./...
 

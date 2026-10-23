@@ -11,7 +11,7 @@ import (
 )
 
 func git(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	out, err := gitCommand(append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -102,6 +102,7 @@ func Create(dir, slug string, held func(path string) bool) (Worktree, error) {
 	}
 	cmd := exec.Command(bin, "add", slug, "--from="+base)
 	cmd.Dir = root
+	noAutoMaintenance(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return Worktree{}, fmt.Errorf("wt add %s in %s: %w: %s", slug, root, err, strings.TrimSpace(string(out)))
 	}
@@ -151,8 +152,8 @@ func Restore(w Worktree, head string, clones []string) (back Worktree, lost stri
 
 func recreate(w Worktree, head string) error {
 	gd := "--git-dir=" + w.GitDir
-	has := func(args ...string) bool { return exec.Command("git", append([]string{gd}, args...)...).Run() == nil }
-	exec.Command("git", gd, "worktree", "prune").Run()
+	has := func(args ...string) bool { return gitCommand(append([]string{gd}, args...)...).Run() == nil }
+	gitCommand(gd, "worktree", "prune").Run()
 	headOK := head != "" && has("cat-file", "-e", head+"^{commit}")
 	var add []string
 	switch {
@@ -173,7 +174,7 @@ func recreate(w Worktree, head string) error {
 		}
 		add = []string{"-b", w.Branch, w.Path, fresh}
 	}
-	if out, err := exec.Command("git", append([]string{gd, "worktree", "add"}, add...)...).CombinedOutput(); err != nil {
+	if out, err := gitCommand(append([]string{gd, "worktree", "add"}, add...)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("recreate %s from %s %s: %w: %s", w.Path, w.GitDir, w.Branch, err, strings.TrimSpace(string(out)))
 	}
 	return nil

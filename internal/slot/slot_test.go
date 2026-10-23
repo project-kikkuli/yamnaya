@@ -113,7 +113,7 @@ func TestRunPassesTheExitCodeOnAndEndsWhatTheCommandLeftRunning(t *testing.T) {
 		{"exit 7", 7},
 		{"sleep 30 & echo $! > " + pidFile, 0},
 	} {
-		code, err := Run([]string{"sh", "-c", c.script}, 0)
+		code, err := Run([]string{"sh", "-c", c.script}, 0, nil)
 		if err != nil || code != c.code {
 			t.Fatalf("%q: code %d, err %v; want %d", c.script, code, err, c.code)
 		}

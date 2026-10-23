@@ -231,6 +231,7 @@ func TestCreateBranchesFromFreshRemoteBaseNotTheCheckout(t *testing.T) {
 	}{
 		{"git worktree", "", true},
 		{"wt", "#!/bin/sh\n[ \"$1\" = add ] && case \"$3\" in --from=*) ;; *) exit 1;; esac\n" +
+			"[ \"$(git config --get gc.auto)\" = 0 ] && [ \"$(git config --get maintenance.auto)\" = false ] || exit 1\n" +
 			"exec git worktree add -q -b \"$2\" \"../$(basename \"$PWD\")-wt-$2\" \"${3#--from=}\"\n", true},
 		{"no remote", "", false},
 	} {

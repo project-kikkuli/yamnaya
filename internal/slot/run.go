@@ -17,8 +17,9 @@ var Grace = 5 * time.Second
 
 // Run runs argv at niceness nice (never raising its priority) in its own process group, passing signals to that group.
 // When the command exits, whatever it left running in its group is ended too, so nothing outlives the slot.
-func Run(argv []string, nice int) (int, error) {
+func Run(argv []string, nice int, env []string) (int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if nice > niceness() {

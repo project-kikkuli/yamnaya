@@ -22,6 +22,7 @@ const gib = 1 << 30
 // Claim is who holds or waits for a slot, and for what.
 type Claim struct {
 	Slot    int       `json:"slot,omitempty"`
+	Lane    string    `json:"lane,omitempty"`
 	PID     int       `json:"pid"`
 	Command []string  `json:"command"`
 	Cwd     string    `json:"cwd,omitempty"`
@@ -43,6 +44,7 @@ type Status struct {
 	Capacity int     `json:"capacity"`
 	Cores    int     `json:"cores"`
 	Memory   uint64  `json:"memory"`
+	Workers  int     `json:"workers"`
 	Holders  []Claim `json:"holders"`
 	Waiters  []Claim `json:"waiters"`
 }
@@ -142,7 +144,7 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 // Status reads who holds and waits for the pool's slots. A slot is held while its lock is; its claim names the holder
 // unless an agent-slot script holds it, which leaves none.
 func (p Pool) Status() (Status, error) {
-	st := Status{Capacity: p.Capacity, Cores: p.Cores, Memory: p.Memory, Holders: []Claim{}, Waiters: []Claim{}}
+	st := Status{Capacity: p.Capacity, Cores: p.Cores, Memory: p.Memory, Workers: p.Workers(), Holders: []Claim{}, Waiters: []Claim{}}
 	for n := 1; n <= p.Capacity; n++ {
 		f, err := os.Open(p.lockPath(n))
 		if errors.Is(err, os.ErrNotExist) {
