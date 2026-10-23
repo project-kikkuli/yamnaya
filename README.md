@@ -107,7 +107,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
     ym remote install <host>
     ym remote <host>
 
-`ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
+`ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. `ym item list --all` also lists that host's items answered or dismissed in the last week, each with its history as that host kept it, so you see what became of an answer you sent there. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
 
 Goals across hosts:
 
@@ -132,6 +132,7 @@ Hosts talk through relays:
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
 - Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did.
 - `ym revive` (and `o` on an exited launched session) recreates the worktree and branch when the repository exists. When the repository is gone, local clone and origin both, it makes a plain directory at the recorded path and resumes the conversation there, without a checkout; such a session never lands early.
+- A new launch never takes the worktree name of a launch ym still keeps a record of, landed or not, so starting another session with the same slug gets `<slug>-2` and the landed one stays revivable.
 - A serve on a state directory other than the default (`YAMNAYA_STATE_DIR`) that sees the directory deleted ends the tmux server it launched agents on, unless that is ym's default server, and stops. Your default state directory and ym's default tmux server are never torn down this way.
 - A Claude session ym launched that sits at the folder trust dialog in its first ten minutes is trusted again and restarted, since another session's config save can drop the trust ym recorded.
 
