@@ -1,0 +1,120 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/pressure"
+	"github.com/project-kikkuli/yamnaya/internal/slot"
+)
+
+func pressureRoots(records []launch.Record, panes map[string]tmux.Pane, org core.Org) map[int]pressure.Owner {
+	parents := map[string]string{}
+	for _, rec := range records {
+		if rec.Session != "" {
+			parents[rec.Session] = rec.Parent
+		}
+	}
+	roots := map[int]pressure.Owner{}
+	for _, rec := range records {
+		if rec.IsLanded() || !rec.Seen.IsZero() {
+			continue
+		}
+		pane, ok := panes[tmux.SessionName(rec.Key)]
+		if !ok || pane.Dead || pane.PID <= 0 {
+			continue
+		}
+		owner := pressure.Owner{Session: rec.Session}
+		if m, ok := org.Managed(rec.Session, parents); ok {
+			owner.Goal, owner.Manager = m.GoalID, m.Session
+		}
+		roots[pane.PID] = owner
+	}
+	return roots
+}
+
+// The sampler runs apart from reconciliation, which can wait on git, transcripts or remote hosts.
+func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer) {
+	state, err := pressure.Read(pool.Dir)
+	if err != nil {
+		fmt.Fprintln(w, "overload:", err)
+		return
+	}
+	if err := recordPressureNotices(l.core, &state, pool.Dir); err != nil {
+		fmt.Fprintln(w, "overload:", err)
+		return
+	}
+	sample := func() (err error) {
+		at := time.Now()
+		load, err := slot.Load()
+		if err != nil {
+			return err
+		}
+		before := state.Line()
+		if err = state.Observe(at, load, pool.Cores); err != nil {
+			return err
+		}
+		defer func() {
+			err = errors.Join(err, state.Save(pool.Dir))
+			if after := state.Line(); after != before {
+				fmt.Fprintln(w, "overload:", after)
+			}
+		}()
+		procs, err := pressure.Processes(ctx)
+		if err != nil {
+			return err
+		}
+		records, err := l.records.All()
+		if err != nil {
+			return err
+		}
+		panes, err := l.srv.Panes()
+		if err != nil {
+			return err
+		}
+		org, err := l.core.LoadOrg()
+		if err != nil {
+			return err
+		}
+		sampleErr := state.Sample(at, load, pool.Cores, procs, pressureRoots(records, panes, org), pressure.SetNice)
+		if err = state.Save(pool.Dir); err != nil {
+			return errors.Join(sampleErr, err)
+		}
+		if err = recordPressureNotices(l.core, &state, pool.Dir); err != nil {
+			return errors.Join(sampleErr, err)
+		}
+		return sampleErr
+	}
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		if err := sample(); err != nil && ctx.Err() == nil {
+			fmt.Fprintln(w, "overload:", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func recordPressureNotices(c *core.Core, state *pressure.State, dir string) error {
+	for _, notice := range state.Notices() {
+		key := "overload:" + state.Since.UTC().Format(time.RFC3339Nano) + ":" + notice.Goal
+		if _, _, err := c.RecordGoalEvent(notice.Goal, "machine-throttled", notice.Text, key); err != nil {
+			return err
+		}
+		state.Notified[notice.Goal] = true
+		if err := state.Save(dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}

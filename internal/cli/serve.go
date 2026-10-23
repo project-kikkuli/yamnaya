@@ -18,6 +18,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/intake"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/slot"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +83,17 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		e.core.Log = func(line string) { fmt.Fprintln(cmd.ErrOrStderr(), line) }
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		if discover && !once {
+			if l, ok := e.core.Launches.(launcher); ok {
+				pool, err := slot.Machine()
+				if err != nil {
+					return err
+				}
+				stopped := make(chan struct{})
+				go func() { defer close(stopped); watchPressure(ctx, l, pool, cmd.ErrOrStderr()) }()
+				defer func() { cancel(); <-stopped }()
+			}
+		}
 		upgraded := make(chan bool, 1)
 		if !once {
 			go monitorWorkService(ctx, cancel, dir, started, upgraded)

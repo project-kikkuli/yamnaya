@@ -209,6 +209,9 @@ func machineLines(mc core.Machine, now time.Time, width int) string {
 	}
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
 	h := "\n" + pal.dim.Render(fit(" "+mc.Summary()))
+	if line := mc.Slots.Pressure.Line(); line != "" {
+		h += "\n" + pal.yellow.Render(fit(" "+line))
+	}
 	for _, u := range mc.Holders {
 		h += "\n" + fit(fmt.Sprintf("   slot %d  %s", u.Slot, u.Line(now)))
 	}

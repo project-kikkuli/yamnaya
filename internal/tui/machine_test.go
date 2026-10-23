@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/pressure"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
@@ -21,6 +22,10 @@ func TestTheHeaderShowsSlotHoldersWaitersAndAnOverload(t *testing.T) {
 		want []string
 	}{
 		{"no pool", core.Machine{}, nil},
+		{"throttled", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true}}, Load: 24},
+			[]string{" slots 0/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), new slots held", " overloaded: load 24 on 12 cores"}},
+		{"recovering", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true}}, Load: 10},
+			[]string{" slots 0/4 held · load 10.0 on 12 cores", " throttle: recovering, new slots open; clears after 3 minutes below 1.25x cores"}},
 		{"quiet", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 3},
 			[]string{" slots 0/4 held · load 3.0 on 12 cores"}},
 		{"busy and overloaded", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 140,

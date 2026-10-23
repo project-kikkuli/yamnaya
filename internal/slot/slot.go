@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/pressure"
 )
 
 const gib = 1 << 30
@@ -41,12 +43,13 @@ func (c Claim) Line() string {
 
 // Status is the pool as it stands: its capacity, who holds a slot, oldest first, and who waits, longest first.
 type Status struct {
-	Capacity int     `json:"capacity"`
-	Cores    int     `json:"cores"`
-	Memory   uint64  `json:"memory"`
-	Workers  int     `json:"workers"`
-	Holders  []Claim `json:"holders"`
-	Waiters  []Claim `json:"waiters"`
+	Pressure pressure.State `json:"pressure"`
+	Capacity int            `json:"capacity"`
+	Cores    int            `json:"cores"`
+	Memory   uint64         `json:"memory"`
+	Workers  int            `json:"workers"`
+	Holders  []Claim        `json:"holders"`
+	Waiters  []Claim        `json:"waiters"`
 }
 
 // Pool is the slots in Dir; Capacity is how many there are.
@@ -105,7 +108,11 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 	waiting := filepath.Join(p.waitDir(), strconv.Itoa(c.PID)+".json")
 	defer os.Remove(waiting)
 	for first := true; ; first = false {
-		for n := 1; n <= p.Capacity; n++ {
+		state, readErr := pressure.Read(p.Dir)
+		if readErr != nil {
+			return nil, 0, readErr
+		}
+		for n := 1; n <= p.Capacity && !state.Holding; n++ {
 			f, err := os.OpenFile(p.lockPath(n), os.O_CREATE|os.O_RDWR, 0o644)
 			if err != nil {
 				return nil, 0, err
@@ -145,6 +152,11 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 // unless an agent-slot script holds it, which leaves none.
 func (p Pool) Status() (Status, error) {
 	st := Status{Capacity: p.Capacity, Cores: p.Cores, Memory: p.Memory, Workers: p.Workers(), Holders: []Claim{}, Waiters: []Claim{}}
+	var pressureErr error
+	st.Pressure, pressureErr = pressure.Read(p.Dir)
+	if pressureErr != nil {
+		return st, pressureErr
+	}
 	for n := 1; n <= p.Capacity; n++ {
 		f, err := os.Open(p.lockPath(n))
 		if errors.Is(err, os.ErrNotExist) {
