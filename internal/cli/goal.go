@@ -230,10 +230,10 @@ func printGoalRow(w io.Writer, r goalRow) {
 	indent := strings.Repeat("  ", r.Depth)
 	status := []string{r.fresh.String()}
 	if r.Host != "" {
-		status = []string{"on " + r.Host}
+		status = []string{"on " + r.Host, r.fresh.String()}
 	}
 	if r.HostState != "" {
-		status = []string{"on " + r.Host + " (" + r.HostState + ")"}
+		status = []string{"on " + r.Host + " (" + r.HostState + ")", r.fresh.String()}
 	}
 	if r.Revision > 0 && !r.Adopted {
 		status = append(status, fmt.Sprintf("steer r%d not adopted", r.Revision))
