@@ -73,7 +73,8 @@ func (h *Host) run(args ...string) (string, error) {
 	if h.Socket != "" || (os.Getenv("TMUX") != "" && !h.inside()) {
 		args = append([]string{"-L", h.socketName()}, args...)
 	}
-	cmd := exec.Command("tmux", args...)
+	// -u keeps tmux from turning the tabs in -F output into underscores when this process has no UTF-8 locale, as under launchd.
+	cmd := exec.Command("tmux", append([]string{"-u"}, args...)...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

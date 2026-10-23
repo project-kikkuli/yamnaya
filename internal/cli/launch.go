@@ -191,9 +191,20 @@ func (e *env) openLaunched(w io.Writer, ref string, show func(*exec.Cmd) error) 
 	if !ok {
 		return false, nil
 	}
+	if !rec.Seen.IsZero() {
+		if _, err := e.core.Find(rec.Session); err == nil {
+			return false, nil
+		}
+	}
 	pane, st := l.state(rec)
-	if rec.IsLanded() {
+	switch {
+	case rec.IsLanded():
 		st = "landed " + rec.Landed.Format(time.DateTime)
+	case st == "running":
+	case codeGone(rec) != "":
+		st = codeGone(rec)
+	case !rec.Seen.IsZero():
+		st = "ended outside ym"
 	}
 	if st != "running" {
 		fmt.Fprintf(w, "%s %s; ym revive %s\n", rec.Key, st, rec.Key)
@@ -449,13 +460,20 @@ func (l launcher) Launched() []core.Launched {
 			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed})
 			continue
 		}
+		if !rec.Seen.IsZero() {
+			continue
+		}
 		rec = l.settle(rec)
 		st := stateIn(panes, listErr, rec)
+		if st == "gone" {
+			// A table read before a launch's session started lacks it, so gone goes by the pane as it is now.
+			_, st = l.state(rec)
+		}
 		if was := rec; mark(&rec, st) != was {
 			l.records.Save(rec)
 		}
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Session: rec.Session, State: st, Path: rec.Worktree.Path,
-			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive, Outside: !rec.Seen.IsZero()})
+			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})
 	}
 	return out
 }
@@ -465,7 +483,7 @@ func (l launcher) Launched() []core.Launched {
 func mark(rec *launch.Record, state string) launch.Record {
 	switch {
 	case state == "running":
-		rec.Running = true
+		rec.Running, rec.Revive = true, false
 	case state == "gone" && rec.Running && rec.Killed.IsZero():
 		rec.Running, rec.Revive = false, true
 	case state != core.LaunchUnknown && state != "gone":
@@ -478,7 +496,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	var landed bool
 	cmd := &cobra.Command{
 		Use:   "launched [--landed]",
-		Short: "List sessions ym launched or saw running elsewhere, and whether each agent still runs",
+		Short: "List sessions ym launched, and whether each agent still runs",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if e.core.Launches == nil {
@@ -492,7 +510,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			return nil
 		}),
 	}
-	cmd.Flags().BoolVar(&landed, "landed", false, "also list landed sessions, which ym revive brings back")
+	cmd.Flags().BoolVar(&landed, "landed", false, "also list landed sessions, and those ym saw running elsewhere a day after they ended, which ym revive brings back")
 	return cmd
 }
 

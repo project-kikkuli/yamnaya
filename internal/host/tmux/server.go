@@ -56,7 +56,7 @@ func agentEnv(env []string) []string {
 }
 
 func (h *Host) command(args ...string) *exec.Cmd {
-	cmd := exec.Command("tmux", append([]string{"-L", h.socketName()}, args...)...)
+	cmd := exec.Command("tmux", append([]string{"-u", "-L", h.socketName()}, args...)...)
 	cmd.Env = agentEnv(os.Environ())
 	return cmd
 }

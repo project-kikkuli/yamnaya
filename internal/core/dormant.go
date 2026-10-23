@@ -111,8 +111,6 @@ type Launched struct {
 	Landed, Killed time.Time
 	// Revive is set when it was running as ym's tmux server went away, so ym resumes it.
 	Revive bool
-	// Outside is set for a session ym never ran that it saw running elsewhere; it has no pane on ym's server to go.
-	Outside bool
 }
 
 func (l Launched) String() string {

@@ -195,6 +195,7 @@ func TestALaunchRunningWhenYmsServerWentAwayResumesAndOneThatHadExitedDoesNot(t 
 		{name: "killed by a signal, then the server went", seen: []string{"running", "sigkill", "gone"}},
 		{name: "running, then ym kill, then the server went", seen: []string{"running", "gone"}, killed: true},
 		{name: "launched, never seen running, then its session went", seen: []string{"gone"}},
+		{name: "read as gone once, then seen running again", seen: []string{"running", "gone", "running"}},
 		{name: "running, tmux could not say, then the server went", seen: []string{"running", "unknown", "gone"}, revives: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

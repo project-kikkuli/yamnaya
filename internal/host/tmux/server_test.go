@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
@@ -111,5 +112,26 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 func TestDefaultHostNeverAttaches(t *testing.T) {
 	if c := (&Host{}).Attach(core.Handle{ID: "%1"}); c != nil {
 		t.Errorf("default host Attach = %v", c.Args)
+	}
+}
+
+func TestPanesReadTheSameWithOrWithoutAUTF8Locale(t *testing.T) {
+	for _, tc := range []struct{ name, lcAll string }{
+		{name: "UTF-8 locale", lcAll: "en_US.UTF-8"},
+		{name: "no UTF-8 locale, as launchd starts ym serve", lcAll: "C"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := server(t)
+			h.must(t, "new-session", "-d", "-s", "work", "cat")
+			t.Setenv("LC_ALL", tc.lcAll)
+			p, err := h.Pane("work")
+			if err != nil || !strings.HasPrefix(p.ID, "%") || p.PID == 0 {
+				t.Fatalf("Pane = %+v, %v", p, err)
+			}
+			h.forget()
+			if panes, err := h.Panes(); err != nil || panes["work"].ID != p.ID {
+				t.Fatalf("Panes = %+v, %v; want work as %s", panes, err, p.ID)
+			}
+		})
 	}
 }

@@ -24,7 +24,7 @@ func TestKillUsesTheMutationResultAndOnlyAcceptsConfirmedAbsence(t *testing.T) {
 			os.WriteFile(alive, []byte("alive"), 0600)
 			t.Setenv("YM_KILL_FIXTURE_ALIVE", alive)
 			t.Setenv("YM_KILL_FIXTURE_FAILURE", tc.failure)
-			script := "#!/bin/sh\ncase \"$3\" in\nlist-panes) echo 'Permission denied' >&2; exit 1;;\nkill-session) if [ -n \"$YM_KILL_FIXTURE_FAILURE\" ]; then echo \"$YM_KILL_FIXTURE_FAILURE\" >&2; exit 1; fi; rm \"$YM_KILL_FIXTURE_ALIVE\";;\nesac\n"
+			script := "#!/bin/sh\nfor a; do case \"$a\" in list-panes|kill-session) cmd=$a; break;; esac; done\ncase \"$cmd\" in\nlist-panes) echo 'Permission denied' >&2; exit 1;;\nkill-session) if [ -n \"$YM_KILL_FIXTURE_FAILURE\" ]; then echo \"$YM_KILL_FIXTURE_FAILURE\" >&2; exit 1; fi; rm \"$YM_KILL_FIXTURE_ALIVE\";;\nesac\n"
 			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}

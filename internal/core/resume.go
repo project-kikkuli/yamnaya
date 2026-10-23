@@ -183,7 +183,7 @@ func (c *Core) ReviveWork(b Board) error {
 			delete(c.recovery.tried, l.Session)
 			c.recovery.mu.Unlock()
 		}
-		if l.State != "gone" || l.Outside || !l.Landed.IsZero() || !l.Killed.IsZero() || l.Session == "" {
+		if l.State != "gone" || !l.Landed.IsZero() || !l.Killed.IsZero() || l.Session == "" {
 			continue
 		}
 		m, ok := work(l.Session, l.Parent)
@@ -264,9 +264,7 @@ type Running struct {
 func running(b Board) []Running {
 	launched := map[string]bool{}
 	for _, l := range b.Launched {
-		if !l.Outside {
-			launched[l.Session] = true
-		}
+		launched[l.Session] = true
 	}
 	var out []Running
 	for _, s := range b.Sessions {
@@ -341,7 +339,7 @@ func (c *Core) lastRunning(b Board) []Running {
 func cold(b Board) bool {
 	n := 0
 	for _, l := range b.Launched {
-		if !l.Landed.IsZero() || l.Outside {
+		if !l.Landed.IsZero() {
 			continue
 		}
 		if l.State != "gone" {

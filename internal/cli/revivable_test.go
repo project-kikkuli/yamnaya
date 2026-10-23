@@ -154,6 +154,11 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 			if rec.IsLanded() != c.landed || (len(rows) == 1) == c.landed || (!c.landed && rows[0].State != c.state) {
 				t.Fatalf("rows %+v, landed %v; want state %q, landed %v", rows, rec.IsLanded(), c.state, c.landed)
 			}
+			for _, r := range l.Launched() {
+				if r.Session == "s2" && r.Landed.IsZero() {
+					t.Fatalf("launched lists %+v, which ym never launched, as a launch", r)
+				}
+			}
 			if c.landed {
 				l.Saw([]core.Live{s})
 				if back, _ := l.records.Find("s2"); back.IsLanded() || len(l.Dormant()) != 1 {
