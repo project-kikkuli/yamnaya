@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"io"
 	"os"
 	"os/exec"
@@ -359,4 +360,40 @@ func deletedState(dir string) bool {
 	}
 	_, err := os.Stat(dir)
 	return errors.Is(err, os.ErrNotExist)
+}
+
+// keptServe is the label of the launchd agent keeping ym serve for this state directory, when one is loaded.
+func keptServe() (string, bool) {
+	state, err := stateDir()
+	if err != nil {
+		return "", false
+	}
+	label, err := serveLabel(state)
+	if err != nil {
+		return "", false
+	}
+	if _, err := launchctl("print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)); err != nil {
+		return "", false
+	}
+	return label, true
+}
+
+// kickstart asks launchd to start its agent label unless it already runs; a serve it starts waits for any other to exit.
+func kickstart(label string) error {
+	if out, err := launchctl("kickstart", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)); err != nil {
+		return fmt.Errorf("launchctl kickstart %s: %w: %s", label, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// scrubAgentEnv drops from this process's environment what it inherited from an agent's session, so a serve started from an
+// agent's shell, its restarts and what it starts carry none of that session's identity.
+func scrubAgentEnv() {
+	keep := tmux.AgentEnv(os.Environ())
+	os.Clearenv()
+	for _, kv := range keep {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			os.Setenv(k, v)
+		}
+	}
 }

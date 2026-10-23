@@ -40,6 +40,10 @@ func SessionName(key string) string {
 }
 
 // agentEnv drops the variables a running agent sets for its own children, so agents ym starts never think they are nested.
+// AgentEnv is env without what marks a process as running inside an agent's session: its tmux client and pane, and Claude
+// Code's and Codex's session variables.
+func AgentEnv(env []string) []string { return agentEnv(env) }
+
 func agentEnv(env []string) []string {
 	var out []string
 	for _, kv := range env {

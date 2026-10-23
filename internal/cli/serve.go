@@ -30,6 +30,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 	var wait bool
 	cmd := &cobra.Command{Use: "serve", Short: "Reconcile items, pull requests and idle agents independently of the terminal", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) (err error) {
 		os.Unsetenv(tui.RestartedEnv)
+		scrubAgentEnv()
 		var log *serveLog
 		if dir, dirErr := stateDir(); dirErr == nil {
 			if log = openServeLog(cmd.ErrOrStderr(), filepath.Join(dir, "work-service.log")); log != nil {
@@ -142,6 +143,10 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				select {
 				case changed := <-upgraded:
 					if changed {
+						if label, kept := keptServe(); kept && os.Getenv("XPC_SERVICE_NAME") != label {
+							fmt.Fprintln(cmd.ErrOrStderr(), "ym serve hands over to launchd's", label, "for the new ym")
+							return kickstart(label)
+						}
 						if err := keepServeLockAcrossExec(lock); err != nil {
 							fmt.Fprintln(cmd.ErrOrStderr(), "ym serve restarts without its lock:", err)
 						}
@@ -256,6 +261,8 @@ func ensureWorkService() error {
 	return startWorkService()
 }
 
+// startWorkService starts ym serve when none holds its lock: through launchd when it keeps one for this state directory, so there
+// is only ever that serve, else detached and without the calling agent's environment.
 func startWorkService() error {
 	dir, err := stateDir()
 	if err != nil {
@@ -270,6 +277,9 @@ func startWorkService() error {
 		return nil
 	}
 	lock.Close()
+	if label, kept := keptServe(); kept {
+		return kickstart(label)
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -280,6 +290,7 @@ func startWorkService() error {
 	}
 	defer log.Close()
 	p := exec.Command(self, "serve")
+	p.Env = tmux.AgentEnv(os.Environ())
 	p.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	p.Stdout, p.Stderr = log, log
 	if err = p.Start(); err != nil {
