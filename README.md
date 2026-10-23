@@ -109,9 +109,18 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 `ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. A host that does not answer shows unreachable with ssh's reason and never holds up the board. Opening, killing, sending, landing and answering run through ssh on that host. `ym remote forget <host>` stops showing it.
 
-Goals run on the host where they start, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there; `ym remote install` also keeps it running across reboots with a systemd user timer (`ym service keep`: `ym-serve.timer` for the default state directory, a name of its own for any other `YAMNAYA_STATE_DIR`), so a remote goal moves with no board open anywhere. The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, it and every chief above it hear the state changes of its goals there, and `ym goal send`, `relaunch`, `drop`, `ack` and `feed` take remote ids. A remote goal's feed shows on the board, and its done or stuck notification appears on the host that carries its relays, the one you sit at.
+Goals across hosts:
 
-Hosts talk through relays. Each host keeps every ask, message and command bound for another host until a host carrying it confirms, and this host's `ym serve` trades relays with each remembered host every cycle in one ssh round trip, passing on what is bound for a third. A host that cannot be reached keeps working on its own and keeps its relays; the board shows it unreachable with its last known sessions and goals, and what it held takes effect once when it is back. `ym relay` lists what this host still has to carry.
+- A goal runs on the host where it starts, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there. `ym remote install` also keeps it running across reboots with a systemd user timer (`ym service keep`: `ym-serve.timer` for the default state directory, a name of its own for any other), so a remote goal moves with no board open anywhere.
+- The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A remote goal's feed shows on the board, and its done or stuck notification appears on the host you sit at.
+- A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, and it and every chief above it hear its goals' state changes. `ym goal send`, `relaunch`, `drop`, `ack` and `feed` take remote ids.
+- A chief may steer a goal any number of hosts below it. When the chain leaves the goal's host, `ym goal steer` says the steer lands once the next chief's host confirms the steerer is above it; a chief the goal does not report to is told the steer was refused.
+
+Hosts talk through relays:
+
+- Each host keeps every ask, message and command bound for another host until the receiving host acts on it. This host's `ym serve` trades relays with each remembered host every cycle in one ssh round trip, passing on what is bound for a third.
+- A relay that fails where it lands (a command that hit a locked database, say) stays with its sender and is sent again every cycle. `ym relay` lists what this host still has to carry, a refused one with `refused there: <why>`; `ym relay drop <seq>` stops carrying one another host keeps refusing.
+- A host that cannot be reached keeps working on its own and keeps its relays. The board shows it unreachable with its last known sessions and goals, and what it held takes effect once when it is back.
 
 ## Background service
 
@@ -172,7 +181,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |
 | Drift | `ym health drift [--since D] [file...]` | replay this machine's transcripts and list each time an agent was busy going nowhere |
 | Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
-| | `ym relay` / `ym service keep` | what this host still has to carry to others / keep `ym serve` running here |
+| | `ym relay [drop <seq>]` / `ym service keep` | what this host still has to carry, or stop carrying a refused one / keep `ym serve` running here |
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
 | | `ym service status\|restart` / `ym docs [connect <email>]` | background service / Notion |
 
