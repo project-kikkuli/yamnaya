@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -210,10 +212,34 @@ func (r *remoteHosts) Sync(host string, req core.RelaySync) (core.RelayReply, er
 	return reply, nil
 }
 
+// Attach runs args on host in this terminal. What the session copies there lands on this Mac's pasteboard, and a link to
+// a port on the host's own localhost opens here: ym forwards that port over the connection.
 func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
 	c := exec.Command(r.ssh, append(sshArgs(host, "-t"), remoteCommand(args))...)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	relay := &termRelay{out: os.Stdout, forward: func(port string) {
+		if "127.0.0.1:"+port == core.BriefsAddr() {
+			return
+		}
+		spec := "127.0.0.1:" + port + ":localhost:" + port
+		go exec.Command(r.ssh, sshArgs(host, "-O", "forward", "-L", spec)...).Run()
+	}}
+	if runtime.GOOS == "darwin" {
+		relay.copy = func(text []byte) {
+			pb := exec.Command("/usr/bin/pbcopy")
+			pb.Stdin = bytes.NewReader(hostBriefLinks(text, host))
+			go pb.Run()
+		}
+	}
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, relay, os.Stderr
 	return c
+}
+
+var remoteBriefLink = regexp.MustCompile(`(https?://(?:127\.0\.0\.1|localhost):7477/b/)([^/\s?#]+(?:[?#][^\s]*)?)(\s|$)`)
+
+// hostBriefLinks points the links in text to briefs on host's own serve at this machine's serve, which shows them at
+// /b/<host>/<id>, since the same port here is this machine's.
+func hostBriefLinks(text []byte, host string) []byte {
+	return remoteBriefLink.ReplaceAll(text, []byte("${1}"+host+"/${2}${3}"))
 }
 
 // sshArgs are ssh's arguments up to the remote command: opts, then one connection to host shared by every ssh ym runs

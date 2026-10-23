@@ -137,8 +137,11 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ref := strings.TrimPrefix(r.URL.Path, "/b/")
 	if host, rest, ok := core.SplitRemote(ref); ok && ref != r.URL.Path {
-		s.serveRemote(w, r, host, rest)
-		return
+		if host != s.core.SelfName() {
+			s.serveRemote(w, r, host, rest)
+			return
+		}
+		ref = rest
 	}
 	if r.URL.Path == "/" {
 		var roots []briefNode

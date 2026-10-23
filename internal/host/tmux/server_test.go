@@ -135,3 +135,25 @@ func TestPanesReadTheSameWithOrWithoutAUTF8Locale(t *testing.T) {
 		})
 	}
 }
+
+func TestReloadBringsARunningServerOntoTheConfigAndLeavesADownOneDown(t *testing.T) {
+	h, conf := ymServer(t)
+	if err := h.Reload(conf); err != nil {
+		t.Fatalf("Reload with no server = %v", err)
+	}
+	bare := filepath.Join(t.TempDir(), "bare.conf")
+	os.WriteFile(bare, nil, 0o644)
+	if _, err := h.Start(bare, "repo-wt-x", t.TempDir(), []string{"sh", "-c", "sleep 30"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Reload(conf); err != nil {
+		t.Fatal(err)
+	}
+	for opt, want := range map[string]string{"set-clipboard": "on", "allow-passthrough": "on"} {
+		if got, _ := h.run("show-options", "-gqv", opt); got != want {
+			if got, _ = h.run("show-options", "-sqv", opt); got != want {
+				t.Errorf("%s = %q after Reload, want %q", opt, got, want)
+			}
+		}
+	}
+}

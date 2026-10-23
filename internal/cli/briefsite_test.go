@@ -71,6 +71,7 @@ func TestBriefPagesShowEachVersionAndRollReportsUpUnderTheirChief(t *testing.T) 
 		{"/", []string{"chief data", "ship the importer", "parser merged", "steer r1 not adopted"}, nil},
 		{"/b/" + g.ID, []string{"parser merged", "Brief v2", "CSV only", "not adopted yet", "?v=1"}, []string{"parser drafted"}},
 		{"/b/" + m.ID + "?v=1", []string{"parser drafted", "Brief v1"}, []string{"parser merged"}},
+		{"/b/" + c.SelfName() + "/" + m.ID, []string{"parser merged", "Brief v2"}, nil},
 		{"/b/" + chief.ID, []string{"data work on track", "Reports", "parser merged", "next of parser merged"}, nil},
 	} {
 		t.Run(tc.path, func(t *testing.T) {

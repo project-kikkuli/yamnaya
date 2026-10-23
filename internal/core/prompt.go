@@ -96,7 +96,7 @@ func (c *Core) briefRules(sb *strings.Builder, m Manager) {
 		rollup = " Your page rolls your reports' briefs up under yours, so yours carries the themes across them and what needs attention, not a copy of theirs."
 	}
 	fmt.Fprintf(sb, "- Keep your brief with ym goal brief --assessment \"<where it stands>\" --changed \"<since your last brief>\" --uncertainty \"<what you are unsure of, or none>\" --next \"<what comes next>\" --waiting-on \"<agents, CI, reviews, people, or none>\". Each call records a new version, rewrites %s, and is served at %s.%s Write one as soon as you have a plan, and again whenever something meaningful happens; ym marks it stale and nudges you when it falls behind. Do not edit the markdown file by hand. If you also publish a richer page, such as an artifact, register its URL with ym goal artifact <url>.\n",
-		m.BriefPath, BriefURL(m.ID), rollup)
+		m.BriefPath, c.BriefURL(m.ID), rollup)
 }
 
 // steerRules tells m how a steer reaches it and that it must adopt it.

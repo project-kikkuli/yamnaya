@@ -353,3 +353,12 @@ func BriefsAddr() string {
 
 // BriefURL is the stable local page of the goal's or chief's brief that id names.
 func BriefURL(id string) string { return "http://" + BriefsAddr() + "/b/" + id }
+
+// BriefURL is the page of the brief id names here. On a host another host carries relays for, it names this host too, so the
+// same link opens on that host, whose ym serve shows this host's briefs at /b/<host>/<id>, and here.
+func (c *Core) BriefURL(id string) string {
+	if r, err := c.Store.RelaySelf(); err == nil && r.Name != "" {
+		return BriefURL(RemoteKey(r.Name, id))
+	}
+	return BriefURL(id)
+}

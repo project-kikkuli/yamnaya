@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -14,16 +15,43 @@ import (
 // Server is the tmux server ym owns for the sessions it launches; it never touches any other server.
 const Server = "ym"
 
-// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them.
+// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, and what an
+// agent copies or links reaches the terminal attached to it, through each tmux on the way.
 const ServerConf = `set -g remain-on-exit on
 set -g history-limit 50000
 set -g escape-time 10
 set -g focus-events on
 set -g mouse on
+set -s set-clipboard on
+set -g allow-passthrough on
+set -s terminal-features[0] "xterm*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
 set -g status-left "ym #S "
 set -g status-left-length 60
 set -g status-right "C-b d: back to the board "
 `
+
+// Conf is the config ym writes for its server on this machine: ServerConf, and on macOS every copy also goes to the
+// pasteboard, since Terminal.app ignores the escape sequence tmux sets the terminal's clipboard with.
+func Conf() string {
+	if runtime.GOOS != "darwin" {
+		return ServerConf
+	}
+	bin, err := exec.LookPath("tmux")
+	if err != nil {
+		bin = "tmux"
+	}
+	return ServerConf + fmt.Sprintf(`set -s copy-command "/usr/bin/pbcopy"
+set-hook -g pane-set-clipboard 'run-shell -b "%s save-buffer - | /usr/bin/pbcopy"'
+`, bin)
+}
+
+// Reload applies conf to the server when it is up, so a config ym changed reaches sessions already running.
+func (h *Host) Reload(conf string) error {
+	if _, err := h.run("source-file", conf); err != nil && !gone(err) {
+		return err
+	}
+	return nil
+}
 
 // NewServer is the host for ym's own server, named by $YAMNAYA_YM_SOCKET or Server.
 func NewServer() *Host {

@@ -68,7 +68,7 @@ func (m Model) prepareView() viewPage {
 	case modeHelp:
 		body = textPage(ansi.Wrap(Help, bodyModel.width, " "), "")
 	case modeScreen:
-		body = textPage(m.screen, "")
+		body = textPage(linkedWrap(m.screen, bodyModel.width), "")
 	case modeWhy:
 		body = textPage(ansi.Wrap(bodyModel.whyView(), bodyModel.width, " "), "")
 	case modePick:

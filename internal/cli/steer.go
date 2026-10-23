@@ -203,7 +203,7 @@ func goalBriefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s brief v%d recorded; %s\n", b.Manager, b.Version, core.BriefURL(b.Manager))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s brief v%d recorded; %s\n", b.Manager, b.Version, e.core.BriefURL(b.Manager))
 			return nil
 		}),
 	}

@@ -55,7 +55,14 @@ func newLauncher() (launcher, error) {
 		return l, err
 	}
 	l.everywhere = defaultStateDir(dir)
-	return l, os.WriteFile(l.conf, []byte(tmux.ServerConf), 0o644)
+	conf := tmux.Conf()
+	if old, err := os.ReadFile(l.conf); err == nil && string(old) == conf {
+		return l, nil
+	}
+	if err := os.WriteFile(l.conf, []byte(conf), 0o644); err != nil {
+		return l, err
+	}
+	return l, l.srv.Reload(l.conf)
 }
 
 // bin is the absolute path of a harness binary, so the ym server needs no PATH of its own.

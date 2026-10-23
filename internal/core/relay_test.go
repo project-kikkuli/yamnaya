@@ -541,3 +541,16 @@ func TestAnotherHostsGoalShowsTheBriefThatHostKeeps(t *testing.T) {
 		})
 	}
 }
+
+func TestBriefLinksNameTheirHostOnceAnotherHostCarriesIt(t *testing.T) {
+	w := newOrgWorld(t)
+	if got := w.core.BriefURL("mgr1"); got != BriefURL("mgr1") {
+		t.Errorf("uncarried host links %q, want %q", got, BriefURL("mgr1"))
+	}
+	if err := w.core.Store.setRelaySelf(RelaySelf{Name: "box.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.core.BriefURL("mgr1"); got != BriefURL("box.example/mgr1") {
+		t.Errorf("carried host links %q, want %q", got, BriefURL("box.example/mgr1"))
+	}
+}
