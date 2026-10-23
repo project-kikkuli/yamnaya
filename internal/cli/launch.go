@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -458,27 +457,15 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 }
 
 // landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
-// and a death by a signal or after ym kill only a day on, unless its worktree and repository are both gone.
+// and a death by a signal or after ym kill only a day on.
 func landsAlone(rec launch.Record, state string, now time.Time) bool {
 	switch {
 	case state == "running", state == core.LaunchUnknown:
 		return false
-	case unrevivable(rec):
-		return true
 	case !rec.Killed.IsZero():
 		return now.Sub(rec.Killed) >= 24*time.Hour
 	case strings.HasPrefix(state, "sig"):
 		return now.Sub(rec.Started) >= 24*time.Hour
-	}
-	return true
-}
-
-// unrevivable reports whether neither the session's worktree nor the repository ym revive would recreate it from exists.
-func unrevivable(rec launch.Record) bool {
-	for _, dir := range []string{rec.Worktree.Path, rec.Worktree.GitDir} {
-		if _, err := os.Stat(dir); dir != "" && !errors.Is(err, fs.ErrNotExist) {
-			return false
-		}
 	}
 	return true
 }

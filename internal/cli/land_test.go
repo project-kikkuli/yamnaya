@@ -44,33 +44,25 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		landed bool
 		tree   bool
 		branch bool
-		// deleted removes the worktree, and the repository too when it is "repo".
-		deleted string
 	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, ""},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, ""},
-		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true, ""},
-		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true, ""},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, ""},
-		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true, ""},
-		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, ""},
-		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, ""},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true, ""},
-		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true, ""},
-		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true, ""},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true, ""},
-		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, ""},
-		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, ""},
-		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, ""},
-		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true, ""},
-		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true, ""},
-		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true, ""},
-		{"SIGTERM today, worktree deleted", "kill -TERM $$", 0, "sigterm", commit, false, false, false, false, false, true, "worktree"},
-		{"exit 0 after ym kill today, worktree deleted", "exit 0", 0, "exited 0", commit, true, false, false, false, false, true, "worktree"},
-		{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "", commit, false, false, false, true, false, false, "repo"},
-		{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "", dirty, true, false, false, true, false, false, "repo"},
-		{"gone after ym kill today, repository deleted", "", 0, "", commit, true, false, false, true, false, false, "repo"},
-		{"running, repository deleted", "exec sleep 60", 0, "", commit, false, false, false, false, false, false, "repo"},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false},
+		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true},
+		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true},
+		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true},
+		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false},
+		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true},
+		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true},
+		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true},
+		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true},
+		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true},
+		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true},
+		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true},
+		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true},
+		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -112,7 +104,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 				if _, err := srv.Start(conf, tmux.SessionName(rec.Key), wt, []string{"sh", "-c", c.agent}); err != nil {
 					t.Fatal(err)
 				}
-				for end := time.Now().Add(5 * time.Second); !strings.HasPrefix(c.agent, "exec sleep"); time.Sleep(20 * time.Millisecond) {
+				for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 					if p, err := srv.Pane(tmux.SessionName(rec.Key)); err == nil && p.Dead {
 						break
 					}
@@ -120,13 +112,6 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 						t.Fatal("the agent never exited")
 					}
 				}
-			}
-			switch c.deleted {
-			case "repo":
-				os.RemoveAll(repo)
-				fallthrough
-			case "worktree":
-				os.RemoveAll(wt)
 			}
 			if c.forget {
 				if _, err := l.Forget(rec.Key); err != nil {
@@ -138,8 +123,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			kept, recorded := l.records.Find(rec.Key)
 			_, statErr := os.Stat(wt)
 			_, paneErr := srv.Pane(tmux.SessionName(rec.Key))
-			running := strings.HasPrefix(c.agent, "exec sleep")
-			if gone := len(rows) == 0 && (paneErr != nil || running); gone != (c.landed || running) || (statErr == nil) != c.tree {
+			if gone := len(rows) == 0 && paneErr != nil; gone != c.landed || (statErr == nil) != c.tree {
 				t.Fatalf("rows %+v, pane err %v, worktree kept %v; want landed %v, worktree kept %v",
 					rows, paneErr, statErr == nil, c.landed, c.tree)
 			}

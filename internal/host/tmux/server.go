@@ -145,16 +145,6 @@ func (h *Host) Kill(name string) error {
 	return fmt.Errorf("tmux kill-session %s: %w: %s", name, err, text)
 }
 
-// KillServer ends the server and every agent running in it; a server that is not running is not an error.
-func (h *Host) KillServer() error {
-	defer h.forget()
-	out, err := h.command("kill-server").CombinedOutput()
-	if text := strings.TrimSpace(string(out)); err != nil && !absent(text) {
-		return fmt.Errorf("tmux kill-server: %w: %s", err, text)
-	}
-	return nil
-}
-
 // Attach is the command that shows the session holding hd in the caller's terminal until the owner detaches.
 // Inside this server, Focus switches the client instead, so Attach is nil there.
 func (h *Host) Attach(hd core.Handle) *exec.Cmd {
