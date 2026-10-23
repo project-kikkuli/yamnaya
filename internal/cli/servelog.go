@@ -98,8 +98,9 @@ type loggedError struct{ error }
 
 func (e loggedError) Unwrap() error { return e.error }
 
-// Logged reports whether err was already written to the serve log.
+// Logged reports whether err was already written to the serve log, or is a command's exit status ym slot passes on.
 func Logged(err error) bool {
 	var l loggedError
-	return errors.As(err, &l)
+	var status exitStatus
+	return errors.As(err, &l) || errors.As(err, &status)
 }

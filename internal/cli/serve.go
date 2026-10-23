@@ -45,6 +45,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if interval <= 0 {
 			return fmt.Errorf("interval must be positive")
 		}
+		e.core.Slots = nil
 		if !discover {
 			e.core.Harnesses = nil
 			e.core.Procs = func() ([]proc.Proc, error) { return nil, nil }

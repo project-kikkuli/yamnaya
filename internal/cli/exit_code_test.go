@@ -17,6 +17,7 @@ func TestYmExitsWithItsOwnStatusOnlyForAFinalRefusal(t *testing.T) {
 		{fmt.Errorf("item #2: %w", core.ErrNotFound), 1},
 		{core.Final(errors.New("item D2 is answered; cannot move it to answered")), exitFinal},
 		{fmt.Errorf("answer: %w", core.Final(errors.New("gone"))), exitFinal},
+		{exitStatus(7), 7},
 	} {
 		if got := ExitCode(tc.err); got != tc.want {
 			t.Errorf("ExitCode(%v) = %d, want %d", tc.err, got, tc.want)

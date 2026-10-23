@@ -17,6 +17,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/health"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/slot"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
@@ -44,6 +45,8 @@ func Wire(path string) (*core.Core, error) {
 		StateDir:  filepath.Dir(path),
 		Notify:    desktopNotify,
 		RunSelf:   runSelf,
+		Slots:     slot.Machine,
+		CPU:       slot.CPU,
 	}
 	if l, err := newLauncher(); err == nil {
 		l.core, l.srv = c, srv
@@ -125,6 +128,7 @@ func NewRoot() *cobra.Command {
 		serveCmd(with),
 		docsCmd(with),
 		serviceCmd(),
+		slotCmd(),
 		goalCmd(with, withHosts),
 		chiefCmd(with, withHosts),
 		itemCmd(with, routed),

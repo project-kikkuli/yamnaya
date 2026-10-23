@@ -98,6 +98,12 @@ A repository is its `origin` remote, so every clone of it, under any directory n
 
 The fleet line shows each Claude and Codex limit window and today's and this week's spend at API prices.
 
+## Machine slots
+
+Agents share one machine, so ym hands out a fixed number of slots for heavy commands: two cores and 4 GiB each, after leaving two cores and a quarter of memory (at least 4 GiB) to everything else. A 12-core, 24 GiB Mac has 4. `ym slot -- <command> [args...]` waits for a free slot, runs the command at niceness 10 (`--nice N` changes it) in its own process group, and gives the slot back once the command and anything it left running in that group have ended; an interrupt or termination passes to the whole group, and the command's exit status is ym's. Every agent ym starts is told to run test suites, builds and long jobs this way. The slots are the lock files in `~/.local/state/agent-slot` (`$XDG_STATE_HOME/agent-slot`) that the `agent-slot` script also takes, so both draw from one pool; a slot the script holds shows as `agent-slot (no details)`.
+
+`ym slot --status [--json]` lists the capacity, the load average, each holder with its command, pid, session, how long and where, and each waiter. The board's header and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header turns red, names the load and the three sessions, or programs outside any session, using the most processor time.
+
 ## Mountains
 
 Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done. The sky follows your local clock. `A` hides them, `NO_COLOR` leaves them out, `YM_REDUCED_MOTION=1` holds them still. ym sends the mountains only as fast as your terminal takes them in, so they rise from the bottom row up when shown again and a key never waits behind them.
@@ -194,6 +200,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym adopt <session>` | move a session from another terminal onto ym's server |
 | | `ym kill <session> [--yes]` | SIGTERM its agent; worktree and transcript stay |
 | | `ym launched [--landed]` / `ym revive <key>` | what ym started / resume an exited one |
+| | `ym slot [--nice N] -- <command>` / `ym slot --status [--json]` | run a heavy command in a shared machine slot / who holds and waits for them |
 | | `ym land <key>` / `ym land --all` | remove worktrees that lose nothing |
 | | `ym gc [--dry-run]` | remove idle clean worktrees and merged branches |
 | | `ym switch <session> --to claude\|codex [--relaunch]` | port a session to the other harness |
@@ -208,8 +215,8 @@ Commands that act for an agent find its session by walking up the process tree t
 
 ## Development
 
-    agent-slot -- go test ./...
-    agent-slot -- go vet ./...
+    ym slot -- go test -p 2 ./internal/<package>/...
+    ym slot -- go vet ./...
     staticcheck ./...
 
 `internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` draws the mountains.

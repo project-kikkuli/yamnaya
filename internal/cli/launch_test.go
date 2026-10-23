@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
@@ -79,8 +80,11 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 			if dirs[gitDir] || dirs[filepath.Join(gitDir, "hooks")] {
 				t.Fatalf("argv %q opens the git dir's hooks and config to the sandbox", argv)
 			}
-			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Session {
+			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Prompt+slotNote && last != c.rec.Session {
 				t.Fatalf("argv %q must end with the prompt or session", argv)
+			}
+			if strings.HasSuffix(c.name, "start") && !strings.HasSuffix(argv[len(argv)-1], slotNote) {
+				t.Fatalf("argv %q starts an agent without telling it to run heavy commands through ym slot", argv)
 			}
 		})
 	}

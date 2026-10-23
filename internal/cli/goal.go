@@ -108,6 +108,8 @@ type workerRow struct {
 	Branch   string    `json:"branch,omitempty"`
 	Ahead    int       `json:"ahead,omitempty"`
 	PRs      []string  `json:"prs,omitempty"`
+	// Slot is the shared slot the worker holds or waits for and the command it runs there.
+	Slot string `json:"slot,omitempty"`
 }
 
 func treeRows(b core.Board, under string) []goalRow {
@@ -135,6 +137,11 @@ func treeRows(b core.Board, under string) []goalRow {
 			wr := workerRow{Session: w.Session, Name: w.Name, State: w.State, Activity: w.Activity, At: w.At, Branch: w.Branch, Ahead: w.Ahead}
 			if w.Member != nil {
 				wr.Subagent = w.Member.ID
+			} else if u, waiting, ok := b.Machine.Use(w.Session); ok {
+				wr.Slot = fmt.Sprintf("slot %d: %s, %s", u.Slot, clip(u.Claim.Line(), 60), core.Span(b.At.Sub(u.Since)))
+				if waiting {
+					wr.Slot = fmt.Sprintf("waits for a slot: %s, %s", clip(u.Claim.Line(), 60), core.Span(b.At.Sub(u.Since)))
+				}
 			}
 			for _, pr := range w.PRs {
 				wr.PRs = append(wr.PRs, prLabel(pr))
@@ -185,6 +192,7 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if asJSON {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
 			}
+			printMachine(cmd.OutOrStdout(), b.Machine, b.At)
 			if len(rows) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "no goals; start one with ym goal \"<ask>\"")
 			}
@@ -241,11 +249,32 @@ func printGoalRow(w io.Writer, r goalRow) {
 			marks = append(marks, fmt.Sprintf("%s +%d", a.Branch, a.Ahead))
 		}
 		marks = append(marks, a.PRs...)
+		if a.Slot != "" {
+			marks = append(marks, "["+a.Slot+"]")
+		}
 		if len(marks) > 0 {
 			line += "  " + strings.Join(marks, " ")
 		}
 		fmt.Fprintln(w, line)
 	}
+}
+
+// printMachine prints the slot summary, the slots held and waited for, and any overload, above the goal tree.
+func printMachine(w io.Writer, m core.Machine, now time.Time) {
+	if m.Slots.Capacity == 0 {
+		return
+	}
+	fmt.Fprintln(w, m.Summary())
+	for _, u := range m.Holders {
+		fmt.Fprintf(w, "  slot %d  %s\n", u.Slot, u.Line(now))
+	}
+	for _, u := range m.Waiters {
+		fmt.Fprintf(w, "  waiting  %s\n", u.Line(now))
+	}
+	if o := m.Overload(); o != "" {
+		fmt.Fprintln(w, o)
+	}
+	fmt.Fprintln(w)
 }
 
 func prLabel(pr core.PR) string {

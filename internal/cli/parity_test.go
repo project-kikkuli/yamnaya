@@ -15,7 +15,7 @@ var agentOnly = map[string]bool{
 	"ym install": true, "ym update": true, "ym completion": true, "ym remote": true, "ym remote install": true, "ym remote forget": true, "ym board": true, "ym help": true,
 	"ym serve": true, "ym docs connect": true, "ym service status": true, "ym service restart": true, "ym service ensure": true, "ym service keep": true, "ym service unkeep": true, "ym relay": true, "ym relay drop": true,
 	"ym goal done": true, "ym goal verdict": true, "ym goal artifact": true, "ym goal authority": true, "ym goal update": true, "ym goal wake": true,
-	"ym goal adopt": true, "ym goal brief": true,
+	"ym goal adopt": true, "ym goal brief": true, "ym slot": true,
 }
 
 func TestEveryOwnerCommandHasABoardKeyInHelp(t *testing.T) {

@@ -68,11 +68,17 @@ func startArgv(rec launch.Record) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	prompt := rec.Prompt + slotNote
 	if rec.Harness == claude.Name {
-		return []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, rec.Prompt}, nil
+		return []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, prompt}, nil
 	}
-	return append(append([]string{b, "--yolo"}, codexDirs(rec)...), rec.Prompt), nil
+	return append(append([]string{b, "--yolo"}, codexDirs(rec)...), prompt), nil
 }
+
+// slotNote ends every prompt ym starts an agent on, so heavy work across all agents shares the machine's slots.
+const slotNote = "\n\nThis machine is shared by many agents. Run every heavy command (test suites, builds, linters over a whole repo, long jobs) as " +
+	"`ym slot -- <command> [args...]`: it waits for one of the machine's shared slots and runs the command niced. Quick commands need no slot. " +
+	"`ym slot --status` shows who holds and waits for the slots."
 
 // resumeArgv continues rec's conversation, with prompt as its next message unless it is empty.
 func resumeArgv(rec launch.Record, prompt string) ([]string, error) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
 // Core composes harnesses, hosts and the store.
@@ -56,6 +57,11 @@ type Core struct {
 	ShowRemotes bool
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
+	// Slots is this host's pool of shared slots, Loads its load average and CPU each process's processor use; a nil Slots
+	// leaves the board without a Machine, a nil Loads reads the system's.
+	Slots func() (slot.Pool, error)
+	Loads func() float64
+	CPU   func() (map[int]float64, error)
 
 	gc       gitCache
 	fw       forwardedSet
@@ -63,6 +69,7 @@ type Core struct {
 	reuse    boardReuse
 	paced    PRPace
 	recovery recovery
+	cpu      cpuCache
 }
 
 // Live is a discovered session with where it runs and how many processes run it.
@@ -193,6 +200,8 @@ type Board struct {
 	Remotes []RemoteBoard
 	// PRPace is how this host's ym serve last read pull requests.
 	PRPace PRPace
+	// Machine is how this host's shared slots and processors stand.
+	Machine Machine
 	// remoteStanding is how each manager and chief on another host stands by that host's reading.
 	remoteStanding map[string]string
 
@@ -347,7 +356,9 @@ func (c *Core) Board() (Board, error) {
 	wg.Wait()
 	fp, reusable := c.fingerprint(stamp, len(procs), byHarness)
 	if prev, ok := c.reuse.get(fp, reusable, b.At); ok {
-		return c.again(prev, b.At), nil
+		again := c.again(prev, b.At)
+		c.machine(&again, procs)
+		return again, nil
 	}
 	var found []Session
 	for _, d := range discovered {
@@ -502,6 +513,7 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	c.reuse.put(fp, reusable, &b)
+	c.machine(&b, procs)
 	return b, nil
 }
 

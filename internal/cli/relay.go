@@ -104,6 +104,10 @@ const exitFinal = 3
 
 // ExitCode is the status ym exits with for err.
 func ExitCode(err error) int {
+	var status exitStatus
+	if errors.As(err, &status) {
+		return int(status)
+	}
 	if errors.Is(err, core.ErrFinal) {
 		return exitFinal
 	}

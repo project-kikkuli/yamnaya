@@ -187,6 +187,29 @@ func (m Model) header() string {
 	if m.core != nil && m.core.Meter != nil {
 		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
 	}
+	return h + machineLines(m.board.Machine, m.board.At, m.width)
+}
+
+// machineLines are the slot summary, each holder, the waiters on one line, and when overloaded the top consumers.
+func machineLines(mc core.Machine, now time.Time, width int) string {
+	if mc.Slots.Capacity == 0 {
+		return ""
+	}
+	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
+	h := "\n" + pal.dim.Render(fit(" "+mc.Summary()))
+	for _, u := range mc.Holders {
+		h += "\n" + fit(fmt.Sprintf("   slot %d  %s", u.Slot, u.Line(now)))
+	}
+	if len(mc.Waiters) > 0 {
+		var ws []string
+		for _, u := range mc.Waiters {
+			ws = append(ws, u.Line(now))
+		}
+		h += "\n" + pal.yellow.Render(fit("   waiting  "+strings.Join(ws, " · ")))
+	}
+	if o := mc.Overload(); o != "" {
+		h += "\n" + pal.red.Render(fit(" "+o))
+	}
 	return h
 }
 

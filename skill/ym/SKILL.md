@@ -83,6 +83,10 @@ Your chief, or your manager's chief, may run on another host. Asks, answers and 
 
 A Notion discussion or review request addressed to the owner about your goal's work (its page or a pull request it names is in your goal, brief or sessions) reaches you as a `ym:` message instead of the owner, one message per document listing every new or changed thread on it. Act on it in the document itself, prefixing anything you post with your model name; it leaves your queue when the discussion is resolved or answered there. Escalate with `ym item add` only if it is beyond your authority.
 
+## Heavy commands take a slot
+
+The machine is shared by every agent on it. Run each heavy command (a test suite, a build, a repo-wide linter, a long job) as `ym slot -- <command> [args...]`. It waits for one of the machine's shared slots (their number comes from its physical cores and memory), runs the command niced in its own process group, and gives the slot back once the command and everything it left running have ended. Quick commands such as reading files, `git` or a single small test need no slot. `ym slot --status` lists the slots, who holds them and who waits; the board and `ym goal list` show the same with each holder's goal and session. The `agent-slot` script draws from the same slots.
+
 ## Actions in the conversation
 
 When the owner must act in the native chat, file `ym item add --kind chore --action chat --question "<specific action>" --rec "<necessary context>"`. The board labels it action in chat and opens the originating session with `o` or `O`. Opening it is not an approval or completion. Existing owner answers in the ledger are authoritative even when an agent repeats the question in prose.
