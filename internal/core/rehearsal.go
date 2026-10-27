@@ -24,15 +24,30 @@ func RehearsalRoot(dir string) string {
 	}
 }
 
-// ForeignRehearsal reports whether dir lies under a rehearsal root that stateDir does not: a rehearsal's sessions belong to the
-// ym running it, so every other ym leaves them undiscovered, unrecorded and unadopted.
+// ForeignRehearsal reports whether the nearest rehearsal or scratch root holding dir does not hold stateDir: a drill's or test's
+// sessions belong to the ym running it, so every other ym leaves them undiscovered, unrecorded and unadopted.
 func ForeignRehearsal(dir, stateDir string) bool {
 	root := RehearsalRoot(dir)
-	if root == "" {
-		return false
+	for _, r := range ScratchRoots() {
+		if len(r) > len(root) && under(dir, r) {
+			root = r
+		}
 	}
-	s := filepath.Clean(stateDir)
-	return s != root && !strings.HasPrefix(s, root+string(filepath.Separator))
+	return root != "" && !under(stateDir, root)
+}
+
+// ScratchRoots are the directories drills and tests work in whether or not they mark them: the system temporary directories and ~/tmp/arbiter-work.
+func ScratchRoots() []string {
+	roots := []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+	if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, "tmp", "arbiter-work"))
+	}
+	return roots
+}
+
+func under(dir, root string) bool {
+	d := filepath.Clean(dir)
+	return d == root || strings.HasPrefix(d, root+string(filepath.Separator))
 }
 
 // foreign is ForeignRehearsal for this ym's state dir.

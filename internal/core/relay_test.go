@@ -578,7 +578,9 @@ func TestBriefLinksNameTheirHostOnceAnotherHostCarriesIt(t *testing.T) {
 // silentRemotes reach hosts whose latest read went unanswered.
 type silentRemotes struct{ fakeRemotes }
 
-func (s *silentRemotes) Silent(string) error { return fmt.Errorf("%w: no answer for 2m", ErrUnreachable) }
+func (s *silentRemotes) Silent(string) error {
+	return fmt.Errorf("%w: no answer for 2m", ErrUnreachable)
+}
 
 func TestAQueuedKillLandsOnceWhetherItsTargetLivesEndedOrWasKilledTwice(t *testing.T) {
 	for _, tc := range []struct {

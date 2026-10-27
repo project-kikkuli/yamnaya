@@ -95,7 +95,7 @@ Slots divide the physical cores left after reserving two for the host between th
 
 Use `ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 <packages>` for yamnaya tests. Commands using the same named lane run one at a time across worktrees, in addition to taking a machine slot. A lane waiter does not hold a machine slot and appears in `ym slot --status`. Always inspect status and the command holding a lane before waiting on slow work. Explicit Git garbage collection and maintenance are heavy commands and need a slot too; ym's own worktree operations suppress automatic Git maintenance.
 
-To drill a build of ym, keep it off the owner's ym: put the drill's repositories, worktrees and state under a directory holding an empty `.ym-rehearsal` file, and export `YAMNAYA_STATE_DIR` under it plus private `YAMNAYA_YM_SOCKET` and `YAMNAYA_TMUX_SOCKET` names before every run. End both tmux servers (`tmux -L <name> kill-server`) when done.
+To drill a build of ym, keep it off the owner's ym: put the drill's repositories, worktrees and state under a directory holding an empty `.ym-rehearsal` file, and export `YAMNAYA_STATE_DIR` under it plus private `YAMNAYA_YM_SOCKET` and `YAMNAYA_TMUX_SOCKET` names before every run. End both tmux servers (`tmux -L <name> kill-server`) when done. A ym whose state is elsewhere also ignores sessions under `/tmp`, the system temporary directories and `~/tmp/arbiter-work`.
 
 ## Actions in the conversation
 

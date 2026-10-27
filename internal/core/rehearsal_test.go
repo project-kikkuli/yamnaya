@@ -42,3 +42,34 @@ func TestAYmSeesARehearsalsSessionsOnlyWhenItRunsThatRehearsal(t *testing.T) {
 		})
 	}
 }
+
+func TestAYmSeesASessionInAnUnmarkedScratchDirOnlyWhenItsStateIsThere(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	owner := filepath.Join(home, ".local", "state", "yamnaya")
+	drill := filepath.Join(home, "tmp", "arbiter-work", "drill")
+	for _, c := range []struct {
+		name  string
+		cwd   string
+		state string
+		seen  bool
+	}{
+		{"owner, session under /private/tmp", "/private/tmp/claude-501/scratchpad/v1/repos/projA", owner, false},
+		{"owner, session under /tmp", "/tmp/drill/projB", owner, false},
+		{"owner, session under /var/folders", "/var/folders/rs/x/T/TestX/001/work", owner, false},
+		{"owner, session under ~/tmp/arbiter-work", filepath.Join(drill, "repo"), owner, false},
+		{"owner, session in a repository", filepath.Join(home, "dev", "repo"), owner, true},
+		{"a drill's ym with its state under /private/tmp", "/private/tmp/claude-501/scratchpad/v1/repos/projA", "/private/tmp/claude-501/scratchpad/v1/state", true},
+		{"a drill's ym with its state under ~/tmp/arbiter-work", filepath.Join(drill, "repo"), filepath.Join(drill, "state"), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.core.StateDir = c.state
+			w.run(10, 1, "/dev/t1", "claude", "s1", Idle)
+			w.claude.sessions[10] = Session{ID: "s1", Status: Idle, Cwd: c.cwd}
+			if got := len(w.board(t).Sessions) == 1; got != c.seen {
+				t.Fatalf("board on %s shows the session in %s %v, want %v", c.state, c.cwd, got, c.seen)
+			}
+		})
+	}
+}
