@@ -155,7 +155,7 @@ func TestAManagerAskedForABriefIsRestartedOnceItEndsThatTurn(t *testing.T) {
 	if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "CI failed on the parser: 1 failing", "red-1"); err != nil {
 		t.Fatal(err)
 	}
-	w.set(m.Session, func(s *Session) { s.Context, s.ContextAt, s.Result, s.ResultAt = 150_000, w.clock, "Looked.", w.clock })
+	w.set(m.Session, func(s *Session) { s.Context, s.ContextAt, s.Result, s.ResultAt = 180_000, w.clock, "Looked.", w.clock })
 	w.loop(t, 2)
 	if n := strings.Count(strings.Join(w.handedTo(m.Session), "\n"), "Record a fresh brief now"); n != 1 {
 		t.Fatalf("old session was asked for a brief %d times, want once", n)

@@ -10,7 +10,7 @@ import (
 
 // ContextCap is the context, in tokens, past which ym restarts an idle manager or chief fresh from its brief, until the owner sets
 // another with ym goal context-cap.
-const ContextCap = 100_000
+const ContextCap = 150_000
 
 // CacheLife is how long the model's prompt cache outlives a session's last reply; resuming after it reads the whole transcript cold.
 const CacheLife = time.Hour
