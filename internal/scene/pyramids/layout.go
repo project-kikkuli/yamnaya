@@ -214,16 +214,6 @@ func (b *pyramid) collapse() int  { return max(1, b.built*55/100) }
 func (b *pyramid) topRow() int    { return (b.base - b.built) / 2 }
 func (b *pyramid) groundRow() int { return b.base / 2 }
 
-func (b *pyramid) busy() int {
-	n := 0
-	for _, c := range b.team {
-		if c.Stance == scene.Climbing {
-			n++
-		}
-	}
-	return n
-}
-
 // out is how far the ramp juts from the face at course k: a wedge of mud brick widest at the foot, one
 // cell above the courses laid.
 func (b *pyramid) out(k int) int {
