@@ -47,7 +47,7 @@ func TestRemoteDeviceLoginReachesNativeOnOwningHost(t *testing.T) {
 	files := map[string]string{
 		filepath.Join(home, ".local", "bin", "ym"): "#!/bin/sh\nunset YM_CLI_TEST_CHILD\nexport YAMNAYA_STATE_DIR=" + shellQuote(remote) + "\nexec " + shellQuote(os.Args[0]) + " -test.run=^TestRemoteDeviceAuthLoginProcess$ -- \"$@\"\n",
 		filepath.Join(bins, "codex"):               "#!/bin/sh\nprintf '%s\\n' \"$CODEX_HOME\" \"$CODEX_SQLITE_HOME\" \"$@\" > " + shellQuote(result) + "\n",
-		filepath.Join(bins, "ssh"):                 "#!/bin/sh\nif [ \"$1\" = -t ]; then shift; fi\nshift\nHOME=" + shellQuote(home) + " exec sh -c \"$1\"\n",
+		filepath.Join(bins, "ssh"):                 "#!/bin/sh\nwhile [ \"$1\" = -o ] || [ \"$1\" = -t ]; do [ \"$1\" = -o ] && shift; shift; done\nshift\nHOME=" + shellQuote(home) + " exec sh -c \"$1\"\n",
 	}
 	for path, body := range files {
 		putProfileFile(t, path, body)

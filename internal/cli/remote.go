@@ -38,14 +38,17 @@ func remoteCmd() *cobra.Command {
 			if err := rememberHost(args[0]); err != nil {
 				return err
 			}
-			flags := []string{args[0], remoteCommand(args[1:])}
+			var opts []string
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
-				flags = append([]string{"-t"}, flags...)
+				opts = append(opts, "-t")
 			}
-			c := exec.Command(sshBin(), flags...)
+			c := exec.Command(sshBin(), append(sshArgs(args[0], opts...), remoteCommand(args[1:]))...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := c.Run(); err != nil {
 				if exit, ok := err.(*exec.ExitError); ok {
+					if exit.ExitCode() == 255 {
+						(&remoteHosts{ssh: sshBin()}).drop(args[0])
+					}
 					os.Exit(exit.ExitCode())
 				}
 				return err
