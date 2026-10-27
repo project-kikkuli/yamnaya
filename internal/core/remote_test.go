@@ -66,8 +66,11 @@ func TestRemoteSessionsJoinTheBoardUnderTheirHost(t *testing.T) {
 			asks = append(asks, "waiting "+n.Session.Key())
 		}
 	}
-	if want := []string{"item box/#1 remote-lead-0001", "waiting remote-lead-0001"}; !reflect.DeepEqual(asks, want) {
+	if want := []string{"item box/#1 remote-lead-0001"}; !reflect.DeepEqual(asks, want) {
 		t.Errorf("needs = %v, want %v", asks, want)
+	}
+	if len(b.Waiting) != 1 || b.Waiting[0].Session.Key() != "remote-lead-0001" {
+		t.Errorf("waiting = %+v, want remote-lead-0001", b.Waiting)
 	}
 	if len(b.Remotes) != 2 || !strings.HasPrefix(b.Remotes[1].State(), "unreachable: ") {
 		t.Errorf("remotes = %+v", b.Remotes)

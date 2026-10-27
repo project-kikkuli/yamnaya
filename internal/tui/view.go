@@ -164,13 +164,21 @@ func (m Model) header() string {
 	for _, s := range m.board.Sessions {
 		counts[s.Status]++
 	}
-	parts := []string{fmt.Sprintf("%d sessions", len(m.board.Sessions))}
+	var states []string
 	for _, st := range []core.Status{core.Busy, core.Waiting, core.Idle, core.Unknown} {
 		if counts[st] > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
+			states = append(states, fmt.Sprintf("%d %s", counts[st], st))
 		}
 	}
-	h := pal.bold.Render(" ym") + "    " + strings.Join(parts, "  ")
+	sessions := plural(len(m.board.Sessions), "session")
+	if len(states) > 0 {
+		sessions += pal.dim.Render(" (" + strings.Join(states, ", ") + ")")
+	}
+	needs := pal.dim.Render("nothing needs you")
+	if n := len(m.board.Needs); n > 0 {
+		needs = pal.red.Render(fmt.Sprintf("%d need you", n))
+	}
+	h := pal.bold.Render(" ym") + "    " + strings.Join([]string{sessions, plural(goalCount(m.board.Tree), "goal"), needs}, "  ")
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
@@ -197,9 +205,34 @@ func (m Model) header() string {
 		}
 	}
 	if m.core != nil && m.core.Meter != nil {
-		h += "\n" + fleetLine(m.board.Fleet, m.host, m.board.At)
+		h += "\n" + fleetLine(m.board.Fleet, m.board.At)
 	}
-	return h + machineLines(m.board.Machine, m.board.At, m.width)
+	return h + machineAlerts(m.board.Machine, m.width)
+}
+
+// goalCount is how many goals the tree shows.
+func goalCount(ns []core.Node) int {
+	total := 0
+	for _, n := range ns {
+		total += n.Count()
+	}
+	return total
+}
+
+// machineAlerts are the header's warnings: throttling, an overloaded machine's top consumers and processes holding too much memory.
+func machineAlerts(mc core.Machine, width int) string {
+	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
+	h := ""
+	if line := mc.Slots.Pressure.Line(); line != "" {
+		h += "\n" + pal.yellow.Render(fit(" "+line))
+	}
+	if o := mc.Overload(); o != "" {
+		h += "\n" + pal.red.Render(fit(" "+o))
+	}
+	for _, s := range mc.Swollen {
+		h += "\n" + pal.red.Render(fit(" "+s.Line()))
+	}
+	return h
 }
 
 // machineLines are the slot summary, each holder, the waiters on one line, and when overloaded the top consumers.
@@ -255,7 +288,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inProfile: "login profile id for " + m.inLabel + " (ym profiles lists logins)", inSend: "send " + m.inLabel, inWaitAnswer: "answer " + m.inLabel,
+			inDismissStale: "dismiss every stale item because", inProfile: "login profile id for " + m.inLabel + " (ym profiles lists logins)", inSend: "send " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
@@ -522,18 +555,6 @@ func (m Model) nameWidth() int {
 	return min(44, max(20, m.width/3))
 }
 
-func runningCrew(sessions []core.Live) int {
-	n := 0
-	for _, s := range sessions {
-		for _, c := range s.Crew {
-			if c.Status == core.Busy {
-				n++
-			}
-		}
-	}
-	return n
-}
-
 func sessionCounts(sessions []core.Live) string {
 	counts := map[core.Status]int{}
 	for _, s := range sessions {
@@ -574,37 +595,9 @@ func prsOf(sessions []core.Live) []core.PR {
 	return out
 }
 
-type prTally struct{ open, fail, run, pass, merged int }
-
-// tallyPRs counts open pull requests by CI result, then merged ones; closed ones count nowhere.
-func tallyPRs(prs []core.PR) prTally {
-	var t prTally
-	for _, pr := range prs {
-		switch {
-		case pr.Status != nil && pr.Status.State == "MERGED":
-			t.merged++
-		case pr.Status != nil && pr.Status.State == "CLOSED":
-		default:
-			t.open++
-			if pr.Status != nil {
-				switch pr.Status.CI() {
-				case "failing":
-					t.fail++
-				case "running":
-					t.run++
-				case "passing":
-					t.pass++
-				}
-			}
-		}
-	}
-	return t
-}
-
 // prSummary counts open pull requests by CI result, then merged ones.
-func prSummary(prs []core.PR) string {
-	t := tallyPRs(prs)
-	open, fail, run, pass, merged := t.open, t.fail, t.run, t.pass, t.merged
+func prSummary(t core.PRCount) string {
+	open, fail, run, pass, merged := t.Open, t.Failing, t.Running, t.Green, t.Merged
 	var parts []string
 	if open > 0 {
 		s := plural(open, "PR")
@@ -683,10 +676,8 @@ func (m Model) missionSpend(ps ...core.Project) string {
 	}
 	var total core.Spend
 	for _, p := range ps {
-		for _, s := range p.Sessions {
-			if _, known := m.board.Fleet.Sessions[s.UsageKey()]; s.Remote != "" && !known {
-				return "usage unknown"
-			}
+		if p.Stats.Spend == nil && core.ProjectHost(p) != "" {
+			return "usage unknown"
 		}
 		total = total.Plus(p.Spend)
 	}
@@ -721,22 +712,6 @@ func (m Model) needLines(i int, n core.Need) string {
 	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
-	if n.Waiting() {
-		s := n.Session
-		head := m.mark(i) + m.hue(n.Project).Render(pad("wait", m.idWidth())) + " " + name + " " + pad(titleOf(*s), 20) + " waiting: "
-		b.WriteString(head + pad(n.Line, max(10, m.width-ansi.StringWidth(head)-1)) + "\n")
-		if sel {
-			for _, line := range askBlock(n.Reply) {
-				b.WriteString("         " + ansi.Truncate(line, max(10, m.width-10), "…") + "\n")
-			}
-			for _, pr := range s.AllPRs() {
-				b.WriteString(pal.dim.Render("         pr "+ansi.Truncate(pr.Note().String(), max(10, m.width-13), "…")) + "\n")
-			}
-			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
-			b.WriteString(pal.dim.Render("         enter whole reply · r reply · x dismiss · o go to session · O beside") + "\n")
-		}
-		return b.String()
-	}
 	if n.Item == nil {
 		what := "permission prompt"
 		if n.Session.Prompt != nil {
@@ -902,14 +877,20 @@ func (m Model) detailView() viewPage {
 		}
 		b.WriteString(" phases  " + strings.Join(ps, "  ") + "\n")
 	}
-	if pr := prSummary(prsOf(p.Sessions)); pr != "" {
+	if pr := prSummary(p.Stats.PRs); pr != "" {
 		b.WriteString(" prs     " + pr + "\n")
 	}
-	pg := progress.Of(p)
-	if f, ok := pg.Fraction(); ok {
-		b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + pal.dim.Render(pg.Parts()) + "\n")
+	if core.ProjectHost(p) != "" {
+		if f := p.Stats.Done; f != nil {
+			b.WriteString(" progress " + progress.Bar(*f, 20) + fmt.Sprintf(" %3.0f%%", *f*100) + pal.dim.Render("  as "+core.ProjectHost(p)+" reads it") + "\n")
+		}
+	} else {
+		pg := progress.Of(p)
+		if f, ok := pg.Fraction(); ok {
+			b.WriteString(" progress " + progress.Bar(f, 20) + fmt.Sprintf(" %3.0f%%  ", f*100) + pal.dim.Render(pg.Parts()) + "\n")
+		}
+		b.WriteString(units(pg.Units))
 	}
-	b.WriteString(units(pg.Units))
 	b.WriteString(m.vibeLines(p))
 	b.WriteString("\n" + pal.bold.Render(" SESSIONS AND CREW") + "\n")
 	i, wide := 0, m.whereWidth(p.Sessions)
@@ -1479,16 +1460,15 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    [ ]          previous or next repository group, across goals and sessions
    < > or home end
                 top or bottom of the list; in an agent's page, its top or bottom
-   enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
-                last reply; an exited launch: revive it; anything else: open it
+   enter        an item: expand it; a permission prompt: go to its session; an exited launch: revive it;
+                anything else: open it
    esc          go back up, or clear the filter
    /            filter
    q            back or quit
 
    Act on the selected row
    r            reply: answer an item (an idle agent in tmux gets it typed in, others on their next turn);
-                on a waiting session, send the answer as your message and clear the row; on a goal or chief,
-                send it your message (every selected one); on a session, send it a follow-up
+                on a goal or chief, send it your message (every selected one); on a session, send it a follow-up
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
    K            on a goal: drop it, so ym stops supervising it; on a chief: retire it (asks y/n)
                 on a session: kill its claude or codex process with SIGTERM (asks y/n); its terminal,
@@ -1499,13 +1479,13 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 then type its name and its remit in your words (enter leaves it empty)
    b            show the goal's or chief's brief, the newest version its manager recorded
    n            new goal: pick its repository first, then type the goal in your words; a manager starts on it
-   o            go to the selected row's session: jump to its tmux pane, or say where it runs;
+   o            go to the selected row's session: jump to its tmux pane, or say where it runs, and mark
+                what it said read;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
                 view; needs ym running inside tmux
-   x            dismiss the item with a reason; on a waiting session, hide the row until it asks again;
-                on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
+   x            dismiss the item with a reason; on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
                 from the goal tree
    l            later: snooze the item
    u            reopen a snoozed item (detail)

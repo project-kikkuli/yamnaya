@@ -49,6 +49,9 @@ type RemoteBoard struct {
 	Fresh map[string]Freshness
 	// Swollen are its processes holding a large share of its memory.
 	Swollen []Swollen
+	// Missions and GoalStats are its missions' stats by project key and its goals' by manager id, as it computed them.
+	Missions  map[string]Stats
+	GoalStats map[string]Stats
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.
 	Stale bool
 	// FailingSince is when reads of the host started failing, zero while the last read answered.
@@ -189,18 +192,7 @@ func (c *Core) remoteHost(ref string) (host, rest string, ok bool) {
 // meet in one tree across hosts, and returns how each remote one stands by its own host's reading.
 func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard, feeds map[string]Feed) map[string]string {
 	self := c.SelfName()
-	q := func(host, ref string) string {
-		if ref == "" {
-			return ""
-		}
-		if h, rest, ok := SplitRemote(ref); ok {
-			if h == self {
-				return rest
-			}
-			return ref
-		}
-		return RemoteKey(host, ref)
-	}
+	q := func(host, ref string) string { return qualifyFrom(self, host, ref) }
 	standing := map[string]string{}
 	for _, r := range boards {
 		for _, m := range r.Managers {
@@ -227,6 +219,20 @@ func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard, feeds map[string]Fee
 		}
 	}
 	return standing
+}
+
+// qualifyFrom is ref, as host names it, as this host, self, names it.
+func qualifyFrom(self, host, ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if h, rest, ok := SplitRemote(ref); ok {
+		if h == self {
+			return rest
+		}
+		return ref
+	}
+	return RemoteKey(host, ref)
 }
 
 // remoteFind is the live session on another host that ref names.

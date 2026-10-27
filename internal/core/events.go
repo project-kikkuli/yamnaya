@@ -277,6 +277,8 @@ type Feed struct {
 	Latest *GoalEvent
 	// Recent are the goal's newest events, newest first.
 	Recent []GoalEvent
+	// Progress is the manager's latest ym goal update line, however far back.
+	Progress *GoalEvent `json:",omitempty"`
 }
 
 // feedRecent is how many of a goal's newest events the board carries.
@@ -307,6 +309,15 @@ func (s *Store) feeds() (map[string]Feed, error) {
 		if len(f.Recent) < feedRecent {
 			f.Recent = append(f.Recent, e)
 		}
+		out[e.Goal] = f
+	}
+	updates, err := scanEvents(s.db.Query(`SELECT `+eventCols+` FROM ym_goal_events WHERE seq IN (SELECT max(seq) FROM ym_goal_events WHERE kind = ? GROUP BY goal)`, EventUpdate))
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range updates {
+		f := out[e.Goal]
+		f.Progress = &e
 		out[e.Goal] = f
 	}
 	return out, nil

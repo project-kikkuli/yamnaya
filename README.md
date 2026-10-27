@@ -47,7 +47,7 @@ Busy is not moving. ym reads each agent's transcript for signs it is going nowhe
 
 ## What reaches you
 
-The **Needs you** queue holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a session's question answered. It holds:
+The **Needs you** queue holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a permission prompt answered. It holds:
 
 - stuck goals
 - asks that climbed past every manager and chief
@@ -55,7 +55,9 @@ The **Needs you** queue holds only what needs you now, and each row leaves on it
 - GitHub review requests addressed to you personally, not to your teams, with the pull request's title and who opened it
 - Notion discussions and reviews addressed to you that no goal claims
 - permission prompts
-- one row per session you started yourself that asks you something
+- managers' plan revisions you steered that they left unadopted, and relays another host keeps refusing
+
+A session you started yourself that goes idle never lands here, whatever its last message says: its row under **Sessions you started** shows `idle · <its last line>`, with a dot while it has said something since you last opened it with `o` or `O`. When one of your sessions files an ask with `ym item add`, that ask does land here.
 
 It stays quiet because every ask arrives ready to decide:
 
@@ -65,7 +67,9 @@ It stays quiet because every ask arrives ready to decide:
 
 A done goal never waits in the queue. It stays under **Goals** with its summary for a day after it passes verification, then leaves the board; `x` on its row, or `ym goal ack <goal>`, clears it sooner. Done and stuck also raise a desktop notification; nothing else does.
 
-Each goal row shows its unread feed count and newest line. `enter` opens the goal with its feed and marks it read.
+Each goal row shows its standing, how fresh its brief is, the vibe its manager last recorded, its agents running and idle, its pull requests (open, CI green, merged) and CI state, its spend at API prices, how long since it started, its unread feed count, its ask and the manager's latest `ym goal update` line with its age. A narrow screen drops the vibe first, then the elapsed time and spend. A chief's row sums the goals below it. `enter` opens the goal with its feed and marks it read.
+
+Every number on a goal or mission row is computed without a model, from transcripts, git, GitHub and ym's database, by the host the goal or mission runs on, each time that host's ym builds its board. A goal or mission on another host shows the numbers from that host's snapshot, so it reads the same here as there. A host still running a ym from before this snapshot format shows `no vibe` and `usage unknown` for its missions until it runs a current ym.
 
 ## The board
 
@@ -78,7 +82,7 @@ The footer shows the everyday keys; `?` lists every key.
 | `[` / `]` | previous / next repository group, across goals and sessions |
 | `<` `>` (`home` `end`) | top / bottom of the list |
 | `enter` / `esc` | open or drill in / go back |
-| `r` | reply: answer an item or a waiting session; on a goal or chief, send it a message; on a session, send it a follow-up |
+| `r` | reply: answer an item; on a goal or chief, send it a message; on a session, send it a follow-up |
 | `g` | go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS" |
 | `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
 | `c` | chief menu: `a` attach the goal or chief (and the selection) to a chief, or to you; `d` detach it from its chief; `n` new chief over the goals and chiefs you check |
@@ -107,20 +111,20 @@ Behind `?`:
 | `G` | gc old worktrees and merged branches |
 | `t` | goals by repository with each chief's reports nested under it, or every goal under its own repository |
 | `e` `m` `p` `P` `v` | rename, merge, advance phase, set phases, set the vibe of a mission |
-| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, agents adrift now and weekly health |
+| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, machine slots and load with agents adrift now and weekly health |
 | `A` | hide or show the mountains |
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
 | `q` | back or quit |
 
 **Goals** groups the goals that report to you by repository and lists every chief, with its reports nested under it, under **chiefs**, so `[` and `]` step through goals and sessions by repository alike.
 
-Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**, and an idle one whose last reply asks you shows as a `waiting:` row you can answer with `r`.
+Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**. An idle one shows `idle · <its last line>` on its own row, behind a dot while that line is unread; `o` or `O` opens it and marks it read, and `r` sends it a follow-up. `ym waiting` still lists the idle ones whose last reply asks you.
 
 A repository is its `origin` remote, so every clone of it, under any directory name and on any host, and every worktree of those clones, shares one repository row and one mountain range, with each session's host shown on its own row. A clone without an `origin` is a repository of its own. `--repo NAME` matches a clone's directory name or its origin's name, and picks the most recently used clone when several clones of one repository match.
 
 `ym new` names the worktree and branch from the prompt, skipping text the agent already reads in its instruction files (`CLAUDE.md`, `AGENTS.md` and what they include) or got in an earlier prompt from the same parent, and ends the name with a random tag so launches in different clones never share a branch. `--slug S` names it exactly. ym discovers a goal's pull requests from its sessions' branches, their upstream branches on origin, and successful pushes, including an explicit refspec such as `HEAD:topic`. The local and remote branch names can differ. A rebased or amended branch keeps its pull request through its upstream or recorded push. An unrelated same-named branch in another clone does not claim it. A goal keeps tracking its pull requests after its agents exit, and pending CI counts as work in flight.
 
-The fleet line shows each Claude and Codex limit window and today's and this week's spend at API prices.
+The board's header shows how many sessions run and in what state, how many goals there are, how many rows need you, each Claude and Codex limit window, and today's and this week's spend at API prices across every host. Slots, load and cores are on the health screen (`h`); the header keeps only warnings: throttling, overload and processes holding too much memory.
 
 ## Machine slots
 
@@ -141,7 +145,7 @@ Existing Go, Make and Node options are retained; inherited Make jobserver descri
 
 `ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./internal/slot/...` also takes the named lane. Commands using the same lane run one at a time across worktrees. A lane waiter appears in `--status` and waits before taking a machine slot, so other lanes can use the pool. Lanes are released when the command and its process group end, including after interruption.
 
-`ym slot --status [--json]` lists the capacity, workers per slot, the load average, each holder with its command, pid, session, how long and where, and each waiter, including their lane names. The board's header and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header turns red, names the load and the three sessions, or programs outside any session, using the most processor time.
+`ym slot --status [--json]` lists the capacity, workers per slot, the load average, each holder with its command, pid, session, how long and where, and each waiter, including their lane names. The board's health screen (`h`) and `ym goal list` show the same with each holder's goal and session name, and `ym goal list` marks the agent holding or waiting for a slot. When the one-minute load average passes one and a half times the physical cores, the header gains a red line naming the load and the three sessions, or programs outside any session, using the most processor time.
 
 `ym serve` also watches load every five seconds, independently of goal reconciliation. When the one-minute load stays above twice the physical cores for a minute, it lowers CPU-consuming child jobs under ym-launched agents to niceness 15, heaviest first, including their job children. Tool jobs beneath a shared Codex app-server belong to a launched session when their `CODEX_THREAD_ID` names it or their working directory is inside its worktree. Agents, shells, the board, ym serve, other terminals and processes outside those agent trees keep their priority. Already lower-priority jobs keep it too. Each affected goal's manager receives one line per overload episode naming its top consumers. Detached jobs whose agent ancestry is gone are outside this control.
 

@@ -135,12 +135,88 @@ func (m Model) treeMatches(ns []core.Node) bool {
 	return false
 }
 
-func agentCount(n core.Node) int {
-	total, _ := n.Working()
-	for _, c := range n.Children {
-		total += agentCount(c)
+// minAsk is how much of a goal row its ask keeps before its numbers give way.
+const minAsk = 56
+
+// nodeStats are a goal's stats, or the sum over every goal below a chief.
+func nodeStats(n core.Node) core.Stats {
+	if n.Goal != nil {
+		return n.Stats
 	}
-	return total
+	var out core.Stats
+	for _, c := range n.Children {
+		st := nodeStats(c)
+		out.Running += st.Running
+		out.Idle += st.Idle
+		out.PRs = out.PRs.Plus(st.PRs)
+		if st.Spend != nil {
+			sp := *st.Spend
+			if out.Spend != nil {
+				sp = out.Spend.Plus(sp)
+			}
+			out.Spend = &sp
+		}
+		if st.Vibe != nil && (out.Vibe == nil || st.Vibe.At.After(out.Vibe.At)) {
+			out.Vibe = st.Vibe
+		}
+		if st.ProgressAt.After(out.ProgressAt) {
+			out.Progress, out.ProgressAt = st.Progress, st.ProgressAt
+		}
+	}
+	return out
+}
+
+// statCells are a goal or chief row's numbers in at most room cells: agents running and idle, pull requests open, green and
+// merged with CI, spend, how long it has run and its vibe, the last ones dropped first on a narrow screen.
+func (m Model) statCells(st core.Stats, room int) string {
+	agents := pad("", 9)
+	if st.Running+st.Idle > 0 {
+		agents = pad(fmt.Sprintf("%d▶ %d idle", st.Running, st.Idle), 9)
+		if st.Running > 0 {
+			agents = pal.green.Render(agents)
+		}
+	}
+	prs := pal.dim.Render(pad("no PRs", 11))
+	if t := st.PRs; t.Open+t.Merged > 0 {
+		prs = pad(fmt.Sprintf("%dPR %d✓ %dm", t.Open, t.Green, t.Merged), 11)
+	}
+	ci := pad("", 4)
+	switch st.PRs.CI() {
+	case "failing":
+		ci = pal.red.Render(pad("CI✗", 4))
+	case "running":
+		ci = pal.yellow.Render(pad("CI…", 4))
+	case "green":
+		ci = pal.green.Render(pad("CI✓", 4))
+	}
+	spend := pal.dim.Render(pad("$?", 8))
+	if st.Spend != nil {
+		spend = pad(st.Spend.Dollars(), 8)
+	}
+	up := pad("", 5)
+	if !st.Started.IsZero() {
+		up = pal.dim.Render(pad(core.Span(m.board.At.Sub(st.Started)), 5))
+	}
+	vibe := pal.dim.Render(pad("no vibe", 12))
+	if v := st.Vibe; v != nil {
+		vibe = pad(ansi.Truncate(v.Place, 12, "…"), 12)
+		if m.board.At.Sub(v.At) > core.VibeStale {
+			vibe = pal.dim.Render(vibe)
+		}
+	}
+	order := []string{agents, prs, ci, spend, up, vibe}
+	n := 0
+	for used := 0; n < len(order) && used+ansi.StringWidth(order[n])+1 <= room; n++ {
+		used += ansi.StringWidth(order[n]) + 1
+	}
+	shown := order[:n]
+	if n == len(order) {
+		shown = append([]string{vibe}, order[:n-1]...)
+	}
+	if len(shown) == 0 {
+		return ""
+	}
+	return strings.Join(shown, " ") + " "
 }
 
 func nodeText(n core.Node) string {
@@ -222,15 +298,21 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		head = pad("chief", 8)
 		what = m.tagged(host, pal.bold.Render(n.Manager.Name)+pal.dim.Render(fmt.Sprintf("  %d goals", n.Count())))
 	}
-	agents := pal.dim.Render(pad(plural(agentCount(n), "agent"), 9))
-	if u := n.Unread(); u > 0 {
-		agents += pal.yellow.Render(fmt.Sprintf("%d new ", u))
-	}
-	if n.Feed.Latest != nil {
+	st := nodeStats(n)
+	switch {
+	case st.Progress != "":
+		what += pal.dim.Render("  " + oneLine(st.Progress) + " · " + age(m.board.At, st.ProgressAt))
+	case n.Feed.Latest != nil:
 		what += pal.dim.Render("  " + n.Feed.Latest.Payload)
 	}
 	indent := strings.Repeat("  ", depth)
-	line := mark + indent + head + " " + stand + " " + briefTag(m.board.At, n) + " " + agents + " " + planTags(n)
+	line := mark + indent + head + " " + stand + " " + briefTag(m.board.At, n) + " "
+	news := ""
+	if u := n.Unread(); u > 0 {
+		news = pal.yellow.Render(fmt.Sprintf("%d new ", u))
+	}
+	tags := planTags(n)
+	line += m.statCells(st, m.width-ansi.StringWidth(line+news+tags)-minAsk) + news + tags
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {
 		return b
@@ -870,23 +952,6 @@ func (m Model) pickLabel() string {
 		return "new " + m.newL.Harness + " goal, repository"
 	}
 	return "new " + m.newL.Harness + " session, repository"
-}
-
-// askBlock is the end of a waiting reply as the agent wrote it: its last block of non-empty lines, at most a dozen.
-func askBlock(reply string) []string {
-	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(reply, "\t", "    "), "\n "), "\n")
-	start := len(lines)
-	for start > 0 && len(lines)-start < 12 {
-		if strings.TrimSpace(lines[start-1]) == "" && len(lines)-start >= 3 {
-			break
-		}
-		start--
-	}
-	var out []string
-	for _, l := range lines[start:] {
-		out = append(out, strings.TrimRight(strings.ReplaceAll(l, "\r", ""), " "))
-	}
-	return out
 }
 
 // relayWhat names what a relay carries, as its owner would recognize it.

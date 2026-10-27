@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,10 +42,8 @@ func waitingWorld(t *testing.T) *world {
 
 func waits(b Board) []string {
 	var out []string
-	for _, n := range b.Needs {
-		if n.Waiting() {
-			out = append(out, n.Session.Key()+" "+n.Line)
-		}
+	for _, n := range b.Waiting {
+		out = append(out, n.Session.Key()+" "+n.Line)
 	}
 	return out
 }
@@ -92,7 +91,7 @@ func TestIdleSessionWhoseLastReplyAsksIsListedUnlessSomethingElseCoversIt(t *tes
 	}
 }
 
-func TestWaitingRowsFollowPromptsAndItemsLongestWaitingFirst(t *testing.T) {
+func TestWaitingSessionsStayOffTheQueueLongestWaitingFirst(t *testing.T) {
 	w := waitingWorld(t)
 	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	w.run(10, 1, "/dev/t1", "claude", "perm", 0)
@@ -106,8 +105,9 @@ func TestWaitingRowsFollowPromptsAndItemsLongestWaitingFirst(t *testing.T) {
 	if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "Pick a name?", Session: "filer"}); err != nil {
 		t.Fatal(err)
 	}
+	b := w.board(t)
 	var got []string
-	for _, n := range w.board(t).Needs {
+	for _, n := range b.Needs {
 		switch {
 		case n.Waiting():
 			got = append(got, "wait "+n.Session.Key())
@@ -117,8 +117,11 @@ func TestWaitingRowsFollowPromptsAndItemsLongestWaitingFirst(t *testing.T) {
 			got = append(got, "perm "+n.Session.Key())
 		}
 	}
-	if want := "perm perm|item Pick a name?|wait early|wait late"; strings.Join(got, "|") != want {
+	if want := "perm perm|item Pick a name?"; strings.Join(got, "|") != want {
 		t.Fatalf("needs = %v, want %s", got, want)
+	}
+	if got, want := waits(b), []string{"early 1. Ship it now?", "late 1. Ship it now?"}; !slices.Equal(got, want) {
+		t.Fatalf("waiting = %v, want %v", got, want)
 	}
 }
 
@@ -129,10 +132,10 @@ func TestAnsweringAWaitingSessionSendsTheOwnersMessageAndClearsTheRowUntilItAsks
 	w.run(10, 1, "/dev/t1", "claude", "s1", 0)
 	w.claude.sessions[10] = Session{ID: "s1", Status: Idle, Facts: Facts{Result: asking}}
 	b := w.board(t)
-	n := b.Needs[0]
-	if !n.Waiting() {
-		t.Fatalf("needs = %+v, want a waiting row", b.Needs)
+	if len(b.Waiting) != 1 || len(b.Needs) != 0 {
+		t.Fatalf("waiting = %+v, needs = %+v, want one waiting session and an empty queue", b.Waiting, b.Needs)
 	}
+	n := b.Waiting[0]
 	if _, err := w.core.AnswerWaiting(*n.Session, n.Reply, "yes, ship it"); err != nil {
 		t.Fatal(err)
 	}

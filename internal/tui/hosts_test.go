@@ -83,7 +83,6 @@ func TestRowsFromAnotherHostCarryItsShortNameAndLocalRowsNone(t *testing.T) {
 	for _, c := range []struct {
 		row, tag string
 	}{
-		{"which branch?", "@boxmachine"},
 		{"Merge the far branch?", "@boxmachine"},
 		{"Far work ", "@boxmachine"},
 		{"Lead work ", ""},

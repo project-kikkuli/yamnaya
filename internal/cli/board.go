@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
 // boardJSON is this host's board as another host's ym reads it.
@@ -38,6 +39,9 @@ type boardJSON struct {
 	Fresh map[string]core.Freshness `json:"fresh,omitempty"`
 	// Swollen are this host's processes holding a large share of its memory.
 	Swollen []core.Swollen `json:"swollen,omitempty"`
+	// Missions are this host's missions' stats by project key; GoalStats its goals' by manager id.
+	Missions  map[string]core.Stats `json:"missions,omitempty"`
+	GoalStats map[string]core.Stats `json:"goal_stats,omitempty"`
 }
 
 type launchedJSON struct {
@@ -95,6 +99,16 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				return err
 			}
 			e.core.Remotes = nil
+			dir, err := stateDir()
+			if err != nil {
+				return err
+			}
+			meter := usage.New(dir)
+			defer meter.Close()
+			if _, err := meter.Scan(time.Now()); err != nil {
+				return err
+			}
+			e.core.Meter = meter
 			b, err := e.core.Board()
 			if err != nil {
 				return err
@@ -106,7 +120,7 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			return writeJSON(cmd.OutOrStdout(), out)
 		}),
 	}
-	cmd.Flags().BoolVar(&build, "build", false, "build the board now instead of printing ym serve's latest snapshot")
+	cmd.Flags().BoolVar(&build, "build", false, "build the board now, reading usage as ym serve does, instead of printing ym serve's latest snapshot")
 	return cmd
 }
 
@@ -173,9 +187,18 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 		out.Goals = append(out.Goals, g)
 	}
 	sort.Slice(out.Goals, func(i, j int) bool { return out.Goals[i].ID < out.Goals[j].ID })
+	out.Missions, out.GoalStats = map[string]core.Stats{}, map[string]core.Stats{}
+	for _, p := range b.Projects {
+		if p.Shown() && core.ProjectHost(p) == "" {
+			out.Missions[p.Key] = p.Stats
+		}
+	}
 	var stand func(core.Node)
 	stand = func(n core.Node) {
 		out.Standing[n.Manager.ID] = n.Standing
+		if n.Goal != nil && n.Manager.Host == "" {
+			out.GoalStats[n.Manager.ID] = n.Stats
+		}
 		for _, c := range n.Children {
 			stand(c)
 		}
@@ -211,6 +234,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		l := core.Live{Session: core.Session{Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
+		l.Result, l.ResultAt = s.Last, parseTS(s.LastAt)
 		if s.Prompt != "" {
 			l.Prompt = &core.Prompt{Tool: s.Prompt}
 		}
@@ -233,6 +257,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
 	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds, r.Fresh, r.Swollen = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds, j.Fresh, j.Swollen
+	r.Missions, r.GoalStats = j.Missions, j.GoalStats
 	return r
 }
 

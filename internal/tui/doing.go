@@ -30,6 +30,15 @@ func doingCell(now time.Time, s core.Live, w int) string {
 	return what + " " + pal.dim.Render(when)
 }
 
+// idleCell is an idle session's last line, behind a dot when it said it after the owner last opened the session.
+func idleCell(s core.Live, w int) string {
+	dot := "  "
+	if s.Unread {
+		dot = pal.yellow.Render("●") + " "
+	}
+	return dot + ansi.Truncate(pal.dim.Render("idle · ")+s.LastLine(), max(4, w-2), "…")
+}
+
 // shortAction is an action cut to what tells it apart: a command by its name and words without its id flags, paths relative to dirs, long ids elided.
 func shortAction(a core.Action, dirs ...string) string {
 	if a.Detail == "" {

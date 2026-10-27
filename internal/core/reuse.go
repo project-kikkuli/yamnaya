@@ -112,6 +112,9 @@ func (c *Core) again(b Board, now time.Time) Board {
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}
+		if err := c.settleStats(&b); err != nil && c.Log != nil {
+			c.Log("board stats: " + err.Error())
+		}
 		b.Repos = repos(b.Projects)
 		b.indexSessions()
 		c.reuse.renumber(&b)

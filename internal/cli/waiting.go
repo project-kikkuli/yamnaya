@@ -21,10 +21,7 @@ type waitingJSON struct {
 
 func waitingList(b core.Board) []waitingJSON {
 	out := []waitingJSON{}
-	for _, n := range b.Needs {
-		if !n.Waiting() {
-			continue
-		}
+	for _, n := range b.Waiting {
 		s := n.Session
 		name := core.Short(n.Project)
 		if p, ok := b.Project(n.Project); ok {

@@ -37,6 +37,8 @@ type Core struct {
 	Roots func() []string
 	// Ask is the line of an agent's reply that asks the owner for something, "" when none; nil lists no waiting sessions.
 	Ask func(reply string) string
+	// Measure is the fraction of a mission's work finished, false with nothing to measure; nil measures none.
+	Measure func(Project) (float64, bool)
 	// Health renders the weekly health trend; nil shows none.
 	Health func() (string, error)
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
@@ -98,6 +100,8 @@ type Live struct {
 	Messages []Message
 	// Remote is the host the session runs on when that is not this one; Where is where that host says it runs.
 	Remote, Where string
+	// Unread is set when the session replied after the owner last opened it.
+	Unread bool
 }
 
 // Location names where the session runs, for display.
@@ -141,6 +145,8 @@ type Project struct {
 	Vibes []Vibe
 	// Manager is the manager whose tree the mission's sessions belong to; empty for a mission the owner started.
 	Manager string
+	// Stats are the mission's numbers by the reading of the host it runs on.
+	Stats Stats
 }
 
 // Shown reports whether the mission has a session running or one ym can revive.
@@ -207,6 +213,8 @@ type Board struct {
 	Kills    map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
+	// Waiting are idle sessions the owner started whose last reply asks the owner; they stay off Needs.
+	Waiting []Need
 	// Gen numbers the boards built; a board reused because nothing it reads changed keeps the number.
 	Gen uint64
 	// Remotes are the other hosts the board reads, reachable or not.
@@ -484,6 +492,14 @@ func (c *Core) Board() (Board, error) {
 			parents[d.ID()] = d.Parent
 		}
 	}
+	opened, err := c.Store.Opened()
+	if err != nil {
+		return b, err
+	}
+	for i := range b.Sessions {
+		s := &b.Sessions[i]
+		s.Unread = !s.ResultAt.IsZero() && s.ResultAt.After(opened[s.Key()])
+	}
 	b.parents, b.lin = parents, lin
 	b.Projects = group(b.Sessions, items, parents, lin, dormant)
 	vibes, err := c.Store.Vibes()
@@ -536,13 +552,16 @@ func (c *Core) Board() (Board, error) {
 	if err := c.tree(&b, b.Org, feeds); err != nil {
 		return b, err
 	}
-	b.Repos = repos(b.Projects)
-	b.Needs, b.Stale = needs(b)
-	wait, err := c.waiting(b, b.Needs)
-	if err != nil {
+	if err := c.settleStats(&b); err != nil {
 		return b, err
 	}
-	b.Needs = collapse(append(append(b.Needs, wait...), b.remoteWaiting()...), b.Org, b)
+	b.Repos = repos(b.Projects)
+	b.Needs, b.Stale = needs(b)
+	if b.Waiting, err = c.waiting(b, b.Needs); err != nil {
+		return b, err
+	}
+	b.Waiting = append(b.Waiting, b.remoteWaiting()...)
+	b.Needs = collapse(b.Needs, b.Org, b)
 	if err := c.queue(&b, b.Org); err != nil {
 		return b, err
 	}

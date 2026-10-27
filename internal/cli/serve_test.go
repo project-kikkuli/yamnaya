@@ -57,18 +57,13 @@ func TestServingAnAskingSessionSpawnsNoModelAndFilesNoItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waiting := 0
-	for _, n := range b.Needs {
-		if n.Waiting() {
-			waiting++
-		}
-	}
+	waiting := len(b.Waiting)
 	items, err := st.Items(core.ItemFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if waiting != 1 || len(items) != 0 {
-		t.Fatalf("waiting rows %d, items %+v; want the session's one waiting row and no item", waiting, items)
+	if waiting != 1 || len(items) != 0 || len(b.Needs) != 0 {
+		t.Fatalf("waiting %d, items %+v, needs %+v; want the session waiting off the queue and no item", waiting, items, b.Needs)
 	}
 	if spawned, err := os.ReadFile(marker); !os.IsNotExist(err) {
 		t.Fatalf("serving spawned a model: %q %v", spawned, err)

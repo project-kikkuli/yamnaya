@@ -16,6 +16,7 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/agenttest"
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/progress"
 )
 
 // TestMain draws the board unstyled, the way it reads on a terminal with no colors or attributes.
@@ -63,6 +64,14 @@ func missionBoard(now time.Time) core.Board {
 	}}
 	b.Projects[0].Sessions[0].PRs = []core.PR{pr(1, &core.PRStatus{State: "OPEN", Failed: 1}), pr(2, &core.PRStatus{State: "OPEN", Passed: 1}), pr(3, &core.PRStatus{State: "MERGED"})}
 	b.Projects[2].Sessions[0].PRs = many
+	return measured(b)
+}
+
+// measured gives each mission the stats its host's board build computes.
+func measured(b core.Board) core.Board {
+	for i, p := range b.Projects {
+		b.Projects[i].Stats = core.MissionStats(p, b.Fleet.Ready, func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() })
+	}
 	return b
 }
 

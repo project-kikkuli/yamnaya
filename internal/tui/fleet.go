@@ -12,7 +12,7 @@ import (
 const staleAfter = 10 * time.Minute
 
 // fleetLine shows each harness's account-wide limit windows and this host's API-priced spend of today and the last seven days.
-func fleetLine(f core.Fleet, host string, now time.Time) string {
+func fleetLine(f core.Fleet, now time.Time) string {
 	if !f.Ready && len(f.Limits) == 0 {
 		return pal.dim.Render(" usage: reading transcripts…")
 	}
@@ -52,7 +52,7 @@ func fleetLine(f core.Fleet, host string, now time.Time) string {
 		parts = append(parts, p)
 	}
 	if f.Ready {
-		parts = append(parts, "api spend on "+host+" today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
+		parts = append(parts, "spend today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
 	} else {
 		parts = append(parts, pal.dim.Render("spend and codex limits: reading transcripts…"))
 	}

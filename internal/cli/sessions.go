@@ -47,6 +47,9 @@ type sessionJSON struct {
 	Resume       []string `json:"resume,omitempty"`
 	// Adrift are the signs that the session, or a crew member of it, is busy going nowhere.
 	Adrift []string `json:"adrift,omitempty"`
+	// Last is the last line of the session's latest reply, written at LastAt.
+	Last   string `json:"last,omitempty"`
+	LastAt string `json:"last_at,omitempty"`
 }
 
 func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -103,7 +106,7 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 	for _, s := range b.Sessions {
 		j := sessionJSON{Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, Ref: s.Ref(), ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, RepoID: s.RepoID, Worktree: s.Worktree,
 			Branch: s.Branch, Title: s.Title, Status: s.Status.String(), WaitingFor: s.WaitingFor, Since: ts(s.Since), Background: s.Background,
-			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies)}
+			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies), Last: s.LastLine(), LastAt: ts(s.ResultAt)}
 		if s.Prompt != nil {
 			j.Prompt = s.Prompt.String()
 		}

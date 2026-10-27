@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS ym_waiting_dismissed (
 // Waiting reports whether the need is an idle session whose last reply asks the owner.
 func (n Need) Waiting() bool { return n.Item == nil && n.Reply != "" }
 
+// LastLine is the last line of the session's latest reply, clipped to lastLineMax characters.
+func (s Session) LastLine() string {
+	lines := strings.Split(strings.TrimSpace(s.Result), "\n")
+	line := strings.TrimSpace(lines[len(lines)-1])
+	if r := []rune(line); len(r) > lastLineMax {
+		line = string(r[:lastLineMax-1]) + "…"
+	}
+	return line
+}
+
+const lastLineMax = 300
+
 func replyKey(reply string) string {
 	h := sha1.Sum([]byte(strings.TrimSpace(reply)))
 	return hex.EncodeToString(h[:12])

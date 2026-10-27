@@ -56,13 +56,12 @@ func (o *ownerSession) waiting(t *testing.T) []core.Need {
 	t.Helper()
 	b, err := o.core.Board()
 	must(t, err)
-	var out []core.Need
 	for _, n := range b.Needs {
 		if n.Waiting() {
-			out = append(out, n)
+			t.Fatalf("a waiting session reached Needs you: %+v", n)
 		}
 	}
-	return out
+	return b.Waiting
 }
 
 // The D119 case, redacted: the agent asked item 4 in a numbered block, then kept replying "answer item 4" without it.

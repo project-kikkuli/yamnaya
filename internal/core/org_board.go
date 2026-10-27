@@ -44,6 +44,8 @@ type Node struct {
 	// Steer is the newest revision of what the goal or chief is about, nil when it was never steered.
 	Steer *Steer
 	Fresh Freshness
+	// Stats are the goal's numbers by the reading of the host it runs on.
+	Stats Stats
 }
 
 // Unread is how much news the owner has not read on the node's goal, or on every goal below a chief.

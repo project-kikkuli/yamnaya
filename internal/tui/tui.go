@@ -55,7 +55,6 @@ const (
 	inNewRepo
 	inPhases
 	inVibe
-	inWaitAnswer
 	inGoal
 	inChief
 	inAttach
@@ -142,12 +141,10 @@ type Model struct {
 	inKind    inputKind
 	inItem    string
 	inLabel   string
-	// inReply is the waiting reply an answer is for.
-	inReply string
-	inProj  string
-	filter  string
-	targets []core.Target
-	cursor2 int
+	inProj    string
+	filter    string
+	targets   []core.Target
+	cursor2   int
 	// beside opens the chosen target in a split next to ym instead of switching to it.
 	beside    bool
 	mergeSrc  string
@@ -609,9 +606,6 @@ func needText(n core.Need) string {
 	if n.Item != nil {
 		return n.Item.ID + " " + n.Item.Question
 	}
-	if n.Waiting() {
-		return titleOf(*n.Session) + " waiting: " + n.Line
-	}
 	if n.Session != nil && n.Session.Prompt != nil {
 		return n.Session.Prompt.String()
 	}
@@ -758,6 +752,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		adrift := adriftText(m.board)
+		if lines := machineLines(m.board.Machine, m.board.At, m.width); lines != "" {
+			adrift = "machine" + lines + "\n\n" + adrift
+		}
 		m.show("h", adrift+"reading transcripts…")
 		load := m.core.Health
 		return m, func() tea.Msg {
@@ -805,9 +802,6 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return m, nil
-	}
-	if r.need != nil && r.need.Waiting() && slices.Contains([]string{"enter", "r", "x"}, k.String()) {
-		return m.waitingKey(k, *r.need)
 	}
 	if r.stale {
 		switch k.String() {
@@ -989,26 +983,6 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.startInput(inVibe, "", p.Key, "", false)
 			m.inLabel = p.Name
 		}
-	}
-	return m, nil
-}
-
-// waitingKey acts on a session waiting on the owner: enter shows its last reply, r answers it, x dismisses it.
-func (m Model) waitingKey(k tea.KeyPressMsg, n core.Need) (tea.Model, tea.Cmd) {
-	s := n.Session
-	switch k.String() {
-	case "enter":
-		m.show(k.String(), " "+titleOf(*s)+" ("+s.Location()+"), last reply:\n\n"+n.Reply+"\n")
-	case "r":
-		if m.core.Launches == nil {
-			m.message = "ym's launcher is unavailable"
-			return m, nil
-		}
-		m.startInput(inWaitAnswer, s.Key(), "", "", false)
-		m.inLabel, m.inReply = titleOf(*s), n.Reply
-	case "x":
-		key, reply, label := s.Key(), n.Reply, titleOf(*s)
-		return m, m.do(func() (string, error) { return label + " dismissed", m.core.Store.DismissWaiting(key, reply) })
 	}
 	return m, nil
 }
@@ -1299,17 +1273,6 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			l := m.core.Launches
 			return m, m.do(func() (string, error) { return l.Send(s, text) })
-		case inWaitAnswer:
-			if text == "" {
-				return m, nil
-			}
-			s, ok := m.board.Session(m.inItem)
-			if !ok {
-				m.message = m.inLabel + " is gone"
-				return m, nil
-			}
-			reply := m.inReply
-			return m, m.do(func() (string, error) { return m.core.AnswerWaiting(s, reply, text) })
 		case inFilter:
 			m.filter, m.cursor = text, 0
 		case inAnswer:
@@ -1464,6 +1427,9 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 			m.message = "nothing runs in " + r.project.Name + " and ym launched none of its sessions, so there is nothing to resume"
 		}
 		return m, nil
+	}
+	if err := m.core.Store.MarkOpened(key, time.Now()); err != nil {
+		m.message = "error: " + err.Error()
 	}
 	if s, ok := m.board.Session(key); ok && s.Adoptable() && len(s.Copies) <= 1 && m.core.Launches != nil {
 		m.startInput(inAdopt, key, "", "", false)

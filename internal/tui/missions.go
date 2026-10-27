@@ -37,7 +37,7 @@ func (m Model) missionCols(indent int) cols {
 		if len(p.Phases.Names) > 0 {
 			c.phase = phaseName + 1 + phaseDots
 		}
-		if _, ok := progress.Of(p).Fraction(); ok {
+		if p.Stats.Done != nil {
 			c.bar = 18
 		}
 		if v, ok := p.Vibe(); ok {
@@ -132,6 +132,8 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		switch {
 		case p.Duplicated():
 			cells = append(cells, pal.red.Render(pad(copiesWhere(p), c.doing)))
+		case p.Manager == "" && len(p.Sessions) > 0 && p.Sessions[0].Status == core.Idle && p.Sessions[0].LastLine() != "":
+			cells = append(cells, idleCell(p.Sessions[0], c.doing))
 		case len(p.Sessions) > 0:
 			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
 		}
@@ -182,8 +184,8 @@ func phaseCell(ph core.Phases) string {
 var progressLegend = "done = agents finished + PR steps cleared (" + strings.Join(progress.Gates[:], "→") + ")"
 
 func barCell(p core.Project, w int) string {
-	if f, ok := progress.Of(p).Fraction(); ok {
-		return pad(progress.Bar(f, 8)+fmt.Sprintf(" %3.0f%% done", f*100), w)
+	if f := p.Stats.Done; f != nil {
+		return pad(progress.Bar(*f, 8)+fmt.Sprintf(" %3.0f%% done", *f*100), w)
 	}
 	return pad("", w)
 }
@@ -233,15 +235,14 @@ func (m Model) spendCell(p core.Project, w int) string {
 // workParts are a mission's running crew, open pull requests and failing ones, each blank when there are none.
 func workParts(p core.Project) [3]string {
 	var parts [3]string
-	if n := runningCrew(p.Sessions); n > 0 {
+	if n := p.Stats.Running; n > 0 {
 		parts[0] = fmt.Sprintf("%d▶", n)
 	}
-	t := tallyPRs(prsOf(p.Sessions))
-	if t.open > 0 {
-		parts[1] = fmt.Sprintf("%dPR", t.open)
+	if t := p.Stats.PRs; t.Open > 0 {
+		parts[1] = fmt.Sprintf("%dPR", t.Open)
 	}
-	if t.fail > 0 {
-		parts[2] = fmt.Sprintf("✗%d", t.fail)
+	if t := p.Stats.PRs; t.Failing > 0 {
+		parts[2] = fmt.Sprintf("✗%d", t.Failing)
 	}
 	return parts
 }
@@ -283,10 +284,15 @@ func (m Model) repoCounts(r core.Repo) string {
 	if exited > 0 {
 		parts = append(parts, fmt.Sprintf("%d exited", exited))
 	}
-	if run := runningCrew(sessions); run > 0 {
+	run, prs := 0, core.PRCount{}
+	for _, p := range r.Missions {
+		run += p.Stats.Running
+		prs = prs.Plus(p.Stats.PRs)
+	}
+	if run > 0 {
 		parts = append(parts, plural(run, "agent")+" running")
 	}
-	if pr := prSummary(prsOf(sessions)); pr != "" {
+	if pr := prSummary(prs); pr != "" {
 		parts = append(parts, pr)
 	}
 	return strings.Join(parts, " · ")

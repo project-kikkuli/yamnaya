@@ -553,35 +553,6 @@ func TestASettledDutyLeavesTheOwnersQueueOnItsOwn(t *testing.T) {
 			is: func(n Need) bool { return n.Doc != nil },
 		},
 		{
-			name: "waiting session, answered",
-			raise: func(w *orgWorld, t *testing.T) {
-				w.core.Ask = firstAsk
-				w.spawn("mine", "")
-				w.set("mine", func(s *Session) { s.Result = asking })
-			},
-			settle: func(w *orgWorld, t *testing.T) {
-				b := w.board(t)
-				for _, n := range b.Needs {
-					if n.Waiting() {
-						if _, err := w.core.AnswerWaiting(*n.Session, n.Reply, "ship it"); err != nil {
-							t.Fatal(err)
-						}
-					}
-				}
-			},
-			is: func(n Need) bool { return n.Waiting() },
-		},
-		{
-			name: "waiting session, ended",
-			raise: func(w *orgWorld, t *testing.T) {
-				w.core.Ask = firstAsk
-				w.spawn("mine", "")
-				w.set("mine", func(s *Session) { s.Result = asking })
-			},
-			settle: func(w *orgWorld, t *testing.T) { w.stop("mine") },
-			is:     func(n Need) bool { return n.Waiting() },
-		},
-		{
 			name: "permission prompt, resolved",
 			raise: func(w *orgWorld, t *testing.T) {
 				w.spawn("mine", "")
