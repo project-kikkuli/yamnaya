@@ -55,16 +55,15 @@ func paintBackdrop(key backdropKey) *backdrop {
 
 // painter draws one frame: the backdrop, then each carrier and fleet over it.
 type painter struct {
-	c        *scene.Canvas
-	bd       *backdrop
-	lt       light
-	l        layout
-	frame    int
-	box      scene.Rect
-	w, h     int
-	occ      []bool
-	textBuf  []byte
-	hiddenAt int
+	c       *scene.Canvas
+	bd      *backdrop
+	lt      light
+	l       layout
+	frame   int
+	box     scene.Rect
+	w, h    int
+	occ     []bool
+	textBuf []byte
 }
 
 func (p *painter) set(x, y int, fg, bg rgb, glyph string) {

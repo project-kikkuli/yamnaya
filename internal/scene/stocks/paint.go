@@ -105,7 +105,9 @@ func (p *painter) values(n int) []float64 {
 
 // badge writes how a ticker or panel trades, ending just before end, and is where it starts.
 func (p *painter) badge(end, y int, w scene.Weather, dying float64, rowBg rgb, short bool) int {
-	label, fg, bg := "", p.pal.text, rowBg
+	var label string
+	var fg rgb
+	bg := rowBg
 	switch {
 	case dying > 0:
 		label, fg = "DELISTED", p.pal.dim
