@@ -48,6 +48,7 @@ func Wire(path string) (*core.Core, error) {
 			return out
 		},
 		Store:     st,
+		Scoped:    !core.DefaultStateDir(filepath.Dir(path)),
 		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), srv},
 		Procs:     proc.List,
@@ -68,6 +69,7 @@ func Wire(path string) (*core.Core, error) {
 	if l, err := newLauncher(filepath.Dir(path)); err == nil {
 		l.core, l.srv = c, srv
 		c.Launches = l
+		c.Worktrees = l.worktrees
 		c.PreparePort = l.prepareProfilePort
 		c.BackgroundSend = func(s core.Live, text string) error { _, err := l.sendFrom(s, text, false); return err }
 	}

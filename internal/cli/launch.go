@@ -54,7 +54,7 @@ func newLauncher(dir string) (launcher, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
-	l.everywhere = defaultStateDir(dir)
+	l.everywhere = core.DefaultStateDir(dir)
 	conf := tmux.Conf()
 	if old, err := os.ReadFile(l.conf); err == nil && string(old) == conf {
 		return l, nil
@@ -566,6 +566,16 @@ func paneState(p tmux.Pane) string {
 		return fmt.Sprintf("exited %d", p.Status)
 	}
 	return "running"
+}
+
+// worktrees are the directories of every launch this launcher keeps a record of.
+func (l launcher) worktrees() []string {
+	all, _ := l.records.All()
+	out := make([]string, 0, len(all))
+	for _, rec := range all {
+		out = append(out, rec.Worktree.Path)
+	}
+	return out
 }
 
 func (l launcher) Launched() []core.Launched {

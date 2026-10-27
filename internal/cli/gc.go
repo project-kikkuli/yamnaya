@@ -35,20 +35,6 @@ func (l launcher) sweepSoon() {
 	}
 }
 
-// defaultStateDir reports whether dir is ym's state dir when YAMNAYA_STATE_DIR is unset, the one whose gc may sweep every repository.
-func defaultStateDir(dir string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	have, err := os.Stat(dir)
-	if err != nil {
-		return false
-	}
-	want, err := os.Stat(filepath.Join(home, ".local", "state", "yamnaya"))
-	return err == nil && os.SameFile(have, want)
-}
-
 // cwds are the working directories of every process.
 func cwds() []string {
 	procs, _ := proc.List()

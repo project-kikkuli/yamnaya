@@ -60,3 +60,55 @@ func TestStopWithoutASignalOfItsOwnSignalsThroughProcSignal(t *testing.T) {
 		t.Fatalf("signalled %v through proc.Signal, want [4242]", sent)
 	}
 }
+
+func TestADrillsYmSeesOnlySessionsInsideItsOwnRootOrItsLaunches(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	drill := filepath.Join(base, "drill")
+	inside, outside, launched := filepath.Join(drill, "repo"), filepath.Join(base, "real-repo"), filepath.Join(base, "real-repo-wt-x")
+	for _, d := range []string{inside, outside, launched, filepath.Join(drill, "state")} {
+		must(t, os.MkdirAll(d, 0o755))
+	}
+	must(t, os.WriteFile(filepath.Join(drill, RehearsalMark), nil, 0o644))
+	home, _ := os.UserHomeDir()
+	owner := filepath.Join(home, ".local", "state", "yamnaya")
+	start := func(dir string) string {
+		p := exec.Command("sleep", "30")
+		p.Dir = dir
+		must(t, p.Start())
+		t.Cleanup(func() { p.Process.Kill(); p.Wait() })
+		for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+			if cwd := proc.Cwd(p.Process.Pid); cwd != "" {
+				return cwd
+			}
+		}
+		t.Fatalf("no cwd for a process in %s", dir)
+		return ""
+	}
+	cwds := map[string]string{inside: start(inside), outside: start(outside), launched: start(launched)}
+	for _, c := range []struct {
+		name  string
+		state string
+		cwd   string
+		seen  bool
+	}{
+		{"drill ym, session inside its root", filepath.Join(drill, "state"), inside, true},
+		{"drill ym, the owner's session outside its root", filepath.Join(drill, "state"), outside, false},
+		{"drill ym, a worktree its own launch made outside its root", filepath.Join(drill, "state"), launched, true},
+		{"owner's ym, its session outside every drill", owner, outside, true},
+		{"owner's ym, the drill's session", owner, inside, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.core.StateDir, w.core.Scoped = c.state, c.state != owner
+			w.core.Worktrees = func() []string { return []string{launched} }
+			w.run(10, 1, "/dev/t1", "claude", "s1", Idle)
+			w.claude.sessions[10] = Session{ID: "s1", Status: Idle, Cwd: cwds[c.cwd]}
+			if got := len(w.board(t).Sessions) == 1; got != c.seen {
+				t.Fatalf("board on %s shows the session in %s %v, want %v", c.state, cwds[c.cwd], got, c.seen)
+			}
+			if _, err := w.core.Find("s1"); (err == nil) != c.seen {
+				t.Fatalf("Find found it %v, want %v", err == nil, c.seen)
+			}
+		})
+	}
+}

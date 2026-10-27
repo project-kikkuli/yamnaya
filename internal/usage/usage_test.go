@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -403,5 +404,30 @@ func TestSlicesOlderThanTheLongestWindowDropWhileTheMeterRuns(t *testing.T) {
 				t.Errorf("slices in memory %d, stored %d, want %d", len(m.slices), stored, c.want)
 			}
 		})
+	}
+}
+
+func TestClosingTheMeterCutsAScanShortAndCommitsNothing(t *testing.T) {
+	m := meter(t)
+	for i := range 400 {
+		var lines []string
+		for j := range 50 {
+			lines = append(lines, reply(fmt.Sprintf("msg_%d_%d", i, j), "claude-sonnet-5", 1, 1, 0, 0, 0))
+		}
+		write(t, filepath.Join(m.ClaudeDir, "projects", "-Users-me-app", fmt.Sprintf("s%03d.jsonl", i)), lines...)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := m.Scan(ts); done <- err }()
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrClosed) {
+		t.Fatalf("scan in flight at Close returned %v, want ErrClosed", err)
+	}
+	reopened := &Meter{ClaudeDir: m.ClaudeDir, CodexHome: m.CodexHome, StateDir: m.StateDir, Every: time.Hour}
+	t.Cleanup(func() { reopened.Close() })
+	st, err := reopened.Scan(ts)
+	if err != nil || st.Changed != 400 {
+		t.Fatalf("next scan changed %d files (%v), want all 400 left for it", st.Changed, err)
 	}
 }

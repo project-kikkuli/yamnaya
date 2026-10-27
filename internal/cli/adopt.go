@@ -34,7 +34,7 @@ func (l launcher) Adopt(s core.Live, say func(string)) (core.Target, error) {
 	if why := s.Unadoptable(); why != "" {
 		return core.Target{}, errors.New(why)
 	}
-	if why := launch.Unadoptable(s.Cwd, filepath.Dir(l.records.Dir)); why != "" {
+	if why := launch.Unadoptable(s.Cwd, filepath.Dir(l.records.Dir), !l.everywhere); why != "" {
 		return core.Target{}, errors.New(why)
 	}
 	st := launch.Stopper{
@@ -82,7 +82,7 @@ func (l launcher) Relaunch(from core.Live, harnessName, id string) (string, erro
 func (l launcher) takeOver(from core.Live, harnessName, id string) (launch.Record, error) {
 	rec, ok := l.records.Find(from.Harness + ":" + profile.ID(from.Profile) + "@" + from.ID)
 	if !ok || rec.Worktree.Path != from.Cwd {
-		if why := launch.Unadoptable(from.Cwd, filepath.Dir(l.records.Dir)); why != "" {
+		if why := launch.Unadoptable(from.Cwd, filepath.Dir(l.records.Dir), !l.everywhere); why != "" {
 			return launch.Record{}, errors.New(why)
 		}
 		rec = launch.Adopted(from, time.Now())

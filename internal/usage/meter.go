@@ -2,6 +2,7 @@ package usage
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -42,6 +44,7 @@ type Meter struct {
 	Fetch func() ([]byte, error)
 
 	scanMu      sync.Mutex
+	closing     atomic.Bool
 	mu          sync.Mutex
 	ledger      *ledger
 	files       map[string]*file
@@ -83,7 +86,12 @@ func New(stateDir string) *Meter {
 	return &Meter{ClaudeDir: claude, CodexHome: codex, StateDir: stateDir, Every: 5 * time.Second, Fetch: FetchPrices}
 }
 
+// ErrClosed is what a scan Close cut short returns; it commits nothing.
+var ErrClosed = errors.New("usage meter closed")
+
+// Close ends the meter, cutting short a scan in flight between transcripts.
 func (m *Meter) Close() error {
+	m.closing.Store(true)
 	m.scanMu.Lock()
 	defer m.scanMu.Unlock()
 	if m.ledger == nil {
@@ -188,6 +196,9 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	defer m.scanMu.Unlock()
 	start := time.Now()
 	var st Stats
+	if m.closing.Load() {
+		return st, ErrClosed
+	}
 	if _, err := os.Stat(m.StateDir); err != nil {
 		return st, err
 	}
@@ -244,6 +255,9 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 			sources = codexSources(p.Root)
 		}
 		for _, s := range sources {
+			if m.closing.Load() {
+				return st, ErrClosed
+			}
 			s.ConfigRoot = p.Root
 			s.Harness = p.Harness
 			s.Profile = p.ID
@@ -262,6 +276,9 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	st.Files = len(srcs)
 	var work []*parsed
 	for _, s := range srcs {
+		if m.closing.Load() {
+			return st, ErrClosed
+		}
 		old := m.files[s.Path]
 		if old != nil && old.Size == s.Size && old.MTime == s.MTime && old.Profile == s.Profile && old.Account == s.Account {
 			continue
@@ -292,6 +309,9 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	t0 := time.Now()
 	sort.Slice(work, func(i, j int) bool { return work[i].f.Size-work[i].f.Offset > work[j].f.Size-work[j].f.Offset })
 	m.parse(work)
+	if m.closing.Load() {
+		return st, ErrClosed
+	}
 	for _, p := range work {
 		if p.err != nil {
 			return st, p.err
@@ -394,6 +414,9 @@ func (m *Meter) parse(work []*parsed) {
 		}()
 	}
 	for _, p := range work {
+		if m.closing.Load() {
+			break
+		}
 		jobs <- p
 	}
 	close(jobs)

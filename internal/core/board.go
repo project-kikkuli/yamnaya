@@ -45,7 +45,11 @@ type Core struct {
 	Port        func(cwd, id, to string) (string, error)
 	PreparePort func(Session, string, string) (PortPlan, error)
 	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean proc.Signal and 3s.
-	Signal         func(pid int, sig syscall.Signal) error
+	Signal func(pid int, sig syscall.Signal) error
+	// Scoped keeps this ym to sessions under the root holding its state dir, as every ym but the owner's default one is.
+	Scoped bool
+	// Worktrees are the directories this ym's own launches made; nil means none.
+	Worktrees      func() []string
 	KillGrace      time.Duration
 	BackgroundSend func(Live, string) error
 	// Log takes what ym serve should record, such as why a queued answer or message did not reach its agent.

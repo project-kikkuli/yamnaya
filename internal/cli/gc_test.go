@@ -124,8 +124,8 @@ func TestOnlyTheDefaultStateDirSweepsEveryRepository(t *testing.T) {
 		{t.TempDir(), false},
 		{filepath.Join(home, "missing"), false},
 	} {
-		if got := defaultStateDir(c.dir); got != c.want {
-			t.Errorf("defaultStateDir(%s) = %v, want %v", c.dir, got, c.want)
+		if got := core.DefaultStateDir(c.dir); got != c.want {
+			t.Errorf("DefaultStateDir(%s) = %v, want %v", c.dir, got, c.want)
 		}
 	}
 }
@@ -156,6 +156,7 @@ func TestYmNeverAdoptsASessionInTheHomeDirectoryOrAnotherYmsRehearsal(t *testing
 		{"a plain directory elsewhere", plain, owner, true, ""},
 		{"a rehearsal, seen by the owner's ym", run, owner, false, "rehearsal"},
 		{"a rehearsal, seen by the ym running it", run, filepath.Join(rehearsals, "run", "state"), true, ""},
+		{"the owner's directory, seen by a rehearsal's ym", plain, filepath.Join(rehearsals, "run", "state"), false, "rehearsal"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(c.state, "launches")}}

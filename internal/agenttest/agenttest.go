@@ -16,8 +16,8 @@ import (
 )
 
 // Run runs m inside a fresh temporary root, removed afterwards, and returns its exit code. The root is a rehearsal root, so the
-// owner's ym never shows, records or adopts a session a test starts. HOME, TMPDIR, YAMNAYA_STATE_DIR, CLAUDE_CONFIG_DIR and
-// CODEX_HOME point inside it, and ym's tmux servers are private ones. A signal to a process neither started by the test nor
+// owner's ym never shows, records or adopts a session a test starts. HOME, TMPDIR, CLAUDE_CONFIG_DIR and CODEX_HOME point
+// inside it, YAMNAYA_STATE_DIR at the default state dir under that HOME, and ym's tmux servers and brief page are private ones. A signal to a process neither started by the test nor
 // working inside the root is refused and fails the run. A test binary a test runs again keeps the root it inherits.
 func Run(m *testing.M) int {
 	if root := os.Getenv(rootEnv); root != "" {
@@ -39,10 +39,11 @@ func Run(m *testing.M) int {
 	}
 	os.Setenv(rootEnv, root)
 	for _, env := range []string{"CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CODEX_SQLITE_HOME",
-		"YAMNAYA_PROFILE", "YAMNAYA_ACCOUNT", "YAMNAYA_BRIEFS_ADDR", "TMUX", "TMUX_PANE", "XPC_SERVICE_NAME"} {
+		"YAMNAYA_PROFILE", "YAMNAYA_ACCOUNT", "TMUX", "TMUX_PANE", "XPC_SERVICE_NAME"} {
 		os.Unsetenv(env)
 	}
-	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "YAMNAYA_STATE_DIR": "state", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
+	os.Setenv("YAMNAYA_BRIEFS_ADDR", "127.0.0.1:0")
+	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "YAMNAYA_STATE_DIR": "home/.local/state/yamnaya", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
 		path := filepath.Join(root, sub)
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			panic(err)
@@ -103,14 +104,10 @@ func (f *fence) ours(pid int) bool {
 	return false
 }
 
-// check is code, or 1 when the run sent a refused signal or reached the default state directory past YAMNAYA_STATE_DIR.
+// check is code, or 1 when the run sent a refused signal.
 func (f *fence) check(code int) int {
 	if refused := f.refused(); len(refused) > 0 {
 		fmt.Fprintln(os.Stderr, "agenttest: refused signals to processes outside the test:", strings.Join(refused, ", "))
-		code = max(code, 1)
-	}
-	if _, err := os.Stat(filepath.Join(f.root, "home", ".local", "state", "yamnaya")); err == nil {
-		fmt.Fprintln(os.Stderr, "agenttest: a test reached the default state directory past YAMNAYA_STATE_DIR")
 		code = max(code, 1)
 	}
 	return code
