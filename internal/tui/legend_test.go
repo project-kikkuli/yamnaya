@@ -41,3 +41,19 @@ func TestHelpScrollsWhenItDoesNotFit(t *testing.T) {
 		t.Fatal("esc should leave help")
 	}
 }
+
+func TestHelpFitsEveryWidthAndKeepsEveryKey(t *testing.T) {
+	for _, w := range []int{60, 80, 120} {
+		text := ansi.Strip(helpText(w))
+		for i, l := range strings.Split(text, "\n") {
+			if ansi.StringWidth(l) > w {
+				t.Errorf("width %d line %d is %d wide: %q", w, i, ansi.StringWidth(l), l)
+			}
+		}
+		for _, want := range []string{"kill, after one y/n", "page down or up in an agent's page or a text page", "top or bottom of the list", "NO_COLOR turns color off", "Eruption:", "A verifying goal"} {
+			if !strings.Contains(strings.Join(strings.Fields(text), " "), want) {
+				t.Errorf("width %d lost %q", w, want)
+			}
+		}
+	}
+}
