@@ -44,7 +44,7 @@ func TestAYmSeesARehearsalsSessionsOnlyWhenItRunsThatRehearsal(t *testing.T) {
 }
 
 func TestAYmSeesASessionInAnUnmarkedScratchDirOnlyWhenItsStateIsThere(t *testing.T) {
-	home, _ := filepath.EvalSymlinks(t.TempDir())
+	home := "/Users/owner"
 	t.Setenv("HOME", home)
 	owner := filepath.Join(home, ".local", "state", "yamnaya")
 	drill := filepath.Join(home, "tmp", "arbiter-work", "drill")
