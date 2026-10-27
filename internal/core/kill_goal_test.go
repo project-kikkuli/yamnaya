@@ -48,7 +48,6 @@ func TestKillingAGoalEndsItsManagerAgentsAndVerifierAndShowsItKilled(t *testing.
 				w.supervise(t)
 				want = append(want, w.launches.starts[len(w.launches.starts)-1].Session)
 			}
-			signalled(w)
 			b := w.board(t)
 			if _, err := w.core.KillGoal(b, g.ID); err != nil {
 				t.Fatal(err)
@@ -86,7 +85,6 @@ func TestKillingAChiefRetiresItAloneAndItsGoalsReportUp(t *testing.T) {
 	_, m := w.goal(t, "ship the importer", "/repo/august")
 	ch := w.chief(t, "platform", m.ID)
 	w.supervise(t)
-	signalled(w)
 	b := w.board(t)
 	if _, err := w.core.KillGoal(b, ch.ID); err != nil {
 		t.Fatal(err)

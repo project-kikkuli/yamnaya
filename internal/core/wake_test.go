@@ -478,7 +478,7 @@ func TestAWakeOfAGoalThatEndedFiresSilently(t *testing.T) {
 	if _, err := w.core.SetWake(m.Session, w.clock.Add(time.Minute), "check the canary"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.core.DropGoal(g.ID); err != nil {
+	if _, err := w.core.KillGoal(w.board(t), g.ID); err != nil {
 		t.Fatal(err)
 	}
 	w.clock = w.clock.Add(2 * time.Minute)

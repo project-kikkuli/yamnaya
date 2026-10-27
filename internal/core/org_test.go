@@ -69,6 +69,7 @@ func newOrgWorld(t *testing.T) *orgWorld {
 	w.core.Now = func() time.Time { return w.clock }
 	w.core.Pace = &WakePace{}
 	w.claude.inbox = map[string]error{}
+	signalled(w)
 	return w
 }
 
@@ -629,16 +630,16 @@ func TestAsksWaitingOnAManagerThatCanNoLongerAnswerClimbToTheNextOneUp(t *testin
 		strand  func(w *orgWorld, m Manager, g Goal)
 		toChief bool
 	}{
-		{name: "goal dropped", strand: func(w *orgWorld, m Manager, g Goal) { w.core.DropGoal(g.ID) }, toChief: true},
+		{name: "goal killed", strand: func(w *orgWorld, m Manager, g Goal) { w.core.KillGoal(w.board(t), g.ID) }, toChief: true},
 		{name: "manager stuck", strand: func(w *orgWorld, m Manager, g Goal) {
 			m, _ = w.core.Store.Manager(m.ID)
 			m.Failures = stuckFailures
 			w.core.Store.SaveManager(m)
 		}, toChief: true},
 		{name: "chief retired too", strand: func(w *orgWorld, m Manager, g Goal) {
-			w.core.DropGoal(g.ID)
+			w.core.KillGoal(w.board(t), g.ID)
 			chief, _ := w.core.Store.Manager(m.ParentID)
-			w.core.DropGoal(chief.ID)
+			w.core.KillGoal(w.board(t), chief.ID)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

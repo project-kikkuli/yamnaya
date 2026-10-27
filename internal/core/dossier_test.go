@@ -176,7 +176,7 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 				t.Fatal(err)
 			}
 			if tc.dropped {
-				if _, err := w.core.DropGoal(m.ID); err != nil {
+				if _, err := w.core.KillGoal(w.board(t), m.ID); err != nil {
 					t.Fatal(err)
 				}
 			}

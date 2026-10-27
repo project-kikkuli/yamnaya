@@ -279,36 +279,6 @@ func (c *Core) SetArtifact(session, url string) error {
 	return c.Store.SaveManager(m)
 }
 
-// DropGoal ends a goal the owner no longer wants; its manager stops being supervised.
-func (c *Core) DropGoal(ref string) (Goal, error) {
-	if host, rest, ok := c.remoteHost(ref); ok {
-		out, err := c.RunOrRelay(host, "goal", "drop", rest)
-		if err != nil || strings.HasSuffix(out, "retired") {
-			return Goal{}, err
-		}
-		return Goal{ID: ref, Host: host, State: GoalDropped}, nil
-	}
-	o, err := c.LoadOrg()
-	if err != nil {
-		return Goal{}, err
-	}
-	m, err := o.lookup(ref)
-	if err != nil {
-		return Goal{}, err
-	}
-	g, ok := o.Goals[m.GoalID]
-	if !ok {
-		m.Retired = true
-		return Goal{}, c.Store.SaveManager(m)
-	}
-	g.State, g.AckedAt = GoalDropped, c.now()
-	if err := c.Store.SaveGoal(g); err != nil {
-		return g, err
-	}
-	m.Retired = true
-	return g, c.Store.SaveManager(m)
-}
-
 // ReplaceManager ends the session of the manager or chief ref names, if it runs, and starts a fresh one with its prompt and brief.
 func (c *Core) ReplaceManager(b Board, ref string) (Manager, error) {
 	if host, rest, ok := c.remoteHost(ref); ok {

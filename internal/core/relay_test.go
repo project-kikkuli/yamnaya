@@ -96,7 +96,7 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 				t.Fatal(err)
 			}
 			if tc.chiefGone {
-				if _, err := cw.core.DropGoal(chief.ID); err != nil {
+				if _, err := cw.core.KillGoal(cw.board(t), chief.ID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -249,7 +249,7 @@ func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing
 		want string
 	}{
 		{func() error { return w.core.AckGoal("box/goal2") }, "box goal ack goal2"},
-		{func() error { _, err := w.core.DropGoal("box/goal2"); return err }, "box goal drop goal2"},
+		{func() error { _, err := w.core.KillGoal(b, "box/goal2"); return err }, "box kill --yes goal2"},
 		{func() error { _, err := w.core.ReplaceManager(b, "box/mgr1"); return err }, "box goal relaunch mgr1"},
 		{func() error { _, err := w.core.Steer(b, []string{chief.ID}, true, true, "focus"); return err }, "box goal send --subtree mgr1 focus"},
 		{func() error { return w.core.Attach("box/mgr2", chief.ID) }, "box chief attach mgr2 a/" + chief.ID},
