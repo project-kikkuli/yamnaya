@@ -729,6 +729,8 @@ func (m Model) selected() (row, bool) {
 	return rs[m.cursor], true
 }
 
+const rowScopedKeys = "oOrgxluemsSKzTpPv"
+
 func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
 		return m, tea.Quit
@@ -913,6 +915,21 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if k.String() == "B" {
+		r, _ := m.selected()
+		return m.openPanel(panelProfiles, r)
+	}
+	if k.String() == "G" {
+		if m.core.Launches != nil {
+			l := m.core.Launches
+			m.confirm("gc? removes worktrees idle 3 days that are clean, on a remote and unused, then branches merged into origin",
+				m.do(func() (string, error) {
+					msg, err := l.GC()
+					return msg[strings.LastIndex(msg, "\n")+1:], err
+				}))
+		}
+		return m, nil
+	}
 	r, ok := m.selected()
 	if !ok {
 		if (m.mode == modeAgent || m.mode == modeSession) && (k.String() == "o" || k.String() == "O") {
@@ -922,6 +939,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if strings.Contains("sKTL", k.String()) && (m.mode == modeAgent || m.mode == modeSession) {
 			r = row{}
 		} else {
+			if strings.Contains(rowScopedKeys, k.String()) || k.Code == tea.KeyEnter {
+				m.message = "nothing selected"
+			}
 			return m, nil
 		}
 	}
@@ -1038,17 +1058,6 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.message = "counting what killing " + label + " ends"
 			return m, m.weighKill(ss, label)
 		}
-	case "G":
-		if m.core.Launches != nil {
-			l := m.core.Launches
-			m.confirm("gc? removes worktrees idle 3 days that are clean, on a remote and unused, then branches merged into origin",
-				m.do(func() (string, error) {
-					msg, err := l.GC()
-					return msg[strings.LastIndex(msg, "\n")+1:], err
-				}))
-		}
-	case "B":
-		return m.openPanel(panelProfiles, r)
 	case "z":
 		return m.toggleOff(r)
 	case "T":

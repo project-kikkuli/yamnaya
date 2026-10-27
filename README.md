@@ -132,6 +132,8 @@ Behind `?`:
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
 | `q` | back or quit |
 
+On an empty board, the keys that need no selection still work: `B` `H` `Y` `E` `G` `I` `U` `h` `A` `L` `?` `/` `n` `N` `+`, so a fresh install adds its first login with `B`. Keys that act on a row (`enter`, `o`, `r`, `s`, `K`, `z`, `T`, ...) say "nothing selected".
+
 **Goals** groups the goals that report to you by repository and lists every chief, with its reports nested under it, under **chiefs**, so `[` and `]` step through goals and sessions by repository alike.
 
 Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**. An idle one shows `idle · <its last line>` on its own row, behind a dot while that line is unread; `o` or `O` opens it and marks it read, and `r` sends it a follow-up. `ym waiting` still lists the idle ones whose last reply asks you.
