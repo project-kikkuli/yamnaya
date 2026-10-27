@@ -235,3 +235,32 @@ func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnection(t *testing.T
 		})
 	}
 }
+
+func TestBoardSeesHostsRememberedAndForgottenWhileItRuns(t *testing.T) {
+	st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	t.Setenv("YAMNAYA_SSH_BIN", fakeSSH(t))
+	e := &env{core: &core.Core{Store: st}}
+	if err := e.readRemotes(0, true); err != nil || e.core.Remotes == nil {
+		t.Fatalf("board with no hosts wired no remotes: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		act  func() error
+		want []string
+	}{
+		{"remembered", func() error { return st.RecordHost("box", time.Now()) }, []string{"box"}},
+		{"forgotten", func() error { _, err := st.ForgetHost("box"); return err }, []string{}},
+	} {
+		if err := c.act(); err != nil {
+			t.Fatal(err)
+		}
+		e.core.Remotes.(*remoteHosts).rereadAt = time.Time{}
+		if got := e.core.Remotes.Hosts(); strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Fatalf("%s: hosts %v, want %v", c.name, got, c.want)
+		}
+	}
+}

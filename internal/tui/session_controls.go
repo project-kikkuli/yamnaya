@@ -50,13 +50,13 @@ func (m Model) sessionHints() string {
 		hints = append(hints, "K kill")
 	}
 	if r.dormant != nil {
-		hints = append(hints, "B subscription")
+		hints = append(hints, "B login")
 	}
 	if s := m.sessionOf(r); s != nil {
 		if s.ID != "" && m.core.Launches != nil {
 			hints = append(hints, "s send")
 		}
-		hints = append(hints, "T switch", "B subscription")
+		hints = append(hints, "T switch", "B login")
 	}
 	return strings.Join(hints, hintSep)
 }

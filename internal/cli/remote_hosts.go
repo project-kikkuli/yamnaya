@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,10 @@ import (
 // remoteHosts reads the boards of the hosts ym remote reached over ssh, every host at once, and keeps the last read of each.
 type remoteHosts struct {
 	names []string
-	ssh   string
+	// known re-reads the remembered hosts, so a host added or forgotten while a board runs shows or leaves; nil keeps names.
+	known    func() []string
+	rereadAt time.Time
+	ssh      string
 	// timeout bounds one host's read; every is how old a read gets before the next Boards starts another; wait is how long
 	// Boards waits for a host it has never read.
 	timeout, every, wait time.Duration
@@ -64,7 +68,19 @@ func (r *remoteHosts) keep(host string, at time.Time, raw []byte) {
 	r.mu.Unlock()
 }
 
-func (r *remoteHosts) Hosts() []string { return r.names }
+func (r *remoteHosts) Hosts() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reread()
+	return slices.Clone(r.names)
+}
+
+// reread takes the remembered hosts as they stand now, at most every two seconds; r.mu is held.
+func (r *remoteHosts) reread() {
+	if r.known != nil && time.Since(r.rereadAt) >= 2*time.Second {
+		r.names, r.rereadAt = r.known(), time.Now()
+	}
+}
 
 func (r *remoteHosts) Silent(host string) error {
 	r.mu.Lock()
@@ -77,6 +93,7 @@ func (r *remoteHosts) Silent(host string) error {
 
 func (r *remoteHosts) Boards() []core.RemoteBoard {
 	r.mu.Lock()
+	r.reread()
 	var first []chan struct{}
 	for _, h := range r.names {
 		_, read := r.last[h]
@@ -330,15 +347,19 @@ func sshErr(err error, stderr []byte) error {
 // readRemotes routes commands to every host ym remote reached, waiting up to wait for a host's first answer; show also puts their
 // boards on this one.
 func (e *env) readRemotes(wait time.Duration, show bool) error {
-	hosts, err := e.core.Store.KnownHosts()
-	if err != nil || len(hosts) == 0 {
-		return err
-	}
-	names := make([]string, len(hosts))
-	for i, h := range hosts {
-		names[i] = h.Name
-	}
 	st := e.core.Store
+	known := func() []string {
+		hosts, _ := st.KnownHosts()
+		names := make([]string, len(hosts))
+		for i, h := range hosts {
+			names[i] = h.Name
+		}
+		return names
+	}
+	names := known()
+	if len(names) == 0 && wait > 0 {
+		return nil
+	}
 	r := newRemoteHosts(names, wait, func(h string, at time.Time, board []byte) {
 		st.SeeHost(h, at)
 		if show {
@@ -351,6 +372,9 @@ func (e *env) readRemotes(wait time.Duration, show bool) error {
 				r.keep(h, at, raw)
 			}
 		}
+	}
+	if wait == 0 {
+		r.known = known
 	}
 	e.core.Remotes = r
 	e.core.ShowRemotes = show

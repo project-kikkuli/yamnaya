@@ -544,7 +544,7 @@ func (m Model) loadSettings() tea.Cmd {
 		d := settingsData{loaded: true}
 		out, err := run("", "", "service", "status")
 		if err == nil && json.Unmarshal([]byte(out), &d.service) != nil {
-			d.service = map[string]any{"error": out}
+			d.service = map[string]any{"note": out}
 		}
 		docs, docsErr := run("", "", "docs")
 		d.docs, _, _ = strings.Cut(docs, "\n")
@@ -576,6 +576,9 @@ func (m Model) settingRows() ([]prow, []pdo) {
 		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
 			serve += ", last cycle " + age(time.Now(), t)
 		}
+	}
+	if note, _ := d.service["note"].(string); note != "" {
+		serve = oneLine(note)
 	}
 	if e, _ := d.service["error"].(string); e != "" {
 		serve += pal.red.Render(", last error: " + oneLine(e))

@@ -112,6 +112,8 @@ func (m Model) shown() bool {
 	switch m.mode {
 	case modeHelp, modeScreen, modeWhy, modePick, modeItems, modePanel:
 		return false
+	case modeConfirm:
+		return m.back != modePanel
 	case modeInput:
 		return m.inKind != inNewRepo && m.back != modePanel
 	}
