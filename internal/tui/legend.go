@@ -13,7 +13,7 @@ func helpText(width int) string {
 		gold = gold.Foreground(lipgloss.Color("#e0b030"))
 	}
 	g := func(s string) string {
-		return "   " + strings.ReplaceAll(ansi.Wrap(s, max(20, width-4), " "), "\n", "\n     ")
+		return "   " + strings.ReplaceAll(ansi.Wrap(s, max(20, width-5), " "), "\n", "\n     ")
 	}
 	var b strings.Builder
 	b.WriteString(reflow(Help, width))
@@ -21,13 +21,13 @@ func helpText(width int) string {
 	b.WriteString("\n")
 	para("Mountains (each repository is a range, each goal or session you started a peak; A hides them)")
 	for _, l := range []string{
-		pal.green.Render("λ") + " agent at work, climbing the west face; the leader stands higher the more is done",
-		pal.red.Render("λ") + " agent stopped and waiting on you",
+		"λ agent at work, climbing the west face; pale yellow at night, dark blue by day. The leader stands higher the more is done",
+		pal.red.Render("λ") + " agent stopped and waiting on you (always red)",
 		"▴ N resting: idle teammates that stay on the mountain",
 		"▲ pull request camp on the east face; higher = more of its 6 gates passed (branch, commits, PR, CI, threads, merged)",
 		pal.green.Render("▲") + " camp whose CI passed      " + pal.red.Render("▲") + " camp whose CI fails",
 		gold.Render("⚑") + " merged pull request (several collapse to \"N merged\")",
-		gold.Render("⚑") + " on a summit: goal done, or every pull request merged",
+		pal.red.Render("⚑") + " on a summit: goal done, or every pull request merged",
 		pal.red.Render("│ ✸") + " red flare over a peak: something waits on you; it blinks and the name turns red",
 		"name NN%: how far along it is (see Percentages)",
 	} {
@@ -36,11 +36,11 @@ func helpText(width int) string {
 	b.WriteString("\n")
 	para("Weather (per peak; the sky above a range takes the worst of its peaks)")
 	for _, l := range []string{
-		"Clear: moving or verifying, or a session with agents or pull requests in flight",
-		"Clouds: quiet (nudged, or nothing moved for 30 minutes), adrift, or a session with no active agent and no camp yet",
+		"Clear: a goal that is moving or verifying; a session with an agent at work or waiting, or with both a teammate and a pull request. It outranks Summit while an agent is busy",
+		"Clouds: a goal that is quiet (nudged, or nothing moved for 30 minutes) or adrift; a session with no working agent, or with pull requests but no teammate",
 		"Storm: dark cloud, rain " + pal.dim.Render("╱") + " and lightning: a stuck goal, or a pull request with failing CI",
 		"Eruption: lava, smoke and embers, no climbers: the manager's session died and has not come back",
-		"Summit: glow and halo: goal done, or every pull request merged; a group only when all its members are",
+		"Summit: glow and halo: goal done, or a session whose pull requests are all merged with no one on the mountain; a group only when all its members are",
 		"Sky tint: where peaks overlap, Eruption beats Storm beats Summit beats Clouds",
 	} {
 		b.WriteString(g(l) + "\n")

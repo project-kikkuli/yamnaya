@@ -173,21 +173,21 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 | Sign | Meaning |
 |---|---|
-| `λ` | A busy agent, climbing the west face. The leader stands higher the more is done. |
-| red `λ` | An agent stopped and waiting on you. |
+| `λ` | A busy agent, climbing the west face, pale yellow at night and dark blue by day. The leader stands higher the more is done. |
+| red `λ` | An agent stopped and waiting on you. Always red. |
 | `▴ N resting` | Idle teammates that stay on the mountain. |
 | `▲` | A pull request camp on the east face, higher for each of its six gates passed: branch, commits, pull request, CI, threads, merged. |
 | green `▲` / red `▲` | CI passed / CI failing. |
 | gold `⚑` | A merged pull request. Several collapse to `N merged`. |
-| `⚑` on a summit | The goal is done, or every pull request is merged. |
+| red `⚑` on a summit | The goal is done, or every pull request is merged. |
 | red `│ ✸` | A flare: something waits on you. It blinks and the name turns red. |
-| Clear | Moving or verifying, or a session with agents or pull requests in flight. |
-| Clouds | Quiet (nudged, or nothing moved for 30 minutes), adrift, or a session with no active agent and no camp yet. |
+| Clear | A goal that is moving or verifying; a session with an agent at work or waiting, or with both a teammate and a pull request. It outranks Summit while an agent is busy. |
+| Clouds | A goal that is quiet (nudged, or nothing moved for 30 minutes) or adrift; a session with no working agent, or with pull requests but no teammate. |
 | Storm: dark cloud, rain `╱`, lightning | A stuck goal, or a pull request with failing CI. |
 | Eruption: lava, smoke, embers, no climbers | The manager's session died and has not come back. |
-| Summit: glow and halo | Goal done, or every pull request merged. A group is at its summit only when all its members are. |
+| Summit: glow and halo | Goal done, or a session whose pull requests are all merged with no one on the mountain. A group is at its summit only when all its members are. |
 | Sky tint | Where peaks overlap, Eruption beats Storm beats Summit beats Clouds. |
-| Sun, moon, stars, lake, pines, fog, drifting clouds, far ridges | Decoration only. Sun, moon and stars follow your clock. Colors never mark a goal or repository. |
+| Sun, moon, stars, lake, pines, fog, wisps, drifting clouds, far ridges, rim light | Decoration only. Sun, moon and stars follow your clock. Colors never mark a goal or repository. |
 
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
 

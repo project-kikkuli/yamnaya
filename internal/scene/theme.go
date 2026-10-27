@@ -52,7 +52,7 @@ var day = theme{
 	cloud: hex("#ffffff"), cloudShade: hex("#b9c6d6"),
 	lavaHot: hex("#fff3a6"), lava: hex("#ff5a14"), lavaDeep: hex("#9c1606"),
 	smoke: hex("#ecebee"), smokeDark: hex("#55525a"),
-	climber: hex("#e02a20"), rope: hex("#f0a030"), flag: hex("#e0241a"), label: hex("#ffffff"),
+	climber: hex("#14213d"), rope: hex("#f0a030"), flag: hex("#e0241a"), label: hex("#ffffff"),
 	bolt: hex("#ffffff"), green: hex("#1f9d3a"), gold: hex("#c98a00"),
 	valley: .78,
 }
