@@ -74,7 +74,7 @@ func (m Model) prepareView() viewPage {
 	var body viewPage
 	switch m.mode {
 	case modeHelp:
-		body = textPage(ansi.Wrap(Help, bodyModel.width, " "), "")
+		body = textPage(ansi.Wrap(helpText(bodyModel.width), bodyModel.width, " "), "")
 	case modeScreen:
 		body = textPage(linkedWrap(m.screen, bodyModel.width), "")
 	case modeWhy:
@@ -126,7 +126,7 @@ func (m Model) prepareView() viewPage {
 		height = max(12, m.height-m.height/4)
 	}
 	room := max(1, height-len(foot))
-	if (m.mode == modeScreen || m.mode == modeAgent) && len(lines) > room && room > top {
+	if (m.mode == modeHelp || m.mode == modeScreen || m.mode == modeAgent) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -399,7 +399,7 @@ func (m Model) hints() string {
 	}
 	switch m.mode {
 	case modeHelp, modeScreen:
-		return "esc back"
+		return "↑↓ pgup pgdn scroll · esc back"
 	case modeItems:
 		return "↑↓ move · enter expand · r reply · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:

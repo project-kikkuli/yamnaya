@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/scene"
@@ -710,6 +711,21 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeInput:
 		return m.inputKey(k)
 	case modeHelp:
+		last := max(0, strings.Count(ansi.Wrap(helpText(m.width), m.width, " "), "\n")-m.height+4)
+		switch k.String() {
+		case "up", "k":
+			m.scrollY = max(0, m.scrollY-1)
+			return m, nil
+		case "down", "j":
+			m.scrollY = min(last, m.scrollY+1)
+			return m, nil
+		case "pgdown", "space", "f":
+			m.scrollY = min(last, m.scrollY+m.height/2)
+			return m, nil
+		case "pgup", "b":
+			m.scrollY = max(0, m.scrollY-m.height/2)
+			return m, nil
+		}
 		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == "?" {
 			m.mode = m.back
 		}
@@ -828,7 +844,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "?":
-		m.back, m.mode = m.mode, modeHelp
+		m.back, m.mode, m.scrollY = m.mode, modeHelp, 0
 		return m, nil
 	case "h":
 		if m.core.Health == nil {
