@@ -107,6 +107,8 @@ func (m Model) prepareView() viewPage {
 			body = bodyModel.goalView()
 		case modeChief:
 			body = bodyModel.chiefView()
+		case modePanel:
+			body = bodyModel.panelView()
 		default:
 			body = bodyModel.listView()
 		}
@@ -296,7 +298,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inProfile: "login profile id for " + m.inLabel + " (ym profiles lists logins)", inSend: "send " + m.inLabel,
+			inDismissStale: "dismiss every stale item because", inPanel: m.panelLabel(), inSend: "send " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
@@ -329,7 +331,11 @@ func (m Model) footer() []string {
 			lines = append(lines, pal.dim.Render(" enter accepts the default   type to replace it   esc cancel"))
 			return lines
 		}
-		lines = append(lines, " "+pal.bold.Render(label+":")+" "+string(m.input)+"█")
+		typed := string(m.input)
+		if m.inKind == inPanel && m.pn.in != nil && m.pn.in.secret {
+			typed = strings.Repeat("•", len(m.input))
+		}
+		lines = append(lines, " "+pal.bold.Render(label+":")+" "+typed+"█")
 		if on != "" {
 			lines = append(lines, on)
 		}
@@ -398,6 +404,8 @@ func (m Model) hints() string {
 		return joinHints(controls, "↑↓ move · enter open · ? more")
 	}
 	switch m.mode {
+	case modePanel:
+		return m.panelHints()
 	case modeHelp, modeScreen:
 		return "↑↓ pgup pgdn scroll · esc back"
 	case modeItems:
@@ -1540,13 +1548,20 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 then local branches merged into origin that no worktree uses (asks y/n); the board
                 runs it by itself at most hourly
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
-   B            switch the session's login profile (subscription)
+   B            login profiles: every Claude and Codex login on every host with its limit windows; a adds one
+                (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
+                the launch default, x removes it; pressed on a session, enter switches the session to it
+   H            hosts: i installs or updates ym on one and keeps it running, o opens its board, x forgets it,
+                a adds a host; below, what this host still carries to them, x stops carrying one
+   Y            settings: restart ym serve, keep it running across reboots or stop, connect Notion
+                (the token is typed hidden), the context cap, which repositories' managers may merge, update ym
    space f pgdown, b pgup
                 page down or up in an agent's page or a text page
    I            every item, answered, dismissed and snoozed too; in a mission, just its items
    h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
-   E            every session ym launched and whether its agent still runs
+   E            every session ym launched and whether its agent still runs, killed goals and ended sessions;
+                enter revives one with its worktree and work
    A            hide or show the scene behind the board
    L            switch the theme of that scene to the next one (mountains first); ym theme <name> sets it
                 from a shell

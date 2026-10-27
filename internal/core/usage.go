@@ -238,6 +238,9 @@ type LoginProfile struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	Account string `json:"account,omitempty"`
+	// Root is its native config directory on its host; Default marks the profile launches use when none is named.
+	Root    string `json:"root,omitempty"`
+	Default bool   `json:"default,omitempty"`
 }
 
 func (s Session) Ref() string { return profile.SessionKey(s.Harness, s.Profile, s.Key()) }

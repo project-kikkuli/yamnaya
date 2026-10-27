@@ -200,5 +200,8 @@ func (m Model) ended(msg actMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.message = msg.message
 	}
+	if m.listMode() == modePanel && m.pn.kind == panelSettings {
+		return m, tea.Batch(m.refresh(false), m.loadSettings())
+	}
 	return m, m.refresh(false)
 }

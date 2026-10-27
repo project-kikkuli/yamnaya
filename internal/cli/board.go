@@ -53,6 +53,9 @@ type launchedJSON struct {
 	State   string `json:"state"`
 	Path    string `json:"path"`
 	Landed  string `json:"landed,omitempty"`
+	Killed  string `json:"killed,omitempty"`
+	// Recovered marks a landed launch whose work ym bundled before removing its worktree.
+	Recovered bool `json:"recovered,omitempty"`
 }
 
 type dormantJSON struct {
@@ -163,7 +166,7 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 		out.Items = append(out.Items, withHistory(c, it))
 	}
 	for _, l := range b.Launched {
-		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed)})
+		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed), Killed: ts(l.Killed), Recovered: l.Recovered})
 	}
 	for _, p := range b.Projects {
 		for _, d := range p.Dormant {
@@ -247,7 +250,8 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Closed = append(r.Closed, fromJSON(host, qualify, it))
 	}
 	for _, l := range j.Launched {
-		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed)})
+		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed),
+			Killed: parseTS(l.Killed), Recovered: l.Recovered})
 	}
 	for _, d := range j.Dormant {
 		r.Dormant = append(r.Dormant, core.Dormant{Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,

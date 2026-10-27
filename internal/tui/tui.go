@@ -39,6 +39,8 @@ const (
 	// modeGoal shows one goal: its manager, brief and agents; modeChief one chief and its reports.
 	modeGoal
 	modeChief
+	// modePanel lists login profiles, hosts, settings or launches to act on.
+	modePanel
 )
 
 type inputKind int
@@ -51,7 +53,7 @@ const (
 	inDismissStale
 	inAdopt
 	inSend
-	inProfile
+	inPanel
 	inNew
 	inNewRepo
 	inPhases
@@ -187,10 +189,12 @@ type Model struct {
 	// acts are the actions the board dispatched, by the row key they act on; queued are its commands waiting for a host.
 	acts   map[string]act
 	queued map[string]core.Relay
+	pn     panelState
 }
 
 func New(c *core.Core) Model {
 	m := Model{killing: map[string]bool{}, acts: map[string]act{}, drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
+	m.pn.run, m.pn.tty = selfRunner(c), selfTTY(c)
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -362,7 +366,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
-			m.queued = queued(msg.relays)
+			m.queued, m.pn.relays = queued(msg.relays), msg.relays
 			m.themed(msg)
 			m.fallen(time.Now())
 		}
@@ -406,6 +410,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refresh(false)
 	case actMsg:
 		return m.ended(msg)
+	case settingsMsg:
+		m.pn.settings = settingsData(msg)
+		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)
+		return m, nil
 	case reachedMsg:
 		delete(m.acts, msg.key)
 		t := msg.t
@@ -804,6 +812,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case modePick:
 		return m.pickKey(k)
+	case modePanel:
+		return m.panelKey(k)
 	}
 	if m.mode == modeMerge && !slices.Contains([]string{"q", "esc", "up", "k", "down", "j", "enter"}, k.String()) {
 		return m, nil
@@ -886,9 +896,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		m.show("U", m.usageText())
 		return m, nil
-	case "E":
-		m.show("E", m.launchedText())
-		return m, nil
+	case "E", "H", "Y":
+		r, _ := m.selected()
+		return m.openPanel(panelKeys[k.String()], r)
 	case "I":
 		m.itemsOf = ""
 		if m.mode == modeDetail || m.mode == modeSession || m.mode == modeAgent {
@@ -1038,21 +1048,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}))
 		}
 	case "B":
-		if switcher, ok := m.core.Launches.(interface {
-			SwitchProfile(string, string) (string, error)
-		}); ok && switcher != nil {
-			if s := m.sessionOf(r); s != nil {
-				ref := s.Ref()
-				if s.Remote != "" {
-					ref = core.RemoteKey(s.Remote, ref)
-				}
-				m.startInput(inProfile, ref, "", "", false)
-				m.inLabel = s.Label()
-			} else if r.dormant != nil {
-				m.startInput(inProfile, r.dormant.Key, "", "", false)
-				m.inLabel = r.dormant.Title
-			}
-		}
+		return m.openPanel(panelProfiles, r)
 	case "z":
 		return m.toggleOff(r)
 	case "T":
@@ -1318,6 +1314,9 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.picking() {
 		return m.optKey(k)
 	}
+	if next, ok := m.panelInputKey(k); ok {
+		return next, nil
+	}
 	switch k.String() {
 	case "esc":
 		m.mode = m.back
@@ -1374,18 +1373,13 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.adopt(m.inItem)
 		case inGoal, inChief, inRemit, inSteer:
 			return m.goalInput(text)
-		case inProfile:
-			if text == "" {
+		case inPanel:
+			in := m.pn.in
+			m.pn.in, m.input = nil, nil
+			if in == nil {
 				return m, nil
 			}
-			ref := m.inItem
-			switcher, ok := m.core.Launches.(interface {
-				SwitchProfile(string, string) (string, error)
-			})
-			if !ok {
-				return m, nil
-			}
-			return m, m.do(func() (string, error) { return switcher.SwitchProfile(ref, text) })
+			return in.then(m, text)
 		case inSend:
 			if text == "" {
 				return m, nil

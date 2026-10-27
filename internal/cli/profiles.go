@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,12 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	add := &cobra.Command{Use: "add <claude|codex> <id>", Short: "Register an isolated native config root without copying credentials", Args: cobra.ExactArgs(2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		if root == "" {
 			root = filepath.Join(e.core.StateDir, "profiles", args[0], args[1])
+		} else if rest, ok := strings.CutPrefix(root, "~/"); ok {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			root = filepath.Join(home, rest)
 		}
 		if err := profile.Add(e.core.StateDir, profile.Profile{Harness: args[0], ID: args[1], Label: label, Root: root}); err != nil {
 			return err
@@ -54,7 +61,7 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		fmt.Fprintf(cmd.OutOrStdout(), "added %s/%s; login: ym profiles login %s %s\n", args[0], args[1], args[0], args[1])
 		return nil
 	})}
-	add.Flags().StringVar(&root, "root", "", "native config directory (default: new isolated root in ym state)")
+	add.Flags().StringVar(&root, "root", "", "native config directory, absolute or under ~/ on this host (default: new isolated root in ym state)")
 	add.Flags().StringVar(&label, "label", "", "display label, independent of account identity")
 	var deviceAuth bool
 	login := &cobra.Command{Use: "login <claude|codex> <id>", Short: "Run native login in the selected profile", Args: func(cmd *cobra.Command, args []string) error {
@@ -113,7 +120,24 @@ func profilesCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		return errors.Join(loginErr, scanErr)
 	})}
 	login.Flags().BoolVar(&deviceAuth, "device-auth", false, "use Codex device authorization on a host without a browser")
-	cmd.AddCommand(add, login)
+	remove := &cobra.Command{Use: "remove <claude|codex> <id>", Short: "Stop offering a profile; its root and the login in it stay on disk", Args: cobra.ExactArgs(2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		if err := profile.Remove(e.core.StateDir, args[0], args[1]); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "removed %s/%s; its root stays on disk\n", args[0], args[1])
+		return nil
+	})}
+	def := &cobra.Command{Use: "default <claude|codex> [<id>]", Short: "Show, or set, the profile a launch uses when none is named; default is the native login", Args: cobra.RangeArgs(1, 2), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		if len(args) == 2 {
+			if err := profile.Prefer(e.core.StateDir, args[0], args[1]); err != nil {
+				return err
+			}
+		}
+		id := profile.ID(profile.Preferred(e.core.StateDir)[args[0]])
+		fmt.Fprintf(cmd.OutOrStdout(), "%s launches use %s when none is named\n", args[0], profileDisplay(args[0], id))
+		return nil
+	})}
+	cmd.AddCommand(add, login, remove, def)
 	return cmd
 }
 func recordProfile(rec launch.Record) profile.Profile {
@@ -191,6 +215,9 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 			return p, err
 		}
 		return p, p.DefaultConstraint()
+	}
+	if pref := profile.Preferred(dir)[harness]; pref != "" {
+		sort.SliceStable(ps, func(i, j int) bool { return ps[i].ID == pref && ps[j].ID != pref })
 	}
 	var limits []core.Limit
 	if l.core != nil && l.core.Meter != nil {

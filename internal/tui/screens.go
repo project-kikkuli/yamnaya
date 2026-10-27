@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
@@ -49,26 +48,6 @@ func (m Model) usageText() string {
 		} else if r.Stale || r.Err != nil || r.Late(m.board.At) {
 			b.WriteString("usage on " + r.Host + ": last observed " + r.Usage.At.Format(time.RFC3339) + " (" + r.State() + ")\n")
 		}
-	}
-	return b.String()
-}
-
-func (m Model) launchedText() string {
-	if m.core.Launches == nil {
-		return " ym's launcher is unavailable"
-	}
-	var ls []core.Launched
-	for _, l := range m.core.Launches.Launched() {
-		if l.Landed.IsZero() {
-			ls = append(ls, l)
-		}
-	}
-	if len(ls) == 0 {
-		return " ym launched no sessions yet; n starts one"
-	}
-	var b strings.Builder
-	for _, l := range ls {
-		b.WriteString(l.String() + "\n")
 	}
 	return b.String()
 }

@@ -123,6 +123,8 @@ type Launched struct {
 	Landed, Killed time.Time
 	// Revive is set when it was running as ym's tmux server went away, so ym resumes it.
 	Revive bool
+	// Recovered is set when ym bundled work out of its worktree before removing it, so ym revive puts that work back.
+	Recovered bool
 }
 
 func (l Launched) String() string {

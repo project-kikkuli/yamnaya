@@ -42,8 +42,10 @@ func Wire(path string) (*core.Core, error) {
 			ps, _ := profile.Load(filepath.Dir(path))
 			var out []core.LoginProfile
 			limits := profileLimits(filepath.Dir(path))
+			pref := profile.Preferred(filepath.Dir(path))
 			for _, p := range ps {
-				out = append(out, core.LoginProfile{Host: p.Host, State: profileStatus(p, limits), Harness: p.Harness, ID: p.ID, Label: p.Label, Account: p.Account})
+				out = append(out, core.LoginProfile{Host: p.Host, State: profileStatus(p, limits), Harness: p.Harness, ID: p.ID, Label: p.Label, Account: p.Account,
+					Root: p.Root, Default: profile.ID(pref[p.Harness]) == p.ID})
 			}
 			return out
 		},

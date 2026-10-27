@@ -184,7 +184,7 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			return ""
 		}},
 		{"E lists launched sessions", nil, []string{"E"}, func(t *testing.T, f fixture) string {
-			if v := f.m.View().Content; f.m.mode != modeScreen || !strings.Contains(v, "fix-login") || !strings.Contains(v, "exited 1") {
+			if v := f.m.View().Content; f.m.mode != modePanel || !strings.Contains(v, "fix-login") || !strings.Contains(v, "exited 1") {
 				return "launched view:\n" + v
 			}
 			return ""

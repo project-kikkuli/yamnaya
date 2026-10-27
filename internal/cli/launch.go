@@ -584,7 +584,8 @@ func (l launcher) Launched() []core.Launched {
 	out := make([]core.Launched, 0, len(all))
 	for _, rec := range all {
 		if rec.IsLanded() {
-			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed})
+			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed,
+				Killed: rec.Killed, Recovered: rec.Recovery.Bundle != ""})
 			continue
 		}
 		if !rec.Seen.IsZero() {

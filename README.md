@@ -119,11 +119,14 @@ Behind `?`:
 | `R` | relaunch a manager or chief |
 | `z` | turn ym off, or back on, for the selected goal, chief, session or mission's session (see Turning ym off) |
 | `T` | relaunch an idle session in the other harness |
-| `B` | switch the session's login profile |
+| `B` | login profiles (see Login profiles); on a session, aimed at switching it |
+| `H` | hosts: `i` installs or updates ym on one and keeps its `ym serve` running, `o` opens its board, `x` forgets it, `a` adds one; below, the relays this host still carries, `x` stops carrying one |
+| `Y` | settings: `enter` on a row acts on it: restart ym serve, keep it running across reboots or stop keeping it, connect Notion (the token is typed hidden), the context cap, which repositories' managers may merge, update ym |
 | `G` | gc old worktrees and merged branches |
 | `t` | goals by repository with each chief's reports nested under it, or every goal under its own repository |
 | `e` `m` `p` `P` `v` | rename, merge, advance phase, set phases, set the vibe of a mission |
-| `I` `U` `E` `h` | every item, usage and limits, everything ym launched, machine slots and load with agents adrift now and weekly health |
+| `I` `U` `h` | every item, usage and limits, machine slots and load with agents adrift now and weekly health |
+| `E` | everything ym launched, killed goals and ended sessions; `enter` revives one with its worktree and work |
 | `A` | hide or show the scene behind the board |
 | `L` | switch the scene to the next theme (listed only in `?`) |
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
@@ -221,7 +224,7 @@ A trading screen. Each repository is a sector panel and each chief an index pane
 
 ## Remote hosts
 
-    ym remote install <host>
+    ym remote install <host>       (or H on the board, then a)
     ym remote <host>
 
 `ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. `ym item list --all` also lists that host's items answered or dismissed in the last week, each with its history as that host kept it, so you see what became of an answer you sent there. Another host's board is read from the snapshot that host's `ym serve` writes every cycle, so a read never makes a loaded host build a board. The header's `hosts` line says how each host stands: `no answer for 12m (last good 2:04PM)` with ssh's reason when it stops answering, `unreachable` when it never has, and `board 9m old` when it answers but its `ym serve` has fallen behind. None of these holds up the board. Every ssh ym runs to a host shares one connection, kept ten minutes after its last use (its socket is `/tmp/ym-<uid>-<hash>`), so board reads, relays and opening a session skip the ssh handshake. A connection attempt gives up after 3 seconds, a shared connection whose host goes silent ends within about 6, and a read or command that finds a host silent ends that shared connection so the next one starts fresh. Opening, killing, sending and answering run through ssh on that host, and never hold the board: the row says what is running (`killing… 3s`), then how it ended, or `kill failed: <why>`. On a host whose latest read went unanswered, a kill or a send is queued at once instead, and its row says `kill pending since 2:04PM: @host not answering: <why>` until `ym serve` delivers it, within a cycle of the host answering again; opening a session there fails at once with that reason. A kill or send that loses the host partway is queued the same way. A second kill of the same session while one is pending reuses it, and a kill whose session already ended there counts as done. Sessions on this host go through the same path and show the same row states. Detaching from a remote session you opened from the board (C-b d) brings you straight back to this host's board. `ym remote forget <host>` stops showing it.
@@ -295,7 +298,7 @@ After a restart:
 
 Answers reach a Claude session as its next prompt through its messaging socket, busy or idle; otherwise an idle agent in a tmux pane gets them typed in, and anything else reads them with `ym item inbox` on its next turn. `ym serve` retries every cycle: an answer, or a message from the last hour, that is still queued is typed in as soon as its agent sits idle at an empty prompt, never over text you are typing there. When one cannot be delivered to an idle agent, `work-service.log` says why, once per reason.
 
-**Notion.** Create an internal integration at notion.so/profile/integrations with read content, read comments and read user information including email, share your pages with it, then run `ym docs connect <your Notion email>` and paste the token. ym sweeps pages edited in the last 21 days, and every 15 minutes rereads the comments of each of those pages tied to you, edited since or not, and of every page with an ask open, so a new comment, reply or resolution is found even if Notion leaves the page's edit time alone; a page is read in full again only when its edit time or its comments change. A page is tied to you when you created it, wrote in or are mentioned in one of its threads, or it lists you in a reviewer, approver or sign-off people property. A discussion addressed to you becomes an ask; one about a goal's work goes to that goal's manager instead, as one message per document listing its new or changed threads. Each document is one queue row however many threads it has open (`enter` opens the page, or the thread when there is only one; the open row lists each thread with its link); each thread closes on its own when it is resolved or answered, or once the comment asking you is more than 21 days old. A row you clear stays hidden as its threads close and comes back when any of them gets a new comment. `ym docs` shows the last sweep and where each ask went.
+**Notion.** Create an internal integration at notion.so/profile/integrations with read content, read comments and read user information including email, share your pages with it, then press `Y` on the board, `enter` on the Notion row, and type your Notion email and the token (or run `ym docs connect <your Notion email>` and paste it). ym sweeps pages edited in the last 21 days, and every 15 minutes rereads the comments of each of those pages tied to you, edited since or not, and of every page with an ask open, so a new comment, reply or resolution is found even if Notion leaves the page's edit time alone; a page is read in full again only when its edit time or its comments change. A page is tied to you when you created it, wrote in or are mentioned in one of its threads, or it lists you in a reviewer, approver or sign-off people property. A discussion addressed to you becomes an ask; one about a goal's work goes to that goal's manager instead, as one message per document listing its new or changed threads. Each document is one queue row however many threads it has open (`enter` opens the page, or the thread when there is only one; the open row lists each thread with its link); each thread closes on its own when it is resolved or answered, or once the comment asking you is more than 21 days old. A row you clear stays hidden as its threads close and comes back when any of them gets a new comment. `ym docs` shows the last sweep and where each ask went.
 
 **Limits.** Claude Code reports limits only to its statusline. `ym install --statusline` wires it; by hand, add `printf '%s' "$input" | ym limits record >/dev/null 2>&1 &` to your statusline command.
 
@@ -346,6 +349,35 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym relay [drop <seq>]` | what this host still has to carry, or stop carrying a refused one |
 | Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
 | | `ym service status\|restart\|keep\|unkeep` / `ym docs [connect <email>]` | background service / Notion |
+| | `ym profiles [add\|login\|default\|remove]` | login profiles; see Login profiles |
+
+### Everything from the board
+
+You never need these commands by hand: `ym` opens the board, and every one of them is a key there. The CLI stays for agents and scripts. Agent-facing commands (`ym item add`, `ym item inbox`, `ym item prepare`, `ym new` from an agent, `ym goal brief`, `update`, `wake`, `event`, `done`, `adopt`, `artifact`, `verdict`, `ym slot`, `ym serve`, `ym board`) are not listed.
+
+| Command | Board |
+| --- | --- |
+| `ym goal`, `ym new`, `ym chief` | `n` / `N`, `+`, `c n` or `C` |
+| `ym sessions`, `ym waiting`, `ym goal list`, `ym goal feed`, `ym goal context` | the board itself; `enter` opens a row |
+| `ym open`, `ym adopt` | `o` / `O` |
+| `ym send`, `ym goal send` | `s`, or `r` on a goal, chief or session |
+| `ym item answer`, `go`, `dismiss`, `snooze`, `reopen`, `show`, `list` | `r`, `g`, `x`, `l`, `u`, `enter`, `I` |
+| `ym goal show` | `b`, `W` |
+| `ym goal steer` / `relaunch` / `ack` | `S` / `R` / `x` |
+| `ym chief attach`, `ym chief detach` | `c a`, `c d` |
+| `ym kill` | `K` |
+| `ym off`, `ym on` | `z` |
+| `ym switch --to` / `--profile` | `T` / `B` on the session |
+| `ym profiles`, `add`, `login`, `default`, `remove` | `B` |
+| `ym launched`, `ym revive` | `E`; `enter` on an exited row also revives |
+| `ym remote <host>`, `ym remote install`, `ym remote forget`, `ym relay`, `ym relay drop` | `H` |
+| `ym service status`, `restart`, `keep`, `unkeep`, `ym docs`, `ym docs connect`, `ym goal context-cap`, `ym goal authority`, `ym update` | `Y` |
+| `ym usage`, `ym limits` | `U` |
+| `ym health`, `ym health drift`, `ym slot --status` | `h` |
+| `ym gc` | `G` |
+| `ym phase`, `ym vibe`, `ym project rename`, `merge`, `split` | `p` `P`, `v`, `e`, `m`, `S` |
+
+A command a screen runs is the same `ym` command, run off the board: its row says what is running (`installing ym on box… 41s`), then how it ended. A token typed on the board, such as Notion's, shows as dots and reaches `ym docs connect` on its standard input, never its arguments.
 
 Session commands accept a full session ID, the shorthand printed by `ym sessions`, or an unambiguous prefix of at least six characters. UUIDv7 sessions, including Codex threads, display the last 12 characters so sessions started together have distinct labels; Claude UUIDv4 sessions display the first eight. An ambiguous shorthand or prefix returns an error with the full IDs instead of selecting a session. Stored sessions, inboxes, goal links and adopted launch keys use full IDs.
 
@@ -357,11 +389,18 @@ ym starts Codex as the platform binary its npm package ships rather than through
 
 ## Login profiles
 
-ym keeps the existing default Claude and Codex login. Register additional native config roots with `ym profiles add claude personal --root /absolute/claude-personal` or `ym profiles add codex personal --root /absolute/codex-personal`. Labels are optional display names. `ym profiles login <harness> <id>` runs the native login inside that root; native provider storage keeps each profile’s credentials separate. On a host without a browser, use `ym remote <host> profiles login codex personal --device-auth` and complete the native device authorization in a browser. A host-local root is a path on that host.
+ym keeps the existing default Claude and Codex login. `B` on the board lists every Claude and Codex login on this host and every remembered host, each with its account, its limit windows and when they reset, its root, and which one launches use when none is named:
 
-Use `--profile <id>` with `ym new`, `ym goal`, and `ym chief`. The board cycles launch profiles with Shift-Tab. Unspecified launches inherit a usable parent profile or choose deterministically among profiles without a known exhausted pool. Profile and subscription identity are separate: aliases of the same provider principal/workspace share quota; missing identity or quota is shown as unknown.
+- `a` adds one: type its label, with `tab` switching between claude and codex and `ctrl+t` picking the host, then accept or edit its root, `~/.claude-<label>` or `~/.codex-<label>` on that host.
+- `i` logs in: the native login runs in this terminal and the board comes back when it ends. On another host it runs there over ssh, Codex with device authorization, so the link and the one-time code show as Codex prints them; open the link in any browser.
+- `d` makes it the launch default for its harness on its host, `x` removes it (its root and the login in it stay on disk).
+- Opened with `B` on a session, `enter` switches that session to the login under the cursor, or to the first row's auto, a different verified login.
 
-`ym switch <session-or-launch> --profile <id>` resumes an idle or exited conversation using another login. `--profile auto` chooses a different verified pool. B on the board selects a subscription. Background failover waits for a structured subscription exhaustion plus a settled turn, records attempted pools, and resumes with an instruction to inspect prior tool effects before continuing. It does not replay the previous prompt. Exactly-once tool execution cannot be guaranteed by a native resume.
+From a shell: `ym profiles add claude personal --label Personal --root ~/.claude-personal` (the root is absolute or under `~/` on that host), `ym profiles login <harness> <id>`, `ym profiles default <harness> [<id>]` and `ym profiles remove <harness> <id>`; on another host, `ym remote <host> profiles login codex personal --device-auth`. Native provider storage keeps each profile's credentials separate.
+
+Use `--profile <id>` with `ym new`, `ym goal`, and `ym chief`. The board cycles launch profiles with Shift-Tab. Unspecified launches inherit a usable parent profile or choose deterministically among profiles without a known exhausted pool, trying the launch default first. Profile and subscription identity are separate: aliases of the same provider principal/workspace share quota; missing identity or quota is shown as unknown.
+
+`ym switch <session-or-launch> --profile <id>` resumes an idle or exited conversation using another login. `--profile auto` chooses a different verified pool. Background failover waits for a structured subscription exhaustion plus a settled turn, records attempted pools, and resumes with an instruction to inspect prior tool effects before continuing. It does not replay the previous prompt. Exactly-once tool execution cannot be guaranteed by a native resume.
 
 ym starts managed Codex sessions with `--no-daemon` so each conversation can stop and resume independently. If an external client or shared server cannot be quiesced, ym reports the blocker and keeps the source recoverable. Close that client before switching; unrelated sessions remain running.
 
