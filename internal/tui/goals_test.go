@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -578,5 +579,44 @@ func TestAQueueRowForAManagersDutyNamesItsGoal(t *testing.T) {
 				t.Fatalf("row %q, want it to read %q", line, tc.want)
 			}
 		})
+	}
+}
+
+func TestAGoalRowAlwaysShowsItsVibeAndDropsElapsedThenSpendWhenNarrow(t *testing.T) {
+	for _, width := range []int{80, 120, 140, 240, 320} {
+		for _, mountains := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%d wide, mountains %v", width, mountains), func(t *testing.T) {
+				m, _, ms := goalSetup(t, "make the importer handle CSV")
+				next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 50})
+				m = next.(Model)
+				m.peaks.hidden = !mountains
+				spend := core.Spend{USD: 6.5}
+				b := m.board
+				b.Tree = slices.Clone(b.Tree)
+				for i := range b.Tree {
+					if b.Tree[i].Manager.ID == ms[0].ID {
+						b.Tree[i].Stats = core.Stats{Vibe: &core.Vibe{Place: "Reykjavik", At: b.At}, Running: 1, Spend: &spend, Started: b.At.Add(-3 * time.Hour)}
+					}
+				}
+				b.Gen++
+				next, _ = m.Update(boardMsg{board: b})
+				m = next.(Model)
+				row := ""
+				for _, l := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+					if strings.Contains(l, "importer") {
+						row = l
+					}
+				}
+				if !strings.Contains(row, "Reykjavik") {
+					t.Fatalf("goal row %q lacks its vibe", row)
+				}
+				if width >= 240 && !strings.Contains(row, "$6.50") {
+					t.Errorf("wide goal row %q lacks its spend", row)
+				}
+				if width >= 240 && !mountains && !strings.Contains(row, "3h") {
+					t.Errorf("wide goal row without mountains %q lacks its elapsed time", row)
+				}
+			})
+		}
 	}
 }

@@ -166,8 +166,8 @@ func nodeStats(n core.Node) core.Stats {
 	return out
 }
 
-// statCells are a goal or chief row's numbers in at most room cells: agents running and idle, pull requests open, green and
-// merged with CI, spend, how long it has run and its vibe, the last ones dropped first on a narrow screen.
+// statCells are a goal or chief row's numbers: its vibe always, then as many as fit in room of agents running and idle, pull
+// requests open, green and merged with CI, spend and how long it has run, the last ones dropped first.
 func (m Model) statCells(st core.Stats, room int) string {
 	agents := pad("", 9)
 	if st.Running+st.Idle > 0 {
@@ -204,17 +204,13 @@ func (m Model) statCells(st core.Stats, room int) string {
 			vibe = pal.dim.Render(vibe)
 		}
 	}
-	order := []string{agents, prs, ci, spend, up, vibe}
-	n := 0
-	for used := 0; n < len(order) && used+ansi.StringWidth(order[n])+1 <= room; n++ {
-		used += ansi.StringWidth(order[n]) + 1
-	}
-	shown := order[:n]
-	if n == len(order) {
-		shown = append([]string{vibe}, order[:n-1]...)
-	}
-	if len(shown) == 0 {
-		return ""
+	shown := []string{vibe}
+	used := ansi.StringWidth(vibe) + 1
+	for _, c := range []string{agents, prs, ci, spend, up} {
+		if used += ansi.StringWidth(c) + 1; used > room {
+			break
+		}
+		shown = append(shown, c)
 	}
 	return strings.Join(shown, " ") + " "
 }
