@@ -225,6 +225,9 @@ type boardMsg struct {
 	relays []core.Relay
 	err    error
 	tick   bool
+	// theme is the theme ym state names, read after themeSeq L presses.
+	theme    string
+	themeSeq int
 }
 
 type tickMsg struct{}
@@ -252,11 +255,11 @@ type adoptedMsg struct {
 
 // refresh reloads the board; only the periodic reload schedules the next one, so actions never start a second loop.
 func (m Model) refresh(tick bool) tea.Cmd {
-	c := m.core
+	c, seq, theme := m.core, m.peaks.themeSeq, m.peaks.theme
 	return func() tea.Msg {
 		if c.KeepAlive != nil {
 			if err := c.KeepAlive(); err != nil {
-				return boardMsg{err: err, tick: tick}
+				return boardMsg{err: err, tick: tick, theme: theme, themeSeq: seq}
 			}
 		}
 		b, err := c.Board()
@@ -264,7 +267,10 @@ func (m Model) refresh(tick bool) tea.Cmd {
 		if err == nil && c.Store != nil {
 			relays, err = c.Store.PendingRelays()
 		}
-		return boardMsg{b, relays, err, tick}
+		if err == nil && c.Store != nil {
+			theme, err = c.Store.Theme()
+		}
+		return boardMsg{b, relays, err, tick, theme, seq}
 	}
 }
 
@@ -303,6 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case boardMsg:
 		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() {
 			m.board = b.board
+			m.themed(b)
 			if b.tick {
 				return m, m.tick()
 			}
@@ -356,6 +363,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
 			m.queued = queued(msg.relays)
+			m.themed(msg)
+			m.fallen(time.Now())
 		}
 		if m.listMode() == modeItems {
 			m.loadItems()
@@ -385,6 +394,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.marks = keys
 		return m, nil
 	case killedMsg:
+		m.settled(msg.keys, msg.err != nil)
 		for _, k := range msg.keys {
 			delete(m.killing, k)
 			m.acts[k] = act{what: "kill", at: time.Now(), done: true, message: msg.message, err: msg.err}
@@ -719,7 +729,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeInput:
 		return m.inputKey(k)
 	case modeHelp:
-		last := max(0, strings.Count(ansi.Wrap(helpText(m.width), m.width, " "), "\n")-m.height+4)
+		last := max(0, strings.Count(ansi.Wrap(helpText(m.width, m.legendScene()), m.width, " "), "\n")-m.height+4)
 		switch k.String() {
 		case "up", "k":
 			m.scrollY = max(0, m.scrollY-1)
@@ -733,6 +743,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "pgup", "b":
 			m.scrollY = max(0, m.scrollY-m.height/2)
 			return m, nil
+		case "L":
+			return m.nextTheme()
 		}
 		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == "?" {
 			m.mode = m.back
@@ -761,6 +773,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "y":
 			m.mode, m.message = m.back, ""
+			m.fell(m.marks, time.Now())
 			for _, k := range m.marks {
 				m.killing[k] = true
 				m.acts[k] = act{doing: "killing", what: "kill", at: time.Now()}
@@ -803,6 +816,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		m.peaks.hidden = !m.peaks.hidden
 		return m, nil
+	case "L":
+		return m.nextTheme()
 	case "q":
 		if m.mode == modeList {
 			return m, tea.Quit

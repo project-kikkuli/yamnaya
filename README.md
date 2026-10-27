@@ -124,7 +124,8 @@ Behind `?`:
 | `t` | goals by repository with each chief's reports nested under it, or every goal under its own repository |
 | `e` `m` `p` `P` `v` | rename, merge, advance phase, set phases, set the vibe of a mission |
 | `I` `U` `E` `h` | every item, usage and limits, everything ym launched, machine slots and load with agents adrift now and weekly health |
-| `A` | hide or show the mountains |
+| `A` | hide or show the scene behind the board |
+| `L` | switch the scene to the next theme (listed only in `?`) |
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
 | `q` | back or quit |
 
@@ -165,11 +166,13 @@ During an overload episode, new `ym slot` acquisitions wait without occupying a 
 
 Any process holding more than a quarter of the machine's memory gets a red header line (`memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1`), on another host's board too, tagged with that host. When it runs under an agent, ym tells that agent's manager once, with how to end it. ym never stops it itself.
 
-## Mountains
+## Themes
 
-Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done. The sky follows your local clock. `A` hides them, `NO_COLOR` leaves them out, `YM_REDUCED_MOTION=1` holds them still. ym sends the mountains only as fast as your terminal takes them in, so they rise from the bottom row up when shown again and a key never waits behind them.
+The board floats over a scene of your work, drawn in one theme at a time: mountains by default. Every theme shows the same things: each repository or chief as a group, each goal or session you started as a unit with its progress, its agents (busy, waiting on you in red, resting), its pull requests by gates passed and CI state, its weather, a blinking alert when something waits on you, a marker on the selected row's unit, and a short kill animation (at most 1.5 seconds, never delaying the kill) before a killed unit leaves. `L` switches to the next theme and `ym theme <name>` sets it from a shell; ym keeps the choice in its state. `?` explains the current theme's pictures, generated from the theme itself. `A` hides the scene, `NO_COLOR` leaves it out, `YM_REDUCED_MOTION=1` holds it still. ym sends the scene only as fast as your terminal takes it in, so it rises from the bottom row up when shown again and a key never waits behind it. Adding a theme is described in `internal/scene/THEMES.md`.
 
-`?` on the board lists the same legend.
+### Mountains
+
+Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done, an avalanche a kill. The sky follows your local clock.
 
 | Sign | Meaning |
 |---|---|
@@ -187,6 +190,8 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 | Eruption: lava, smoke, embers, no climbers | The manager's session died and has not come back. |
 | Summit: glow and halo | Goal done, or a session whose pull requests are all merged with no one on the mountain. A group is at its summit only when all its members are. |
 | Sky tint | Where peaks overlap, Eruption beats Storm beats Summit beats Clouds. |
+| `▾` | Over the selected row's peak or range, its name lit. |
+| Avalanche | A killed unit: snow pours down the peak and buries it, then the peak is gone. |
 | Sun, moon, stars, lake, pines, fog, wisps, drifting clouds, far ridges, rim light | Decoration only. Sun, moon and stars follow your clock. Colors never mark a goal or repository. |
 
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
@@ -268,6 +273,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Group | Command | Does |
 | --- | --- | --- |
 | Board | `ym` | the board |
+| | `ym theme [name]` | list the board's themes with the current one starred, or switch to one |
 | | `ym sessions [--local] [--json]` | every live session on this host and remembered hosts |
 | | `ym waiting [--json]` | idle sessions whose last reply asks you |
 | | `ym board` | this host's latest snapshot as JSON, for another host's ym; `--build` builds it now |
@@ -338,7 +344,7 @@ An explicitly empty or relative default `CLAUDE_CONFIG_DIR` is unsupported becau
     ym slot -- go vet ./...
     staticcheck ./...
 
-`internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` draws the mountains.
+`internal/core` holds goals, managers, chiefs, routing, the supervisor, events and verification, and imports no adapter. `internal/harness/claude` and `internal/harness/codex` read each CLI's own files; `internal/host/tmux` runs ym's tmux server; `internal/launch` creates and lands worktrees; `internal/scene` holds the theme-independent scene model, the canvas and the theme registry; each theme is a package under it, `internal/scene/mountains` the default (`internal/scene/THEMES.md` says how to add one).
 
 `tools/rehearse/rehearse.sh [--host H | --local] [--scenario S] [--ask TEXT] [--ref REF] [--timeout MIN] [--model ID]` runs a real goal end to end against a private proving-ground repository (`$YM_REHEARSAL_REPO`, else a new one per run) with its own state directory and tmux server, logging every change to `timeline.log`. Scenarios inject one fault: `clean`, `kill-manager`, `kill-worker`, `freeze-worker`, `break-ci`, `review-comment`, `kill-serve`. A rehearsal runs on a remote host over ssh so it puts no load on your Mac: `--host H`, else `$YM_REHEARSAL_HOST`, else the one host `ym remote` has reached. It runs on this machine only with `--local`. On the remote host the script runs from a yamnaya clone it keeps in the rehearsal root. Every run lives under `~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>` on the host it runs on, and that root holds a `.ym-rehearsal` file: a ym whose state directory is outside a marked root never shows, records or adopts a session working under it, so your own ym ignores rehearsals while the rehearsal's ym runs them. Every Claude session a rehearsal launches (manager, chief, workers, verifier) runs on `claude-haiku-5-5`; `--model ID` picks another, such as an Opus id, for a run that needs one. Codex sessions run on `gpt-6-luna`. The run's ym reads these from `YAMNAYA_CLAUDE_MODEL` and `YAMNAYA_CODEX_MODEL`, which pass `--model` to every session it starts or resumes (a session record's own model wins on resume); unset, as in every real goal, sessions keep the harness default. Codex runs with `CODEX_HOME` in the run directory, holding copies of your Codex login and config, so its threads stay out of `~/.codex`. Claude runs on your own `~/.claude`, since a separate config directory would leave it logged out.
 

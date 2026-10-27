@@ -47,4 +47,5 @@ var Commands = map[string]string{
 	"ym limits":         "U",
 	"ym health":         "h",
 	"ym health drift":   "h",
+	"ym theme":          "L",
 }

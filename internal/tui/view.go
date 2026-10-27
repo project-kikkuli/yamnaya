@@ -74,7 +74,7 @@ func (m Model) prepareView() viewPage {
 	var body viewPage
 	switch m.mode {
 	case modeHelp:
-		body = textPage(ansi.Wrap(helpText(bodyModel.width), bodyModel.width, " "), "")
+		body = textPage(ansi.Wrap(helpText(bodyModel.width, bodyModel.legendScene()), bodyModel.width, " "), "")
 	case modeScreen:
 		body = textPage(linkedWrap(m.screen, bodyModel.width), "")
 	case modeWhy:
@@ -1547,7 +1547,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
    E            every session ym launched and whether its agent still runs
-   A            hide or show the mountains
+   A            hide or show the scene behind the board
+   L            switch the theme of that scene to the next one (mountains first); ym theme <name> sets it
+                from a shell
    ?            this page
    ctrl+c       quit
 

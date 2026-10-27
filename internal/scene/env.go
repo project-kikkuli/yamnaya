@@ -6,37 +6,40 @@ import (
 	"github.com/charmbracelet/colorprofile"
 )
 
-type colorProfile int
+// Depth is how many colors the terminal shows.
+type Depth int
 
 const (
-	trueColor colorProfile = iota
-	ansi256
-	noColor
+	TrueColor Depth = iota
+	ANSI256
+	NoColor
 )
 
 var (
-	profile       = detectProfile()
-	reducedMotion = os.Getenv("YM_REDUCED_MOTION") != "" && os.Getenv("YM_REDUCED_MOTION") != "0"
+	// Colors is the terminal's color depth; themes draw shapes alone, no color, under NoColor.
+	Colors = detectDepth()
+	// ReducedMotion is YM_REDUCED_MOTION: every theme then draws frame 0 and nothing ticks.
+	ReducedMotion = os.Getenv("YM_REDUCED_MOTION") != "" && os.Getenv("YM_REDUCED_MOTION") != "0"
 )
 
-func detectProfile() colorProfile {
+func detectDepth() Depth {
 	switch {
 	case os.Getenv("NO_COLOR") != "":
-		return noColor
+		return NoColor
 	case os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit":
-		return trueColor
+		return TrueColor
 	case os.Getenv("TERM_PROGRAM") == "Apple_Terminal":
-		return ansi256
+		return ANSI256
 	}
-	return trueColor
+	return TrueColor
 }
 
-// ColorProfile is the color depth the mountains are drawn in, for the terminal renderer to keep.
+// ColorProfile is the color depth the scene is drawn in, for the terminal renderer to keep.
 func ColorProfile() colorprofile.Profile {
-	switch profile {
-	case noColor:
+	switch Colors {
+	case NoColor:
 		return colorprofile.Ascii
-	case ansi256:
+	case ANSI256:
 		return colorprofile.ANSI256
 	}
 	return colorprofile.TrueColor

@@ -1,6 +1,6 @@
 package scene
 
-// Peak is one piece of work: a mission or a goal. Its team climbs it, its pull requests are camps on it.
+// Peak is a unit: a goal, or a session the owner started. Its team works on it; Camps are its pull requests.
 type Peak struct {
 	ID, Name string
 	Weather  Weather
@@ -10,6 +10,8 @@ type Peak struct {
 	Progress float64
 	// NeedsYou marks work waiting on the owner; a flare goes up from it.
 	NeedsYou bool
+	// Dying is how far its kill animation has played, 0..1; zero while it lives.
+	Dying float64
 }
 
 // Climber is one agent on a peak.

@@ -1,69 +1,165 @@
 package scene
 
-// theme is the light of the scene at one time of day.
-type theme struct {
-	sky                            []stop
-	snowLit, snowShade             rgb
-	rockLit, rockShade             rgb
-	forest, forestSnow, tree       rgb
-	glow, rim                      rgb
-	water                          rgb
-	stormSky, stormCloud, stormTop rgb
-	cloud, cloudShade              rgb
-	lavaHot, lava, lavaDeep        rgb
-	smoke, smokeDark               rgb
-	climber, rope, flag, label     rgb
-	bolt                           rgb
-	green, gold                    rgb
-	valley                         float64
-	// stars is how bright the night sky is: stars, moon and lit windows show above zero.
-	stars float64
+import (
+	"slices"
+	"strings"
+	"sync"
+)
+
+// Theme draws a scene. It paints the same model every theme gets, so it is free in how it looks but must show
+// every Signal, and its Legend says how; the help screen is built from that legend.
+type Theme interface {
+	// Name is what ym theme and the switch key call it: one lowercase word.
+	Name() string
+	// Paint draws frame of s filling width x height, leaving box, where the table floats, to the table. The
+	// same arguments always give the same canvas. Frames are Step apart.
+	Paint(s Scene, width, height, frame int, box Rect) *Canvas
+	// Hit is the id of the unit or group drawn at x, y in frame 0, its name and agents included; "" elsewhere.
+	Hit(s Scene, width, height int, box Rect, x, y int) string
+	// Legend is how the theme shows each Signal at the scene's time of day, and what it draws only to decorate.
+	Legend(s Scene) Legend
 }
 
-type stop struct {
-	at float64
-	c  rgb
+// Legend is a theme's half of the help: Entries say how each Signal looks, Decoration what has no meaning.
+type Legend struct {
+	Entries    []Entry
+	Decoration []string
 }
 
-var dusk = theme{
-	sky:     []stop{{0, hex("#050a1a")}, {.38, hex("#10204a")}, {.66, hex("#3b3f73")}, {.84, hex("#b4707a")}, {.94, hex("#ec9e64")}, {1, hex("#ffd08a")}},
-	snowLit: hex("#f6c4ae"), snowShade: hex("#4a5a8e"),
-	rockLit: hex("#74505e"), rockShade: hex("#151a33"),
-	forest: hex("#0a1513"), forestSnow: hex("#33405e"), tree: hex("#03070a"),
-	glow: hex("#ffad7e"), rim: hex("#ffe0b0"),
-	water:    hex("#0b1830"),
-	stormSky: hex("#1a1f2d"), stormCloud: hex("#23293a"), stormTop: hex("#5c6480"),
-	cloud: hex("#d6a9b5"), cloudShade: hex("#544f78"),
-	lavaHot: hex("#fff3a6"), lava: hex("#ff6418"), lavaDeep: hex("#9c1606"),
-	smoke: hex("#b8b0b4"), smokeDark: hex("#2e2629"),
-	climber: hex("#fff0b8"), rope: hex("#ff8a3d"), flag: hex("#ff4733"), label: hex("#ffe6c0"),
-	bolt: hex("#f2ecff"), green: hex("#7ee08a"), gold: hex("#ffd36b"),
-	valley: .5, stars: .8,
+// Entry is one Signal as a theme draws it: Glyph in Color, "" for the terminal's own, looking as Look says.
+type Entry struct {
+	Signal Signal
+	Glyph  string
+	Color  string
+	Look   string
 }
 
-var day = theme{
-	sky:     []stop{{0, hex("#1a56b8")}, {.4, hex("#3a83db")}, {.75, hex("#82b8ec")}, {.92, hex("#bcd9f3")}, {1, hex("#e6f0f8")}},
-	snowLit: hex("#fbfdff"), snowShade: hex("#98b2d8"),
-	rockLit: hex("#8c8b92"), rockShade: hex("#36425a"),
-	forest: hex("#1a3326"), forestSnow: hex("#c4d3e2"), tree: hex("#0d1c15"),
-	glow: hex("#ffe3a3"), rim: hex("#ffffff"),
-	water:    hex("#245f9c"),
-	stormSky: hex("#556070"), stormCloud: hex("#3f4755"), stormTop: hex("#8a94a3"),
-	cloud: hex("#ffffff"), cloudShade: hex("#b9c6d6"),
-	lavaHot: hex("#fff3a6"), lava: hex("#ff5a14"), lavaDeep: hex("#9c1606"),
-	smoke: hex("#ecebee"), smokeDark: hex("#55525a"),
-	climber: hex("#14213d"), rope: hex("#f0a030"), flag: hex("#e0241a"), label: hex("#ffffff"),
-	bolt: hex("#ffffff"), green: hex("#1f9d3a"), gold: hex("#c98a00"),
-	valley: .78,
+// Signal is something on the board every theme shows.
+type Signal int
+
+const (
+	SigGroup Signal = iota
+	SigUnit
+	SigProgress
+	SigBusy
+	SigWaiting
+	SigResting
+	SigPR
+	SigPRGreen
+	SigPRRed
+	SigMerged
+	SigDone
+	SigNeedsYou
+	SigSelected
+	SigClear
+	SigClouds
+	SigStorm
+	SigEruption
+	SigSummit
+	SigKill
+	signals
+)
+
+// Signals is every Signal in the order help lists them.
+func Signals() []Signal {
+	out := make([]Signal, signals)
+	for i := range out {
+		out[i] = Signal(i)
+	}
+	return out
 }
 
-func (t theme) skyAt(v float64) rgb {
-	v = clamp(v, 0, 1)
-	for i := 1; i < len(t.sky); i++ {
-		if v <= t.sky[i].at {
-			a, b := t.sky[i-1], t.sky[i]
-			return mix(a.c, b.c, smooth(0, 1, (v-a.at)/(b.at-a.at)))
+// IsWeather reports whether the signal is a unit's weather, listed apart in help.
+func (g Signal) IsWeather() bool { return g >= SigClear && g <= SigSummit }
+
+func (g Signal) String() string {
+	return [...]string{"group", "unit", "progress", "busy", "waiting", "resting", "pr", "pr green", "pr red", "merged", "done",
+		"needs you", "selected", "Clear", "Clouds", "Storm", "Eruption", "Summit", "kill"}[g]
+}
+
+// When is what on the board the signal stands for, the same in every theme.
+func (g Signal) When() string {
+	return [...]string{
+		SigGroup:    "a repository; a chief groups the goals and chiefs under it, nesting",
+		SigUnit:     "a goal, or a session you started",
+		SigProgress: "how far along the unit is (see Percentages)",
+		SigBusy:     "an agent at work",
+		SigWaiting:  "an agent stopped and waiting on you; always red",
+		SigResting:  "idle teammates that stay with the unit",
+		SigPR:       "a pull request; its stage is how many of its 6 gates passed (branch, commits, PR, CI, threads, merged)",
+		SigPRGreen:  "a pull request whose CI passed",
+		SigPRRed:    "a pull request whose CI fails",
+		SigMerged:   "a merged pull request",
+		SigDone:     "a goal done, or every pull request of a session merged",
+		SigNeedsYou: "something on the unit waits on you",
+		SigSelected: "the unit or group of the selected row",
+		SigClear:    "a goal that is moving or verifying; a session with an agent at work or waiting, or with both a teammate and a pull request. It outranks Summit while an agent is busy",
+		SigClouds:   "a goal that is quiet (nudged, or nothing moved for 30 minutes) or adrift; a session with no working agent, or with pull requests but no teammate",
+		SigStorm:    "a stuck goal, or a pull request with failing CI",
+		SigEruption: "the manager's session died and has not come back",
+		SigSummit:   "a goal done, or a session whose pull requests are all merged with no one at work; a group only when all its members are",
+		SigKill:     "a unit you killed, for at most 1.5s before it leaves; the kill itself never waits for it",
+	}[g]
+}
+
+var registry struct {
+	sync.Mutex
+	themes []Theme
+}
+
+// Default is the theme a scene with no theme, or an unknown one, is drawn in.
+const Default = "mountains"
+
+// Register adds a theme; each theme package calls it from init.
+func Register(t Theme) {
+	registry.Lock()
+	defer registry.Unlock()
+	if slices.ContainsFunc(registry.themes, func(o Theme) bool { return o.Name() == t.Name() }) {
+		panic("scene: theme " + t.Name() + " registered twice")
+	}
+	registry.themes = append(registry.themes, t)
+	slices.SortFunc(registry.themes, func(a, b Theme) int {
+		switch {
+		case a.Name() == Default:
+			return -1
+		case b.Name() == Default:
+			return 1
+		}
+		return strings.Compare(a.Name(), b.Name())
+	})
+}
+
+// Themes is every registered theme, the default first and then by name.
+func Themes() []Theme {
+	registry.Lock()
+	defer registry.Unlock()
+	return slices.Clone(registry.themes)
+}
+
+// Lookup is the theme called name, or the default.
+func Lookup(name string) Theme {
+	all := Themes()
+	for _, t := range all {
+		if t.Name() == name {
+			return t
 		}
 	}
-	return t.sky[len(t.sky)-1].c
+	for _, t := range all {
+		if t.Name() == Default {
+			return t
+		}
+	}
+	panic("scene: no themes registered; import internal/scene/themes")
+}
+
+// Next is the theme after name in Themes, wrapping around.
+func Next(name string) string {
+	all := Themes()
+	cur := Lookup(name).Name()
+	for i, t := range all {
+		if t.Name() == cur {
+			return all[(i+1)%len(all)].Name()
+		}
+	}
+	return Default
 }

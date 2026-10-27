@@ -13,6 +13,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/progress"
 	"github.com/project-kikkuli/yamnaya/internal/scene"
+	_ "github.com/project-kikkuli/yamnaya/internal/scene/themes"
 )
 
 // mountains is the range drawn behind the board. Each repository is a range: its goals stand as the main peaks
@@ -31,6 +32,11 @@ type mountains struct {
 	quiet time.Time
 	// screen is the mountains as sent to the terminal, which follow the scene a frame's worth of bytes at a time.
 	screen *onScreen
+	// theme names the theme drawn; themeSeq counts L presses, so a board read from before one keeps it.
+	theme    string
+	themeSeq int
+	// kills are the units a kill from the board is taking off the scene, by id.
+	kills map[string]fall
 }
 
 type onScreen struct {
@@ -45,7 +51,7 @@ const cellBytes = 40
 type mountainFrame struct{}
 
 func newMountains() mountains {
-	return mountains{dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
+	return mountains{kills: map[string]fall{}, dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
 }
 
 // settle moves the mountains on screen toward the scene: by what the terminal takes in a frame when step is
@@ -134,11 +140,13 @@ func weather(standing string) scene.Weather {
 	return scene.Clear
 }
 
-// sceneOf is the board as mountains. Chiefs are ranges of the goals under them; every other goal and every
-// session the owner started stands in the range of its repository.
-func (m Model) sceneOf() scene.Scene {
+// sceneOf is the board as a scene: chiefs group the goals under them; every other goal and every session the
+// owner started stands in the group of its repository. Units a kill takes off fall away first.
+func (m Model) sceneOf() scene.Scene { return m.falling(m.boardScene(), time.Now()) }
+
+func (m Model) boardScene() scene.Scene {
 	b := m.board
-	s := scene.Scene{Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute)}
+	s := scene.Scene{Theme: m.peaks.theme, Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute)}
 	waiting := needs(b)
 	repos := map[string]*scene.Range{}
 	var order []string
@@ -155,6 +163,9 @@ func (m Model) sceneOf() scene.Scene {
 	}
 	for _, n := range b.Tree {
 		if n.Goal != nil {
+			if n.Goal.State == core.GoalKilled {
+				continue
+			}
 			r := repo(n.Repo)
 			r.Peaks = append(r.Peaks, goalPeak(n, waiting))
 		} else {
@@ -193,6 +204,9 @@ func chiefRange(n core.Node, waiting map[string]bool) scene.Range {
 	r := scene.Range{ID: n.Manager.ID, Name: n.Manager.Name, Weather: weather(n.Standing)}
 	for _, c := range n.Children {
 		if c.Goal != nil {
+			if c.Goal.State == core.GoalKilled {
+				continue
+			}
 			r.Peaks = append(r.Peaks, goalPeak(c, waiting))
 		} else {
 			r.Ranges = append(r.Ranges, chiefRange(c, waiting))
@@ -388,4 +402,24 @@ func (m Model) paint(page viewPage) string {
 
 func tableText(page viewPage) string {
 	return strings.ReplaceAll(strings.ReplaceAll(page.String(), "\r", ""), "\t", "    ")
+}
+
+// themed takes the theme ym state names, unless L switched it after the board was read.
+func (m *Model) themed(b boardMsg) {
+	if b.themeSeq == m.peaks.themeSeq {
+		m.peaks.theme = b.theme
+	}
+}
+
+// nextTheme draws the next theme and records it in ym state.
+func (m Model) nextTheme() (tea.Model, tea.Cmd) {
+	name := scene.Next(m.peaks.theme)
+	m.peaks.theme, m.peaks.themeSeq = name, m.peaks.themeSeq+1
+	st := m.core.Store
+	return m, m.do(func() (string, error) { return "theme " + name, st.SetTheme(name) })
+}
+
+// legendScene is what help explains the theme at: the theme drawn, now, on this terminal.
+func (m Model) legendScene() scene.Scene {
+	return scene.Scene{Theme: m.peaks.theme, Dark: m.peaks.dark, Now: time.Now()}
 }

@@ -11,8 +11,8 @@ const (
 	Summit
 )
 
-// combine is the sky over a group: its worst storm, or Summit once every part is done.
-func combine(own Weather, parts []Weather) Weather {
+// Combine is the sky over a group: its worst storm, or Summit once every part is done.
+func Combine(own Weather, parts []Weather) Weather {
 	rank := map[Weather]int{Clouds: 0, Clear: 1, Summit: 1, Storm: 2, Eruption: 3}
 	w, done := own, own == Summit || len(parts) > 0
 	if w == Summit || w == Clear && len(parts) > 0 {

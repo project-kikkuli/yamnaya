@@ -157,6 +157,7 @@ func NewRoot() *cobra.Command {
 		itemCmd(with, routed),
 		phaseCmd(with),
 		vibeCmd(with),
+		themeCmd(with),
 		projectCmd(with),
 		linkCmd(with),
 		sessionsCmd(withHosts),
