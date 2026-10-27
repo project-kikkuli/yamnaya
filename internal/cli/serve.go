@@ -318,12 +318,13 @@ func startWorkService() error {
 }
 
 // abandoned reports whether dir is a state directory other than the owner's that was deleted, as a finished rehearsal deletes its own.
+// It reads the database file, the one file a running serve never writes anew: every cycle rewrites others and recreates dir for them.
 func abandoned(dir string) bool {
 	home, err := os.UserHomeDir()
 	if abs, _ := filepath.Abs(dir); err != nil || abs == filepath.Join(home, ".local", "state", "yamnaya") {
 		return false
 	}
-	_, err = os.Stat(dir)
+	_, err = os.Stat(filepath.Join(dir, "ym.db"))
 	return errors.Is(err, fs.ErrNotExist)
 }
 

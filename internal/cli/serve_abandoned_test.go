@@ -21,9 +21,12 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		deleted bool
+		// byFile deletes the way rm -rf does, one file at a time while serve still writes, so the directory itself may stay.
+		byFile bool
 	}{
-		{"state dir deleted", true},
-		{"state dir kept", false},
+		{"state dir deleted at once", true, false},
+		{"state dir deleted file by file", true, true},
+		{"state dir kept", false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base := t.TempDir()
@@ -63,8 +66,22 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 					t.Fatalf("ym serve never completed a cycle; goroutines:\n%s", stack[:n])
 				}
 			}
-			if c.deleted {
-				if err := os.RemoveAll(state); err != nil {
+			gone := filepath.Join(base, "gone")
+			switch {
+			case c.byFile:
+				ents, err := os.ReadDir(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, e := range ents {
+					if err := os.RemoveAll(filepath.Join(state, e.Name())); err != nil {
+						t.Fatal(err)
+					}
+					time.Sleep(40 * time.Millisecond)
+				}
+				gone = state
+			case c.deleted:
+				if err := os.Rename(state, gone); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -83,6 +100,11 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 				}
 				cancel()
 				<-done
+			}
+			if c.deleted {
+				if err := os.RemoveAll(gone); err != nil {
+					t.Fatal(err)
+				}
 			}
 			_, paneErr := srv.Pane("agent")
 			agentRuns := syscall.Kill(pane.PID, 0) == nil
