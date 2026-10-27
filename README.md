@@ -201,6 +201,28 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
 
+### Moai
+
+An island coast. Each repository is an ahu, a stone platform with its name cut in it and a cove of sea at its foot; each chief is a ceremonial site, its ahu side by side over a `╰─ name site ─╯` line. Each goal is a moai on the ahu, carved out of its block as the work progresses: a rough block under a third, then the face, then the whole figure. Sun, moon, stars and the Milky Way follow your clock.
+
+| Sign | Meaning |
+|---|---|
+| `goal 50%` over a moai | A unit and its progress. A crowded ahu folds moai into `N moai`, a crowded screen ahu into `N ahu`. |
+| yellow `λ` `ʎ` | A busy carver swinging an adze beside the moai, stone chips flying. |
+| red `λ` | An agent stopped and waiting on you, standing still at the moai's left. |
+| grey `∩` | A resting carver sitting at the right end of the moai's place. |
+| `■` on the grass | A pull request, further right the more of its six gates it passed; green when CI passed. |
+| red `▞` | A cracked stone: CI fails. |
+| brown-orange `●` | A merged pull request: a pukao topknot of scoria at the right end of the stones. |
+| red `✸` over `▲` | A blinking signal fire: something waits on you. The moai's name turns red. |
+| `▾` | Before the selected row's moai, ahu or site, its name lit. |
+| `░▒` | Clouds: sea mist over the moai's head and the grass. |
+| `╱` and `^*` in the cove | Storm: rain, and storm surf crashing below the ahu. |
+| Toppled moai in dust | Eruption: the manager is down; only red carvers stay. |
+| Coral eyes and a pukao on its head | Summit: the whole moai stands on its ahu facing inland, done. |
+| Moai falls into the cove | A killed unit: it leans, topples off the ahu and goes under in a splash, then it is gone. |
+| Sun, moon, stars, Milky Way, hills, grass tufts, sea, the grain of uncarved stone | Decoration only. Colors never mark a goal or repository. |
+
 ### Stocks
 
 A trading screen. Each repository is a sector panel and each chief an index panel showing the average of its goals. Each goal is a ticker: a symbol made from its name, a price that is its progress (0 to 100), and a price line ending at that price. Busy agents are volume bars, pull requests are candles, and the weather is how the ticker trades. The top bar shows the market session for your clock.
