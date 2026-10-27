@@ -199,6 +199,27 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 | Avalanche | A killed unit: snow pours down the peak and buries it, then the peak is gone. |
 | Sun, moon, stars, lake, pines, fog, wisps, drifting clouds, far ridges, rim light | Decoration only. Sun, moon and stars follow your clock. Colors never mark a goal or repository. |
 
+### Islands
+
+`ym theme islands`. The board seen from above: each repository is an archipelago and a chief's goals ring a pale lagoon. Each goal is an island, bigger the more agents and pull requests it has, with a sand rim, a green interior and hills; it greens from the hills down to the beach as work gets done. Islands keep their place from frame to frame. The light follows your local clock.
+
+| Sign | Meaning |
+|---|---|
+| `▸` `◂` | A busy agent: a named boat sailing round the island, its wake behind it. |
+| red `▸` under red `✶` | An agent stopped and waiting on you, moored off the south shore. Always red. |
+| `▪ N resting` | Idle teammates, under the island's south shore. |
+| `□` | A pull request: a dock at the shore for few gates passed, a building further inland the more it passed. |
+| green `■` / red `⌧` | CI passed (lit) / CI failing (damaged). |
+| gold `♜` | A lighthouse with a turning beam: merged pull requests, `N merged` for several. |
+| `⚑` on the summit | The goal is done, or every pull request is merged. |
+| red `✸ SOS` | Something waits on you. It blinks and the name turns red. |
+| Clouds / Storm | White clouds and their shadows drifting over / a dark storm cell with rain `╱` and lightning `ϟ`. |
+| Eruption | The island turns volcano: ash, a lava crater, lava down its flanks, smoke and embers. |
+| Summit | A full harbor: gold piers `╤` all round the shore in golden shallows. |
+| `▾` | Over the selected island or archipelago, its name lit and the island's shore outlined. |
+| Sinking | A killed unit: the sea rises over the island and rings ripple out, then it is gone. |
+| Ocean depth, swell and crests `~`, surf on the shoals, beaches, hills, lagoon color, glint `·` | Decoration only. |
+
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
 
 ### Civilizations
