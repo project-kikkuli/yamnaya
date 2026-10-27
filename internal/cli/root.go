@@ -94,9 +94,6 @@ func NewRoot() *cobra.Command {
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
-			announceLinks(os.Stdout)
-		},
 	}
 	root.PersistentFlags().StringVar(&e.session, "session", "", "act as this session id instead of the calling agent's")
 	root.PersistentFlags().StringVarP(&e.project, "project", "p", "", "project key, name or session id (default: the calling agent's project)")
@@ -189,7 +186,7 @@ func NewRoot() *cobra.Command {
 		limitsCmd(),
 		remoteCmd(),
 		relayCmd(with),
-		linkOpenCmd(),
+		attachRelayCmd(),
 	)
 	return root
 }

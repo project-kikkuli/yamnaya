@@ -295,8 +295,16 @@ func (r *remoteHosts) Sync(host string, req core.RelaySync) (core.RelayReply, er
 
 // Attach runs args on host in this terminal. What the session copies there lands on this Mac's pasteboard, a link right-clicked
 // there opens here, and a link to a port on the host's own localhost works here: ym forwards that port over the connection.
+// ym attach-relay sits between this terminal and ssh, so it sees which right-clicks the owner made.
 func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
-	c := exec.Command(r.ssh, append(sshArgs(host, "-t"), attachCommand(args))...)
+	self, _ := os.Executable()
+	c := exec.Command(self, append([]string{"attach-relay", host}, args...)...)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c
+}
+
+// relay is what passes host's session to this terminal for Attach.
+func (r *remoteHosts) relay(host string) *termRelay {
 	relay := &termRelay{out: os.Stdout, forward: func(port string) {
 		if "127.0.0.1:"+port == core.BriefsAddr() {
 			return
@@ -314,8 +322,7 @@ func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
 			go exec.Command("/usr/bin/open", string(hostBriefLinks(url, host))).Run()
 		}
 	}
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, relay, os.Stderr
-	return c
+	return relay
 }
 
 var remoteBriefLink = regexp.MustCompile(`(https?://(?:127\.0\.0\.1|localhost):7477/b/)([^/\s?#]+(?:[?#][^\s]*)?)(\s|$)`)

@@ -39,13 +39,13 @@ func TestRemoteCommandRunsYmWithItsDirOnPath(t *testing.T) {
 	}
 }
 
-func TestAttachCommandRunsYmOnAnXtermThatRelaysLinksWhateverTerminalThisEndHas(t *testing.T) {
+func TestAttachCommandRunsYmOnAnXtermWhateverTerminalThisEndHas(t *testing.T) {
 	home := t.TempDir()
 	bin := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "ym"), []byte("#!/bin/sh\necho \"$TERM $YAMNAYA_LINK_RELAY $*\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "ym"), []byte("#!/bin/sh\necho \"$TERM $*\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, term := range []string{"xterm-256color", "screen-256color", "tmux-256color", "dumb"} {
@@ -55,7 +55,7 @@ func TestAttachCommandRunsYmOnAnXtermThatRelaysLinksWhateverTerminalThisEndHas(t
 		if err != nil {
 			t.Fatalf("%s: %v: %s", term, err, out)
 		}
-		if got, want := string(out), "xterm-256color 1 open --no-board a b\n"; got != want {
+		if got, want := string(out), "xterm-256color open --no-board a b\n"; got != want {
 			t.Errorf("TERM=%s: remote ym got %q, want %q", term, got, want)
 		}
 	}
