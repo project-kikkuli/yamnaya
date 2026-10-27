@@ -112,6 +112,8 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 	state := p.Status.String()
 	if exited {
 		state = "exited"
+	} else if len(p.Sessions) > 0 && p.Sessions[0].Off {
+		state = core.StandOff
 	}
 	st := pal.state(state).Render(pad(state, c.state))
 	if p.Duplicated() {

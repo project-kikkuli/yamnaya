@@ -46,6 +46,17 @@ Nothing goes dark. A manager with no turns, brief edits or agent activity for 30
 
 Busy is not moving. ym reads each agent's transcript for signs it is going nowhere: the same failure in 5 of its last 20 tool results over 3 minutes or more with no file changed between (pending CI and empty searches do not count), its context compacted 3 times in a row within 15 minutes each with under 10 tool calls between, or 3 or more files written in a repository other than its own. That agent's row reads `adrift`, its goal stands adrift, and each episode becomes one goal event with the evidence for the manager and its chiefs. It reaches you only if the manager escalates. `h` lists every agent adrift now; `ym health drift` replays this machine's transcripts for past episodes.
 
+## Turning ym off
+
+`ym off` stops ym for a session, a goal or a chief so you can talk to it in its own chat. Run inside a session, `ym off` and `ym on` act on that session; from a shell, `ym off <session|goal|manager|chief>`. On the board, `z` toggles the selected row. A goal's flag covers its manager and every agent under it, including agents started later; a chief's covers the chief and its own agents, not the goals reporting to it; a session's covers it and the sessions it spawns.
+
+While ym is off for a session:
+
+- ym delivers nothing into it: no wakes, nudges, digests, answers, messages, steers or brief prompts. `ym send` and the board's `s` and `r` hold what you send for it.
+- ym leaves it alone: no relaunch, revive, idle or quiet nudge, and no stuck row. Its goal stands `ym off` instead of stuck or quiet, and its sessions read `ym off`.
+- ym commands run inside it fail with "ym is off for this session; reply in chat instead." These still work, since they only read: `ym`, `ym on`, `ym off`, `ym board`, `ym sessions`, `ym launched`, `ym waiting`, `ym item list`, `ym item show`, `ym goal list`, `ym goal show`, `ym goal feed`, `ym goal context`, `ym drift`, `ym profiles` and `ym phase show`. Commands that never open ym's state, such as `ym slot`, `ym usage` and `ym health`, work as usual.
+- Events are still recorded. `ym on` hands each session it reaches again everything held for it as one message: its goal's events, the answers to its items and the messages queued for it.
+
 ## What reaches you
 
 The **Needs you** queue holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a permission prompt answered. It holds:
@@ -106,6 +117,7 @@ Behind `?`:
 | `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
 | `C` / `D` | new chief / detach from its chief, the same as `c n` / `c d` |
 | `R` | relaunch a manager or chief |
+| `z` | turn ym off, or back on, for the selected goal, chief, session or mission's session (see Turning ym off) |
 | `T` | relaunch an idle session in the other harness |
 | `B` | switch the session's login profile |
 | `G` | gc old worktrees and merged branches |
@@ -260,6 +272,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym item show\|answer\|dismiss\|snooze\|reopen\|go <id>` | act on one item |
 | | `ym item prepare <id> [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."] [--assumption "..."]` | (manager) add what an open ask lacks; `--option` replaces its options, `--evidence` appends; refused if an owner-bound ask would still not be ready |
 | | `ym item inbox` | answers and messages the calling session has not received |
+| | `ym off [<session\|goal\|chief>]` / `ym on [...]` | stop ym for the calling session, or the one named / start it again, handing over what waited in one message |
 | Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
 | | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |
 | | `ym adopt <session>` | move a session from another terminal onto ym's server |

@@ -50,6 +50,7 @@ func (b Board) Alive(m Manager) bool {
 
 // Supervise keeps every active goal's manager and every chief running and moving: a dead one is relaunched with backoff, a quiet
 // one is nudged, and one still stuck after its nudges, or one that cannot be launched, puts one stuck row in the owner's queue.
+// It leaves alone a manager or chief ym is off for.
 func (c *Core) Supervise(b Board) error {
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -70,9 +71,13 @@ func (c *Core) Supervise(b Board) error {
 		errs = append(errs, err)
 	}
 	act := c.activity(b, o)
+	off, err := c.Store.offTargets()
+	if err != nil {
+		return err
+	}
 	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
-		if hasGoal && g.Ended() {
+		if hasGoal && g.Ended() || managerOff(off, o, b.parents, m) {
 			continue
 		}
 		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {

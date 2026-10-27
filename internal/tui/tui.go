@@ -1014,6 +1014,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.inLabel = r.dormant.Title
 			}
 		}
+	case "z":
+		return m.toggleOff(r)
 	case "T":
 		if s := m.sessionOf(r); s != nil {
 			live, to := *s, core.Other(s.Harness)
@@ -1043,6 +1045,25 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// toggleOff turns ym off, or back on, for the row's goal or chief, else its session, or a mission's root session.
+func (m Model) toggleOff(r row) (tea.Model, tea.Cmd) {
+	var t core.OffTarget
+	var off bool
+	switch s := m.sessionOf(r); {
+	case r.node != nil && r.node.Manager.Host == "":
+		mg := r.node.Manager
+		t, off = core.OffTarget{Manager: &mg}, !r.node.Off
+	case s != nil && s.Remote == "":
+		t, off = core.OffTarget{Session: s.Key()}, !s.Off
+	case r.project != nil && len(r.project.Sessions) > 0 && r.project.Sessions[0].Remote == "":
+		t, off = core.OffTarget{Session: r.project.Sessions[0].Key()}, !r.project.Sessions[0].Off
+	default:
+		return m, nil
+	}
+	board := m.board
+	return m, m.do(func() (string, error) { return m.core.SetOff(board, t, off) })
 }
 
 // confirm asks ask on the footer; y runs yes, n or esc cancels.

@@ -105,6 +105,9 @@ func NewRoot() *cobra.Command {
 			}
 			defer c.Store.Close()
 			e.core = c
+			if err := e.refuseOff(cmd); err != nil {
+				return err
+			}
 			if cmd.Name() != "serve" {
 				keepServing(cmd.ErrOrStderr())
 			}
@@ -142,6 +145,7 @@ func NewRoot() *cobra.Command {
 		e.core.Health = healthText
 		return tui.Run(e.core)
 	})
+	root.AddCommand(offCmds(with)...)
 	root.AddCommand(
 		serveCmd(with),
 		docsCmd(with),

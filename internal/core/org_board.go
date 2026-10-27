@@ -26,7 +26,7 @@ const (
 	StandVerifying = "verifying"
 )
 
-var standRank = map[string]int{StandDone: 0, StandKilled: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandAdrift: 3, StandDown: 4, StandStuck: 5}
+var standRank = map[string]int{StandDone: 0, StandKilled: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandAdrift: 3, StandDown: 4, StandStuck: 5, StandOff: 1}
 
 // Node is a manager or chief on the board: its goal, its live session, the agents it runs, and the reports below a chief.
 type Node struct {
@@ -47,6 +47,8 @@ type Node struct {
 	Fresh Freshness
 	// Stats are the goal's numbers by the reading of the host it runs on.
 	Stats Stats
+	// Off is set while the owner has ym off for the goal or chief.
+	Off bool
 }
 
 // Unread is how much news the owner has not read on the node's goal, or on every goal below a chief.
@@ -114,6 +116,10 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	if err != nil {
 		return err
 	}
+	off, err := c.Store.offTargets()
+	if err != nil {
+		return err
+	}
 	fresh, err := c.Freshness(o)
 	if err != nil {
 		return err
@@ -131,7 +137,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	var build func(Manager, map[string]bool) Node
 	build = func(m Manager, seen map[string]bool) Node {
 		seen[m.ID] = true
-		n := Node{Manager: m, Agents: agents[m.ID], Fresh: fresh[m.ID]}
+		n := Node{Manager: m, Agents: agents[m.ID], Fresh: fresh[m.ID], Off: managerOff(off, o, b.parents, m)}
 		if st, ok := steers[m.ID]; ok {
 			n.Steer = &st
 		}
@@ -177,6 +183,8 @@ func (c *Core) standing(b Board, n Node) string {
 		own = StandKilled
 	case n.Goal != nil && n.Goal.State == GoalVerifying:
 		own = StandVerifying
+	case n.Off:
+		own = StandOff
 	case m.Stuck() || (n.Goal != nil && n.Goal.State == GoalStuck):
 		own = StandStuck
 	case !b.Alive(m) && !(m.LastError == "" && b.At.Sub(m.LaunchedAt) < StartGrace):

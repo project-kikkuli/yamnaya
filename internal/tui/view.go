@@ -1063,6 +1063,9 @@ func adriftText(b core.Board) string {
 
 // stateWord is how a session's row reads: adrift when it shows a sign of going nowhere, else its status.
 func stateWord(s core.Live) string {
+	if s.Off {
+		return core.StandOff
+	}
 	if len(s.Drift) > 0 {
 		return "adrift"
 	}
@@ -1461,7 +1464,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), adrift (an agent is busy
  going nowhere: the same failure again and again, its context compacted over and over, or writes in
  another repository; ym tells its manager the evidence), down (its manager's
- session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), or done. A done goal stays
+ session died; ym relaunches it), stuck (nudges did not help, or it cannot launch), ym off (z turned ym off for it;
+ ym leaves it alone), or done. A done goal stays
  on the tree with its summary for a day after it passed verification; x clears it sooner.
  SESSIONS YOU STARTED groups the sessions no manager runs by repository. enter drills down:
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
@@ -1521,6 +1525,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
    V            open the artifact a manager registered as its richer brief
    R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
+   z            ym off or back on: on a goal or chief, for its manager and every agent under it; on a
+                session or mission, for that session. While off, ym delivers nothing to it and its ym
+                commands refuse, so you talk to it in its own chat; ym on hands it what waited, in one message
    C            new chief, the same as c n
    D            detach the goal or chief from its chief, the same as c d
    t            goals by repository with chiefs nesting their reports, or every goal by its own repository

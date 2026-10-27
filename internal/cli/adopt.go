@@ -126,6 +126,10 @@ func (l launcher) sendFrom(s core.Live, text string, owner bool) (string, error)
 }
 
 func (l launcher) send(session string, pane *serverPane, text string, inbox func(string) bool) (string, error) {
+	off := l.core.Off(session)
+	if off {
+		pane, inbox = nil, nil
+	}
 	snd := launch.Sender{Box: l.core.Store, Inbox: inbox}
 	var p launch.Pane
 	if pane != nil {
@@ -134,6 +138,9 @@ func (l launcher) send(session string, pane *serverPane, text string, inbox func
 	m, out, err := snd.Send(session, p, text)
 	if err != nil {
 		return "", err
+	}
+	if off {
+		return fmt.Sprintf("held for %s: ym is off for it; it gets this once ym is on again", core.Short(session)), nil
 	}
 	if out == launch.Held {
 		if err := detach("send-hold", strconv.FormatInt(m.Seq, 10), pane.id, pane.harness.Name()); err != nil {

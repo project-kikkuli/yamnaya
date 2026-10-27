@@ -350,7 +350,7 @@ func (c *Core) typePending(b Board, o Org) (int, error) {
 		if now.Sub(m.CreatedAt) > pendingFresh {
 			continue
 		}
-		s, ok := b.Session(c.carrier(o, m.Session))
+		s, ok := c.reach(b, c.carrier(o, m.Session))
 		if !ok {
 			continue
 		}
@@ -461,7 +461,7 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 	if o, err := c.LoadOrg(); err == nil {
 		session = c.carrier(o, session)
 	}
-	s, ok := b.Session(c.Resolve(session))
+	s, ok := c.reach(b, c.Resolve(session))
 	if !ok {
 		return Queued, ""
 	}

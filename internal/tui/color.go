@@ -6,6 +6,8 @@ import (
 	"slices"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 // palette keeps board colors in the terminal theme.
@@ -75,7 +77,7 @@ func (p palette) state(s string) lipgloss.Style {
 	switch s {
 	case "busy":
 		return p.green
-	case "waiting":
+	case "waiting", core.StandOff:
 		return p.yellow
 	case "adrift", "hung":
 		return p.red

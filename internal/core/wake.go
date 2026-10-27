@@ -175,7 +175,7 @@ func (c *Core) noticeAgent(b Board, o Org, session, kind, text, key string) erro
 
 // Wake fires due timers, nudges a manager that ended its turn with nothing in flight, then hands every running manager its goal's
 // new events and every running chief its subtree's, each as one short message once they are due. Events wait for a manager that is
-// down; its relaunch prompt carries them.
+// down, whose relaunch prompt carries them, or that ym is off for, which gets them once ym is on again.
 func (c *Core) Wake(b Board) error {
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -198,7 +198,7 @@ func (c *Core) Wake(b Board) error {
 		if !o.Active(m) {
 			continue
 		}
-		if _, ok := b.Session(m.Session); !ok {
+		if _, ok := c.reach(b, m.Session); !ok {
 			continue
 		}
 		var err error
@@ -297,7 +297,7 @@ func (c *Core) fireTimers(b Board, o Org) error {
 				return err
 			}
 		default:
-			if _, running := b.Session(m.Session); !running {
+			if _, running := c.reach(b, m.Session); !running {
 				continue
 			}
 			if err := c.tell(b, m.Session, "ym: "+why, false); err != nil {

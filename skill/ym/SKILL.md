@@ -7,6 +7,10 @@ description: Use in any Claude Code or Codex session to file open questions as t
 
 `ym` finds the session you run in by walking up from its own process to your claude or codex process. Every command below works from any session, in any terminal, with no setup.
 
+## When ym says it is off
+
+If a `ym` command fails with "ym is off for this session; reply in chat instead.", the owner turned ym off for you to talk with you directly. Stop routing through ym: ask your questions, report progress and wait for answers in this chat, as plain conversation. Do not retry ym commands or file items until the owner turns ym back on; `ym on` then hands you, in one message, everything that waited (your goal's events, answers, messages). Read-only commands such as `ym item list`, `ym goal show` and `ym goal list` still work.
+
 ## The bar: file rarely
 
 File an item only when the answer changes what gets built, spends money, touches the owner's accounts or permissions, or picks between product directions the owner owns. Anything else you decide and do: implementation details, naming, library or tool choices, and anything with a conventional default. Do not file it, and do not ask about it in chat. If you could pick a default and move on, that is the answer.

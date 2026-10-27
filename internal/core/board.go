@@ -102,6 +102,8 @@ type Live struct {
 	Remote, Where string
 	// Unread is set when the session replied after the owner last opened it.
 	Unread bool
+	// Off is set while the owner has ym off for the session, its goal or its chief.
+	Off bool
 }
 
 // Location names where the session runs, for display.
@@ -540,6 +542,9 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	if b.Org, err = c.LoadOrg(); err != nil {
+		return b, err
+	}
+	if err := c.markOff(&b); err != nil {
 		return b, err
 	}
 	feeds, err := c.Store.Feeds()

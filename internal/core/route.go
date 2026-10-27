@@ -244,7 +244,7 @@ func askText(b Board, o Org, it Item) string {
 // tell hands text to the session: typed or sent when it runs on the board, else queued for its next inbox or relaunch.
 // owner marks text as the owner's own words.
 func (c *Core) tell(b Board, session, text string, owner bool) error {
-	if s, ok := b.Session(session); ok {
+	if s, ok := c.reach(b, session); ok {
 		var err error
 		switch {
 		case owner && c.Launches != nil:

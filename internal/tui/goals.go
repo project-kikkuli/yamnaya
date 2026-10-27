@@ -276,6 +276,7 @@ var standStyle = map[string]func(string) string{
 	core.StandAdrift:    func(s string) string { return pal.red.Render(s) },
 	core.StandDown:      func(s string) string { return pal.red.Render(s) },
 	core.StandStuck:     func(s string) string { return pal.red.Render(s) },
+	core.StandOff:       func(s string) string { return pal.yellow.Render(s) },
 }
 
 // nodeLines is a goal or chief row, indented under its chief: who owns it, how it stands, how fresh its brief is, and what it is about.
