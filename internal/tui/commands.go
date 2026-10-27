@@ -32,6 +32,8 @@ var Commands = map[string]string{
 	"ym goal steer":     "S",
 	"ym goal context":   "enter",
 	"ym goal relaunch":  "R",
+	"ym off":            "z",
+	"ym on":             "z",
 	"ym goal feed":      "enter",
 	"ym goal ack":       "x",
 	"ym chief":          "c",
