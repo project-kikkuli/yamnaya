@@ -53,7 +53,7 @@ Busy is not moving. ym reads each agent's transcript for signs it is going nowhe
 While ym is off for a session:
 
 - ym delivers nothing into it: no wakes, nudges, digests, answers, messages, steers or brief prompts. `ym send` and the board's `s` and `r` hold what you send for it.
-- ym leaves it alone: no relaunch, revive, idle or quiet nudge, and no stuck row. Its goal stands `ym off` instead of stuck or quiet, and its sessions read `ym off`.
+- ym leaves it alone: no relaunch, revive, context-cap restart, idle or quiet nudge, and no stuck row. Its goal stands `ym off` instead of stuck or quiet, and its sessions read `ym off`.
 - ym commands run inside it fail with "ym is off for this session; reply in chat instead." These still work, since they only read: `ym`, `ym on`, `ym off`, `ym board`, `ym sessions`, `ym launched`, `ym waiting`, `ym item list`, `ym item show`, `ym goal list`, `ym goal show`, `ym goal feed`, `ym goal context`, `ym drift`, `ym profiles` and `ym phase show`. Commands that never open ym's state, such as `ym slot`, `ym usage` and `ym health`, work as usual.
 - Events are still recorded. `ym on` hands each session it reaches again everything held for it as one message: its goal's events, the answers to its items and the messages queued for it.
 

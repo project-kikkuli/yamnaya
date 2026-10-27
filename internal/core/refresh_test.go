@@ -65,11 +65,13 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 		restarted bool
 		woken     bool
 		askedOld  bool
+		off       bool
 	}{
 		{name: "under the cap", tokens: 40_000, brief: true, woken: true},
 		{name: "past the cap with its brief current", tokens: 120_000, brief: true, restarted: true},
 		{name: "past the cap mid-turn", tokens: 120_000, brief: true, busy: true},
 		{name: "past the cap with no brief", tokens: 120_000, askedOld: true},
+		{name: "past the cap with ym off", tokens: 120_000, brief: true, off: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -101,6 +103,11 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 					s.Status = Busy
 				}
 			})
+			if tc.off {
+				if err := w.core.Store.SetOff(m.ID, true); err != nil {
+					t.Fatal(err)
+				}
+			}
 			w.loop(t, 1)
 			o, err := w.core.LoadOrg()
 			if err != nil {
