@@ -298,7 +298,7 @@ func sendHoldCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if p == nil {
 				return fmt.Errorf("unknown harness %q", args[2])
 			}
-			_, err = launch.Sender{Box: l.core.Store, Poll: 500 * time.Millisecond}.Hold(seq, p)
+			_, err = launch.Sender{Box: l.core.Store, Poll: 500 * time.Millisecond, Off: l.core.Off}.Hold(seq, p)
 			return err
 		}),
 	}

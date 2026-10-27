@@ -103,15 +103,17 @@ func TestHoldTypesOnceThePromptClears(t *testing.T) {
 		typed   bool
 		state   string
 		claimed bool
+		off     bool
 	}{
-		{"prompt clears", &pane{prompts: []bool{true, true, true, false}}, false, true, core.MsgTyped, true},
-		{"agent exits first", &pane{dead: true}, false, false, core.MsgPending, false},
-		{"inbox took it first", &pane{prompts: []bool{false}}, true, false, core.MsgInbox, false},
-		{"input box hidden until it shows", &pane{prompts: []bool{false}, fails: 2}, false, true, core.MsgTyped, true},
+		{"prompt clears", &pane{prompts: []bool{true, true, true, false}}, false, true, core.MsgTyped, true, false},
+		{"prompt clears after ym was turned off", &pane{prompts: []bool{true, true, true, false}}, false, false, core.MsgPending, false, true},
+		{"agent exits first", &pane{dead: true}, false, false, core.MsgPending, false, false},
+		{"inbox took it first", &pane{prompts: []bool{false}}, true, false, core.MsgInbox, false, false},
+		{"input box hidden until it shows", &pane{prompts: []bool{false}, fails: 2}, false, true, core.MsgTyped, true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := store(t)
-			snd := Sender{Box: st}
+			snd := Sender{Box: st, Off: func(session string) bool { return c.off && session == "s1" }}
 			m, _ := st.AddMessage("s1", "also rebase", core.MsgPending)
 			if c.inbox {
 				(&core.Core{Store: st}).TakeMessages("s1")

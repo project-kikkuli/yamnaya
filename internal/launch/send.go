@@ -48,6 +48,8 @@ type Sender struct {
 	Poll time.Duration
 	// Inbox hands text to the session's own inbox when it runs off ym's server; nil or false leaves it for ym item inbox.
 	Inbox func(text string) bool
+	// Off reports whether the owner turned ym off for a session; Hold leaves its message waiting while it is.
+	Off func(session string) bool
 }
 
 // Send delivers text to session; pane is nil when the session does not run on ym's server.
@@ -91,7 +93,8 @@ func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outc
 	return m, Typed, nil
 }
 
-// Hold types a held message once the pane's permission prompt clears. It gives up, leaving the message to the inbox, when the agent exits, and stops when the inbox took it first.
+// Hold types a held message once the pane's permission prompt clears. It gives up, leaving the message to the inbox, when the agent exits
+// or ym is off for its session, and stops when the inbox took it first.
 func (s Sender) Hold(seq int64, pane Pane) (bool, error) {
 	for {
 		m, err := s.Box.Message(seq)
@@ -103,6 +106,9 @@ func (s Sender) Hold(seq int64, pane Pane) (bool, error) {
 			return false, nil
 		}
 		if !shown {
+			if s.Off != nil && s.Off(m.Session) {
+				return false, nil
+			}
 			ok, err := s.Box.Claim(seq, core.MsgUncertain)
 			if err != nil || !ok {
 				return false, err
