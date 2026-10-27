@@ -394,7 +394,7 @@ func (p *painter) ticker(bl block, rows int) {
 	}
 	if nc > 0 {
 		for y := y0 + 1; y < y0+1+chartRows; y++ {
-			p.put(cx, y, p.pal.grid, p.pal.panel, "│")
+			p.put(cx, y, p.pal.grid, p.pal.panel, "┊")
 		}
 	}
 	if alive {
@@ -405,7 +405,7 @@ func (p *painter) ticker(bl block, rows int) {
 // candle is a pull request: a body as tall as the gates it passed, colored by its CI, with a dividend flag on
 // the top row once merged.
 func (p *painter) candle(x, y0, rows int, c scene.Camp, fade unitInk, rowBg rgb) {
-	body, glyph := p.pal.open, "│"
+	body, glyph := p.pal.open, "┃"
 	switch c.State {
 	case scene.Green:
 		body, glyph = p.pal.green, "█"
@@ -551,7 +551,7 @@ func (p *painter) quote(bl block) {
 		case scene.Merged:
 			col, g = p.pal.gold, "⚑"
 		}
-		p.put(end+1+i, y, fade.of(col), bg, g)
+		p.put(end+1+i, y, fade.of(col), fade.of(p.pal.panel), g)
 	}
 	if alive {
 		na := min(len(u.Team), max(0, (end-x0-18)/2))
@@ -559,11 +559,11 @@ func (p *painter) quote(bl block) {
 		for i, a := range u.Team[:na] {
 			switch a.Stance {
 			case scene.Climbing:
-				p.put(end+1+i, y, p.pal.busy, bg, levels[2+int(scene.Unit(seed, p.frame/4*7+i)*6)])
+				p.put(end+1+i, y, p.pal.busy, p.pal.panel, levels[2+int(scene.Unit(seed, p.frame/4*7+i)*6)])
 			case scene.Waiting:
 				p.put(end+1+i, y, p.pal.redText, p.pal.red, "!")
 			default:
-				p.put(end+1+i, y, p.pal.rest, bg, "▁")
+				p.put(end+1+i, y, p.pal.rest, p.pal.panel, "▁")
 			}
 		}
 	}
