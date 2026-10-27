@@ -45,7 +45,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				t.Setenv("YAMNAYA_STATE_DIR", state)
 				t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
 				ran := filepath.Join(t.TempDir(), "resumed")
-				script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$YAMNAYA_PROFILE\" \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_SECURESTORAGE_CONFIG_DIR\" \"$CODEX_HOME\" \"$CODEX_SQLITE_HOME\" \"$ANTHROPIC_API_KEY$CODEX_ACCESS_TOKEN\" \"$*\" > %s\nexec sleep 30\n", shellQuote(ran))
+				script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$YAMNAYA_PROFILE\" \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_SECURESTORAGE_CONFIG_DIR\" \"$CODEX_HOME\" \"$CODEX_SQLITE_HOME\" \"$ANTHROPIC_API_KEY$CODEX_ACCESS_TOKEN\" \"$*\" > %s.tmp && mv %s.tmp %s\nexec sleep 30\n", shellQuote(ran), shellQuote(ran), shellQuote(ran))
 				if err := os.WriteFile(filepath.Join(bins, harness), []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}

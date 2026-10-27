@@ -18,7 +18,7 @@ import (
 func fakeAgent(t *testing.T) string {
 	t.Helper()
 	bins, ran := t.TempDir(), filepath.Join(t.TempDir(), "ran")
-	script := fmt.Sprintf("#!/bin/sh\necho \"$PWD $*\" > %s\nexec sleep 30\n", ran)
+	script := fmt.Sprintf("#!/bin/sh\necho \"$PWD $*\" > %s.tmp && mv %s.tmp %s\nexec sleep 30\n", ran, ran, ran)
 	if err := os.WriteFile(filepath.Join(bins, "claude"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
