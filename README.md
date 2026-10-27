@@ -269,6 +269,28 @@ A trading screen. Each repository is a sector panel and each chief an index pane
 | `DELISTED` | A killed unit: its line flatlines and its name strikes through, then it is gone. |
 | Clock and session, ticker tape, the line before now, the change after the price, grid dots | Decoration only. Colors never mark a goal or repository. |
 
+### Anthill
+
+A cutaway of the ground: mounds on the surface, nests and tunnels below. Each repository is a colony whose mounds are linked by a gallery underground, its name under the gallery; a chief is a supercolony whose colonies' galleries run deeper and rise to join its own. Each goal is a mound over its nest: progress raises the mound and spreads the brood comb under it. Pull requests are chambers off the shaft, deeper for each gate passed. The sky follows your clock.
+
+| Sign | Meaning |
+|---|---|
+| amber `ж` | A busy agent, an ant marching up and down the shaft and along the gallery. |
+| red `ж` | An agent stopped and waiting on you, standing still beside the top of the shaft with its name in red. Always red. |
+| grey `ж N resting` | Idle teammates curled in the brood comb. |
+| `○` | A pull request chamber, deeper for each of its six gates passed, its number beside it. |
+| green `●` / red `▒` | CI passed: a stocked chamber glowing green / CI failing: a collapsed chamber full of red rubble. |
+| gold `◆` | A merged pull request: a chamber of stored food sealed off from the shaft. Several collapse to `N sealed`. |
+| `ψ` over a full mound | The goal is done: winged alates fly off it. |
+| red `Ж` | Something waits on you: a big red ant blinks at the entrance, red alarm rings pulse out, and the name turns red. |
+| `▾` | Over the selected row's mound, its name lit; a selected colony reads `▸ name ◂`. |
+| Clouds | A haze of brown dust drifting over the mound. |
+| Storm: rain `╱`, flood | A rain cloud over the mound and flood water seeping down the shaft into the chambers and gallery. |
+| Eruption | An anteater beside the mound, its tongue raiding down the shaft. |
+| Summit | A warm glow round the full mound. |
+| Kill | The mound is flattened into a puff of dust and its nest and tunnels cave in, then it is gone. |
+| Sun, moon, stars, grass, soil layers, roots, pebbles, the brood comb's cells | Decoration only. Colors never mark a goal or repository. |
+
 ## Remote hosts
 
     ym remote install <host>       (or H on the board, then a)
