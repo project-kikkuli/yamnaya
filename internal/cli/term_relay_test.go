@@ -16,19 +16,24 @@ func TestTermRelayCopiesAndForwardsWhatTheRemoteDraws(t *testing.T) {
 		writes []string
 		copies []string
 		ports  []string
+		opens  []string
 	}{
-		{"a copy ended by BEL", []string{"a" + osc("hello", "\a") + "b"}, []string{"hello"}, nil},
-		{"a copy ended by ST split across writes", []string{"x\x1b]5", "2;;" + base64.StdEncoding.EncodeToString([]byte("two"))[:2], base64.StdEncoding.EncodeToString([]byte("two"))[2:] + "\x1b\\y"}, []string{"two"}, nil},
-		{"two copies in one write", []string{osc("one", "\a") + osc("two", "\a")}, []string{"one", "two"}, nil},
-		{"a clipboard query sets nothing", []string{"\x1b]52;c;?\a"}, nil, nil},
-		{"links to the remote's localhost", []string{"see http://localhost:3000/x and http://127.0.0.1:8080 and http://localhost:3000/y"}, nil, []string{"3000", "8080"}},
-		{"a link split across writes", []string{"open http://local", "host:5173/ now"}, nil, []string{"5173"}},
-		{"links elsewhere forward nothing", []string{"https://example.com:8443/a http://10.0.0.1:80"}, nil, nil},
+		{"a copy ended by BEL", []string{"a" + osc("hello", "\a") + "b"}, []string{"hello"}, nil, nil},
+		{"a copy ended by ST split across writes", []string{"x\x1b]5", "2;;" + base64.StdEncoding.EncodeToString([]byte("two"))[:2], base64.StdEncoding.EncodeToString([]byte("two"))[2:] + "\x1b\\y"}, []string{"two"}, nil, nil},
+		{"two copies in one write", []string{osc("one", "\a") + osc("two", "\a")}, []string{"one", "two"}, nil, nil},
+		{"a clipboard query sets nothing", []string{"\x1b]52;c;?\a"}, nil, nil, nil},
+		{"links to the remote's localhost", []string{"see http://localhost:3000/x and http://127.0.0.1:8080 and http://localhost:3000/y"}, nil, []string{"3000", "8080"}, nil},
+		{"a link split across writes", []string{"open http://local", "host:5173/ now"}, nil, []string{"5173"}, nil},
+		{"links elsewhere forward nothing", []string{"https://example.com:8443/a http://10.0.0.1:80"}, nil, nil, nil},
+		{"a right-clicked link opens", []string{"a\x1b]7477;open;https://e.x/a?b=1&c=2\ab"}, nil, nil, []string{"https://e.x/a?b=1&c=2"}},
+		{"an open split across writes, then a copy", []string{"\x1b]747", "7;open;https://e.x/", "y\x1b\\" + osc("hi", "\a")}, []string{"hi"}, nil, []string{"https://e.x/y"}},
+		{"an open of anything but a web link opens nothing", []string{"\x1b]7477;open;file:///etc/passwd\a\x1b]7477;open;https://e.x/a b\a"}, nil, nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			var copies, ports []string
-			r := &termRelay{out: &out, copy: func(b []byte) { copies = append(copies, string(b)) }, forward: func(p string) { ports = append(ports, p) }}
+			var copies, ports, opens []string
+			r := &termRelay{out: &out, copy: func(b []byte) { copies = append(copies, string(b)) }, forward: func(p string) { ports = append(ports, p) },
+				open: func(u []byte) { opens = append(opens, string(u)) }}
 			var want string
 			for _, w := range tc.writes {
 				if n, err := r.Write([]byte(w)); n != len(w) || err != nil {
@@ -44,6 +49,9 @@ func TestTermRelayCopiesAndForwardsWhatTheRemoteDraws(t *testing.T) {
 			}
 			if !slices.Equal(ports, tc.ports) {
 				t.Errorf("forwarded %q, want %q", ports, tc.ports)
+			}
+			if !slices.Equal(opens, tc.opens) {
+				t.Errorf("opened %q, want %q", opens, tc.opens)
 			}
 		})
 	}

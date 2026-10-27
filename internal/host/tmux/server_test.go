@@ -1,13 +1,16 @@
 package tmux
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -179,4 +182,66 @@ func TestReloadBringsARunningServerOntoTheConfigAndLeavesADownOneDown(t *testing
 			}
 		}
 	}
+}
+
+func TestServerPassesCopiesLinksAndLinkOpensToEveryClientTerminal(t *testing.T) {
+	script, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("script not installed")
+	}
+	for _, term := range []string{"xterm-256color", "screen-256color", "tmux-256color"} {
+		t.Run(term, func(t *testing.T) {
+			h, conf := ymServer(t)
+			emit := `read x; printf '\033[H\033[2J\033]52;c;aGk=\a\033]8;;https://e.x/a?b=1&c=2\033\\LINK\033]8;;\033\\'; read y`
+			if _, err := h.Start(conf, "s", t.TempDir(), []string{"sh", "-c", emit}); err != nil {
+				t.Fatal(err)
+			}
+			attach := []string{"tmux", "-L", h.Socket, "attach", "-t", "=s"}
+			args := append([]string{"-q", "/dev/null"}, attach...)
+			if runtime.GOOS == "linux" {
+				args = []string{"-qfec", strings.Join(attach, " "), "/dev/null"}
+			}
+			var out lockedBuffer
+			c := exec.Command(script, args...)
+			c.Env = append(agentEnv(os.Environ()), "TERM="+term)
+			c.Stdout, c.Stderr = &out, &out
+			in, err := c.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { in.Close(); c.Process.Kill(); c.Wait() })
+			waitFor(t, "the client to attach", func() bool { n, _ := h.run("list-clients"); return n != "" })
+			if _, err := h.run("send-keys", "-t", "=s:", "Enter"); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the copy and the link to reach the client's terminal", func() bool {
+				s := out.String()
+				return strings.Contains(s, "\x1b]52;c;aGk=") && strings.Contains(s, ";https://e.x/a?b=1&c=2\x1b\\")
+			})
+			in.Write([]byte("\x1b[<2;2;1M\x1b[<2;2;1m"))
+			waitFor(t, "a right-click on the link to ask the client's end to open it", func() bool {
+				return strings.Contains(out.String(), "\x1b]7477;open;https://e.x/a?b=1&c=2\a")
+			})
+		})
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

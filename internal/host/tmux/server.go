@@ -17,8 +17,9 @@ import (
 // Server is the tmux server ym owns for the sessions it launches; it never touches any other server.
 const Server = "ym"
 
-// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, and what an
-// agent copies or links reaches the terminal attached to it, through each tmux on the way.
+// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, what an agent
+// copies or links reaches the terminal attached to it through each tmux on the way, and a right-click on a link passes a
+// request to open it to the ym that attached the client.
 const ServerConf = `set -g remain-on-exit on
 set -g history-limit 50000
 set -g escape-time 10
@@ -27,13 +28,18 @@ set -g mouse on
 set -s set-clipboard on
 set -g allow-passthrough on
 set -s terminal-features[0] "xterm*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
+set -s terminal-features[1] "screen*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
+set -s terminal-features[2] "tmux*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
+set -s terminal-features[3] "rxvt*:ignorefkeys"
+bind -n MouseDown3Pane if -F "#{m:http*://*,#{mouse_hyperlink}}" { run-shell -b 'printf "\033Ptmux;\033\033]7477;open;%s\007\033\134" #{q:mouse_hyperlink} > #{pane_tty}' } { if -F "#{||:#{mouse_any_flag},#{pane_in_mode}}" { select-pane -t=; send -M } }
 set -g status-left "ym #S "
 set -g status-left-length 60
 set -g status-right "C-b d: back to the board "
 `
 
 // Conf is the config ym writes for its server on this machine: ServerConf, and on macOS every copy also goes to the
-// pasteboard, since Terminal.app ignores the escape sequence tmux sets the terminal's clipboard with.
+// pasteboard, since Terminal.app ignores the escape sequence tmux sets the terminal's clipboard with, and a right-clicked
+// link opens in the browser, since Terminal.app neither renders OSC 8 links nor gets Cmd-click while tmux takes the mouse.
 func Conf() string {
 	if runtime.GOOS != "darwin" {
 		return ServerConf
@@ -44,6 +50,7 @@ func Conf() string {
 	}
 	return ServerConf + fmt.Sprintf(`set -s copy-command "/usr/bin/pbcopy"
 set-hook -g pane-set-clipboard 'run-shell -b "%s save-buffer - | /usr/bin/pbcopy"'
+bind -n MouseDown3Pane if -F "#{m:http*://*,#{mouse_hyperlink}}" { run-shell -b '/usr/bin/open #{q:mouse_hyperlink}' } { if -F "#{||:#{mouse_any_flag},#{pane_in_mode}}" { select-pane -t=; send -M } }
 `, bin)
 }
 

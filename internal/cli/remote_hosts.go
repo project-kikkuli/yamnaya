@@ -276,10 +276,10 @@ func (r *remoteHosts) Sync(host string, req core.RelaySync) (core.RelayReply, er
 	return reply, nil
 }
 
-// Attach runs args on host in this terminal. What the session copies there lands on this Mac's pasteboard, and a link to
-// a port on the host's own localhost opens here: ym forwards that port over the connection.
+// Attach runs args on host in this terminal. What the session copies there lands on this Mac's pasteboard, a link right-clicked
+// there opens here, and a link to a port on the host's own localhost works here: ym forwards that port over the connection.
 func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
-	c := exec.Command(r.ssh, append(sshArgs(host, "-t"), remoteCommand(args))...)
+	c := exec.Command(r.ssh, append(sshArgs(host, "-t"), attachCommand(args))...)
 	relay := &termRelay{out: os.Stdout, forward: func(port string) {
 		if "127.0.0.1:"+port == core.BriefsAddr() {
 			return
@@ -292,6 +292,9 @@ func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
 			pb := exec.Command("/usr/bin/pbcopy")
 			pb.Stdin = bytes.NewReader(hostBriefLinks(text, host))
 			go pb.Run()
+		}
+		relay.open = func(url []byte) {
+			go exec.Command("/usr/bin/open", string(hostBriefLinks(url, host))).Run()
 		}
 	}
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, relay, os.Stderr

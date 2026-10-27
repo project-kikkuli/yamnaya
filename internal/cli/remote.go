@@ -38,12 +38,11 @@ func remoteCmd() *cobra.Command {
 			if err := rememberHost(args[0]); err != nil {
 				return err
 			}
-			var opts []string
-			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
-				opts = append(opts, "-t")
-			}
-			c := exec.Command(sshBin(), append(sshArgs(args[0], opts...), remoteCommand(args[1:]))...)
+			c := exec.Command(sshBin(), append(sshArgs(args[0]), remoteCommand(args[1:]))...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
+				c = (&remoteHosts{ssh: sshBin()}).Attach(args[0], args[1:]...)
+			}
 			if err := c.Run(); err != nil {
 				if exit, ok := err.(*exec.ExitError); ok {
 					if exit.ExitCode() == 255 {
@@ -103,6 +102,12 @@ func remoteForgetCmd() *cobra.Command {
 }
 
 // remoteCommand runs ym on a host with its own directory on PATH, so what it starts finds ym and the user's tools without a login shell.
+// attachCommand is remoteCommand for a terminal: the host's tmux takes it for an xterm, so what a session copies or links
+// reaches this end whichever terminal or tmux runs here.
+func attachCommand(args []string) string {
+	return "TERM=xterm-256color " + remoteCommand(args)
+}
+
 func remoteCommand(args []string) string {
 	remote := `PATH="$HOME/.local/bin:$PATH" ` + remoteBin
 	for _, a := range args {
