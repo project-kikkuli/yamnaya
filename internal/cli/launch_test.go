@@ -91,3 +91,50 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvModelPinsSessionsOfItsHarnessOnly(t *testing.T) {
+	bins := t.TempDir()
+	for _, name := range []string{"claude", "codex"} {
+		if err := os.WriteFile(filepath.Join(bins, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bins)
+	t.Setenv("YAMNAYA_STATE_DIR", t.TempDir())
+	wt := launch.Worktree{Path: t.TempDir()}
+	for _, c := range []struct {
+		name    string
+		env     map[string]string
+		rec     launch.Record
+		resume  bool
+		want    string
+		wantArg bool
+	}{
+		{"claude start pinned", map[string]string{"YAMNAYA_CLAUDE_MODEL": "claude-haiku-5-5"}, launch.Record{Harness: "claude", Session: "s", Prompt: "go", Worktree: wt}, false, "claude-haiku-5-5", true},
+		{"claude resume pinned", map[string]string{"YAMNAYA_CLAUDE_MODEL": "claude-haiku-5-5"}, launch.Record{Harness: "claude", Session: "s", Worktree: wt}, true, "claude-haiku-5-5", true},
+		{"record model beats env on resume", map[string]string{"YAMNAYA_CLAUDE_MODEL": "claude-haiku-5-5"}, launch.Record{Harness: "claude", Session: "s", Model: "claude-opus-5-5", Worktree: wt}, true, "claude-opus-5-5", true},
+		{"codex start pinned", map[string]string{"YAMNAYA_CODEX_MODEL": "gpt-6-luna"}, launch.Record{Harness: "codex", Prompt: "go", Worktree: wt}, false, "gpt-6-luna", true},
+		{"claude env does not touch codex", map[string]string{"YAMNAYA_CLAUDE_MODEL": "claude-haiku-5-5"}, launch.Record{Harness: "codex", Prompt: "go", Worktree: wt}, false, "", false},
+		{"unset env keeps the default", nil, launch.Record{Harness: "claude", Session: "s", Prompt: "go", Worktree: wt}, false, "", false},
+		{"unset env keeps the default on resume", nil, launch.Record{Harness: "claude", Session: "s", Worktree: wt}, true, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("YAMNAYA_CLAUDE_MODEL", "")
+			t.Setenv("YAMNAYA_CODEX_MODEL", "")
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			argv, err := startArgv(c.rec)
+			if c.resume {
+				argv, err = resumeArgv(c.rec, "")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := slices.Index(argv, "--model")
+			if (i >= 0) != c.wantArg || (i >= 0 && argv[i+1] != c.want) {
+				t.Fatalf("argv %q: --model want %q (present %v)", argv, c.want, c.wantArg)
+			}
+		})
+	}
+}

@@ -93,10 +93,24 @@ func startArgv(rec launch.Record) ([]string, error) {
 		return nil, err
 	}
 	prompt := rec.Prompt + slotNote
+	model := envModel(rec.Harness)
 	if rec.Harness == claude.Name {
-		return scopedArgv(rec, []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session, prompt}), nil
+		argv := []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session}
+		if model != "" {
+			argv = append(argv, "--model", model)
+		}
+		return scopedArgv(rec, append(argv, prompt)), nil
 	}
-	return scopedArgv(rec, append(append([]string{b, "--yolo"}, codexDirs(rec)...), prompt)), nil
+	argv := []string{b, "--yolo"}
+	if model != "" {
+		argv = append(argv, "--model", model)
+	}
+	return scopedArgv(rec, append(append(argv, codexDirs(rec)...), prompt)), nil
+}
+
+// envModel is the model the environment pins every session of harnessName to; rehearsals set it so their sessions run on a cheap model.
+func envModel(harnessName string) string {
+	return os.Getenv(map[string]string{claude.Name: "YAMNAYA_CLAUDE_MODEL", codex.Name: "YAMNAYA_CODEX_MODEL"}[harnessName])
 }
 
 // slotNote ends every prompt ym starts an agent on, so heavy work across all agents shares the machine's slots.
@@ -131,8 +145,12 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	} else {
 		argv = append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session)
 	}
-	if rec.Model != "" {
-		argv = append(argv, "--model", rec.Model)
+	model := rec.Model
+	if model == "" {
+		model = envModel(rec.Harness)
+	}
+	if model != "" {
+		argv = append(argv, "--model", model)
 	}
 	if prompt != "" {
 		argv = append(argv, prompt)

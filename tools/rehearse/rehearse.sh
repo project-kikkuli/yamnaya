@@ -15,7 +15,7 @@ fi
 
 usage() {
 	cat <<'EOF'
-usage: tools/rehearse/rehearse.sh [--host H | --local] [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF]
+usage: tools/rehearse/rehearse.sh [--host H | --local] [--scenario S] [--ask TEXT] [--timeout MIN] [--ref REF] [--model ID]
 
 Scenarios: clean, kill-manager, kill-worker, freeze-worker, break-ci, review-comment, kill-serve.
 A run goes to a remote host over ssh unless --local: --host H, else $YM_REHEARSAL_HOST, else the one host ym remote
@@ -24,11 +24,13 @@ origin/main), creates the private repository <you>/ym-rehearsal-<stamp> from too
 ends, by timeout, signal or error, ends its tmux server and ym serve, deletes the repository and the run's checkouts, and
 keeps timeline.log, serve.log and brief.md in ~/tmp/arbiter-work/yamnaya-rehearsal/<stamp>-<scenario>/ on the host it ran
 on. That root holds a .ym-rehearsal file, so the host's own ym never shows, records or adopts a rehearsal's sessions.
+Every Claude session the run launches (manager, chief, workers, verifier) runs on claude-haiku-5-5 unless --model ID names
+another, and Codex sessions run on gpt-6-luna; the run's ym reads YAMNAYA_CLAUDE_MODEL and YAMNAYA_CODEX_MODEL for this.
 YM_REHEARSAL_REPO=owner/name runs on an existing repository instead and keeps it, so concurrent runs can share one.
 EOF
 }
 
-scenario=clean ask="" timeout=60 ref=origin/main host=${YM_REHEARSAL_HOST:-} local=0
+scenario=clean ask="" timeout=60 ref=origin/main model=claude-haiku-5-5 host=${YM_REHEARSAL_HOST:-} local=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--host) host=$2; shift 2 ;;
@@ -37,6 +39,7 @@ while [ $# -gt 0 ]; do
 	--ask) ask=$2; shift 2 ;;
 	--timeout) timeout=$2; shift 2 ;;
 	--ref) ref=$2; shift 2 ;;
+	--model) model=$2; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; exit 2 ;;
 	esac
@@ -55,7 +58,7 @@ if [ "$local" = 0 ]; then
 		host=$hosts
 	fi
 	origin=$(git -C "$YM_REHEARSAL_SRC" remote get-url origin)
-	remote_args=(--local --scenario "$scenario" --timeout "$timeout" --ref "$ref")
+	remote_args=(--local --scenario "$scenario" --timeout "$timeout" --ref "$ref" --model "$model")
 	if [ -n "$ask" ]; then remote_args+=(--ask "$ask"); fi
 	script=$(basename "$0")
 	# The remote root and the clone are made before the script lands, so it runs from a yamnaya checkout of its own there.
@@ -121,6 +124,7 @@ git -C "$src" archive "$rev" | tar -x -C "$run/src"
 (cd "$run/src" && go build -o "$run/bin/ym" ./cmd/ym)
 
 export YAMNAYA_STATE_DIR=$run/state
+export YAMNAYA_CLAUDE_MODEL=$model YAMNAYA_CODEX_MODEL=gpt-6-luna
 # Codex writes its threads under CODEX_HOME; a private one with copies of the owner's login and config keeps the run's out of ~/.codex.
 mkdir -p "$run/codex"
 for f in auth.json config.toml; do
@@ -135,6 +139,7 @@ db=$run/state/ym.db
 repo=$run/proving-ground
 ym=$run/bin/ym
 
+note "models: claude $model, codex $YAMNAYA_CODEX_MODEL"
 note "rehearsal $scenario: ym $(git -C "$src" log -1 --format='%h %s' "$rev")"
 note "run dir $run, tmux -L $YAMNAYA_YM_SOCKET, repo $ground"
 
