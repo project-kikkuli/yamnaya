@@ -17,9 +17,8 @@ import (
 // Server is the tmux server ym owns for the sessions it launches; it never touches any other server.
 const Server = "ym"
 
-// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, what an agent
-// copies or links reaches the terminal attached to it through each tmux on the way, and a right-click on a link passes a
-// request to open it to the ym that attached the client.
+// ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, and what an agent
+// copies or links reaches the terminal attached to it through each tmux on the way.
 const ServerConf = `set -g remain-on-exit on
 set -g history-limit 50000
 set -g escape-time 10
@@ -31,18 +30,18 @@ set -s terminal-features[0] "xterm*:clipboard:ccolour:cstyle:focus:title:hyperli
 set -s terminal-features[1] "screen*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
 set -s terminal-features[2] "tmux*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
 set -s terminal-features[3] "rxvt*:ignorefkeys"
-bind -n MouseDown3Pane if -F "#{m:http*://*,#{mouse_hyperlink}}" { run-shell -b 'printf "\033Ptmux;\033\033]7477;open;%s\007\033\134" #{q:mouse_hyperlink} > #{pane_tty}' } { if -F "#{||:#{mouse_any_flag},#{pane_in_mode}}" { select-pane -t=; send -M } }
 set -g status-left "ym #S "
 set -g status-left-length 60
 set -g status-right "C-b d: back to the board "
 `
 
-// Conf is the config ym writes for its server on this machine: ServerConf, and on macOS every copy also goes to the
-// pasteboard, since Terminal.app ignores the escape sequence tmux sets the terminal's clipboard with, and a right-clicked
-// link opens in the browser, since Terminal.app neither renders OSC 8 links nor gets Cmd-click while tmux takes the mouse.
-func Conf() string {
+// Conf is the config ym writes for its server on this machine: ServerConf, and a right-click on a web link opens it. On macOS
+// it opens in the browser, since Terminal.app neither renders OSC 8 links nor gets Cmd-click while tmux takes the mouse, and
+// every copy also goes to the pasteboard, since Terminal.app ignores the escape sequence tmux sets the terminal's clipboard
+// with. Elsewhere ym, the binary at ym, asks the ym that attached the client over ssh to open it, with stateDir its state.
+func Conf(ym, stateDir string) string {
 	if runtime.GOOS != "darwin" {
-		return ServerConf
+		return ServerConf + RelayOpen(ym, stateDir)
 	}
 	bin, err := exec.LookPath("tmux")
 	if err != nil {
@@ -50,8 +49,18 @@ func Conf() string {
 	}
 	return ServerConf + fmt.Sprintf(`set -s copy-command "/usr/bin/pbcopy"
 set-hook -g pane-set-clipboard 'run-shell -b "%s save-buffer - | /usr/bin/pbcopy"'
-bind -n MouseDown3Pane if -F "#{m:http*://*,#{mouse_hyperlink}}" { run-shell -b '/usr/bin/open #{q:mouse_hyperlink}' } { if -F "#{||:#{mouse_any_flag},#{pane_in_mode}}" { select-pane -t=; send -M } }
-`, bin)
+`, bin) + rightClick("/usr/bin/open #{q:mouse_hyperlink}")
+}
+
+// RelayOpen binds a right-click on a web link to ym link-open, which passes the request to the ym attached to that client.
+func RelayOpen(ym, stateDir string) string {
+	return rightClick(fmt.Sprintf(`"%s" link-open "%s" #{q:mouse_hyperlink} #{q:client_tty} #{q:pane_tty}`, ym, stateDir))
+}
+
+func rightClick(run string) string {
+	return `bind -n MouseDown3Pane if -F "#{||:#{m:http://*,#{mouse_hyperlink}},#{m:https://*,#{mouse_hyperlink}}}" { run-shell -b '` + run +
+		`' } { if -F "#{||:#{mouse_any_flag},#{pane_in_mode}}" { select-pane -t=; send -M } }
+`
 }
 
 // Reload applies conf to the server when it is up, so a config ym changed reaches sessions already running.

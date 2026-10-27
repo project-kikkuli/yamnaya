@@ -2,14 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/base64"
 	"io"
 	"regexp"
 )
 
 // termRelay passes what a remote session draws to the terminal unchanged, hands copy the text it sets the clipboard
-// to, hands open each web link the remote's tmux asks to open here, and hands forward each port on the remote's own
-// localhost its links name, once.
+// to, hands open each web link a right-click on the remote asks to open here, and hands forward each port on the remote's
+// own localhost its links name, once. An open counts only when it carries the nonce the remote ym announced as the first
+// escape sequence of the stream, before any pane could print one.
 type termRelay struct {
 	out     io.Writer
 	copy    func(text []byte)
@@ -17,11 +19,14 @@ type termRelay struct {
 	forward func(port string)
 	carry   []byte
 	ports   map[string]bool
+	nonce   []byte
+	escaped bool
 }
 
 const (
 	oscClipboard = "\x1b]52;"
-	// oscOpen is what ym's tmux on a host writes to the client's terminal when the owner right-clicks a link there.
+	// oscNonce is what the ym ssh runs on a host announces first; oscOpen, nonce;url, is what a right-click on a link there sends.
+	oscNonce     = "\x1b]7477;nonce;"
 	oscOpen      = "\x1b]7477;open;"
 	maxClipboard = 1 << 20
 )
@@ -47,34 +52,47 @@ func (r *termRelay) Write(p []byte) (int, error) {
 		}
 	}
 	for {
-		at, prefix := bytes.Index(buf, []byte(oscClipboard)), oscClipboard
-		if o := bytes.Index(buf, []byte(oscOpen)); o >= 0 && (at < 0 || o < at) {
-			at, prefix = o, oscOpen
+		at, prefix := -1, ""
+		for _, p := range []string{oscClipboard, oscOpen, oscNonce} {
+			if o := bytes.Index(buf, []byte(p)); o >= 0 && (at < 0 || o < at) {
+				at, prefix = o, p
+			}
 		}
 		if at < 0 {
 			break
 		}
+		first := !r.escaped && bytes.IndexByte(buf[:at], 0x1b) < 0
 		body := buf[at+len(prefix):]
 		end, term := bytes.IndexByte(body, '\a'), 1
 		if st := bytes.Index(body, []byte("\x1b\\")); st >= 0 && (end < 0 || st < end) {
 			end, term = st, 2
 		}
 		if end < 0 {
+			r.escaped = !first
 			if len(body) < maxClipboard {
 				r.carry = append([]byte(nil), buf[at:]...)
 			}
 			return n, err
 		}
-		if prefix == oscOpen {
-			if r.open != nil && webLink.Match(body[:end]) {
-				r.open(body[:end])
+		r.escaped = true
+		switch prefix {
+		case oscNonce:
+			if first {
+				r.nonce = append([]byte(nil), body[:end]...)
 			}
-		} else {
+		case oscOpen:
+			nonce, url, _ := bytes.Cut(body[:end], []byte(";"))
+			if r.open != nil && len(r.nonce) > 0 && subtle.ConstantTimeCompare(nonce, r.nonce) == 1 && webLink.Match(url) {
+				r.open(url)
+			}
+		default:
 			r.clip(body[:end])
 		}
 		buf = body[end+term:]
 	}
-	r.carry = append([]byte(nil), buf[max(0, len(buf)-len(oscClipboard)-24):]...)
+	keep := max(0, len(buf)-len(oscClipboard)-24)
+	r.escaped = r.escaped || bytes.IndexByte(buf[:keep], 0x1b) >= 0
+	r.carry = append([]byte(nil), buf[keep:]...)
 	return n, err
 }
 

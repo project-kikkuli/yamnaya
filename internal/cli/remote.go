@@ -101,12 +101,13 @@ func remoteForgetCmd() *cobra.Command {
 	}
 }
 
-// remoteCommand runs ym on a host with its own directory on PATH, so what it starts finds ym and the user's tools without a login shell.
 // attachCommand is remoteCommand for a terminal: the host's tmux takes it for an xterm, so what a session copies or links
-// reaches this end whichever terminal or tmux runs here.
+// reaches this end whichever terminal or tmux runs here, and the host's ym announces the nonce a right-click's open carries.
 func attachCommand(args []string) string {
-	return "TERM=xterm-256color " + remoteCommand(args)
+	return "TERM=xterm-256color " + linkRelayEnv + "=1 " + remoteCommand(args)
 }
+
+// remoteCommand runs ym on a host with its own directory on PATH, so what it starts finds ym and the user's tools without a login shell.
 
 func remoteCommand(args []string) string {
 	remote := `PATH="$HOME/.local/bin:$PATH" ` + remoteBin

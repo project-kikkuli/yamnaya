@@ -184,7 +184,7 @@ func TestReloadBringsARunningServerOntoTheConfigAndLeavesADownOneDown(t *testing
 	}
 }
 
-func TestServerPassesCopiesLinksAndLinkOpensToEveryClientTerminal(t *testing.T) {
+func TestServerPassesCopiesAndLinksToEveryClientTerminal(t *testing.T) {
 	script, err := exec.LookPath("script")
 	if err != nil {
 		t.Skip("script not installed")
@@ -220,10 +220,6 @@ func TestServerPassesCopiesLinksAndLinkOpensToEveryClientTerminal(t *testing.T) 
 			waitFor(t, "the copy and the link to reach the client's terminal", func() bool {
 				s := out.String()
 				return strings.Contains(s, "\x1b]52;c;aGk=") && strings.Contains(s, ";https://e.x/a?b=1&c=2\x1b\\")
-			})
-			in.Write([]byte("\x1b[<2;2;1M\x1b[<2;2;1m"))
-			waitFor(t, "a right-click on the link to ask the client's end to open it", func() bool {
-				return strings.Contains(out.String(), "\x1b]7477;open;https://e.x/a?b=1&c=2\a")
 			})
 		})
 	}

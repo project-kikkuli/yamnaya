@@ -11,6 +11,7 @@ func TestTermRelayCopiesAndForwardsWhatTheRemoteDraws(t *testing.T) {
 	osc := func(text, end string) string {
 		return "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(text)) + end
 	}
+	nonce := func(n string) string { return "\x1b]7477;nonce;" + n + "\a" }
 	for _, tc := range []struct {
 		name   string
 		writes []string
@@ -25,9 +26,14 @@ func TestTermRelayCopiesAndForwardsWhatTheRemoteDraws(t *testing.T) {
 		{"links to the remote's localhost", []string{"see http://localhost:3000/x and http://127.0.0.1:8080 and http://localhost:3000/y"}, nil, []string{"3000", "8080"}, nil},
 		{"a link split across writes", []string{"open http://local", "host:5173/ now"}, nil, []string{"5173"}, nil},
 		{"links elsewhere forward nothing", []string{"https://example.com:8443/a http://10.0.0.1:80"}, nil, nil, nil},
-		{"a right-clicked link opens", []string{"a\x1b]7477;open;https://e.x/a?b=1&c=2\ab"}, nil, nil, []string{"https://e.x/a?b=1&c=2"}},
-		{"an open split across writes, then a copy", []string{"\x1b]747", "7;open;https://e.x/", "y\x1b\\" + osc("hi", "\a")}, []string{"hi"}, nil, []string{"https://e.x/y"}},
-		{"an open of anything but a web link opens nothing", []string{"\x1b]7477;open;file:///etc/passwd\a\x1b]7477;open;https://e.x/a b\a"}, nil, nil, nil},
+		{"a right-click's open carrying the announced nonce opens", []string{nonce("n1") + "a\x1b]7477;open;n1;https://e.x/a?b=1&c=2\ab"}, nil, nil, []string{"https://e.x/a?b=1&c=2"}},
+		{"an announce and an open split across writes, then a copy", []string{"\x1b]7477;no", "nce;n1\a\x1b]747", "7;open;n1;https://e.x/", "y\x1b\\" + osc("hi", "\a")}, []string{"hi"}, nil, []string{"https://e.x/y"}},
+		{"an open of anything but a web link opens nothing", []string{nonce("n1") + "\x1b]7477;open;n1;file:///etc/passwd\a\x1b]7477;open;n1;https://e.x/a b\a"}, nil, nil, nil},
+		{"an open with no nonce opens nothing", []string{nonce("n1") + "\x1b]7477;open;https://e.x/a\a"}, nil, nil, nil},
+		{"an open with a guessed nonce opens nothing", []string{nonce("n1") + "\x1b]7477;open;n2;https://e.x/a\a\x1b]7477;open;;https://e.x/b\a"}, nil, nil, nil},
+		{"an open with no nonce announced opens nothing", []string{"\x1b]7477;open;;https://e.x/a\a"}, nil, nil, nil},
+		{"an announce after anything else was drawn sets no nonce", []string{"\x1b[H", nonce("n1") + "\x1b]7477;open;n1;https://e.x/a\a"}, nil, nil, nil},
+		{"a later announce replaces no nonce", []string{nonce("n1") + "\x1b[H" + nonce("n2") + "\x1b]7477;open;n2;https://e.x/a\a\x1b]7477;open;n1;https://e.x/b\a"}, nil, nil, []string{"https://e.x/b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
