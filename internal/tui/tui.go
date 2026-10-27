@@ -63,6 +63,8 @@ const (
 	// inOver picks a new chief's reports and inRemit asks its remit; inAttach picks the chief to report to.
 	inOver
 	inRemit
+	// inChiefMenu picks what c does: put the row under a chief, detach it, or start a new chief.
+	inChiefMenu
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -80,6 +82,8 @@ type row struct {
 	stale bool
 	// depth is how far below a chief the node row sits in the tree.
 	depth int
+	// group is the goal row's group on the board: its repository, or the chiefs.
+	group string
 }
 
 // frame is a drill level to return to on esc.
@@ -101,7 +105,11 @@ type Model struct {
 	picked map[string]bool
 	// unfolded are the queue rows of sessions whose folded asks are listed.
 	unfolded map[string]bool
-	byRepo   bool
+	// flat lists every goal under its own repository, leaving chiefs out.
+	flat bool
+	// menu is the c menu's choices for the manager or chief menuFor.
+	menu    []menuOpt
+	menuFor string
 	// forGoal sends the repository picker on to a goal instead of a session.
 	forGoal bool
 	inPicks []string
@@ -667,14 +675,14 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
-		case "a", "g", "l", "x", "u", "o", "O":
+		case "r", "g", "l", "x", "u", "o", "O":
 			m.mode = m.back
 			m.follow("item:" + m.why.Key())
 			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
 				m.message = m.why.ID + " is no longer on this list"
 				return m, nil
 			}
-		case "esc", "q", "enter", "w":
+		case "esc", "q", "enter":
 			m.mode = m.back
 			return m, nil
 		default:
@@ -728,6 +736,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else if m.cursor < len(m.rows())-1 {
 			m.cursor++
 		}
+		return m, nil
+	case "tab", "shift+tab", "[", "]", "<", ">", "home", "end":
+		m.move(k.String())
 		return m, nil
 	case "pgup", "b":
 		if m.mode == modeAgent {
@@ -795,7 +806,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if r.need != nil && r.need.Waiting() && slices.Contains([]string{"enter", "w", "a", "x"}, k.String()) {
+	if r.need != nil && r.need.Waiting() && slices.Contains([]string{"enter", "r", "x"}, k.String()) {
 		return m.waitingKey(k, *r.need)
 	}
 	if r.stale {
@@ -840,11 +851,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.beside = k.String() == "O"
 		return m.open(r)
-	case "a":
-		if r.item != nil && r.item.State == core.ItemOpen {
-			m.startInput(inAnswer, r.item.Key(), "", r.item.Rec, true)
-			m.inLabel = r.item.ID
-		}
+	case "r":
+		return m.reply(r)
 	case "g":
 		if r.item != nil && r.item.State == core.ItemOpen && r.item.Kind == core.KindGo {
 			key, board := r.item.Key(), m.board
@@ -874,11 +882,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return id + " reopened", err
 			})
 		}
-	case "w":
-		if r.item != nil {
-			return m.expand(r.item.Key())
-		}
-	case "r":
+	case "e":
 		if p := m.projectOf(r); p != nil {
 			m.startInput(inRename, "", p.Key, p.Name, true)
 		}
@@ -989,13 +993,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// waitingKey acts on a session waiting on the owner: enter or w shows its last reply, a answers it, x dismisses it.
+// waitingKey acts on a session waiting on the owner: enter shows its last reply, r answers it, x dismisses it.
 func (m Model) waitingKey(k tea.KeyPressMsg, n core.Need) (tea.Model, tea.Cmd) {
 	s := n.Session
 	switch k.String() {
-	case "enter", "w":
+	case "enter":
 		m.show(k.String(), " "+titleOf(*s)+" ("+s.Location()+"), last reply:\n\n"+n.Reply+"\n")
-	case "a":
+	case "r":
 		if m.core.Launches == nil {
 			m.message = "ym's launcher is unavailable"
 			return m, nil

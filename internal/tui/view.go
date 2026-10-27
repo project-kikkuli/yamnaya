@@ -243,9 +243,12 @@ func (m Model) footer() []string {
 		return lines
 	}
 	if m.mode == modeInput && m.picking() {
-		keys := " ↑↓ choose   enter put it there   esc cancel"
-		if m.inKind == inOver {
-			keys = " ↑↓ choose   space check   enter go on to its name   esc cancel"
+		keys := " ↑↓ choose · enter put it there · esc cancel"
+		switch m.inKind {
+		case inOver:
+			keys = " ↑↓ choose · space check · enter go on to its name · esc cancel"
+		case inChiefMenu:
+			keys = " ↑↓ choose · enter or its letter picks · esc cancel"
 		}
 		return append(lines, pal.dim.Render(keys))
 	}
@@ -308,66 +311,76 @@ func (m Model) footer() []string {
 	return lines
 }
 
-// wrapHints breaks hints, keys three spaces apart, into lines of at most width, each starting with indent, never inside a key.
+// hintSep separates the keys of a hint line.
+const hintSep = " · "
+
+// wrapHints breaks hints, keys hintSep apart, into lines of at most width, each starting with indent, never inside a key.
 func wrapHints(indent, hints string, width int) []string {
 	var lines []string
-	line := indent
-	for _, hint := range strings.Split(strings.TrimSpace(hints), "   ") {
-		if ansi.StringWidth(line+hint) > max(20, width-1) && strings.TrimSpace(line) != "" {
-			lines = append(lines, strings.TrimRight(line, " "))
-			line = indent
+	line := ""
+	for _, hint := range strings.Split(strings.Trim(hints, " ·"), hintSep) {
+		if line != "" && ansi.StringWidth(indent+line+hintSep+hint) > max(20, width-1) {
+			lines = append(lines, indent+line)
+			line = ""
 		}
-		line += hint + "   "
+		if line != "" {
+			line += hintSep
+		}
+		line += hint
 	}
-	return append(lines, strings.TrimRight(line, " "))
+	return append(lines, indent+line)
 }
+
+// joinHints joins hint lists, skipping empty ones.
+func joinHints(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, hintSep)
+}
+
+// boardHints are the board's footer keys; ? lists the rest.
+const boardHints = "↑↓ move · tab section · [ ] repo · < > top/bottom · enter open · r reply · g go · K kill · c chief · b brief · n new · / filter · ? more"
 
 func (m Model) hints() string {
 	if r, ok := m.selected(); ok && r.item != nil && r.item.Action == "chat" && (m.mode == modeList || m.mode == modeDetail || m.mode == modeSession || m.mode == modeItems) {
-		return "o open chat   O beside   enter context   l later   x dismiss   ? help"
+		return "o open chat · O beside · enter context · l later · x dismiss · ? more"
+	}
+	if m.mode == modeList {
+		return boardHints
 	}
 	controls := m.sessionHints()
-	if m.width < 80 && (m.mode == modeList || m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
-		return strings.TrimSpace(controls + "   ↑↓ move   enter open   ? help")
+	if m.width < 80 && (m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
+		return joinHints(controls, "↑↓ move · enter open · ? more")
 	}
-
 	switch m.mode {
 	case modeHelp, modeScreen:
 		return "esc back"
 	case modeItems:
-		return "↑↓ move   enter expand   a answer   g go ahead   l later   u unsnooze   x dismiss   esc back"
+		return "↑↓ move · enter expand · r reply · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "a answer   g go ahead   l later   x dismiss   u unsnooze   o go to its session   O beside   esc back"
+		return "r reply · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
 	case modePick:
-		return "↑↓ choose   enter open   esc back"
+		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
-		return "↑↓ choose mission   enter merge into it   esc cancel"
+		return "↑↓ choose mission · enter merge into it · esc cancel"
 	case modeRepo:
-		return controls + "   ↑↓ move   enter open mission   o go to session   O beside   n goal   + session   p/P phase   v vibe   r rename   m merge   S split   I items   esc back   ? help"
+		return joinHints(controls, "↑↓ move · < > top/bottom · enter open mission · o go to session · r reply · n new · e rename · m merge · esc back · ? more")
 	case modeDetail:
-		return controls + "   ↑↓ move   enter open session, agent or item   o go to session   O beside   n goal   + session   a answer   g go ahead   l later   u unsnooze   x dismiss   I all items   p/P phase   v vibe   r rename   esc back   ? help"
+		return joinHints(controls, "↑↓ move · < > top/bottom · enter open · o go to session · r reply · g go · x dismiss · esc back · ? more")
 	case modeSession:
-		return controls + "   ↑↓ move   enter open agent or item   o go to session   O beside   n goal   + session   a answer   g go ahead   x dismiss   I all items   p/P phase   v vibe   esc back   ? help"
+		return joinHints(controls, "↑↓ move · < > top/bottom · enter open agent or item · o go to session · r reply · esc back · ? more")
 	case modeAgent:
-		return controls + "   ↑↓ scroll   space/b page   o go to its session   O beside   esc back"
+		return joinHints(controls, "↑↓ scroll · space/b page · < > top/bottom · o go to its session · O beside · esc back")
 	case modeGoal:
-		return controls + "   ↑↓ move   enter open session   o go to session   B brief   W brief page   V artifact   s send   S steer plan   R relaunch   esc back   ? help"
+		return joinHints(controls, "↑↓ move · enter open session · o go to session · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more")
 	case modeChief:
-		return "↑↓ move   enter open   " + m.nodeHints() + "   esc back   ? help"
+		return "↑↓ move · < > top/bottom · enter open · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more"
 	}
-	if r, ok := m.selected(); ok && r.node != nil {
-		return "↑↓ move   enter open   " + m.nodeHints() + "   t by repo   n goal   / filter   ? help   q quit"
-	}
-	return controls + "   ↑↓ move   enter open   n goal   N goal in any repo   + session   space select   C new chief   B brief   a answer   g go ahead   x dismiss   w reply   o go to session   / filter   I items   U usage   h health   A mountains   ? help   q quit"
-}
-
-// nodeHints are the keys that act on the selected goal or chief row.
-func (m Model) nodeHints() string {
-	h := "S steer   s send   R relaunch   B brief   W brief page   o session   space select   c under chief"
-	if r, ok := m.selected(); ok && r.node != nil && r.node.Manager.ParentID != "" {
-		h += "   D detach"
-	}
-	return h + "   C new chief   K drop"
+	return boardHints
 }
 
 func (m Model) mark(i int) string {
@@ -394,15 +407,20 @@ func (m Model) listView() viewPage {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
 	goals, repos := false, false
+	group := ""
 	cols := m.missionCols(2)
 	for i, r := range rows {
 		if r.node != nil && !goals {
 			goals = true
-			title := " GOALS"
-			if m.byRepo {
-				title += pal.dim.Render("  by repo, t for the tree")
+			title := pal.bold.Render(" GOALS") + pal.dim.Render("  by repository, chiefs with their reports; t lists every goal by its own")
+			if m.flat {
+				title = pal.bold.Render(" GOALS") + pal.dim.Render("  every goal by its own repository; t nests reports under their chiefs")
 			}
-			b.WriteString("\n" + pal.bold.Render(title) + "\n")
+			b.WriteString("\n" + title + "\n")
+		}
+		if r.node != nil && r.group != group {
+			group = r.group
+			b.WriteString(pal.bold.Render("   "+groupLabel(group)) + "\n")
 		}
 		if (r.repo != nil || r.project != nil) && !repos {
 			repos = true
@@ -419,7 +437,7 @@ func (m Model) listView() viewPage {
 		case r.stale:
 			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
 			if i == m.cursor {
-				line += pal.dim.Render("   enter expand   x dismiss all")
+				line += pal.dim.Render("   enter expand · x dismiss all")
 			}
 			b.WriteString(line + "\n")
 		case r.node != nil:
@@ -715,7 +733,7 @@ func (m Model) needLines(i int, n core.Need) string {
 				b.WriteString(pal.dim.Render("         pr "+ansi.Truncate(pr.Note().String(), max(10, m.width-13), "…")) + "\n")
 			}
 			b.WriteString(pal.dim.Render("         "+s.Location()+" | "+age(m.board.At, s.Since)) + "\n")
-			b.WriteString(pal.dim.Render("         enter whole reply   a answer   x dismiss   o go to session   O beside") + "\n")
+			b.WriteString(pal.dim.Render("         enter whole reply · r reply · x dismiss · o go to session · O beside") + "\n")
 		}
 		return b.String()
 	}
@@ -726,17 +744,17 @@ func (m Model) needLines(i int, n core.Need) string {
 		}
 		b.WriteString(m.mark(i) + pal.yellow.Render("PERM ") + " " + name + " " + what + "\n")
 		if sel {
-			b.WriteString(pal.dim.Render("         enter "+goVerb(*n.Session)+"   s send") + "\n")
+			b.WriteString(pal.dim.Render("         enter "+goVerb(*n.Session)+" · r reply") + "\n")
 		}
 		return b.String()
 	}
 	it := n.Item
-	q, keys := it.Question, "enter expand   a answer   l later   x dismiss   o go to session   O beside"
+	q, keys := it.Question, "enter expand · r reply · l later · x dismiss · o go to session · O beside"
 	if it.Action == "chat" {
-		q, keys = pal.yellow.Render("action in chat · ")+q, "enter context   o open chat   O beside   l later   x dismiss"
+		q, keys = pal.yellow.Render("action in chat · ")+q, "enter context · o open chat · O beside · l later · x dismiss"
 	}
 	if it.Kind == core.KindGo {
-		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand   g go ahead   a answer   l later   x dismiss   o go to session   O beside"
+		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand · g go ahead · r reply · l later · x dismiss · o go to session · O beside"
 	}
 	if len(core.Unprepared(*it)) > 0 {
 		q = pal.yellow.Render("unprepared · ") + q
@@ -1443,8 +1461,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  to merge in repos where managers may not merge, reviews GitHub asks of you personally, Notion discussions
  and reviews addressed to you that no goal claims, permission prompts, and one row per session you started
  that asks you something. A row leaves on its own once it is settled.
- GOALS is the goal tree: each chief row has its managers and chiefs indented beneath it, and its standing is
- its reports' worst. Every row shows its standing and its brief's age, "brief stale" or "no brief"; enter on a
+ GOALS groups the goals that report to you by repository, and lists every chief under "chiefs" with its
+ managers and chiefs indented beneath it; a chief's standing is its reports' worst. Every row shows its standing and its brief's age, "brief stale" or "no brief"; enter on a
  chief opens it with its reports.
  A goal stands moving, quiet (nothing moved for a while; ym nudges its manager), adrift (an agent is busy
  going nowhere: the same failure again and again, its context compacted over and over, or writes in
@@ -1455,51 +1473,65 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  repo -> missions -> sessions and crew -> session detail -> agent brief, result and trail. esc goes up.
  Agents a manager starts report to it: their ym item add reaches the manager's session, not you.
 
-   ↑ ↓ or k j   move
-   A            hide or show the mountains
-   n            new goal in the selected row's repository: type it in your words; a manager starts on it
-   N            new goal in any repository: pick it first, then the goal
-   +            new session in the selected row's repository, run by you, no manager: type the prompt;
-                the worktree is named from it
-                n, N, + and C: tab switches claude and codex, and each starts on the harness and host the last
-                one used; ctrl+t picks this one or a remembered host
-   space        select a goal or chief row; s and c then act on every selected one
-   s            on a goal or chief: send it your message (every selected one); tab widens a chief's to its
-                whole subtree. On a session: send it a follow-up, typed in on ym's server even mid-turn
-   S            on a goal or chief: edit what it is about in $EDITOR; saving makes the next numbered
-                revision, which shows "steer rN not adopted" until its manager runs ym goal adopt
-   B            show the goal's or chief's brief, the newest version its manager recorded
-   W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
-   V            open the artifact a manager registered as its richer brief
-   R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
-   C            new chief: check the goals and chiefs it oversees (the selected ones start checked) with
-                space, enter, then type its name and its remit in your words (enter leaves it empty)
-   c            put the goal or chief (and every selected one) under a chief: pick it from the list of
-                chiefs, or you to report to no chief
-   D            detach the goal or chief from its chief, so it reports to you (asks y/n)
-   t            show goals as the chief tree or by repository
+   Move
+   ↑↓ or k j    move
+   tab          next section: needs you, goals, sessions (shift-tab: previous)
+   [ ]          previous or next repository group, across goals and sessions
+   < > or home end
+                top or bottom of the list; in an agent's page, its top or bottom
    enter        an item: expand it; a permission prompt: go to its session; a waiting session: show its
                 last reply; an exited launch: revive it; anything else: open it
+   esc          go back up, or clear the filter
+   /            filter
+   q            back or quit
+
+   Act on the selected row
+   r            reply: answer an item (an idle agent in tmux gets it typed in, others on their next turn);
+                on a waiting session, send the answer as your message and clear the row; on a goal or chief,
+                send it your message (every selected one); on a session, send it a follow-up
+   g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
+   K            on a goal: drop it, so ym stops supervising it; on a chief: retire it (asks y/n)
+                on a session: kill its claude or codex process with SIGTERM (asks y/n); its terminal,
+                worktree and transcript stay, and a session ym launched shows exited, ready to revive
+   c            chief menu: a attaches the goal or chief (and every selected one) to a chief you pick, or to
+                you; d detaches it from its chief, so it reports to you (asks y/n); n starts a new chief:
+                check the goals and chiefs it oversees with space (the selected ones start checked), enter,
+                then type its name and its remit in your words (enter leaves it empty)
+   b            show the goal's or chief's brief, the newest version its manager recorded
+   n            new goal: pick its repository first, then type the goal in your words; a manager starts on it
    o            go to the selected row's session: jump to its tmux pane, or say where it runs;
                 a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
                 it there and resumes it on its own server
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
                 view; needs ym running inside tmux
-   a            answer an item; an idle agent in tmux gets it typed in, others on their next turn;
-                on a waiting session, send the answer as your message, the same way s does, and clear the row
-   g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
-   l            later: snooze the item
-   u            reopen a snoozed item (detail)
    x            dismiss the item with a reason; on a waiting session, hide the row until it asks again;
                 on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
                 from the goal tree
-   w            show the item in full with its history, or a waiting session's last reply
-   r            rename a mission; an empty name restores the inferred one
+   l            later: snooze the item
+   u            reopen a snoozed item (detail)
+
+   More
+   N            new goal in the selected row's repository
+   +            new session in the selected row's repository, run by you, no manager: type the prompt;
+                the worktree is named from it
+                n, N, + and c n: tab switches claude and codex, shift-tab the login profile, and each starts
+                on the harness and host the last one used; ctrl+t picks this one or a remembered host
+   space        select a goal or chief row; r, s and c then act on every selected one
+   s            send: like r on a goal, chief or session; tab widens a chief's message to its whole subtree
+   S            on a goal or chief: edit what it is about in $EDITOR; saving makes the next numbered
+                revision, which shows "steer rN not adopted" until its manager runs ym goal adopt;
+                on a mission: split a merged mission back out
+   W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
+   V            open the artifact a manager registered as its richer brief
+   R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
+   C            new chief, the same as c n
+   D            detach the goal or chief from its chief, the same as c d
+   t            goals by repository with chiefs nesting their reports, or every goal by its own repository
+   e            rename a mission; an empty name restores the inferred one
    m            merge a mission into another
-   S            split a merged mission back out
-   K            on a goal: drop it, so ym stops supervising it; on a chief: retire it (asks y/n)
-                on a session: kill its claude or codex process with SIGTERM (asks y/n); its terminal,
-                worktree and transcript stay, and a session ym launched shows exited, ready to revive
+   p            advance the mission to its next phase (asks y/n)
+   P            set the mission's phases, comma separated
+   v            set the mission's vibe, any fitting place from Afghanistan (broken) to Hawaii (great): "place: why"
    L            land a session ym launched: end it and remove its worktree once its branch is clean
                 and merged or pushed, deleting the branch when merged into origin (asks y/n); on an exited
                 mission, every launch in it. One whose agent exited or whose pane is gone, or one killed
@@ -1510,15 +1542,16 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 then local branches merged into origin that no worktree uses (asks y/n); the board
                 runs it by itself at most hourly
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
-   p            advance the mission to its next phase (asks y/n)
-   P            set the mission's phases, comma separated
-   v            set the mission's vibe, any fitting place from Afghanistan (broken) to Hawaii (great): "place: why"
+   B            switch the session's login profile (subscription)
+   space f pgdown, b pgup
+                page down or up in an agent's page or a text page
    I            every item, answered, dismissed and snoozed too; in a mission, just its items
-   /            filter
    h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
    E            every session ym launched and whether its agent still runs
-   q            back or quit
+   A            hide or show the mountains
+   ?            this page
+   ctrl+c       quit
 
  A mission's ≈ shares are its part of each current limit window. They count only this host's
  usage, so work on other hosts makes them run high.

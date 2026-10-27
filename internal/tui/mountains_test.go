@@ -153,13 +153,15 @@ func TestGoalsByRepositoryGatherEveryCloneOfARepositoryUnderItsOriginName(t *tes
 		goal("g2", "/x/atlas", "github.com/o/zeta"),
 		goal("g3", "/b/yamnaya-proving-ground", "github.com/o/yamnaya-proving-ground"),
 	}}
-	m.loaded, m.byRepo = true, true
+	m.loaded, m.flat = true, true
 	var got []string
-	for i, r := range m.treeRows() {
+	groups := map[string]string{}
+	for _, r := range m.treeRows() {
 		got = append(got, r.node.Goal.ID)
-		if line := ansi.Strip(m.nodeLines(i, *r.node, r.depth)); r.node.Goal.ID != "g2" && !strings.Contains(line, "yamnaya-proving-ground ask") {
-			t.Errorf("row %q does not name the origin's repository", line)
-		}
+		groups[r.node.Goal.ID] = groupLabel(r.group)
+	}
+	if groups["g1"] != "yamnaya-proving-ground" || groups["g3"] != groups["g1"] || groups["g2"] != "zeta" {
+		t.Errorf("goal groups %v, want both clones under yamnaya-proving-ground", groups)
 	}
 	if want := []string{"g1", "g3", "g2"}; !slices.Equal(got, want) {
 		t.Errorf("goals by repository %v, want both clones' goals together %v", got, want)

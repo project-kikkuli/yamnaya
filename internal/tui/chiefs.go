@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,7 +34,94 @@ func (m Model) treeOpts(chiefsOnly bool, skip map[string]bool) []pickOpt {
 	return out
 }
 
-func (m Model) picking() bool { return m.inKind == inOver || m.inKind == inAttach }
+func (m Model) picking() bool {
+	return m.inKind == inOver || m.inKind == inAttach || m.inKind == inChiefMenu
+}
+
+// menuOpt is one choice of the c menu and the key that picks it.
+type menuOpt struct{ key, label string }
+
+// openChiefMenu offers what c does on r: put its goal or chief under a chief, detach it from its chief, or start a new chief.
+func (m *Model) openChiefMenu(r row) {
+	m.menu, m.menuFor, m.optCur = nil, "", 0
+	if n, ok := m.nodeOf(r); ok {
+		name, others := m.ownerName(n.Manager.ID), len(m.picked)
+		if m.picked[n.Manager.ID] {
+			others--
+		}
+		if others > 0 {
+			name += fmt.Sprintf(" and %d selected", others)
+		}
+		m.menuFor = n.Manager.ID
+		m.menu = append(m.menu, menuOpt{"a", "attach " + name + " to a chief"})
+		if n.Manager.ParentID != "" {
+			m.menu = append(m.menu, menuOpt{"d", "detach " + m.ownerName(n.Manager.ID) + " from " + m.ownerName(n.Manager.ParentID) + ", so it reports to you"})
+		}
+	}
+	m.menu = append(m.menu, menuOpt{"n", "new chief over the goals and chiefs you check"})
+	m.startInput(inChiefMenu, "", "", "", false)
+}
+
+func (m Model) chiefMenuKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key := k.String(); key {
+	case "esc", "q":
+		m.mode = m.back
+	case "up", "k":
+		m.optCur = max(0, m.optCur-1)
+	case "down", "j":
+		m.optCur = max(0, min(len(m.menu)-1, m.optCur+1))
+	case "enter":
+		return m.chiefMenu(m.menu[m.optCur].key)
+	default:
+		for _, o := range m.menu {
+			if o.key == key {
+				return m.chiefMenu(key)
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m Model) chiefMenu(key string) (tea.Model, tea.Cmd) {
+	m.mode = m.back
+	n, ok := m.board.Node(m.menuFor)
+	switch {
+	case key == "n":
+		r, _ := m.selected()
+		m.newChief(r)
+	case key == "a" && ok:
+		ids := []string{n.Manager.ID}
+		for id := range m.picked {
+			if id != n.Manager.ID {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids[1:])
+		m.openChiefPicker(ids, n.Manager.ParentID)
+	case key == "d" && ok && n.Manager.ParentID != "":
+		m.detach(n)
+	}
+	return m, nil
+}
+
+// newChief opens the picker of a new chief's reports, starting it in r's repository.
+func (m *Model) newChief(r row) {
+	m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
+	m.loadTarget()
+	m.loadHarness("chief")
+	m.openOverPicker()
+}
+
+// detach asks y/n, then has n report to the owner instead of its chief.
+func (m *Model) detach(n core.Node) {
+	id, chief := n.Manager.ID, n.Manager.ParentID
+	if c, ok := m.board.Node(chief); ok {
+		chief = c.Manager.Label()
+	}
+	m.confirm("detach "+n.Manager.Label()+" from "+chief+"? it reports to you", m.do(func() (string, error) {
+		return id + " reports to you", m.core.Attach(id, "")
+	}))
+}
 
 // openOverPicker lists every manager and chief for a new chief to oversee, the selected ones checked.
 func (m *Model) openOverPicker() {
@@ -82,6 +170,9 @@ func (m Model) ownerNames(ids []string) string {
 }
 
 func (m Model) optKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.inKind == inChiefMenu {
+		return m.chiefMenuKey(k)
+	}
 	switch k.String() {
 	case "esc", "q":
 		m.mode = m.back
@@ -134,6 +225,13 @@ func (m Model) attach(ids []string, chief string) (tea.Model, tea.Cmd) {
 
 func (m Model) optsView() string {
 	var b strings.Builder
+	if m.inKind == inChiefMenu {
+		b.WriteString(pal.bold.Render(" CHIEF") + pal.dim.Render("  chiefs oversee goals and other chiefs") + "\n")
+		for i, o := range m.menu {
+			b.WriteString(ansi.Truncate(m.markAt(i == m.optCur)+pal.bold.Render(o.key)+"  "+o.label, max(20, m.width-1), "…") + "\n")
+		}
+		return b.String()
+	}
 	if m.inKind == inOver {
 		b.WriteString(pal.bold.Render(" NEW CHIEF") + pal.dim.Render("  check the goals and chiefs it oversees") + "\n")
 	} else {
@@ -157,7 +255,7 @@ func (m Model) optsView() string {
 		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
 	}
 	if m.inKind == inAttach && len(m.opts) == 1 {
-		b.WriteString(pal.dim.Render("   no other chief yet; C starts one") + "\n")
+		b.WriteString(pal.dim.Render("   no other chief yet; c then n starts one") + "\n")
 	}
 	return b.String()
 }

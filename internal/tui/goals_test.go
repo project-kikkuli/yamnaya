@@ -227,7 +227,7 @@ func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := tc.row(ms, x, y)
-			m = press(t, to(t, refresh(t, m), isNode(id)), "c")
+			m = press(t, to(t, refresh(t, m), isNode(id)), "c", "a")
 			for _, o := range m.opts {
 				if n, ok := m.board.Node(o.id); o.id == id || ok && n.Goal != nil || o.id == z.ID && id == x.ID {
 					t.Fatalf("the picker for %s offers %s, which is itself, a goal or below it", id, o.id)
@@ -246,18 +246,19 @@ func TestCPicksTheChiefToReportToAndDDetaches(t *testing.T) {
 		})
 	}
 	for _, tc := range []struct {
+		keys   []string
 		answer string
 		parent bool
-	}{{"y", false}, {"n", true}} {
-		t.Run("D answered "+tc.answer, func(t *testing.T) {
+	}{{[]string{"D"}, "y", false}, {[]string{"D"}, "n", true}, {[]string{"c", "d"}, "y", false}, {[]string{"c", "down", "enter"}, "y", false}} {
+		t.Run(strings.Join(tc.keys, " ")+" answered "+tc.answer, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "goal one")
 			x, err := c.NewChief("x", "", t.TempDir(), "", []string{ms[0].ID})
 			if err != nil {
 				t.Fatal(err)
 			}
-			m = press(t, to(t, refresh(t, m), isNode(ms[0].ID)), "D")
+			m = press(t, to(t, refresh(t, m), isNode(ms[0].ID)), tc.keys...)
 			if m.mode != modeConfirm || !strings.Contains(m.ask, "detach") {
-				t.Fatalf("D should ask before detaching, mode %v ask %q", m.mode, m.ask)
+				t.Fatalf("%v should ask before detaching, mode %v ask %q", tc.keys, m.mode, m.ask)
 			}
 			press(t, m, tc.answer)
 			if got := parentOf(t, c, ms[0].ID); (got == x.ID) != tc.parent {
@@ -319,9 +320,9 @@ func TestBShowsTheBriefAndVOpensTheArtifact(t *testing.T) {
 	var opened []string
 	m.openURL = func(url string) error { opened = append(opened, url); return nil }
 	m = to(t, refresh(t, m), isNode(ms[0].ID))
-	shown := press(t, m, "B")
+	shown := press(t, m, "b")
 	if shown.mode != modeScreen || !strings.Contains(shown.View().Content, "CSV parser merged; TSV next.") {
-		t.Fatalf("B should show the brief, mode %v:\n%s", shown.mode, shown.View().Content)
+		t.Fatalf("b should show the brief, mode %v:\n%s", shown.mode, shown.View().Content)
 	}
 	press(t, m, "V")
 	if !slices.Equal(opened, []string{"https://claude.ai/artifact/importer"}) {
@@ -334,7 +335,7 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 	l := &launches{}
 	c.Launches = l
 	m = to(t, place(t, m, c), mission("lead"))
-	m = press(t, m, "n")
+	m = press(t, m, "N")
 	m = press(t, m, strings.Split("make login faster", "")...)
 	m = press(t, m, "enter")
 	if len(l.started) != 1 || l.started[0].Repo != "/src/app" || !strings.Contains(l.started[0].Prompt, "make login faster") {
@@ -349,7 +350,7 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 }
 
 func TestTabPicksTheHarnessOfAGoalOrChiefAndTheNextOneStartsOnIt(t *testing.T) {
-	goal, chief := []string{"n"}, []string{"C", "enter"}
+	goal, chief := []string{"N"}, []string{"c", "n", "enter"}
 	for _, c := range []struct {
 		name         string
 		open, finish []string

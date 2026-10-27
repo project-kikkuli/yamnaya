@@ -29,7 +29,7 @@ Press `o` on the goal to open the manager and talk to it like any session.
 - **Goal**: one ask, in your words. States: moving, quiet, adrift (its manager or an agent is busy going nowhere), down (manager died, being relaunched), verifying, stuck, done.
 - **Manager**: an interactive Claude session, or Codex with `ym goal --codex` (`tab` on the board), with a persistent identity. If its session dies, ym relaunches it with its prompt, its brief and every event it missed. It starts agents with `ym new`, which links them under it.
 - **Agents**: ordinary Claude or Codex sessions. They ask their manager with `ym item add`, never you. When one goes idle, its last message lands in its manager's inbox once. A reply that adds nothing (no new commit in its worktree, no new ask, mostly the words of its last reply, a short still-waiting note, or one that opens by saying nothing is new) is recorded as `idle-again` and only counted.
-- **Chiefs**: a chief groups managers and other chiefs. It reads their briefs, steers them and hears their state changes. Work never waits on a chief. On the board, `C` starts one: check its reports in a list of every goal and chief, then type its name and remit. `c` on a goal or chief picks the chief it reports to from a list, and `D` detaches it so it reports to you. From a shell, `ym chief "<name>" --over <id>,<id>` does the same as `C`.
+- **Chiefs**: a chief groups managers and other chiefs. It reads their briefs, steers them and hears their state changes. Work never waits on a chief. On the board, `c` opens the chief menu: `n` starts one (check its reports in a list of every goal and chief, then type its name and remit), `a` on a goal or chief picks the chief it reports to from a list, and `d` detaches it so it reports to you. From a shell, `ym chief "<name>" --over <id>,<id>` does the same as `c n`.
 - **Steering**: `S` on a goal or chief, or `ym goal steer <id>` (opens `$EDITOR`; `--file F` or piped stdin also work), saves a new plan as the next numbered revision. The manager is woken with it and runs `ym goal adopt <id> --revision N`; until then the row shows `steer rN not adopted`. ym nudges it every 10 minutes, twice, then tells whoever steered (a queue row for you, a message for a chief). A chief steers only what is below it. Steering a verifying goal calls verification off; the next verifier judges against the new plan. `ym goal context <id>` prints the revisions.
 - **Briefs**: managers and chiefs record where they stand with `ym goal brief`: assessment, what changed, uncertainty, next, waiting on. Each call is a new version. `ym serve` serves them at `http://127.0.0.1:7477/b/<id>` (`/` lists all; `--briefs` or `YAMNAYA_BRIEFS_ADDR` moves it; a ym with another `YAMNAYA_STATE_DIR` serves on a port from 7478 to 8477 derived from that directory; a request whose host is a name other than `localhost` gets 403), and a chief's page rolls up its reports. A brief older than the goal's latest meaningful event (agent done, PR, CI, review, merge, stuck, failed verification, adopted steer) is stale: the manager's prompt has it record a fresh one once it has acted, and a manager still behind 5 minutes later is nudged once, never mid-turn.
 - **Authority**: a manager decides everything about its goal. It merges its own pull requests only in repositories cleared by `ym goal authority`; elsewhere a green pull request lands in your merge queue. It writes to other people only with a model-name prefix.
@@ -69,30 +69,52 @@ Each goal row shows its unread feed count and newest line. `enter` opens the goa
 
 ## The board
 
+The footer shows the everyday keys; `?` lists every key.
+
 | Key | Does |
 | --- | --- |
-| `n` / `N` | new goal in the selected row's repository / pick the repository first |
-| `+` | new session of your own, no manager |
+| `↑` `↓` | move |
+| `tab` / `shift-tab` | next / previous section: Needs you, Goals, Sessions |
+| `[` / `]` | previous / next repository group, across goals and sessions |
+| `<` `>` (`home` `end`) | top / bottom of the list |
 | `enter` / `esc` | open or drill in / go back |
-| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
-| `s` | send a message to the goal, chief or session; `space` selects several, `tab` widens a chief to its subtree |
-| `a` `g` `l` `x` `w` `u` | answer, go ahead, later, dismiss, show in full, reopen an item; `x` also clears a queue row or a done goal |
-| `B` / `W` / `V` | show the manager's brief / open its served brief page / open its registered artifact |
-| `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
-| `C` | new chief: check the goals and chiefs it oversees (selected rows start checked), then type its name and remit |
-| `c` / `D` | pick the chief a goal or chief (and the selection) reports to, or you / detach it from its chief (asks y/n) |
-| `R` | relaunch a manager or chief |
+| `r` | reply: answer an item or a waiting session; on a goal or chief, send it a message; on a session, send it a follow-up |
+| `g` | go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS" |
 | `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
+| `c` | chief menu: `a` attach the goal or chief (and the selection) to a chief, or to you; `d` detach it from its chief; `n` new chief over the goals and chiefs you check |
+| `b` | show the goal's or chief's brief |
+| `n` | new goal: pick the repository first, then type it in your words |
+| `/` | filter |
+| `?` | every key |
+
+Behind `?`:
+
+| Key | Does |
+| --- | --- |
+| `N` | new goal in the selected row's repository |
+| `+` | new session of your own, no manager |
+| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
+| `space` | select goal and chief rows; `r`, `s` and `c` then act on every selected one |
+| `s` | send a message to the goal, chief or session, like `r`; `tab` widens a chief to its subtree |
+| `x` `l` `u` | dismiss, later, reopen an item; `x` also clears a queue row or a done goal |
+| `W` / `V` | open the manager's served brief page / its registered artifact |
+| `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
+| `C` / `D` | new chief / detach from its chief, the same as `c n` / `c d` |
+| `R` | relaunch a manager or chief |
 | `L` / `F` | land a launched session (remove its worktree when clean and merged) / forget it |
 | `T` | relaunch an idle session in the other harness |
+| `B` | switch the session's login profile |
 | `G` | gc old worktrees and merged branches |
-| `t` | goals as the chief tree, each chief's reports indented under it, or by repository |
+| `t` | goals by repository with each chief's reports nested under it, or every goal under its own repository |
+| `e` `m` `p` `P` `v` | rename, merge, advance phase, set phases, set the vibe of a mission |
 | `I` `U` `E` `h` | every item, usage and limits, everything ym launched, agents adrift now and weekly health |
 | `A` | hide or show the mountains |
-| `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `C` and `+` starts on the harness it used last |
-| `/` `?` `q` | filter, all keys, back or quit |
+| `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
+| `q` | back or quit |
 
-Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**, and an idle one whose last reply asks you shows as a `waiting:` row you can answer with `a`.
+**Goals** groups the goals that report to you by repository and lists every chief, with its reports nested under it, under **chiefs**, so `[` and `]` step through goals and sessions by repository alike.
+
+Sessions you start yourself (`+`, or `ym new` from your own shell) have no manager. They are grouped by repository under **Sessions you started**, and an idle one whose last reply asks you shows as a `waiting:` row you can answer with `r`.
 
 A repository is its `origin` remote, so every clone of it, under any directory name and on any host, and every worktree of those clones, shares one repository row and one mountain range, with each session's host shown on its own row. A clone without an `origin` is a repository of its own. `--repo NAME` matches a clone's directory name or its origin's name, and picks the most recently used clone when several clones of one repository match.
 
@@ -138,13 +160,13 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 `ym remote install` cross-compiles ym from the source embedded in your binary (needs `go` locally), copies it to `~/.local/bin/ym` on the Linux host and runs `ym install --statusline` there. Every host `ym remote` reaches is remembered: the board, `ym sessions` and `ym waiting` show its sessions and items labelled with the host. `ym item list --all` also lists that host's items answered or dismissed in the last week, each with its history as that host kept it, so you see what became of an answer you sent there. Another host's board is read from the snapshot that host's `ym serve` writes every cycle, so a read never makes a loaded host build a board. The header's `hosts` line says how each host stands: `no answer for 12m (last good 2:04PM)` with ssh's reason when it stops answering, `unreachable` when it never has, and `board 9m old` when it answers but its `ym serve` has fallen behind. None of these holds up the board. Every ssh ym runs to a host shares one connection, kept ten minutes after its last use (its socket is `/tmp/ym-<uid>-<hash>`), so board reads, relays and opening a session skip the ssh handshake. Opening, killing, sending, landing and answering run through ssh on that host. Detaching from a remote session you opened from the board (C-b d) brings you straight back to this host's board. `ym remote forget <host>` stops showing it.
 
-Copying and links work in a session as they do in a plain terminal, on this host's tmux server and on another host's. ym's tmux server takes what an agent copies (the clipboard escape sequence, OSC 52) and what you select with the mouse, and passes links (OSC 8) through to your terminal. On macOS every copy also goes to the pasteboard through `pbcopy`, since Terminal.app ignores OSC 52. A remote session you open from the board or with `ym open` copies to this Mac's pasteboard too, and a link it prints to a port on that host's own localhost, such as a dev server on `http://localhost:3000`, opens here: ym forwards that port over the shared ssh connection when the port is free on this Mac. A session you attach to with your own `ssh host tmux -L ym attach` gets the tmux side only, so on Terminal.app its copies stop at tmux; open it through ym instead. After ym changes this config it applies it to the running server, so sessions already running pick it up. The board's `B` page wraps long lines and keeps every URL whole and linked rather than cutting it off.
+Copying and links work in a session as they do in a plain terminal, on this host's tmux server and on another host's. ym's tmux server takes what an agent copies (the clipboard escape sequence, OSC 52) and what you select with the mouse, and passes links (OSC 8) through to your terminal. On macOS every copy also goes to the pasteboard through `pbcopy`, since Terminal.app ignores OSC 52. A remote session you open from the board or with `ym open` copies to this Mac's pasteboard too, and a link it prints to a port on that host's own localhost, such as a dev server on `http://localhost:3000`, opens here: ym forwards that port over the shared ssh connection when the port is free on this Mac. A session you attach to with your own `ssh host tmux -L ym attach` gets the tmux side only, so on Terminal.app its copies stop at tmux; open it through ym instead. After ym changes this config it applies it to the running server, so sessions already running pick it up. The board's brief page (`b`) wraps long lines and keeps every URL whole and linked rather than cutting it off.
 
 Goals across hosts:
 
 - A goal runs on the host where it starts, supervised by that host's own `ym serve`, which `ym board`, `ym goal`, `ym chief` and `ym new` start there. `ym remote install` also keeps it running across reboots (`ym service keep`, see Background service), so a remote goal moves with no board open anywhere.
 - The board shows every host's goal tree as one, each remote manager or chief tagged with its host and standing as that host reads it. A remote goal's feed shows on the board, and its done or stuck notification appears on the host you sit at.
-- A remote goal's brief shows on the board and in `ym goal list` with its version and whether it is behind, as that host's snapshot gives it. `B` shows it, and `W` opens its page at `http://127.0.0.1:7477/b/<host>/<id>`, read from that host within five seconds or else from the last snapshot ym read, with its age. Only the latest version comes from another host.
+- A remote goal's brief shows on the board and in `ym goal list` with its version and whether it is behind, as that host's snapshot gives it. `b` shows it, and `W` opens its page at `http://127.0.0.1:7477/b/<host>/<id>`, read from that host within five seconds or else from the last snapshot ym read, with its age. Only the latest version comes from another host.
 - On a host another host carries relays for, the brief links ym gives its managers name the host, `http://127.0.0.1:7477/b/<host>/<id>`, which opens both there and here, since each `ym serve` shows its own briefs under its own name. Copying an older unqualified link (`/b/<id>`) from a remote session through ym rewrites it to that form, because the same port here belongs to this host's serve.
 - A chief can oversee managers and chiefs on other hosts, named `<host>/<id>`: `ym chief attach <host>/mgr3 chief1`, `ym chief attach mgr3 <host>/chief1` or `ym chief --over <host>/mgr3`. Asks climb to it across hosts, its answers come back, and it and every chief above it hear its goals' state changes. `ym goal send`, `relaunch`, `drop`, `ack` and `feed` take remote ids.
 - A chief may steer a goal any number of hosts below it. When the chain leaves the goal's host, `ym goal steer` says the steer lands once the next chief's host confirms the steerer is above it; a chief the goal does not report to is told the steer was refused.

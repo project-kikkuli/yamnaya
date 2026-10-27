@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/progress"
@@ -116,7 +117,7 @@ func (m Model) tableWidth() int {
 	if !m.shown() {
 		return m.width
 	}
-	return max(60, min(m.width-6, 132))
+	return max(60, min(m.width-6, ansi.StringWidth(boardHints)+4))
 }
 
 func weather(standing string) scene.Weather {

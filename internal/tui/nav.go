@@ -1,0 +1,109 @@
+package tui
+
+import (
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
+)
+
+// section is the part of the board a list row sits in: 0 needs you, 1 goals, 2 sessions.
+func section(r row) int {
+	switch {
+	case r.node != nil:
+		return 1
+	case r.repo != nil:
+		return 2
+	}
+	return 0
+}
+
+// repoGroup is the group [ and ] step between: the whole queue, one repository's goals or the chiefs, or one repository's sessions.
+func repoGroup(r row) string {
+	switch section(r) {
+	case 1:
+		return "goals " + r.group
+	case 2:
+		return "sessions " + r.repo.Key
+	}
+	return "needs"
+}
+
+// starts are the indexes of the rows that begin a new part, and the part the row at index at belongs to.
+func starts(rows []row, at int, part func(row) string) ([]int, int) {
+	var out []int
+	cur := 0
+	for i, r := range rows {
+		if i == 0 || part(r) != part(rows[i-1]) {
+			out = append(out, i)
+		}
+		if i == at {
+			cur = len(out) - 1
+		}
+	}
+	return out, cur
+}
+
+// move jumps the cursor: tab and shift+tab between sections, [ and ] between repository groups, < > home and end to the top or bottom.
+func (m *Model) move(key string) {
+	if m.mode == modeAgent {
+		switch key {
+		case "<", "home":
+			m.scrollY = 0
+		case ">", "end":
+			m.scrollBy(1 << 30)
+		}
+		return
+	}
+	rows := m.rows()
+	if len(rows) == 0 {
+		return
+	}
+	switch key {
+	case "<", "home":
+		m.cursor = 0
+		return
+	case ">", "end":
+		m.cursor = len(rows) - 1
+		return
+	}
+	if m.mode != modeList {
+		return
+	}
+	part := repoGroup
+	if key == "tab" || key == "shift+tab" {
+		part = func(r row) string { return string(rune('0' + section(r))) }
+	}
+	at, cur := starts(rows, m.cursor, part)
+	switch key {
+	case "tab":
+		m.cursor = at[(cur+1)%len(at)]
+	case "shift+tab":
+		m.cursor = at[(cur+len(at)-1)%len(at)]
+	case "]":
+		if cur+1 < len(at) {
+			m.cursor = at[cur+1]
+		}
+	case "[":
+		m.cursor = at[max(cur-1, 0)]
+	}
+}
+
+// reply answers the row's open item, else sends a follow-up to the row's session.
+func (m Model) reply(r row) (tea.Model, tea.Cmd) {
+	if r.item != nil && r.item.State == core.ItemOpen {
+		m.startInput(inAnswer, r.item.Key(), "", r.item.Rec, true)
+		m.inLabel = r.item.ID
+		return m, nil
+	}
+	s := m.sessionOf(r)
+	if s == nil && r.project != nil && len(r.project.Sessions) == 1 {
+		s = &r.project.Sessions[0]
+	}
+	if s == nil || s.ID == "" || m.core.Launches == nil {
+		m.message = "nothing here to reply to"
+		return m, nil
+	}
+	m.startInput(inSend, s.Key(), "", "", false)
+	m.inLabel = titleOf(*s)
+	return m, nil
+}

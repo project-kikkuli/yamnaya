@@ -130,6 +130,12 @@ func keyOf(k string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "home":
+		return tea.KeyPressMsg{Code: tea.KeyHome}
+	case "end":
+		return tea.KeyPressMsg{Code: tea.KeyEnd}
 	case "backspace":
 		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case " ", "space":
@@ -173,7 +179,7 @@ func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	if v := m.View().Content; !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
 		t.Fatalf("view:\n%s", v)
 	}
-	m = press(t, m, "a", "ctrl+u", "ship", " ", "it", "enter")
+	m = press(t, m, "r", "ctrl+u", "ship", " ", "it", "enter")
 	it, _ := c.Store.Item("D1")
 	if it.State != core.ItemAnswered || it.Answer != "ship it" {
 		t.Fatalf("D1 = %+v", it)
@@ -192,10 +198,10 @@ func TestPastedTextLandsInTheInputLikeTypedText(t *testing.T) {
 		keys   []string
 		answer string
 	}{
-		{"typed", []string{"a", "ctrl+u", "ship", " ", "it", "enter"}, "ship it"},
-		{"pasted", []string{"a", "ctrl+u", "paste:ship it", "enter"}, "ship it"},
-		{"pasted after typing", []string{"a", "ctrl+u", "go ", "paste:ship it", "enter"}, "go ship it"},
-		{"pasted on the board before answering", []string{"paste:junk", "a", "ctrl+u", "ok", "enter"}, "ok"},
+		{"typed", []string{"r", "ctrl+u", "ship", " ", "it", "enter"}, "ship it"},
+		{"pasted", []string{"r", "ctrl+u", "paste:ship it", "enter"}, "ship it"},
+		{"pasted after typing", []string{"r", "ctrl+u", "go ", "paste:ship it", "enter"}, "go ship it"},
+		{"pasted on the board before answering", []string{"paste:junk", "r", "ctrl+u", "ok", "enter"}, "ok"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, _ := setup(t)
@@ -240,11 +246,11 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 
 func TestAnswerDefaultsToTheRecAndTypingReplacesIt(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "a", "enter")
+	m = press(t, m, "r", "enter")
 	if it, _ := c.Store.Item("D1"); it.Answer != "yes" {
 		t.Fatalf("enter on the default answered %q, want the rec", it.Answer)
 	}
-	press(t, m, "a", "h", "i", "enter")
+	press(t, m, "r", "h", "i", "enter")
 	if it, _ := c.Store.Item("D2"); it.Answer != "hi" {
 		t.Fatalf("typed answer = %q, want it to replace the rec", it.Answer)
 	}
@@ -283,7 +289,7 @@ func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 
 func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "a", "esc", "l")
+	m = press(t, m, "r", "esc", "l")
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemSnoozed {
 		t.Fatalf("D1 = %s", it.State)
 	}
@@ -303,7 +309,7 @@ func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	if r.project == nil || r.need != nil {
 		t.Fatalf("cursor on %+v, want the first mission", r)
 	}
-	m = press(t, m, "r", "ctrl+u", "Launch", "enter")
+	m = press(t, m, "e", "ctrl+u", "Launch", "enter")
 	b, _ := c.Board()
 	if p, _ := b.Project("lead"); p.Name != "Launch" {
 		t.Fatalf("name = %q", p.Name)

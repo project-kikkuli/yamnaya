@@ -62,7 +62,7 @@ An ask that climbed to the owner past a manager or chief that was stuck or retir
 
 ## Running a goal as its manager
 
-The owner starts a goal with `ym goal "<ask>"` (or `n` on the board; `--codex` or `tab` runs it on Codex), and ym starts a manager session for it with a prompt that carries the goal, its authority and its brief path. The manager owns the goal outright: go-aheads, decisions and fixes are its calls, never the owner's sign-off.
+The owner starts a goal with `ym goal "<ask>"` (or `n` on the board, which picks the repository first, or `N` in the selected row's; `--codex` or `tab` runs it on Codex), and ym starts a manager session for it with a prompt that carries the goal, its authority and its brief path. The manager owns the goal outright: go-aheads, decisions and fixes are its calls, never the owner's sign-off.
 
 - Start agents with `ym new --repo <repo> "<prompt>"`, adding `--codex` for a Codex agent; they report to you.
 - What they ask arrives in your wake as one line naming the item; `ym item show '<#key>'` prints it whole. Answer with `ym item answer '<#key>' <answer>`, `ym item go '<#key>'` or `ym item dismiss '<#key>' <reason>`. `ym item list --to-me` lists what waits on you.

@@ -38,12 +38,8 @@ func TestWaitingRowShowsTheRepliesFirstQuestionAndOnlyForTheAskingSession(t *tes
 		t.Fatalf("board:\n%s", view)
 	}
 	m = to(t, m, isWaiting)
-	m = press(t, m, "w")
+	m = press(t, m, "enter")
 	if m.mode != modeScreen || !strings.Contains(m.screen, "Parser done.") || !strings.Contains(m.screen, "Ship it now?") {
-		t.Fatalf("w shows %q", m.screen)
-	}
-	m = press(t, m, "esc", "enter")
-	if m.mode != modeScreen || !strings.Contains(m.screen, "Parser done.") {
 		t.Fatalf("enter shows %q", m.screen)
 	}
 }
@@ -54,7 +50,7 @@ func TestWaitingRowKeysAnswerOrDismissIt(t *testing.T) {
 		keys []string
 		sent string
 	}{
-		{name: "a sends the answer", keys: []string{"a", "y", "e", "s", "enter"}, sent: "asker yes"},
+		{name: "r sends the answer", keys: []string{"r", "y", "e", "s", "enter"}, sent: "asker yes"},
 		{name: "x dismisses without sending", keys: []string{"x"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,7 +71,7 @@ func TestWaitingRowKeysAnswerOrDismissIt(t *testing.T) {
 func TestEscCancelsAnAnswerToAWaitingSession(t *testing.T) {
 	m, _, l := waitingBoard(t)
 	m = to(t, m, isWaiting)
-	m = press(t, m, "a", "n", "o", "esc")
+	m = press(t, m, "r", "n", "o", "esc")
 	m = refresh(t, m)
 	if len(l.sent) != 0 || !strings.Contains(m.View().Content, "waiting:") {
 		t.Fatalf("sent %v; board:\n%s", l.sent, m.View().Content)

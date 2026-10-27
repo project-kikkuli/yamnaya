@@ -177,7 +177,7 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			}
 			return ""
 		}},
-		{"I lists answered items too", nil, []string{"a", "enter", "I"}, func(t *testing.T, f fixture) string {
+		{"I lists answered items too", nil, []string{"r", "enter", "I"}, func(t *testing.T, f fixture) string {
 			if v := f.m.View().Content; f.m.mode != modeItems || !strings.Contains(v, "answered") || !strings.Contains(v, "Rename the flag?") {
 				return "items view:\n" + v
 			}

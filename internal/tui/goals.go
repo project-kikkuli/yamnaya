@@ -37,10 +37,11 @@ func (m Model) nodeOf(r row) (core.Node, bool) {
 	return core.Node{}, false
 }
 
-// treeRows are the goal rows of the board: every chief with its managers and chiefs nested under it, or every manager by repository.
+// treeRows are the goal rows of the board grouped by repository: each goal reporting to the owner under its repository and
+// every chief with its reports nested under it in the chiefs group, or when flat every goal under its own repository.
 func (m Model) treeRows() []row {
 	var out []row
-	if m.byRepo {
+	if m.flat {
 		var all []core.Node
 		var walk func([]core.Node)
 		walk = func(ns []core.Node) {
@@ -60,24 +61,68 @@ func (m Model) treeRows() []row {
 		})
 		for i := range all {
 			if m.matches(all[i].Goal.Ask, all[i].Manager.Name) {
-				out = append(out, row{node: &all[i]})
+				out = append(out, row{node: &all[i], group: goalGroup(all[i])})
 			}
 		}
 		return out
 	}
-	var walk func([]core.Node, int, bool)
-	walk = func(ns []core.Node, depth int, all bool) {
-		for i := range ns {
-			n := &ns[i]
+	var walk func([]*core.Node, int, bool, string)
+	walk = func(ns []*core.Node, depth int, all bool, group string) {
+		for _, n := range ns {
 			hit := all || m.matches(nodeText(*n))
 			if hit || m.treeMatches(n.Children) {
-				out = append(out, row{node: n, depth: depth})
-				walk(n.Children, depth+1, hit)
+				out = append(out, row{node: n, depth: depth, group: group})
+				var kids []*core.Node
+				for i := range n.Children {
+					kids = append(kids, &n.Children[i])
+				}
+				walk(kids, depth+1, hit, group)
 			}
 		}
 	}
-	walk(m.board.Tree, 0, false)
+	tops := make([]*core.Node, len(m.board.Tree))
+	for i := range m.board.Tree {
+		tops[i] = &m.board.Tree[i]
+	}
+	sort.SliceStable(tops, func(i, j int) bool { return groupLess(goalGroup(*tops[i]), goalGroup(*tops[j])) })
+	for _, n := range tops {
+		walk([]*core.Node{n}, 0, false, goalGroup(*n))
+	}
 	return out
+}
+
+// chiefGroup is the goal group of chiefs and everything they oversee.
+const chiefGroup = "chiefs"
+
+// goalGroup is the group a top-level goal or chief row shows in: the goal's repository, or the chiefs.
+func goalGroup(n core.Node) string {
+	if n.Goal == nil {
+		return chiefGroup
+	}
+	return "repo " + n.Repo
+}
+
+// groupLess puts the chiefs first, then repositories by name.
+func groupLess(a, b string) bool {
+	if a == chiefGroup || b == chiefGroup {
+		return a == chiefGroup && b != chiefGroup
+	}
+	if la, lb := groupLabel(a), groupLabel(b); la != lb {
+		return la < lb
+	}
+	return a < b
+}
+
+// groupLabel is a goal group's heading.
+func groupLabel(group string) string {
+	repo, ok := strings.CutPrefix(group, "repo ")
+	if !ok {
+		return group
+	}
+	if label := core.RepoLabel(repo); label != "" {
+		return label
+	}
+	return "no repository"
 }
 
 // treeMatches reports whether the filter matches any node in ns or below them.
@@ -173,9 +218,6 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		_, id, _ := core.SplitRemote(n.Goal.ID)
 		head = pad(id, 8)
 		what = m.tagged(host, n.Goal.Ask)
-		if m.byRepo {
-			what = core.RepoLabel(n.Repo) + "  " + what
-		}
 	} else {
 		head = pad("chief", 8)
 		what = m.tagged(host, pal.bold.Render(n.Manager.Name)+pal.dim.Render(fmt.Sprintf("  %d goals", n.Count())))
@@ -218,20 +260,16 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	if state := m.hostState(host); state != "" {
 		meta = append(meta, "on "+host+": "+state)
 	}
-	keys := "enter open   S steer plan   s send   R relaunch   B brief   W brief page   o session   space select   c under chief"
-	if n.Manager.ParentID != "" {
-		keys += "   D detach"
-	}
-	keys += "   C new chief"
+	keys := "enter open · r reply · b brief · c chief · S steer plan · R relaunch · W brief page · o session · space select"
 	if n.Goal != nil && n.Goal.State == core.GoalDone {
-		keys += "   x clear   K drop"
+		keys += " · x clear · K drop"
 	} else if n.Goal != nil {
-		keys += "   K drop"
+		keys += " · K drop"
 	} else {
-		keys += "   K retire"
+		keys += " · K retire"
 	}
 	if brief, ok := m.artifact(n); ok && brief != "" {
-		keys += "   V artifact"
+		keys += " · V artifact"
 	}
 	under := "         " + indent
 	b += pal.dim.Render(under+strings.Join(meta, " | ")) + "\n"
@@ -338,11 +376,11 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	switch {
 	case n.Goal != nil:
 		head, what = pal.red.Render(pad("stuck", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
-		keys = "enter open   B brief   o manager   R relaunch   s send   x clear"
+		keys = "enter open · r reply · b brief · o manager · R relaunch · x clear"
 	case n.Steer != nil:
 		head = pal.yellow.Render(pad("steer", 8))
 		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", m.managerName(n.Manager), n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
-		keys = "enter open   o manager   S steer again   R relaunch   x dismiss"
+		keys = "enter open · o manager · S steer again · R relaunch · x dismiss"
 	case n.Relay != nil:
 		head = pal.red.Render(pad("refused", 8))
 		what = fmt.Sprintf("%s keeps refusing %s, %d times since %s: %s", n.Relay.Dest, relayWhat(*n.Relay), n.Relay.Refusals,
@@ -356,19 +394,19 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		if n.Manager != "" {
 			what = m.managerName(n.Manager) + ": " + what
 		}
-		keys = "enter open in browser   x dismiss"
+		keys = "enter open in browser · x dismiss"
 	case n.Review != nil:
 		head, what = pal.yellow.Render(pad("review", 8)), n.Review.URL
 		if n.Review.Title != "" {
 			what = n.Review.Title + pal.dim.Render("  by "+n.Review.Author+"  "+n.Review.URL)
 		}
-		keys = "enter open in browser   x dismiss"
+		keys = "enter open in browser · x dismiss"
 	case n.Doc != nil:
 		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Title+pal.dim.Render("  "+n.Doc.Asker+": "+n.Doc.Text)
 		if len(n.Docs) > 1 {
 			head, what = pal.yellow.Render(pad("doc", 8)), fmt.Sprintf("%s  %d open threads", n.Doc.Title, len(n.Docs))+pal.dim.Render("  newest "+n.Doc.Asker+": "+n.Doc.Text)
 		}
-		keys = "enter open in browser   x dismiss"
+		keys = "enter open in browser · x dismiss"
 	default:
 		return "", false
 	}
@@ -403,7 +441,7 @@ func (m Model) goalView() viewPage {
 	b.WriteString(" " + ansi.Wrap(g.Ask, max(20, m.width-2), " ") + "\n")
 	m.field(&b, "manager", n.Manager.ID+" "+managerState(m.board, n))
 	m.field(&b, "plan", planField(n))
-	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  B shows it, W opens the page"))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  b shows it, W opens the page"))
 	if url, ok := m.artifact(n); ok {
 		m.field(&b, "artifact", url+pal.dim.Render("  V opens it"))
 	}
@@ -477,10 +515,10 @@ func (m Model) chiefView() viewPage {
 	b.WriteString(fmt.Sprintf(" %s  %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Name), standStyle[n.Standing](n.Standing), pal.dim.Render(n.Manager.ID)))
 	m.field(&b, "session", managerState(m.board, n))
 	m.field(&b, "plan", planField(n))
-	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  B shows it, W opens the page with its reports' briefs"))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" REPORTS (%d)", len(n.Children))) + "\n")
 	if len(n.Children) == 0 {
-		b.WriteString(pal.dim.Render("   none; c on a goal row puts it under a chief") + "\n")
+		b.WriteString(pal.dim.Render("   none; c then a on a goal row puts it under a chief") + "\n")
 	}
 	for i, r := range m.rows() {
 		b.WriteString(m.nodeLines(i, *r.node, r.depth))
@@ -515,7 +553,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.message = "ym's launcher is unavailable"
 			return m, nil, true
 		}
-		m.newL, m.forGoal = core.NewLaunch{}, key == "N"
+		m.newL, m.forGoal = core.NewLaunch{}, key == "n"
 		m.loadTarget()
 		m.loadHarness("goal")
 		if m.forGoal {
@@ -538,15 +576,17 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, nil, true
 	case "t":
 		if m.mode == modeList {
-			m.byRepo = !m.byRepo
+			m.flat = !m.flat
 			return m, nil, true
 		}
 	case "C":
-		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
-		m.loadTarget()
-		m.loadHarness("chief")
-		m.openOverPicker()
+		m.newChief(r)
 		return m, nil, true
+	case "c":
+		if m.mode == modeList || m.mode == modeChief || m.mode == modeGoal {
+			m.openChiefMenu(r)
+			return m, nil, true
+		}
 	}
 	if r.need != nil && (r.need.PR != nil || r.need.Review != nil || r.need.Doc != nil) {
 		url := ""
@@ -634,7 +674,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.picked[n.Manager.ID] = true
 		}
 		return m, nil, true
-	case "B":
+	case "b":
 		if host, rest, ok := core.SplitRemote(n.Manager.ID); ok && n.Manager.Host != "" {
 			head := " " + pal.bold.Render(m.tagged(host, n.Manager.Label())) + pal.dim.Render("  "+briefOf(n)) + "\n\n"
 			if f := n.Fresh.Brief; f != nil {
@@ -663,7 +703,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "V":
 		url, ok := m.artifact(n)
 		if !ok {
-			m.message = n.Manager.ID + " has registered no artifact; B shows its brief"
+			m.message = n.Manager.ID + " has registered no artifact; b shows its brief"
 			return m, nil, true
 		}
 		open := m.openURL
@@ -679,7 +719,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.beside = key == "O"
 		next, cmd := m.open(row{session: n.Live})
 		return next.(Model), cmd, true
-	case "s":
+	case "s", "r":
 		if r.session != nil && r.node == nil {
 			return m, nil, false
 		}
@@ -714,30 +754,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return "dropped " + id, err
 		}))
 		return m, nil, true
-	case "c":
-		if r.node == nil {
-			return m, nil, false
-		}
-		ids := []string{n.Manager.ID}
-		for id := range m.picked {
-			if id != n.Manager.ID {
-				ids = append(ids, id)
-			}
-		}
-		sort.Strings(ids[1:])
-		m.openChiefPicker(ids, n.Manager.ParentID)
-		return m, nil, true
 	case "D":
 		if r.node == nil || n.Manager.ParentID == "" {
 			return m, nil, false
 		}
-		id, chief := n.Manager.ID, n.Manager.ParentID
-		if c, ok := m.board.Node(chief); ok {
-			chief = c.Manager.Label()
-		}
-		m.confirm("detach "+n.Manager.Label()+" from "+chief+"? it reports to you", m.do(func() (string, error) {
-			return id + " reports to you", m.core.Attach(id, "")
-		}))
+		m.detach(n)
 		return m, nil, true
 	}
 	return m, nil, false

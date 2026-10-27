@@ -137,7 +137,7 @@ func (t Target) Advice() string {
 	case t.Remote != "":
 		return fmt.Sprintf("runs on %s; ym open %s attaches to it there over ssh", t.Remote, Short(t.Session.Key()))
 	case t.Session.Background:
-		return fmt.Sprintf("runs as a background job (pid %d) with no terminal ym can attach to; a answers and s sends reach it through its inbox", t.Session.PID)
+		return fmt.Sprintf("runs as a background job (pid %d) with no terminal ym can attach to; r replies and s sends reach it through its inbox", t.Session.PID)
 	case t.Handle != nil:
 		return fmt.Sprintf("runs in %s %s (pid %d); ym jumps there only when it runs inside that tmux", t.Handle.Host, t.Handle.Label, t.Session.PID)
 	case t.Session.PID == 0:

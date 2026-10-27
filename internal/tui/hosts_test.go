@@ -117,10 +117,10 @@ func TestLaunchesStartWhereTheTargetSaysAndTheNextOneDefaultsThere(t *testing.T)
 		{"session on the host", []string{"+", "ctrl+t", "ok", "enter"}, []string{box, "new", "--repo", "app", "--", "ok"}, 0, box},
 		{"codex on the host", []string{"+", "tab", "ctrl+t", "ok", "enter"}, []string{box, "new", "--codex", "--repo", "app", "--", "ok"}, 0, box},
 		{"switching back", []string{"+", "ctrl+t", "ctrl+t", "ok", "enter"}, nil, 1, ""},
-		{"goal on the host", []string{"n", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--repo", "app", "--", "ship"}, 0, box},
+		{"goal on the host", []string{"N", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--repo", "app", "--", "ship"}, 0, box},
 		{"chief on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--repo", "app", "--", "lead"}, 0, box},
 		{"chief with a remit on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "ship", "enter"}, []string{box, "chief", "--remit", "ship", "--repo", "app", "--", "lead"}, 0, box},
-		{"codex goal on the host", []string{"n", "tab", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--codex", "--repo", "app", "--", "ship"}, 0, box},
+		{"codex goal on the host", []string{"N", "tab", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--codex", "--repo", "app", "--", "ship"}, 0, box},
 		{"codex chief on the host", []string{"C", "enter", "tab", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--codex", "--repo", "app", "--", "lead"}, 0, box},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -171,8 +171,8 @@ func TestTheItemsListShowsAnotherHostsClosedItemWithTheHistoryThatHostKept(t *te
 		}
 		m = press(t, m, "down")
 	}
-	m = press(t, m, "w")
+	m = press(t, m, "enter")
 	if v := ansi.Strip(m.View().Content); m.mode != modeWhy || !strings.Contains(v, "did not land: answered there already: D") {
-		t.Fatalf("w on box's item shows mode %v:\n%s", m.mode, v)
+		t.Fatalf("enter on box's item shows mode %v:\n%s", m.mode, v)
 	}
 }

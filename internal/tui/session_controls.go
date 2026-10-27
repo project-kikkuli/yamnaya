@@ -60,7 +60,7 @@ func (m Model) sessionHints() string {
 		}
 		hints = append(hints, "T switch", "B subscription")
 	}
-	return strings.Join(hints, "   ")
+	return strings.Join(hints, hintSep)
 }
 
 func (m Model) hasLaunch(session string) bool {

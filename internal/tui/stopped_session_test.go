@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -15,9 +14,6 @@ func TestArchivingADeadLaunchHidesItWithoutCleaningItsWorktree(t *testing.T) {
 	c.Procs = func() ([]proc.Proc, error) { return nil, nil }
 	m = refresh(t, m)
 	m = to(t, m, func(r row) bool { return r.project != nil && r.need == nil && len(r.project.Dormant) == 1 })
-	if footer := strings.Join(m.footer(), "\n"); !strings.Contains(footer, "K archive") || !strings.Contains(footer, "L land") {
-		t.Fatalf("dead launch offers no archive or land: %s", footer)
-	}
 	m = press(t, m, "K", "y")
 	for _, p := range m.board.Projects {
 		if len(p.Dormant) > 0 && p.Shown() {

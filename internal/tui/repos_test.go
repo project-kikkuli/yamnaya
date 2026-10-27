@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-func TestNewSkipsThePickerAndBigNOpensIt(t *testing.T) {
+func TestBigNSkipsThePickerAndNOpensIt(t *testing.T) {
 	for _, c := range []struct {
 		key    string
 		picker bool
 		scans  int
 	}{
-		{"n", false, 0},
-		{"N", true, 1},
+		{"N", false, 0},
+		{"n", true, 1},
 	} {
 		t.Run(c.key, func(t *testing.T) {
 			m, k, _ := setup(t)
@@ -30,7 +30,7 @@ func TestNewSkipsThePickerAndBigNOpensIt(t *testing.T) {
 	}
 }
 
-func TestBigNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
+func TestNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	for _, c := range []struct {
 		name   string
@@ -71,7 +71,7 @@ func TestBigNPicksTheGoalsRepositoryFromTheScannedRoots(t *testing.T) {
 				}
 			}
 			m = to(t, place(t, m, k), mission("lead"))
-			m = press(t, m, "N")
+			m = press(t, m, "n")
 			view := m.View().Content
 			for _, want := range []string{"PICK A REPOSITORY", "api", "solo", "web"} {
 				if !strings.Contains(view, want) {
@@ -112,7 +112,7 @@ func TestPickerScansOnceAndShowsWhatItFoundSoFar(t *testing.T) {
 	k.Launches = &launches{}
 	calls := 0
 	k.Roots = func() []string { calls++; return nil }
-	m = press(t, m, "N", "esc", "N")
+	m = press(t, m, "n", "esc", "n")
 	if calls != 1 || !m.scanDone {
 		t.Fatalf("roots read %d times, scan done %v", calls, m.scanDone)
 	}
@@ -122,7 +122,7 @@ func TestPickerScansOnceAndShowsWhatItFoundSoFar(t *testing.T) {
 	}
 }
 
-func TestBigNPicksTheGoalsRepositoryFirst(t *testing.T) {
+func TestNPicksTheGoalsRepositoryFirst(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		keys   []string
@@ -151,10 +151,10 @@ func TestBigNPicksTheGoalsRepositoryFirst(t *testing.T) {
 				t.Fatal(err)
 			}
 			m = to(t, place(t, m, k), mission("lead"))
-			m = press(t, m, "N")
+			m = press(t, m, "n")
 			view := m.View().Content
 			if !strings.Contains(view, "PICK A REPOSITORY") || m.newL.Repo != "" || len(m.picks) == 0 || m.picks[0] != filepath.Join(root, "api") {
-				t.Fatalf("N should open the picker with recents first and nothing preselected (repo %q, picks %v):\n%s", m.newL.Repo, m.picks, view)
+				t.Fatalf("n should open the picker with recents first and nothing preselected (repo %q, picks %v):\n%s", m.newL.Repo, m.picks, view)
 			}
 			for _, key := range c.keys {
 				if len(key) > 1 && key != "enter" && key != "esc" && key != "tab" {

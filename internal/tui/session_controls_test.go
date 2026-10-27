@@ -59,10 +59,15 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				m = next.(Model)
 				footer := ansi.Strip(strings.Join(m.footer(), "\n"))
 				rendered := ansi.Strip(m.View().Content)
-				for _, check := range []struct {
+				hints := []struct {
 					hint string
 					want bool
-				}{{"K kill", wantKill}, {"L land", wantLand}, {"K archive", wantArchive}, {"F forget", wantLand}} {
+				}{{"K kill", wantKill}, {"L land", wantLand}, {"K archive", wantArchive}, {"F forget", wantLand}}
+				if m.mode == modeList {
+					hints = hints[:1]
+					hints[0].want = true
+				}
+				for _, check := range hints {
 					if strings.Contains(footer, check.hint) != check.want || strings.Contains(rendered, check.hint) != check.want {
 						t.Fatalf("%s present=%v want=%v:\n%s", check.hint, strings.Contains(footer, check.hint), check.want, footer)
 					}
