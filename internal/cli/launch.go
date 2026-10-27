@@ -46,12 +46,8 @@ type launcher struct {
 	everywhere bool
 }
 
-func newLauncher() (launcher, error) {
-	path, err := core.DefaultStorePath()
-	if err != nil {
-		return launcher{}, err
-	}
-	dir := filepath.Dir(path)
+// newLauncher is the launcher keeping its records, tmux config and logs in the state directory dir.
+func newLauncher(dir string) (launcher, error) {
 	l := launcher{srv: tmux.NewServer(), records: launch.Records{Dir: filepath.Join(dir, "launches")}, conf: filepath.Join(dir, "tmux.conf"),
 		stamp: filepath.Join(dir, "gc.stamp"), repos: filepath.Join(dir, "repos.json"), landings: filepath.Join(dir, "landings.jsonl"),
 		removals: filepath.Join(dir, "gc.log"), squash: &launch.Squash{Hub: launch.GH{}, Cache: filepath.Join(dir, "squash.json"), Now: time.Now}}
@@ -271,7 +267,7 @@ func (e *env) attach(cmd *exec.Cmd) error {
 
 // openLaunched opens a session by its launch key, showing it with show; ok is false when ref names no launch.
 func (e *env) openLaunched(w io.Writer, ref string, show func(*exec.Cmd) error) (bool, error) {
-	l, err := newLauncher()
+	l, err := newLauncher(e.core.StateDir)
 	if err != nil {
 		return false, err
 	}
@@ -511,7 +507,7 @@ func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 		Hidden: true,
 		Args:   cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			l, err := newLauncher()
+			l, err := newLauncher(e.core.StateDir)
 			if err != nil {
 				return err
 			}
@@ -959,7 +955,7 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			"when they are gone, from another clone when its own is gone, else as an empty directory holding only the conversation"),
 		Args: cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			l, err := newLauncher()
+			l, err := newLauncher(e.core.StateDir)
 			if err != nil {
 				return err
 			}

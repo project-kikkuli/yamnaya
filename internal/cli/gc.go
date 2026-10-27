@@ -212,7 +212,7 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 	dry := cmd.Flags().Bool("dry-run", false, "print what gc would remove and delete, changing nothing")
 	quiet := cmd.Flags().Bool("quiet", false, "print nothing and skip measuring sizes")
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
-		l, err := newLauncher()
+		l, err := newLauncher(e.core.StateDir)
 		if err != nil {
 			return err
 		}

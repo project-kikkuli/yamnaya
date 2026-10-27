@@ -7,6 +7,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 // Toll is what a kill ends and removes: sessions, the worktrees ym made for them, and the work in those worktrees no remote holds,
@@ -252,15 +254,20 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), errors.Join(errs...)
 }
 
+// SignalFunc is how c signals a process: Signal, else proc.Signal.
+func (c *Core) SignalFunc() func(int, syscall.Signal) error {
+	if c.Signal != nil {
+		return c.Signal
+	}
+	return proc.Signal
+}
+
 // Stop sends SIGTERM to each process running s and waits for them to end. Its terminal, worktree and transcript stay.
 func (c *Core) Stop(s Live) (string, error) {
 	if s.Remote != "" {
 		return c.RunRemote(s.Remote, "kill", "--yes", "--stop", s.Key())
 	}
-	signal := c.Signal
-	if signal == nil {
-		signal = syscall.Kill
-	}
+	signal := c.SignalFunc()
 	grace := c.KillGrace
 	if grace == 0 {
 		grace = 3 * time.Second

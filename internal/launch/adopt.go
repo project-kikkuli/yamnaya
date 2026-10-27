@@ -102,9 +102,10 @@ func sigName(sig syscall.Signal) string {
 }
 
 // Unadoptable says why ym gives no launch record to a session working in dir, or "": the home directory holds everything
-// the owner has, so nothing ym does to a launch may ever point at it, and another ym's rehearsal is that ym's.
-func Unadoptable(dir string) string {
-	if path, err := core.DefaultStorePath(); err == nil && core.ForeignRehearsal(dir, filepath.Dir(path)) {
+// the owner has, so nothing ym does to a launch may ever point at it, and another ym's rehearsal is that ym's: one whose state dir,
+// state, lies outside it.
+func Unadoptable(dir, state string) string {
+	if core.ForeignRehearsal(dir, state) {
 		return dir + " belongs to a rehearsal; only the ym running it adopts its sessions"
 	}
 	home, err := os.UserHomeDir()

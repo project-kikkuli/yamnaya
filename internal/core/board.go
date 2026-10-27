@@ -44,7 +44,7 @@ type Core struct {
 	// Port rebuilds session id, run in cwd, in harness to and returns the new session id.
 	Port        func(cwd, id, to string) (string, error)
 	PreparePort func(Session, string, string) (PortPlan, error)
-	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean syscall.Kill and 3s.
+	// Signal and KillGrace are how Kill signals a process and how long it waits for it to end; nil and zero mean proc.Signal and 3s.
 	Signal         func(pid int, sig syscall.Signal) error
 	KillGrace      time.Duration
 	BackgroundSend func(Live, string) error

@@ -1,28 +1,123 @@
-// Package agenttest keeps the claude and codex a test starts, real or fake, out of the owner's ~/.claude and ~/.codex.
+// Package agenttest keeps a test process, and the claude, codex, tmux and ym it starts, real or fake, out of everything the
+// owner's own ym and agents use.
 package agenttest
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-// Run runs m with CLAUDE_CONFIG_DIR and CODEX_HOME in a fresh temporary directory, removed afterwards, and returns its exit code.
+// Run runs m inside a fresh temporary root, removed afterwards, and returns its exit code. The root is a rehearsal root, so the
+// owner's ym never shows, records or adopts a session a test starts. HOME, TMPDIR, YAMNAYA_STATE_DIR, CLAUDE_CONFIG_DIR and
+// CODEX_HOME point inside it, and ym's tmux servers are private ones. A signal to a process neither started by the test nor
+// working inside the root is refused and fails the run. A test binary a test runs again keeps the root it inherits.
 func Run(m *testing.M) int {
-	dir, err := os.MkdirTemp("", "ymtest-agents-")
+	if root := os.Getenv(rootEnv); root != "" {
+		f := &fence{root: root}
+		proc.Signal = f.signal
+		return f.check(m.Run())
+	}
+	base, err := os.MkdirTemp("", "ymt-")
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
-	for _, env := range []string{"CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID"} {
+	defer os.RemoveAll(base)
+	root, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".ym-rehearsal"), nil, 0o644); err != nil {
+		panic(err)
+	}
+	os.Setenv(rootEnv, root)
+	for _, env := range []string{"CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CODEX_SQLITE_HOME",
+		"YAMNAYA_PROFILE", "YAMNAYA_ACCOUNT", "YAMNAYA_BRIEFS_ADDR", "TMUX", "TMUX_PANE", "XPC_SERVICE_NAME"} {
 		os.Unsetenv(env)
 	}
-	for env, sub := range map[string]string{"CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
-		path := filepath.Join(dir, sub)
+	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "YAMNAYA_STATE_DIR": "state", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
+		path := filepath.Join(root, sub)
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			panic(err)
 		}
 		os.Setenv(env, path)
 	}
-	return m.Run()
+	if err := os.WriteFile(filepath.Join(root, "home", ".gitconfig"), []byte("[user]\n\tname = ym test\n\temail = ymtest@example.invalid\n[init]\n\tdefaultBranch = main\n"), 0o644); err != nil {
+		panic(err)
+	}
+	socks := []string{fmt.Sprintf("ymt-%d-ym", os.Getpid()), fmt.Sprintf("ymt-%d-tmux", os.Getpid())}
+	os.Setenv("YAMNAYA_YM_SOCKET", socks[0])
+	os.Setenv("YAMNAYA_TMUX_SOCKET", socks[1])
+	defer func() {
+		for _, s := range socks {
+			exec.Command("tmux", "-L", s, "kill-server").Run()
+		}
+	}()
+	f := &fence{root: root}
+	proc.Signal = f.signal
+	return f.check(m.Run())
+}
+
+const rootEnv = "YM_AGENTTEST_ROOT"
+
+// fence lets a signal through only to a process the test started or one working inside its root.
+type fence struct {
+	root string
+	mu   sync.Mutex
+	bad  []string
+}
+
+func (f *fence) signal(pid int, sig syscall.Signal) error {
+	if f.ours(pid) {
+		return syscall.Kill(pid, sig)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bad = append(f.bad, fmt.Sprintf("%s to pid %d", sig, pid))
+	return syscall.EPERM
+}
+
+func (f *fence) ours(pid int) bool {
+	if pid <= 1 {
+		return false
+	}
+	if cwd := proc.Cwd(pid); cwd == f.root || strings.HasPrefix(cwd, f.root+string(filepath.Separator)) {
+		return true
+	}
+	procs, err := proc.List()
+	if err != nil {
+		return false
+	}
+	for _, p := range proc.Index(procs).Ancestors(pid) {
+		if p.PID == os.Getpid() {
+			return true
+		}
+	}
+	return false
+}
+
+// check is code, or 1 when the run sent a refused signal or reached the default state directory past YAMNAYA_STATE_DIR.
+func (f *fence) check(code int) int {
+	if refused := f.refused(); len(refused) > 0 {
+		fmt.Fprintln(os.Stderr, "agenttest: refused signals to processes outside the test:", strings.Join(refused, ", "))
+		code = max(code, 1)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "home", ".local", "state", "yamnaya")); err == nil {
+		fmt.Fprintln(os.Stderr, "agenttest: a test reached the default state directory past YAMNAYA_STATE_DIR")
+		code = max(code, 1)
+	}
+	return code
+}
+
+func (f *fence) refused() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bad
 }

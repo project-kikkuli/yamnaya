@@ -65,7 +65,7 @@ func Wire(path string) (*core.Core, error) {
 		CPU:       slot.CPU,
 		Mem:       slot.Mem,
 	}
-	if l, err := newLauncher(); err == nil {
+	if l, err := newLauncher(filepath.Dir(path)); err == nil {
 		l.core, l.srv = c, srv
 		c.Launches = l
 		c.PreparePort = l.prepareProfilePort

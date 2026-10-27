@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -269,6 +270,53 @@ func TestALaunchWhoseSessionIsNotUpYetIsUnknownNotGone(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := missing(tc.rec, now); got != tc.want {
 				t.Fatalf("state %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOnlyTheInstalledYmClaimsTheDefaultServeAgent(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd keeps the default serve on macOS only")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		onPath string
+		claims bool
+	}{
+		{"this ym is the one on PATH", self, true},
+		{"another ym is on PATH, as when a scratch build runs by its path", "/bin/sh", false},
+		{"no ym on PATH", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, agents := fakeLaunchctl(t)
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("YAMNAYA_STATE_DIR", "")
+			os.MkdirAll(filepath.Join(home, ".local", "state", "yamnaya"), 0o755)
+			bins := t.TempDir()
+			if c.onPath != "" {
+				if err := os.Symlink(c.onPath, filepath.Join(bins, "ym")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", bins)
+			installed := filepath.Join(agents, "io.yamnaya.ym-serve.plist")
+			os.WriteFile(installed, []byte("installed ym's agent"), 0o644)
+			f.loaded[fmt.Sprintf("gui/%d/io.yamnaya.ym-serve", os.Getuid())] = true
+			keepDefault(io.Discard)
+			raw, _ := os.ReadFile(installed)
+			claimed := strings.Contains(string(raw), "<string>"+self+"</string>")
+			booted := slices.Contains(f.calls, "bootout")
+			if claimed != c.claims || booted != c.claims {
+				t.Fatalf("plist names this ym %v, running agent booted out %v; want both %v", claimed, booted, c.claims)
 			}
 		})
 	}

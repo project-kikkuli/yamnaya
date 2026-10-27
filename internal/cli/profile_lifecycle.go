@@ -104,9 +104,9 @@ func (l launcher) nativeLifecycle(rec launch.Record, dest profile.Profile, allow
 	return owned, nil
 }
 func (l launcher) drainNative(children []proc.Proc, root int) error {
-	signal := syscall.Kill
-	if l.core != nil && l.core.Signal != nil {
-		signal = l.core.Signal
+	signal := proc.Signal
+	if l.core != nil {
+		signal = l.core.SignalFunc()
 	}
 	for _, p := range children {
 		if p.PID != root {

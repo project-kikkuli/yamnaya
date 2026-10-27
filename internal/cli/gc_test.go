@@ -158,8 +158,8 @@ func TestYmNeverAdoptsASessionInTheHomeDirectoryOrAnotherYmsRehearsal(t *testing
 		{"a rehearsal, seen by the ym running it", run, filepath.Join(rehearsals, "run", "state"), true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("YAMNAYA_STATE_DIR", c.state)
-			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: t.TempDir()}}
+			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(c.state, "launches")}}
+			t.Cleanup(func() { os.RemoveAll(l.records.Dir) })
 			s := core.Live{Session: core.Session{Harness: "claude", ID: "s1", Cwd: c.cwd, PID: 4242}}
 			l.Saw([]core.Live{s})
 			if _, ok := l.records.Find("s1"); ok != c.adopted {

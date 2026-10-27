@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/project-kikkuli/yamnaya/internal/agenttest"
 )
 
 func TestMain(m *testing.M) {
 	profile, reducedMotion = trueColor, false
-	m.Run()
+	os.Exit(agenttest.Run(m))
 }
 
 var sizes = []struct{ w, h int }{{80, 24}, {100, 30}, {160, 48}, {260, 70}, {40, 12}, {20, 6}, {1, 1}}

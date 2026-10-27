@@ -186,9 +186,10 @@ func unkeepLaunchd() (string, error) {
 }
 
 // keepDefault keeps the default state directory's ym serve running across logins and restarts on macOS, set up the first time the
-// board or ym install runs there, so the owner never sets it up.
+// board or ym install runs there, so the owner never sets it up. Only the installed ym does: a build run by its path would point
+// the agent at itself, and loading that agent ends the serve the installed ym runs.
 func keepDefault(w io.Writer) {
-	if runtime.GOOS != "darwin" || os.Getenv("YAMNAYA_NO_SERVE") == "1" {
+	if runtime.GOOS != "darwin" || os.Getenv("YAMNAYA_NO_SERVE") == "1" || !installedSelf() {
 		return
 	}
 	state, err := stateDir()
@@ -204,6 +205,24 @@ func keepDefault(w io.Writer) {
 	for _, err := range dropDeadAgents() {
 		fmt.Fprintln(w, err)
 	}
+}
+
+// installedSelf reports whether this ym is the ym on PATH, the one the owner installed.
+func installedSelf() bool {
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	onPath, err := exec.LookPath("ym")
+	if err != nil {
+		return false
+	}
+	a, err := os.Stat(self)
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(onPath)
+	return err == nil && os.SameFile(a, b)
 }
 
 var plistString = regexp.MustCompile(`<string>([^<]*)</string>`)
