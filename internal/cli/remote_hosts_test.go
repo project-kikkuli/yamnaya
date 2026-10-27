@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,5 +203,35 @@ func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
 	var j boardJSON
 	if err != nil || json.Unmarshal([]byte(out), &j) != nil || time.Since(parseTS(j.At)) > time.Minute {
 		t.Fatalf("board printed %q, %v; want the snapshot stamped with when it was taken", out, err)
+	}
+}
+
+func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnection(t *testing.T) {
+	for _, c := range []struct {
+		host   string
+		silent bool
+	}{{"box", false}, {"dead", true}, {"slow", true}} {
+		t.Run(c.host, func(t *testing.T) {
+			bin := fakeSSH(t)
+			log := filepath.Join(t.TempDir(), "calls")
+			wrapper := filepath.Join(t.TempDir(), "ssh")
+			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\necho \"$@\" >> "+log+"\nexec "+bin+" \"$@\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r := newRemoteHosts([]string{c.host}, 3*time.Second, nil)
+			r.ssh, r.timeout = wrapper, time.Second
+			r.Boards()
+			calls, _ := os.ReadFile(log)
+			dropped := strings.Contains(string(calls), "-O exit")
+			if err := r.Silent(c.host); (err != nil) != c.silent || c.silent && !errors.Is(err, core.ErrUnreachable) {
+				t.Errorf("Silent = %v", err)
+			}
+			if dropped != c.silent {
+				t.Errorf("shared connection dropped %v; ssh calls:\n%s", dropped, calls)
+			}
+			if err := r.Reach(c.host); (err != nil) != (c.host != "box") {
+				t.Errorf("Reach = %v", err)
+			}
+		})
 	}
 }

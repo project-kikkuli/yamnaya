@@ -165,7 +165,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			next, cmd = m.Update(out)
 			m = next.(Model)
 			switch out.(type) {
-			case doneMsg, adoptedMsg, reposMsg, killedMsg:
+			case doneMsg, adoptedMsg, reposMsg, killedMsg, actMsg:
 			default:
 				cmd = nil
 			}

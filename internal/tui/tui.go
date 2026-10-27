@@ -183,10 +183,13 @@ type Model struct {
 	slots map[string]int
 	// drawn keeps the last screen drawn, shared by every copy of the model.
 	drawn *lastDraw
+	// acts are the actions the board dispatched, by the row key they act on; queued are its commands waiting for a host.
+	acts   map[string]act
+	queued map[string]core.Relay
 }
 
 func New(c *core.Core) Model {
-	m := Model{killing: map[string]bool{}, drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
+	m := Model{killing: map[string]bool{}, acts: map[string]act{}, drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -217,9 +220,10 @@ func Run(c *core.Core) error {
 }
 
 type boardMsg struct {
-	board core.Board
-	err   error
-	tick  bool
+	board  core.Board
+	relays []core.Relay
+	err    error
+	tick   bool
 }
 
 type tickMsg struct{}
@@ -255,7 +259,11 @@ func (m Model) refresh(tick bool) tea.Cmd {
 			}
 		}
 		b, err := c.Board()
-		return boardMsg{b, err, tick}
+		var relays []core.Relay
+		if err == nil && c.Store != nil {
+			relays, err = c.Store.PendingRelays()
+		}
+		return boardMsg{b, relays, err, tick}
 	}
 }
 
@@ -292,7 +300,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b.err == nil && m.loaded && m.err == nil && m.page != nil && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() {
 			m.board = b.board
 			if b.tick {
 				return m, m.tick()
@@ -346,6 +354,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.board, m.loaded, m.err = msg.board, true, nil
+			m.queued = queued(msg.relays)
 		}
 		if m.listMode() == modeItems {
 			m.loadItems()
@@ -377,12 +386,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case killedMsg:
 		for _, k := range msg.keys {
 			delete(m.killing, k)
+			m.acts[k] = act{what: "kill", at: time.Now(), done: true, message: msg.message, err: msg.err}
 		}
 		m.message = msg.message
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
 		}
 		return m, m.refresh(false)
+	case actMsg:
+		return m.ended(msg)
+	case reachedMsg:
+		delete(m.acts, msg.key)
+		t := msg.t
+		return m, tea.Exec(attached{msg.open, m.out}, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
 	case doneMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
@@ -723,6 +739,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode, m.message = m.back, ""
 			for _, k := range m.marks {
 				m.killing[k] = true
+				m.acts[k] = act{doing: "killing", what: "kill", at: time.Now()}
 			}
 			if len(m.marks) > 0 {
 				m.message = "killing; teardown runs in the background"
@@ -1131,6 +1148,12 @@ func (m Model) revive(d core.Dormant) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	l, c := m.core.Launches, m.core
+	if host, _ := m.splitHost(d.Key); host != "" {
+		if err := m.silent(host); err != nil {
+			m.refuse(d.Key, "revive", err)
+			return m, nil
+		}
+	}
 	m.message = "reviving " + d.Key + "…"
 	return m, func() tea.Msg {
 		out, err := l.Revive(d.Key)
@@ -1313,7 +1336,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			l := m.core.Launches
-			return m, m.do(func() (string, error) { return l.Send(s, text) })
+			return m, m.act(sessionKey(s), "sending", "send", func() (string, error) { return l.Send(s, text) })
 		case inFilter:
 			m.filter, m.cursor = text, 0
 		case inAnswer:
@@ -1503,6 +1526,9 @@ func (m Model) focus(t core.Target) tea.Cmd {
 		})
 	}
 	if cmd := m.core.AttachCmd(t); cmd != nil {
+		if t.Remote != "" {
+			return m.attachRemote(t, cmd)
+		}
 		return tea.Exec(attached{cmd, m.out}, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
 	}
 	return m.do(func() (string, error) {

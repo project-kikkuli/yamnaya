@@ -151,6 +151,36 @@ func (c *Core) RemoteSession(ref string) (host, rest string, ok bool) {
 // ErrUnreachable is a host ssh could not reach, as against a ym command that failed there.
 var ErrUnreachable = errors.New("host unreachable")
 
+// HostHealth is Remotes that know, without reading a host, that it stopped answering.
+type HostHealth interface {
+	// Silent is why host did not answer its latest read, nil while it answers or before the first read ends.
+	Silent(host string) error
+}
+
+// Reacher is Remotes that can check a host answers without running ym there.
+type Reacher interface {
+	Reach(host string) error
+}
+
+// Reach checks host answers now, failing at once when ym's latest read of it went unanswered.
+func (c *Core) Reach(host string) error {
+	if err := c.Silent(host); err != nil {
+		return err
+	}
+	if r, ok := c.Remotes.(Reacher); ok {
+		return r.Reach(host)
+	}
+	return nil
+}
+
+// Silent is why host did not answer ym's latest read of it, wrapping ErrUnreachable; nil when it answered or ym cannot tell.
+func (c *Core) Silent(host string) error {
+	if h, ok := c.Remotes.(HostHealth); ok {
+		return h.Silent(host)
+	}
+	return nil
+}
+
 // RunRemote runs ym args on host.
 func (c *Core) RunRemote(host string, args ...string) (string, error) {
 	if c.Remotes == nil || !slices.Contains(c.Remotes.Hosts(), host) {
@@ -163,9 +193,11 @@ func (c *Core) RunRemote(host string, args ...string) (string, error) {
 // one's relays, queues them for ym serve to carry there.
 func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
 	if c.Remotes != nil && slices.Contains(c.Remotes.Hosts(), host) {
-		out, err := c.Remotes.Run(host, args...)
-		if !errors.Is(err, ErrUnreachable) {
-			return out, err
+		if c.Silent(host) == nil {
+			out, err := c.Remotes.Run(host, args...)
+			if !errors.Is(err, ErrUnreachable) {
+				return out, err
+			}
 		}
 	} else if !slices.Contains(c.peerHosts(), host) {
 		return "", fmt.Errorf("%s: ym has not reached that host: %w", host, ErrNotFound)

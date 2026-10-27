@@ -487,19 +487,19 @@ func (m Model) listView() viewPage {
 			}
 			b.WriteString(line + "\n")
 		case r.node != nil:
-			b.WriteString(m.nodeLines(i, *r.node, r.depth))
+			b.WriteString(withNote(m.nodeLines(i, *r.node, r.depth), m.rowNote(r)))
 		case r.need != nil:
 			if text, ok := m.queueLines(i, *r.need); ok {
 				b.WriteString(text)
 			} else {
-				b.WriteString(m.needLines(i, *r.need))
+				b.WriteString(withNote(m.needLines(i, *r.need), m.rowNote(r)))
 			}
 		case r.item != nil:
 			b.WriteString(m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)}))
 		case r.project == nil:
 			b.WriteString(m.repoLine(i, *r.repo, cols))
 		default:
-			b.WriteString(m.missionLine(i, *r.project, cols))
+			b.WriteString(withNote(m.missionLine(i, *r.project, cols), m.rowNote(r)))
 		}
 	}
 	if !goals {
@@ -929,7 +929,7 @@ func (m Model) detailView() viewPage {
 			line += pal.dim.Render("   o adopt")
 		}
 		b.place = "s:" + s.Key()
-		b.WriteString(line + "\n")
+		b.WriteString(withNote(line+"\n", m.note(sessionKey(s))))
 		if d := doingText(m.board.At, s.Session); d != "" {
 			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
 		}
@@ -954,7 +954,7 @@ func (m Model) detailView() viewPage {
 				line += "   " + pal.red.Render(d.State)
 			}
 		}
-		b.WriteString(line + "\n")
+		b.WriteString(withNote(line+"\n", m.note(d.Key)))
 		i++
 	}
 	b.WriteString("\n" + pal.bold.Render(" ITEMS") + "\n")

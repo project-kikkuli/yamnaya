@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,11 +34,13 @@ type remoteHosts struct {
 	kept    map[string]core.RemoteBoard
 	polled  map[string]time.Time
 	running map[string]chan struct{}
+	// silent is why each host that stopped answering did not, until it answers again.
+	silent map[string]error
 }
 
 func newRemoteHosts(names []string, wait time.Duration, seen func(string, time.Time, []byte)) *remoteHosts {
 	return &remoteHosts{names: names, ssh: sshBin(), timeout: 8 * time.Second, every: 5 * time.Second, wait: wait, seen: seen,
-		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}, kept: map[string]core.RemoteBoard{}}
+		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}, kept: map[string]core.RemoteBoard{}, silent: map[string]error{}}
 }
 
 // sshBin is the ssh ym runs: $YAMNAYA_SSH_BIN, else ssh.
@@ -62,6 +65,15 @@ func (r *remoteHosts) keep(host string, at time.Time, raw []byte) {
 }
 
 func (r *remoteHosts) Hosts() []string { return r.names }
+
+func (r *remoteHosts) Silent(host string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.silent[host] == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", core.ErrUnreachable, r.last[host].State())
+}
 
 func (r *remoteHosts) Boards() []core.RemoteBoard {
 	r.mu.Lock()
@@ -112,6 +124,10 @@ wait:
 func (r *remoteHosts) read(host string, done chan struct{}) {
 	b := core.RemoteBoard{Host: host}
 	out, err := r.board(host)
+	unreachable := errors.Is(err, core.ErrUnreachable)
+	if unreachable {
+		err = errors.Unwrap(err)
+	}
 	var j boardJSON
 	if err == nil {
 		if err = json.Unmarshal(out, &j); err != nil {
@@ -141,6 +157,10 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 	}
 	r.mu.Lock()
 	r.last[host] = b
+	r.silent[host] = nil
+	if unreachable {
+		r.silent[host] = err
+	}
 	delete(r.running, host)
 	r.mu.Unlock()
 	close(done)
@@ -149,18 +169,37 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 func (r *remoteHosts) board(host string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"), remoteCommand([]string{"board"}))...)
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes"), remoteCommand([]string{"board"}))...)
 	c.WaitDelay = time.Second
 	var errb bytes.Buffer
 	c.Stderr = &errb
 	out, err := c.Output()
-	if ctx.Err() != nil {
-		return nil, fmt.Errorf("no answer in %s", r.timeout)
-	}
-	if err != nil {
+	switch {
+	case ctx.Err() != nil:
+		r.drop(host)
+		return nil, wrapped{core.ErrUnreachable, fmt.Errorf("no answer in %s", r.timeout)}
+	case err != nil:
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 255 {
+			r.drop(host)
+			return nil, wrapped{core.ErrUnreachable, sshErr(err, errb.Bytes())}
+		}
 		return nil, sshErr(err, errb.Bytes())
 	}
 	return out, nil
+}
+
+// wrapped is err that also matches mark, reading as err alone.
+type wrapped struct{ mark, err error }
+
+func (w wrapped) Error() string   { return w.err.Error() }
+func (w wrapped) Unwrap() error   { return w.err }
+func (w wrapped) Is(t error) bool { return t == w.mark }
+
+// drop ends the connection ym shares to host, so the next ssh there connects afresh instead of waiting on one that went silent.
+func (r *remoteHosts) drop(host string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	exec.CommandContext(ctx, r.ssh, sshArgs(host, "-O", "exit")...).Run()
 }
 
 func (r *remoteHosts) Run(host string, args ...string) (string, error) {
@@ -171,11 +210,31 @@ func (r *remoteHosts) Run(host string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Reach runs nothing on host, failing with core.ErrUnreachable when ssh cannot reach it within its connect timeout.
+func (r *remoteHosts) Reach(host string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes"), "true")...)
+	c.WaitDelay = time.Second
+	var errb bytes.Buffer
+	c.Stderr = &errb
+	err := c.Run()
+	switch {
+	case ctx.Err() != nil:
+		r.drop(host)
+		return fmt.Errorf("%s: no answer in %s: %w", host, r.timeout, core.ErrUnreachable)
+	case err != nil:
+		r.drop(host)
+		return fmt.Errorf("%s: %w: %w", host, core.ErrUnreachable, sshErr(err, errb.Bytes()))
+	}
+	return nil
+}
+
 // call runs ym args on host with stdin; an ssh that cannot reach the host fails with core.ErrUnreachable.
 func (r *remoteHosts) call(host string, stdin []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*r.timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"), remoteCommand(args))...)
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes"), remoteCommand(args))...)
 	c.WaitDelay = time.Second
 	if stdin != nil {
 		c.Stdin = bytes.NewReader(stdin)
@@ -185,9 +244,11 @@ func (r *remoteHosts) call(host string, stdin []byte, args ...string) ([]byte, e
 	out, err := c.Output()
 	switch {
 	case ctx.Err() != nil:
+		r.drop(host)
 		return nil, fmt.Errorf("no answer in %s: %w", 2*r.timeout, core.ErrUnreachable)
 	case err != nil:
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 255 {
+			r.drop(host)
 			return nil, fmt.Errorf("%w: %w", core.ErrUnreachable, sshErr(err, errb.Bytes()))
 		}
 		return nil, sshErr(err, errb.Bytes())
@@ -243,11 +304,12 @@ func hostBriefLinks(text []byte, host string) []byte {
 }
 
 // sshArgs are ssh's arguments up to the remote command: opts, then one connection to host shared by every ssh ym runs
-// there and kept ten minutes after the last, so a read, relay or attach skips the handshake; keepalives end it within
-// fifteen seconds of the network dropping, so a dead connection never holds the next call.
+// there and kept ten minutes after the last, so a read, relay or attach skips the handshake. A handshake that answers
+// takes under half a second, so three seconds bound one that does not; keepalives end a shared connection within six
+// seconds of the network going silent, so a call muxed onto it fails instead of hanging.
 func sshArgs(host string, opts ...string) []string {
-	return append(append(opts, "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join("/tmp", fmt.Sprintf("ym-%d-%%C", os.Getuid())),
-		"-o", "ControlPersist=10m", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"), host)
+	return append(append(opts, "-o", "ConnectTimeout=3", "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join("/tmp", fmt.Sprintf("ym-%d-%%C", os.Getuid())),
+		"-o", "ControlPersist=10m", "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2"), host)
 }
 
 // sshErr is err with the last line ssh or the remote ym wrote to stderr.

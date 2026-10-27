@@ -129,6 +129,10 @@ func (m Model) launchRemote(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	host, tag, c := m.launchOn, m.hostTag(m.launchOn), m.core
+	if err := m.silent(host); err != nil {
+		m.message = "error: not started: " + err.Error()
+		return m, nil
+	}
 	kind, harness := map[inputKind]string{inNew: "session", inGoal: "goal", inChief: "chief", inRemit: "chief"}[m.inKind], m.newL.Harness
 	m.picked = nil
 	m.message = "starting on " + tag + "…"

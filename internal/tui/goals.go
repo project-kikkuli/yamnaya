@@ -765,6 +765,10 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				m.show("B", head+pal.dim.Render(briefMeta(m.board.At, n)+", as "+m.hostTag(host)+" last told this board")+"\n\n"+f.Markdown(n.Manager.Label()))
 				return m, nil, true
 			}
+			if err := m.silent(host); err != nil {
+				m.show("B", head+pal.red.Render("cannot read it: "+err.Error()))
+				return m, nil, true
+			}
 			m.show("B", head+pal.dim.Render("reading it from "+m.hostTag(host)+"…"))
 			c := m.core
 			return m, func() tea.Msg {

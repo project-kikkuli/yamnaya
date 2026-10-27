@@ -64,7 +64,7 @@ func (m Model) sessionHints() string {
 // dying reports whether a kill already tears down every session in ss.
 func (m Model) dying(ss []core.Live) bool {
 	for _, s := range ss {
-		if !m.killing[s.Key()] {
+		if !m.killing[sessionKey(s)] {
 			return false
 		}
 	}
@@ -101,7 +101,7 @@ func (m Model) weighKill(ss []core.Live, label string) tea.Cmd {
 	return func() tea.Msg {
 		keys := make([]string, len(ss))
 		for i, s := range ss {
-			keys[i] = s.Key()
+			keys[i] = sessionKey(s)
 		}
 		return weighedMsg{ask: fmt.Sprintf("kill %s: %s?", label, c.Weigh(ss)), keys: keys, run: func() (string, error) {
 			var said []string

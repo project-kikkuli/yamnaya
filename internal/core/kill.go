@@ -59,7 +59,7 @@ func (c *Core) Kill(s Live) (string, error) { return c.end(s, "") }
 
 func (c *Core) end(s Live, goal string) (string, error) {
 	if s.Remote != "" {
-		return c.RunRemote(s.Remote, "kill", "--yes", s.Key())
+		return c.RunOrRelay(s.Remote, "kill", "--yes", s.Key())
 	}
 	msg, err := c.Stop(s)
 	if err != nil || c.Launches == nil {
