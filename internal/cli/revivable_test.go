@@ -86,6 +86,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 				os.RemoveAll(repo)
 			}
 
+			l.Sweep()
 			rows := l.Dormant()
 			kept, _ := l.records.Find(rec.Key)
 			if kept.IsLanded() != c.landed || (len(rows) == 1) == c.landed {
@@ -149,6 +150,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 				os.RemoveAll(dir)
 			}
 
+			l.Sweep()
 			rows := l.Dormant()
 			rec, _ = l.records.Find("s2")
 			if rec.IsLanded() != c.landed || (len(rows) == 1) == c.landed || (!c.landed && rows[0].State != c.state) {

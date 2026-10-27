@@ -782,7 +782,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		rec.NativePID = p.PID
 		rec.Dedicated = rec.Harness == codex.Name
 	}
-	rec.Landed, rec.Killed, rec.Revive, rec.Seen, rec.Goal = time.Time{}, time.Time{}, false, time.Time{}, ""
+	rec.Landed, rec.Killed, rec.Revive, rec.Seen, rec.Goal, rec.Blocked, rec.Stamp = time.Time{}, time.Time{}, false, time.Time{}, "", "", ""
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
 			return nil, "", err
@@ -820,39 +820,16 @@ func landsAlone(rec launch.Record, state string, now time.Time, work func(sessio
 	return true
 }
 
-// Dormant lists the launched sessions whose agents no longer run, landing first those that land alone and lose nothing.
+// Dormant lists the launched sessions whose agents no longer run. It reads records and tmux only; landing is Sweep's, in ym serve.
 func (l launcher) Dormant() []core.Dormant {
-	l.sweepSoon()
 	all, _ := l.records.All()
-	dirs := sync.OnceValue(cwds)
-	work := sync.OnceValue(l.goalWork)
-	keep := func(session, parent string) bool { return work()(session, parent) }
 	panes, listErr := l.srv.Panes()
 	var out []core.Dormant
 	for _, rec := range all {
-		if rec.Repo == "" && rec.Worktree.GitDir != "" {
-			if _, err := os.Stat(rec.Worktree.GitDir); err == nil {
-				rec.Repo = core.RepoID(rec.Worktree.GitDir)
-				l.records.Save(rec)
-			}
-		}
 		if rec.IsLanded() {
 			continue
 		}
 		st := stateIn(panes, listErr, rec)
-		if landsAlone(rec, st, time.Now(), keep) {
-			// Landing removes the worktree, so it goes by the pane as it is now, not a table read before the session started.
-			_, st = l.state(rec)
-		}
-		if landsAlone(rec, st, time.Now(), keep) {
-			_, err := l.landUnused(rec, dirs)
-			if err == nil {
-				continue
-			}
-			if !errors.As(err, &unlandable{}) {
-				st = "land failed: " + err.Error()
-			}
-		}
 		if lost := codeGone(rec); lost != "" && st == "gone" && rec.Killed.IsZero() {
 			st = lost
 		} else if st == "gone" && !rec.Seen.IsZero() {
@@ -864,6 +841,57 @@ func (l launcher) Dormant() []core.Dormant {
 		}
 	}
 	return out
+}
+
+// Sweep lands every dormant launch that lands alone. One killed with ym kill before kills removed worktrees is ended as a kill
+// is now, its work bundled first. A landing that refuses is recorded and not tried again until its worktree changes.
+func (l launcher) Sweep() error {
+	l.sweepSoon()
+	all, err := l.records.All()
+	if err != nil {
+		return err
+	}
+	dirs := sync.OnceValue(cwds)
+	work := sync.OnceValue(l.goalWork)
+	keep := func(session, parent string) bool { return work()(session, parent) }
+	panes, listErr := l.srv.Panes()
+	var errs []error
+	for _, rec := range all {
+		if rec.Repo == "" && rec.Worktree.GitDir != "" {
+			if _, err := os.Stat(rec.Worktree.GitDir); err == nil {
+				rec.Repo = core.RepoID(rec.Worktree.GitDir)
+				l.records.Save(rec)
+			}
+		}
+		if rec.IsLanded() || !landsAlone(rec, stateIn(panes, listErr, rec), time.Now(), keep) {
+			continue
+		}
+		if _, st := l.state(rec); !landsAlone(rec, st, time.Now(), keep) {
+			continue
+		}
+		if rec.Blocked != "" && rec.Stamp == launch.Stamp(rec.Worktree.Path) {
+			continue
+		}
+		var err error
+		if !rec.Killed.IsZero() && !rec.Adopted && codeGone(rec) == "" {
+			err = l.unused(rec, dirs)
+			if err == nil {
+				_, err = l.End(rec.Key, "")
+			}
+		} else {
+			_, err = l.landUnused(rec, dirs)
+		}
+		if err == nil {
+			continue
+		}
+		rec, _ = l.records.Find(rec.Key)
+		rec.Blocked, rec.Stamp = err.Error(), launch.Stamp(rec.Worktree.Path)
+		errs = append(errs, l.records.Save(rec))
+		if !errors.As(err, &unlandable{}) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // goalWork reports which sessions work under a goal, none without a core to read goals from.
@@ -983,6 +1011,9 @@ func (l launcher) End(ref, goal string) (string, error) {
 		if err := launch.Discard(rec.Worktree); err != nil {
 			return "", err
 		}
+		if rec.Recovery == (launch.Recovery{}) {
+			launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch, l.squash)
+		}
 		if rec.Recovery != (launch.Recovery{}) {
 			kept = fmt.Sprintf(", kept %s", core.Toll{Commits: rec.Recovery.Commits, Files: rec.Recovery.Files}.Work())
 		}
@@ -1053,14 +1084,22 @@ func (l launcher) landUnused(rec launch.Record, dirs func() []string) (string, e
 	if lost := codeGone(rec); lost != "" && !rec.Adopted {
 		return "", unlandable{rec.Key, rec.Worktree.Path, "is gone with its repository; ym revive resumes its conversation"}
 	}
+	if err := l.unused(rec, dirs); err != nil {
+		return "", err
+	}
+	return l.land(rec)
+}
+
+// unused refuses while a process in dirs works in rec's worktree.
+func (l launcher) unused(rec launch.Record, dirs func() []string) error {
 	if !rec.Adopted {
 		if path, err := filepath.EvalSymlinks(rec.Worktree.Path); err == nil {
 			if user := launch.Inside(path, dirs()); user != "" {
-				return "", unlandable{rec.Key, rec.Worktree.Path, "has a process working in " + user}
+				return unlandable{rec.Key, rec.Worktree.Path, "has a process working in " + user}
 			}
 		}
 	}
-	return l.land(rec)
+	return nil
 }
 
 func (l launcher) land(rec launch.Record) (string, error) {

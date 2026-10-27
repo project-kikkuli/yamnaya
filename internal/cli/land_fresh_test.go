@@ -62,6 +62,8 @@ func TestASessionKilledRightAfterItsLaunchStaysForItsManager(t *testing.T) {
 					t.Fatal("the agent never ended")
 				}
 			}
+			l.Sweep()
+			l.srv = &tmux.Host{Socket: socket, Kind: tmux.Server}
 			rows := l.Dormant()
 			kept, _ := l.records.Find(rec.Key)
 			if kept.IsLanded() != c.landed {

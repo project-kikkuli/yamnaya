@@ -135,6 +135,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 				l.forget(rec)
 			}
 
+			l.Sweep()
 			rows := l.Dormant()
 			kept, recorded := l.records.Find(rec.Key)
 			_, statErr := os.Stat(wt)

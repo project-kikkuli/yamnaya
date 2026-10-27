@@ -57,6 +57,10 @@ type Record struct {
 	Recovery Recovery `json:"recovery,omitzero"`
 	// Goal is the goal or chief whose kill ended the session, so reviving it revives the session too.
 	Goal string `json:"goal,omitempty"`
+	// Blocked is why the last automatic landing refused, with Stamp the worktree's Stamp then; it is not tried again until the
+	// worktree changes.
+	Blocked string `json:"blocked,omitempty"`
+	Stamp   string `json:"stamp,omitempty"`
 	// Running is set while ym last saw its agent run; Revive once ym's tmux server went away under it, as a restart of the host
 	// leaves it, so it resumes instead of landing.
 	Running bool `json:"running,omitempty"`

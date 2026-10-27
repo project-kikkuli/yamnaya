@@ -64,6 +64,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 			}
 
 			os.WriteFile(fail, nil, 0o644)
+			l.Sweep()
 			rows := l.Dormant()
 			_, reviveErr := l.revive(rec)
 			kept, _ := l.records.Find(rec.Key)
@@ -80,7 +81,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 
 			os.Remove(fail)
 			time.Sleep(600 * time.Millisecond)
-			l.Dormant()
+			l.Sweep()
 			kept, _ = l.records.Find(rec.Key)
 			if want := agent == "exit 0"; kept.IsLanded() != want {
 				t.Fatalf("once tmux answers, landed %v, want %v", kept.IsLanded(), want)

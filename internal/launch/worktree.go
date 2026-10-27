@@ -261,6 +261,30 @@ func Remove(w Worktree) error {
 	return err
 }
 
+// Stamp changes whenever git work in the worktree at path could change whether it lands: its HEAD, index or top directory moves.
+// It reads only file times, never running git; take it after git reads the worktree, since git status may rewrite the index.
+func Stamp(path string) string {
+	parts := []string{}
+	at := func(p string) {
+		if fi, err := os.Stat(p); err == nil {
+			parts = append(parts, strconv.FormatInt(fi.ModTime().UnixNano(), 36))
+		} else {
+			parts = append(parts, "-")
+		}
+	}
+	at(path)
+	gitDir := filepath.Join(path, ".git")
+	if b, err := os.ReadFile(gitDir); err == nil {
+		if d, ok := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir: "); ok {
+			gitDir = d
+		}
+	}
+	for _, f := range []string{"HEAD", "index", "logs/HEAD"} {
+		at(filepath.Join(gitDir, f))
+	}
+	return strings.Join(parts, ".")
+}
+
 // Discard deletes the worktree even when it is dirty, keeping its branch.
 func Discard(w Worktree) error {
 	root := filepath.Dir(w.GitDir)
