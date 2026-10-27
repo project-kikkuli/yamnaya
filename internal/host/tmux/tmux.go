@@ -132,12 +132,19 @@ func (h *Host) table() (map[string]pane, map[string]Pane, error) {
 	if err != nil {
 		return h.panes, h.sessions, nil
 	}
+	reap := false
+	defer func() {
+		if reap {
+			h.reap()
+		}
+	}()
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.SplitN(line, "\t", 5)
 		if len(f) != 5 {
 			continue
 		}
 		if p, err := parsePane(f[3], f[4]); err == nil {
+			reap = reap || p.unreaped
 			if _, seen := h.sessions[f[3]]; !seen {
 				h.sessions[f[3]] = p
 			}

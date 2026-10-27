@@ -115,6 +115,8 @@ type Pane struct {
 	Status  int
 	Signal  string
 	PID     int
+	// unreaped is set while the pane's terminal has closed but tmux has not collected how its process ended.
+	unreaped bool
 }
 
 const paneFormat = "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_pid}\t#{pane_dead_signal}"
@@ -160,7 +162,20 @@ func (h *Host) Pane(name string) (Pane, error) {
 	if err != nil {
 		return Pane{}, err
 	}
-	return parsePane(name, out)
+	p, err := parsePane(name, out)
+	if p.unreaped {
+		h.reap()
+	}
+	return p, err
+}
+
+// reap has the server collect the processes of its exited panes. tmux sometimes misses a pane's SIGCHLD and leaves the process
+// a zombie, its exit unknown, until another child ends; a SIGCHLD of ym's own, harmless to any process, has it look again.
+func (h *Host) reap() {
+	out, err := h.run("display-message", "-p", "#{pid}")
+	if pid, perr := strconv.Atoi(strings.TrimSpace(out)); err == nil && perr == nil && pid > 1 {
+		syscall.Kill(pid, syscall.SIGCHLD)
+	}
 }
 
 // Panes is the first pane of every session on the server, by session name; none when the server is down, an error when tmux
@@ -184,8 +199,8 @@ func parsePane(name, out string) (Pane, error) {
 		}
 	}
 	// tmux marks a pane dead when its terminal closes, before it reaps the process; until it has, the exit is not known yet.
-	dead := f[2] == "1" && (f[3] != "" || f[5] != "")
-	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: dead, Status: status, Signal: signal, PID: pid}, nil
+	unreaped := f[2] == "1" && f[3] == "" && f[5] == ""
+	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1" && !unreaped, Status: status, Signal: signal, PID: pid, unreaped: unreaped}, nil
 }
 
 // Kill ends session name; a session that is already gone is not an error.
