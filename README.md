@@ -201,6 +201,29 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
 
+### Civilizations
+
+A strategy-game world map seen from above. Each repository is a continent, named over its coast; each chief is an empire, a dashed border round its continents with its name on the top edge, and a nested chief's continent has a dashed border of its own inside it. Each goal is a civilization on the continent: its capital, its road, its cities, and a tinted territory that spreads east from the capital as the work progresses. Land and sea darken and light with your clock.
+
+| Sign | Meaning |
+|---|---|
+| `goal 50%` over a capital `⌂` | A unit and its progress; its territory is wider the more is done. A crowded continent folds civilizations into `N civs`, a crowded map continents into `N continents`. |
+| `♞` | A busy agent, a unit marching along the road, pale yellow at night and dark blue by day. |
+| red `♝` | An agent stopped and waiting on you: an envoy standing still at the capital's west gate. Always red. |
+| grey `♙N` | Resting teammates under the capital, with how many when more than one. |
+| `∘` `▪` `■` `▣` | A pull request: a city off the road, a hamlet growing to a town, a city and a citadel for each of its six gates passed. |
+| green city / red city on embers | CI passed / CI failing: a thriving or a burning city. A crowded civilization shows its burning cities first. |
+| gold `♜` | A merged pull request: a wonder. |
+| gold `♛` | The capital crowned: the goal is done, or every pull request is merged. |
+| red `⚑` | A blinking envoy flag over the capital: something waits on you. The name turns red. |
+| `▾` | Before the selected row's civilization, continent or empire, its name lit. |
+| `░` | Clouds: stagnation, a grey fog of war over the civilization. |
+| `⚔` on a dark pall | Storm: war or plague. |
+| `▖▝` rubble, `^` fires, the capital a ruin `Π` | Eruption: sacked by barbarians; the manager is down. |
+| Gold border shimmering round the territory | Summit: a golden age. |
+| Cities razed `∩`, the capital a ruin `Π` | A killed unit: the civilization falls and its territory fades to rubble and bare land, then it is gone. |
+| Ocean, waves, coasts, unnamed islands, forests `♣`, mountains `▲`, roads `─`, territory tints | Decoration only. Tints only tell neighbors apart; colors never mark a goal or repository. |
+
 ### Moai
 
 An island coast. Each repository is an ahu, a stone platform with its name cut in it and a cove of sea at its foot; each chief is a ceremonial site, its ahu side by side over a `╰─ name site ─╯` line. Each goal is a moai on the ahu, carved out of its block as the work progresses: a rough block under a third, then the face, then the whole figure. Sun, moon, stars and the Milky Way follow your clock.
