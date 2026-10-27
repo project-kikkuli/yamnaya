@@ -60,7 +60,7 @@ func (m Model) treeRows() []row {
 			return all[i].Repo < all[j].Repo
 		})
 		for i := range all {
-			if m.matches(all[i].Goal.Ask, all[i].Manager.Name) {
+			if m.matches(all[i].Goal.Ask, all[i].Manager.Name, m.hostText(all[i].Manager.Host)) {
 				out = append(out, row{node: &all[i], group: goalGroup(all[i])})
 			}
 		}
@@ -69,7 +69,7 @@ func (m Model) treeRows() []row {
 	var walk func([]*core.Node, int, bool, string)
 	walk = func(ns []*core.Node, depth int, all bool, group string) {
 		for _, n := range ns {
-			hit := all || m.matches(nodeText(*n))
+			hit := all || m.matches(nodeText(*n), m.hostText(n.Manager.Host))
 			if hit || m.treeMatches(n.Children) {
 				out = append(out, row{node: n, depth: depth, group: group})
 				var kids []*core.Node
@@ -128,7 +128,7 @@ func groupLabel(group string) string {
 // treeMatches reports whether the filter matches any node in ns or below them.
 func (m Model) treeMatches(ns []core.Node) bool {
 	for _, n := range ns {
-		if m.matches(nodeText(n)) || m.treeMatches(n.Children) {
+		if m.matches(nodeText(n), m.hostText(n.Manager.Host)) || m.treeMatches(n.Children) {
 			return true
 		}
 	}
@@ -227,7 +227,7 @@ func (m Model) queueRows() []row {
 	var out []row
 	for i := range m.board.Needs {
 		n := &m.board.Needs[i]
-		if !m.matches(m.projectName(n.Project), needText(*n)) {
+		if !m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
 			continue
 		}
 		out = append(out, row{need: n, item: n.Item, session: n.Session})

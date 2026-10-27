@@ -1480,7 +1480,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    enter        an item: expand it; a permission prompt: go to its session; an exited launch: revive it;
                 anything else: open it
    esc          go back up, or clear the filter
-   /            filter
+   /            filter by text or host: local, a machine's name, or its @tag shown on rows
    q            back or quit
 
    Act on the selected row

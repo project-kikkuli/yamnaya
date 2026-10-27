@@ -582,7 +582,7 @@ func (m Model) rows() []row {
 			out = append(out, row{stale: true})
 			for i := range m.board.Stale {
 				n := &m.board.Stale[i]
-				if m.showStale && m.matches(m.projectName(n.Project), needText(*n)) {
+				if m.showStale && m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
 					out = append(out, row{need: n, item: n.Item})
 				}
 			}
@@ -596,7 +596,7 @@ func (m Model) rows() []row {
 				if r.Missions[j].Manager != "" {
 					continue
 				}
-				if all || m.matches(r.Missions[j].Name) {
+				if all || m.matches(r.Missions[j].Name, m.hostText(m.projectHost(r.Missions[j]))) {
 					missions = append(missions, row{project: &r.Missions[j], repo: r})
 				}
 			}
@@ -658,6 +658,14 @@ func (m Model) matches(texts ...string) bool {
 		}
 	}
 	return false
+}
+
+// hostText is every label the board gives a host: its full name, its short tag, and "local" with this machine's name for this host.
+func (m Model) hostText(host string) string {
+	if host == "" {
+		return "local " + m.host
+	}
+	return host + " " + m.hostTag(host)
 }
 
 func needText(n core.Need) string {

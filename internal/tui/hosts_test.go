@@ -3,6 +3,7 @@ package tui
 import (
 	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -173,5 +174,70 @@ func TestTheItemsListShowsAnotherHostsClosedItemWithTheHistoryThatHostKept(t *te
 	m = press(t, m, "enter")
 	if v := ansi.Strip(m.View().Content); m.mode != modeWhy || !strings.Contains(v, "did not land: answered there already: D") {
 		t.Fatalf("enter on box's item shows mode %v:\n%s", m.mode, v)
+	}
+}
+
+func TestFilterMatchesTheHostRowsShowForLocalAndRemoteRows(t *testing.T) {
+	m, c, _ := setup(t)
+	m, _ = withBox(t, m, c)
+	local := m.host
+	for _, c := range []struct {
+		name, filter string
+		show, hide   []string
+	}{
+		{"short tag", "@boxmachine", []string{"Merge the far branch?"}, []string{"Ship it?", "Rename the flag?"}},
+		{"full host", "dev-team-boxmachine.example.net", []string{"Merge the far branch?"}, []string{"Ship it?", "Rename the flag?"}},
+		{"local word", "local", []string{"Ship it?", "Rename the flag?"}, []string{"Merge the far branch?"}},
+		{"this machine", strings.ToUpper(local), []string{"Ship it?", "Rename the flag?"}, []string{"Merge the far branch?"}},
+		{"no host text", "Ship", []string{"Ship it?"}, []string{"Rename the flag?", "Merge the far branch?"}},
+		{"unknown host", "@nowhere", nil, []string{"Ship it?", "Merge the far branch?"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := press(t, m, "/", "paste:"+c.filter, "enter")
+			out := ansi.Strip(f.View().Content)
+			for _, s := range c.show {
+				if !strings.Contains(out, s) {
+					t.Errorf("filter %q hides %q:\n%s", c.filter, s, out)
+				}
+			}
+			for _, s := range c.hide {
+				if strings.Contains(out, s) {
+					t.Errorf("filter %q shows %q:\n%s", c.filter, s, out)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterMatchesTheHostOfGoalsAndChiefs(t *testing.T) {
+	m, _, _ := setup(t)
+	m.board = core.Board{Tree: []core.Node{
+		{Manager: core.Manager{ID: "m1"}, Goal: &core.Goal{ID: "g1", Ask: "near goal"}},
+		{Manager: core.Manager{ID: box + "/m2", Host: box}, Goal: &core.Goal{ID: "g2", Ask: "far goal"}},
+	}, Remotes: []core.RemoteBoard{{Host: box}}}
+	for _, flat := range []bool{false, true} {
+		for _, c := range []struct {
+			filter string
+			want   []string
+		}{
+			{"@boxmachine", []string{"far goal"}},
+			{box, []string{"far goal"}},
+			{"local", []string{"near goal"}},
+			{"goal", []string{"near goal", "far goal"}},
+		} {
+			f := m
+			f.flat, f.filter = flat, c.filter
+			var got []string
+			for _, r := range f.rows() {
+				if r.node != nil {
+					got = append(got, r.node.Goal.Ask)
+				}
+			}
+			slices.Sort(got)
+			slices.Sort(c.want)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("flat=%v filter %q shows %v, want %v", flat, c.filter, got, c.want)
+			}
+		}
 	}
 }

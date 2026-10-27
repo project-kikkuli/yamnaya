@@ -100,7 +100,7 @@ The footer shows the everyday keys; `?` lists every key.
 | `c` | chief menu: `a` attach the goal or chief (and the selection) to a chief, or to you; `d` detach it from its chief; `n` new chief over the goals and chiefs you check |
 | `b` | show the goal's or chief's brief |
 | `n` | new goal: pick the repository first, then type it in your words |
-| `/` | filter |
+| `/` | filter rows by text or host: `local`, this machine's name, a remote's full name or its `@tag` shown on rows |
 | `?` | every key |
 
 Behind `?`:
