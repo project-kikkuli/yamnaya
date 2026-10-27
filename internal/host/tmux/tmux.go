@@ -95,9 +95,10 @@ func (e *runError) Error() string {
 
 func (e *runError) Unwrap() error { return e.err }
 
-// absent reports whether tmux's message says the session it was asked about, or the whole server, does not exist.
+// absent reports whether tmux's message says the session it was asked about, or the whole server, does not exist; a server ending
+// after its last session went says it has no current target.
 func absent(text string) bool {
-	return strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") ||
+	return strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") || text == "no current target" ||
 		strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)")
 }
 

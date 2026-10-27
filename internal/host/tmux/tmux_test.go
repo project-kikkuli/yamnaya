@@ -245,6 +245,7 @@ func TestTmuxFailingToListIsNeverAnEmptyTable(t *testing.T) {
 		{name: "tmux fails to answer", stderr: "server exited unexpectedly", wantErr: true},
 		{name: "the server is not running", stderr: "no server running on /private/tmp/tmux-501/fake", wantGone: true},
 		{name: "the session is gone", stderr: "can't find session: cost", wantGone: true},
+		{name: "the server is ending after its last session went", stderr: "no current target", wantGone: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
