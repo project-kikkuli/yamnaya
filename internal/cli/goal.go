@@ -48,7 +48,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
-		goalRelaunchCmd(hosts), goalDropCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
+		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with))
 	return cmd
 }
@@ -518,26 +518,6 @@ func goalRelaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched as %s\n", m.ID, core.Short(m.Session))
-			return nil
-		}),
-	}
-}
-
-func goalDropCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	return &cobra.Command{
-		Use:   "drop <goal|manager|chief>",
-		Short: "Drop a goal you no longer want, or retire a chief; ym stops supervising it",
-		Args:  cobra.ExactArgs(1),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			g, err := e.core.DropGoal(args[0])
-			if err != nil {
-				return err
-			}
-			if g.ID == "" {
-				fmt.Fprintln(cmd.OutOrStdout(), "retired")
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), g.ID+" dropped")
-			}
 			return nil
 		}),
 	}

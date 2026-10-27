@@ -45,10 +45,12 @@ type Launches interface {
 	Send(s Live, text string) (string, error)
 	// Start launches a new agent in its own worktree on ym's server.
 	Start(n NewLaunch) (Started, error)
-	// Land ends a launched session and removes its worktree, only when its branch is clean and merged or pushed.
-	Land(ref string) (string, error)
-	// Forget ends a launched session and drops its record, leaving its worktree and branch.
-	Forget(ref string) (string, error)
+	// End closes a launched session's pane and removes its worktree, first bundling into ym's state any work no remote holds so
+	// ym revive restores it; goal tags the session so reviving that goal or chief revives it. It fails with ErrNotFound when ym
+	// launched no session ref names.
+	End(ref, goal string) (string, error)
+	// Weigh is the Toll End would take on the launched session ref names, Sessions left zero.
+	Weigh(ref string) (Toll, error)
 	// GC removes idle worktrees of known repositories that lose nothing, then branches merged into origin's default branch.
 	GC() (string, error)
 	// Relaunch resumes session id of harness on ym's server in from's directory, taking over from's launch record when it has one.

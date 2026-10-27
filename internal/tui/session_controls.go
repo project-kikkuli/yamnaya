@@ -1,32 +1,36 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-func (m Model) landingTargets(r row) ([]string, string) {
+// killTargets are the sessions K on r ends, live or exited, and how the confirmation names them.
+func (m Model) killTargets(r row) ([]core.Live, string) {
+	if s := m.killable(r); s != nil {
+		return []core.Live{*s}, s.Label()
+	}
+	dormant := func(d core.Dormant) core.Live {
+		return core.Live{Session: core.Session{ID: d.ID(), Harness: d.Harness, Title: d.Title}}
+	}
 	if r.dormant != nil {
-		return []string{r.dormant.Key}, r.dormant.Key
+		return []core.Live{dormant(*r.dormant)}, r.dormant.Key
 	}
-	if s := m.sessionOf(r); s != nil && s.ID != "" {
-		if m.hasLaunch(s.ID) {
-			return []string{s.ID}, s.Label()
-		}
+	if r.need != nil || r.item != nil || r.stale || r.member != nil {
 		return nil, ""
 	}
-	if p := m.projectOf(r); p != nil && len(p.Sessions) == 1 && p.Sessions[0].ID != "" {
-		if m.hasLaunch(p.Sessions[0].ID) {
-			return []string{p.Sessions[0].ID}, p.Sessions[0].Label()
-		}
-		return nil, ""
-	}
-	if p := m.projectOf(r); p != nil && len(p.Dormant) > 0 {
-		var refs []string
+	if p := m.projectOf(r); p != nil && r.session == nil && (len(p.Sessions) > 0 || len(p.Dormant) > 0) {
+		var out []core.Live
+		out = append(out, p.Sessions...)
 		for _, d := range p.Dormant {
-			refs = append(refs, d.Key)
+			out = append(out, dormant(d))
 		}
-		return refs, fmt.Sprintf("%s's %d exited sessions", p.Name, len(refs))
+		return out, p.Name
 	}
 	return nil, ""
 }
@@ -42,17 +46,11 @@ func (m Model) sessionHints() string {
 		return ""
 	}
 	var hints []string
-	if m.killable(r) != nil {
+	if ss, _ := m.killTargets(r); len(ss) > 0 && !m.dying(ss) {
 		hints = append(hints, "K kill")
-	} else if ids, _ := m.stoppedTargets(r); len(ids) > 0 {
-		hints = append(hints, "K archive")
 	}
 	if r.dormant != nil {
 		hints = append(hints, "B subscription")
-	}
-	refs, _ := m.landingTargets(r)
-	if len(refs) > 0 && m.core.Launches != nil {
-		hints = append(hints, "L land", "F forget")
 	}
 	if s := m.sessionOf(r); s != nil {
 		if s.ID != "" && m.core.Launches != nil {
@@ -63,25 +61,92 @@ func (m Model) sessionHints() string {
 	return strings.Join(hints, hintSep)
 }
 
-func (m Model) hasLaunch(session string) bool {
-	for _, l := range m.board.Launched {
-		if l.Session == session && l.Landed.IsZero() {
-			return true
+// dying reports whether a kill already tears down every session in ss.
+func (m Model) dying(ss []core.Live) bool {
+	for _, s := range ss {
+		if !m.killing[s.Key()] {
+			return false
 		}
 	}
-	return false
+	return len(ss) > 0
 }
 
-func (m Model) stoppedTargets(r row) ([]string, string) {
-	if r.dormant != nil {
-		return []string{r.dormant.ID()}, r.dormant.Title
+// rowDying reports whether a kill started from the board is tearing r down.
+func (m Model) rowDying(r row) bool {
+	if r.node != nil && r.session == nil {
+		return m.killing["node:"+r.node.Manager.ID]
 	}
-	if p := m.projectOf(r); p != nil && len(p.Sessions) == 0 {
-		var ids []string
-		for _, d := range p.Dormant {
-			ids = append(ids, d.ID())
+	ss, _ := m.killTargets(r)
+	return m.dying(ss)
+}
+
+// weighedMsg carries what a kill would end, counted off the UI thread, to ask before it runs.
+type weighedMsg struct {
+	ask  string
+	keys []string
+	run  func() (string, error)
+	err  error
+}
+
+// killedMsg reports a kill's teardown, run off the UI thread, ending the rows it marked dying.
+type killedMsg struct {
+	keys    []string
+	message string
+	err     error
+}
+
+// weighKill counts what killing ss would end, then asks; yes tears them down off the UI thread, marking their rows dying.
+func (m Model) weighKill(ss []core.Live, label string) tea.Cmd {
+	c := m.core
+	return func() tea.Msg {
+		keys := make([]string, len(ss))
+		for i, s := range ss {
+			keys[i] = s.Key()
 		}
-		return ids, p.Name
+		return weighedMsg{ask: fmt.Sprintf("kill %s: %s?", label, c.Weigh(ss)), keys: keys, run: func() (string, error) {
+			var said []string
+			var errs []error
+			for _, s := range ss {
+				msg, err := c.Kill(s)
+				if err != nil {
+					errs = append(errs, err)
+					continue
+				}
+				said = append(said, msg)
+			}
+			return strings.Join(said, "; "), errors.Join(errs...)
+		}}
 	}
-	return nil, ""
+}
+
+// weighGoal counts what killing the goal or chief n would end, then asks as weighKill does.
+func (m Model) weighGoal(n core.Node) tea.Cmd {
+	c, b := m.core, m.board
+	id, label, host := n.Manager.ID, n.Manager.Label(), n.Manager.Host
+	if n.Goal != nil {
+		label = n.Goal.ID + " (" + oneLine(n.Goal.Ask) + ")"
+	}
+	return func() tea.Msg {
+		keys := []string{"node:" + id}
+		run := func() (string, error) { return c.KillGoal(b, id) }
+		if n.Goal == nil {
+			return weighedMsg{ask: "retire chief " + label + "? its session ends; its goals and chiefs keep running and report one level up", keys: keys, run: run}
+		}
+		if host != "" {
+			ss := []core.Live{}
+			if n.Live != nil {
+				ss = append(ss, *n.Live)
+			}
+			ss = append(ss, n.Agents...)
+			return weighedMsg{ask: fmt.Sprintf("kill goal %s on %s with its manager, agents and verifier: %s?", label, host, c.Weigh(ss)), keys: keys, run: run}
+		}
+		_, ss, err := c.KillTargets(b, id)
+		if err != nil {
+			return weighedMsg{err: err}
+		}
+		for _, s := range ss {
+			keys = append(keys, s.Key())
+		}
+		return weighedMsg{ask: fmt.Sprintf("kill goal %s: %s?", label, c.Weigh(ss)), keys: keys, run: run}
+	}
 }

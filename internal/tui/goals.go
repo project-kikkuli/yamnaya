@@ -273,6 +273,7 @@ func (m Model) chiefRows() []row {
 
 var standStyle = map[string]func(string) string{
 	core.StandDone:      func(s string) string { return pal.green.Render(s) },
+	core.StandKilled:    func(s string) string { return pal.dim.Render(s) },
 	core.StandVerifying: func(s string) string { return pal.yellow.Render(s) },
 	core.StandMoving:    func(s string) string { return s },
 	core.StandQuiet:     func(s string) string { return pal.dim.Render(s) },
@@ -284,7 +285,7 @@ var standStyle = map[string]func(string) string{
 // nodeLines is a goal or chief row, indented under its chief: who owns it, how it stands, how fresh its brief is, and what it is about.
 func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	mark := m.mark(i)
-	if m.picked[n.Manager.ID] {
+	if m.picked[n.Manager.ID] && !m.dyingAt[i] {
 		mark = mark[:len(mark)-1] + "*"
 	}
 	stand := standStyle[n.Standing](pad(n.Standing, 7))
@@ -332,7 +333,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	if n.Manager.LastError != "" {
 		meta = append(meta, "launch: "+n.Manager.LastError)
 	}
-	if n.Goal == nil || n.Goal.State != core.GoalDone {
+	if n.Goal == nil || !n.Goal.Ended() {
 		if f := n.Fresh; f.Stale() {
 			meta = append(meta, pal.yellow.Render(briefMeta(m.board.At, n)))
 		} else {
@@ -343,11 +344,12 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		meta = append(meta, "on "+host+": "+state)
 	}
 	keys := "enter open · r reply · b brief · c chief · S steer plan · R relaunch · W brief page · o session · space select"
-	if n.Goal != nil && n.Goal.State == core.GoalDone {
-		keys += " · x clear · K drop"
-	} else if n.Goal != nil {
-		keys += " · K drop"
-	} else {
+	switch {
+	case n.Goal != nil && n.Goal.Ended():
+		keys += " · x clear"
+	case n.Goal != nil:
+		keys += " · K kill"
+	default:
 		keys += " · K retire"
 	}
 	if brief, ok := m.artifact(n); ok && brief != "" {
@@ -367,7 +369,7 @@ func briefTag(at time.Time, n core.Node) string {
 	switch {
 	case f.Brief == nil:
 		return pal.dim.Render(pad("no brief", 11))
-	case f.Stale() && (n.Goal == nil || n.Goal.State != core.GoalDone):
+	case f.Stale() && (n.Goal == nil || !n.Goal.Ended()):
 		return pal.yellow.Render(pad("brief stale", 11))
 	}
 	a := strings.TrimSuffix(age(at, f.Brief.CreatedAt), " ago")
@@ -420,7 +422,7 @@ func goalToClear(r row) *core.Goal {
 	switch {
 	case r.need != nil && r.need.Goal != nil:
 		return r.need.Goal
-	case r.node != nil && r.node.Goal != nil && r.node.Goal.State == core.GoalDone:
+	case r.node != nil && r.node.Goal != nil && r.node.Goal.Ended():
 		return r.node.Goal
 	}
 	return nil
@@ -826,16 +828,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if r.node == nil {
 			return m, nil, false
 		}
-		id, label := n.Manager.ID, n.Manager.Label()
-		what := "drop goal " + label + "? ym stops supervising it; its sessions keep running"
-		if n.Goal == nil {
-			what = "retire " + label + "? its reports report to its own chief or you"
+		if (n.Goal != nil && n.Goal.Ended()) || m.killing["node:"+n.Manager.ID] {
+			return m, nil, true
 		}
-		m.confirm(what, m.do(func() (string, error) {
-			_, err := m.core.DropGoal(id)
-			return "dropped " + id, err
-		}))
-		return m, nil, true
+		m.message = "counting what killing " + n.Manager.Label() + " ends"
+		return m, m.weighGoal(n), true
 	case "D":
 		if r.node == nil || n.Manager.ParentID == "" {
 			return m, nil, false

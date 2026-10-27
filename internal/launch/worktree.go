@@ -260,3 +260,10 @@ func Remove(w Worktree) error {
 	_, err := git(root, "worktree", "remove", w.Path)
 	return err
 }
+
+// Discard deletes the worktree even when it is dirty, keeping its branch.
+func Discard(w Worktree) error {
+	root := filepath.Dir(w.GitDir)
+	_, err := git(root, "worktree", "remove", "--force", "--force", w.Path)
+	return err
+}

@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
@@ -37,14 +40,19 @@ func TestKillAsksOnATerminalAndNeedsYesWithout(t *testing.T) {
 		want   string
 	}{
 		{"no terminal, no --yes", false, false, "", false, "pass --yes"},
-		{"no terminal, --yes", true, false, "", true, "killed claude 06456f12"},
+		{"no terminal, --yes", true, false, "", true, "killed app-wt-x"},
 		{"terminal, n", false, true, "n\n", false, "not killed"},
-		{"terminal, y", false, true, "y\n", true, "kill claude 06456f12 (Allergies rollout)? y/n killed"},
+		{"terminal, y", false, true, "y\n", true, "kill claude 06456f12 (Allergies rollout): 1 session? y/n killed app-wt-x"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dead := false
 			var sent []int
-			k := &core.Core{Harnesses: []core.Harness{agent{}},
+			st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			k := &core.Core{Store: st, Harnesses: []core.Harness{agent{}},
 				Procs: func() ([]proc.Proc, error) {
 					if dead {
 						return nil, nil
@@ -57,13 +65,13 @@ func TestKillAsksOnATerminalAndNeedsYesWithout(t *testing.T) {
 					}
 					return nil
 				}}
-			l := launcher{records: launch.Records{Dir: t.TempDir()}}
+			l := launcher{records: launch.Records{Dir: t.TempDir()}, srv: &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}}
 			if err := l.records.Save(launch.Record{Key: "app-wt-x", Harness: "claude", Session: "06456f12-aaaa"}); err != nil {
 				t.Fatal(err)
 			}
 			k.Launches = l
 			var out bytes.Buffer
-			err := kill(k, "06456f12", c.yes, c.tty, strings.NewReader(c.in), &out)
+			err = kill(k, "06456f12", c.yes, false, c.tty, strings.NewReader(c.in), &out)
 			got := out.String()
 			if err != nil {
 				got += err.Error()

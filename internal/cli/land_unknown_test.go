@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,13 +65,12 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 
 			os.WriteFile(fail, nil, 0o644)
 			rows := l.Dormant()
-			landAll := l.LandAll()
 			_, reviveErr := l.revive(rec)
 			kept, _ := l.records.Find(rec.Key)
 			_, statErr := os.Stat(wt)
-			if kept.IsLanded() || statErr != nil || len(rows) != 0 || !strings.Contains(landAll, "skipped "+rec.Key+": unknown") || reviveErr == nil {
-				t.Fatalf("while tmux fails: landed %v, worktree err %v, rows %+v, land --all %q, revive err %v; want nothing landed, listed or revived",
-					kept.IsLanded(), statErr, rows, landAll, reviveErr)
+			if kept.IsLanded() || statErr != nil || len(rows) != 0 || reviveErr == nil {
+				t.Fatalf("while tmux fails: landed %v, worktree err %v, rows %+v, revive err %v; want nothing landed, listed or revived",
+					kept.IsLanded(), statErr, rows, reviveErr)
 			}
 			for _, launched := range l.Launched() {
 				if launched.Key == rec.Key && !launched.MayRun() {

@@ -421,7 +421,7 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 func (l launcher) await(rec launch.Record) (launch.Record, error) {
 	for deadline := time.Now().Add(core.StartGrace); rec.Session == ""; time.Sleep(250 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			l.Forget(rec.Key)
+			l.forget(rec)
 			return rec, fmt.Errorf("codex in %s recorded no thread within %s, so ym ended it", rec.Key, core.StartGrace)
 		}
 		rec = l.settle(rec)
@@ -735,11 +735,28 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		}
 	}
 	was := rec
-	back, lost, err := launch.Restore(rec.Worktree, rec.Head, l.clones(rec))
+	clones := l.clones(rec)
+	if rec.Recovery != (launch.Recovery{}) {
+		for _, gd := range append([]string{rec.Worktree.GitDir}, clones...) {
+			if _, err := os.Stat(gd); err == nil && gd != "" {
+				if err := rec.Recovery.Fetch(gd, rec.Key); err != nil {
+					return nil, "", err
+				}
+				break
+			}
+		}
+	}
+	back, lost, err := launch.Restore(rec.Worktree, rec.Head, clones)
 	if err != nil {
 		return nil, "", err
 	}
 	rec.Worktree = back
+	if rec.Recovery != (launch.Recovery{}) && lost == "" {
+		if err := rec.Recovery.Apply(rec.Worktree.Path, rec.Key); err != nil {
+			return nil, "", fmt.Errorf("restore the work ym kill kept of %s: %w", rec.Key, err)
+		}
+		rec.Recovery = launch.Recovery{}
+	}
 	if err := trustRecord(rec); err != nil {
 		return nil, "", err
 	}
@@ -765,7 +782,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		rec.NativePID = p.PID
 		rec.Dedicated = rec.Harness == codex.Name
 	}
-	rec.Landed, rec.Killed, rec.Revive, rec.Seen = time.Time{}, time.Time{}, false, time.Time{}
+	rec.Landed, rec.Killed, rec.Revive, rec.Seen, rec.Goal = time.Time{}, time.Time{}, false, time.Time{}, ""
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
 			return nil, "", err
@@ -862,11 +879,39 @@ func (l launcher) goalWork() func(session, parent string) bool {
 }
 
 func (l launcher) Revive(key string) (string, error) {
+	if l.core != nil && l.core.OrgRef(key) {
+		return l.ReviveGoal(key)
+	}
 	rec, err := l.find(key)
 	if err != nil {
 		return l.remote(err, key, "revive")
 	}
 	return l.revive(rec)
+}
+
+// ReviveGoal brings back the goal or chief ref names and every session its kill ended, worktrees and work included.
+func (l launcher) ReviveGoal(ref string) (string, error) {
+	m, err := l.core.ReopenGoal(ref)
+	if err != nil {
+		return "", err
+	}
+	all, err := l.records.All()
+	if err != nil {
+		return "", err
+	}
+	n := 0
+	var errs []error
+	for _, rec := range all {
+		if rec.Goal != m.ID || !rec.IsLanded() {
+			continue
+		}
+		if _, err := l.revive(rec); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		n++
+	}
+	return fmt.Sprintf("revived %s with %d sessions", m.Label(), n), errors.Join(errs...)
 }
 
 func cleanDir(p string) string {
@@ -915,17 +960,57 @@ func (u unlandable) Error() string {
 	return fmt.Sprintf("not landing %s: %s %s", u.key, u.path, u.reason)
 }
 
-// Land ends a launched session and removes its worktree, refusing while its branch has work that is not clean and merged or pushed.
-func (l launcher) Land(ref string) (string, error) {
-	rec, err := l.find(ref)
+// End closes rec's pane and removes its worktree, bundling first the work no remote holds so ym revive restores it.
+func (l launcher) End(ref, goal string) (string, error) {
+	rec, err := l.find(strings.TrimPrefix(ref, "launch:"))
 	if err != nil {
-		return l.remote(err, ref, "land")
+		return l.remote(err, ref, "kill", "--yes")
 	}
 	if rec.IsLanded() {
-		return "", fmt.Errorf("%s landed %s; ym revive %s", rec.Key, rec.Landed.Format(time.DateTime), rec.Key)
+		return fmt.Sprintf("%s already ended %s", rec.Key, rec.Landed.Format(time.DateTime)), nil
 	}
-	return l.land(rec)
+	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
+		return "", err
+	}
+	kept := ""
+	if _, err := os.Stat(rec.Worktree.Path); err == nil && !rec.Adopted && rec.Worktree.GitDir != "" {
+		if head := launch.Head(rec.Worktree.Path); head != "" {
+			rec.Head = head
+		}
+		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {
+			return "", fmt.Errorf("keep the work of %s before removing %s: %w", rec.Key, rec.Worktree.Path, err)
+		}
+		if err := launch.Discard(rec.Worktree); err != nil {
+			return "", err
+		}
+		if rec.Recovery != (launch.Recovery{}) {
+			kept = fmt.Sprintf(", kept %s", core.Toll{Commits: rec.Recovery.Commits, Files: rec.Recovery.Files}.Work())
+		}
+	}
+	rec.Goal = goal
+	if err := l.landed(rec, "killed"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("killed %s%s; ym revive %s brings it back", rec.Key, kept, rec.Key), nil
 }
+
+// Weigh is what End would take on the launched session ref names: its worktree and the work in it no remote holds.
+func (l launcher) Weigh(ref string) (core.Toll, error) {
+	rec, err := l.records.Lookup(strings.TrimPrefix(ref, "launch:"))
+	if err != nil {
+		return core.Toll{}, err
+	}
+	if rec.IsLanded() || rec.Adopted || rec.Worktree.GitDir == "" {
+		return core.Toll{}, nil
+	}
+	if _, err := os.Stat(rec.Worktree.Path); err != nil {
+		return core.Toll{}, nil
+	}
+	t, err := launch.Weigh(rec.Worktree.Path)
+	return core.Toll{Worktrees: 1, Commits: t.Commits, Files: t.Files}, err
+}
+
+func (l launcher) recoveryDir() string { return filepath.Join(filepath.Dir(l.records.Dir), "recovery") }
 
 func (l launcher) SessionStopped(id string) error {
 	rec, ok := l.records.Find(id)
@@ -954,24 +1039,13 @@ func (l launcher) landed(rec launch.Record, why string) error {
 		Worktree: rec.Worktree, Head: rec.Head, Why: why})
 }
 
-// Forget ends a launched session and drops its record, leaving its worktree and branch as they are.
-func (l launcher) Forget(ref string) (string, error) {
-	rec, err := l.find(ref)
-	if err != nil {
-		return l.remote(err, ref, "land", "--forget")
-	}
-	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
-		return "", err
-	}
-	if err := l.records.Delete(rec.Key); err != nil {
-		return "", err
-	}
+// forget ends a launched session and drops its record, leaving its worktree and branch as they are.
+func (l launcher) forget(rec launch.Record) {
+	l.srv.Kill(tmux.SessionName(rec.Key))
+	l.records.Delete(rec.Key)
 	if l.core != nil {
-		if err := l.core.StopSession(core.Dormant{Key: rec.Key, Session: rec.Session}.ID()); err != nil {
-			return "", err
-		}
+		l.core.StopSession(core.Dormant{Key: rec.Key, Session: rec.Session}.ID())
 	}
-	return fmt.Sprintf("forgot %s; %s and branch %s stay", rec.Key, rec.Worktree.Path, rec.Worktree.Branch), nil
 }
 
 // landUnused lands rec unless a process in dirs works in its worktree, as an agent resumed outside ym's pane does.
@@ -1035,70 +1109,6 @@ func (l launcher) land(rec launch.Record) (string, error) {
 		}
 	}
 	return fmt.Sprintf("landed %s (%s); branch %s %s", rec.Key, why, rec.Worktree.Branch, kept), nil
-}
-
-// LandAll lands every dormant session that loses nothing, saying what it skipped.
-func (l launcher) LandAll() string {
-	all, _ := l.records.All()
-	dirs := sync.OnceValue(cwds)
-	var lines []string
-	for _, rec := range all {
-		if rec.IsLanded() {
-			continue
-		}
-		if _, st := l.state(rec); st == "running" || st == core.LaunchUnknown {
-			lines = append(lines, fmt.Sprintf("skipped %s: %s", rec.Key, st))
-			continue
-		}
-		msg, err := l.landUnused(rec, dirs)
-		if err != nil {
-			msg = fmt.Sprintf("skipped %s: %v", rec.Key, err)
-		}
-		lines = append(lines, msg)
-	}
-	if len(lines) == 0 {
-		return "nothing launched to land"
-	}
-	return strings.Join(lines, "\n")
-}
-
-func landCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "land <key|session> | --all",
-		Short: "End a launched session and remove its worktree, only when its branch is clean and merged or pushed; an adopted session's directory stays",
-	}
-	forget := cmd.Flags().Bool("forget", false, "end the session and drop its launch record, never touching its worktree or branch")
-	every := cmd.Flags().Bool("all", false, "land every dormant session that loses nothing")
-	cmd.Args = func(cmd *cobra.Command, args []string) error {
-		if *every {
-			return cobra.NoArgs(cmd, args)
-		}
-		return cobra.ExactArgs(1)(cmd, args)
-	}
-	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
-		if *every {
-			l, err := newLauncher()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), l.LandAll())
-			return nil
-		}
-		if e.core.Launches == nil {
-			return errors.New("ym's launcher is unavailable")
-		}
-		land := e.core.Launches.Land
-		if *forget {
-			land = e.core.Launches.Forget
-		}
-		msg, err := land(args[0])
-		if err != nil {
-			return err
-		}
-		fmt.Fprintln(cmd.OutOrStdout(), msg)
-		return nil
-	})
-	return cmd
 }
 
 // resumeWatchCmd answers Codex's "open in another app" notice with its own retry key. Codex's shared app-server keeps a quit

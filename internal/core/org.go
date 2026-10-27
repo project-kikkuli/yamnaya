@@ -16,6 +16,8 @@ const (
 	GoalVerifying = "verifying"
 	GoalDone      = "done"
 	GoalDropped   = "dropped"
+	// GoalKilled is a goal ym kill ended with its manager and agents; ym revive brings it back.
+	GoalKilled = "killed"
 
 	RoleManager = "manager"
 	RoleChief   = "chief"
@@ -42,6 +44,11 @@ type Goal struct {
 	AckedAt time.Time
 	// Host is the host the goal runs on when that is not this one.
 	Host string
+}
+
+// Ended reports whether the goal is over: done, dropped or killed.
+func (g Goal) Ended() bool {
+	return g.State == GoalDone || g.State == GoalDropped || g.State == GoalKilled
 }
 
 // Manager is a long-lived session's persistent identity: the session it runs as changes when ym relaunches it, the manager does not.

@@ -56,7 +56,7 @@ func (c *Core) FinishGoal(session, summary string, evidence []string) (Goal, Ver
 	if err != nil {
 		return g, Verification{}, err
 	}
-	if g.State == GoalDone || g.State == GoalDropped {
+	if g.Ended() {
 		return g, Verification{}, fmt.Errorf("%s is %s already", g.ID, g.State)
 	}
 	if open, err := c.Store.OpenVerification(g.ID); err == nil {
@@ -138,7 +138,7 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 	switch {
 	case alive && now.Sub(v.LaunchedAt) >= VerifyTimeout:
 		if c.Launches != nil {
-			if _, err := c.Launches.Forget(v.Session); err != nil {
+			if _, err := c.Launches.End(v.Session, ""); err != nil {
 				return err
 			}
 		}
@@ -273,7 +273,7 @@ func (c *Core) endVerifiers(b Board) error {
 			continue
 		}
 		if _, alive := b.Session(v.Session); alive && c.Launches != nil {
-			if _, err := c.Launches.Forget(v.Session); err != nil {
+			if _, err := c.Launches.End(v.Session, ""); err != nil {
 				errs = append(errs, fmt.Errorf("end verifier %s: %w", Short(v.Session), err))
 				continue
 			}

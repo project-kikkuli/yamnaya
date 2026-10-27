@@ -164,7 +164,7 @@ func (l launcher) SwitchProfile(ref, id string) (string, error) {
 		if err = l.drainNative(children, live.PID); err != nil {
 			return "", err
 		}
-		if _, err = l.core.Kill(live); err != nil {
+		if _, err = l.core.Stop(live); err != nil {
 			return "", err
 		}
 	}

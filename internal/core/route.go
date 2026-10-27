@@ -64,7 +64,7 @@ func (o Org) ManagerOf(session string) (Manager, bool) {
 // Active reports whether m still runs its goal or oversees its reports: not retired, and its goal, if any, not ended.
 func (o Org) Active(m Manager) bool {
 	g, hasGoal := o.Goals[m.GoalID]
-	return !m.Retired && !(hasGoal && (g.State == GoalDone || g.State == GoalDropped))
+	return !m.Retired && !(hasGoal && g.Ended())
 }
 
 // Above is the first working manager or chief at or above id: one that is retired, stuck, never launched, or whose goal ended

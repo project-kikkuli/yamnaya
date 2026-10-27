@@ -69,7 +69,7 @@ func (c *Core) Supervise(b Board) error {
 	act := c.activity(b, o)
 	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
-		if hasGoal && (g.State == GoalDone || g.State == GoalDropped) {
+		if hasGoal && g.Ended() {
 			continue
 		}
 		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {
@@ -119,7 +119,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		}
 		m.Failures++
 		m.NextAttempt = now.Add(backoff(m.Failures))
-		if _, err := c.Kill(s); err != nil {
+		if _, err := c.Stop(s); err != nil {
 			m.LastError = "hung since " + s.lastActive().Local().Format(time.DateTime) + "; " + err.Error()
 			if err := c.Store.SaveManager(m); err != nil {
 				return err

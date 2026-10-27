@@ -133,21 +133,15 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			}
 			return ""
 		}},
-		{"L lands the session once confirmed", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"L", "y"}, func(t *testing.T, f fixture) string {
-			if !slices.Equal(f.l.landed, []string{"lead"}) || f.m.message != "landed lead" {
-				return "landed " + strings.Join(f.l.landed, ",") + " message " + f.m.message
+		{"K ends the launched session, its pane and worktree once confirmed", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"K", "y"}, func(t *testing.T, f fixture) string {
+			if !slices.Equal(f.l.landed, []string{"lead"}) || f.m.message != "killed lead" || len(f.m.killing) != 0 {
+				return "ended " + strings.Join(f.l.landed, ",") + " message " + f.m.message
 			}
 			return ""
 		}},
-		{"L then n lands nothing", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"L", "n"}, func(t *testing.T, f fixture) string {
+		{"K then n kills nothing", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"K", "n"}, func(t *testing.T, f fixture) string {
 			if len(f.l.landed) != 0 {
-				return "landed " + strings.Join(f.l.landed, ",")
-			}
-			return ""
-		}},
-		{"F forgets the session once confirmed", []func(row) bool{mission("lead"), nil, isSession("lead")}, []string{"F", "y"}, func(t *testing.T, f fixture) string {
-			if !slices.Equal(f.l.forgot, []string{"lead"}) || len(f.l.landed) != 0 || f.m.message != "forgot lead" {
-				return "forgot " + strings.Join(f.l.forgot, ",") + " landed " + strings.Join(f.l.landed, ",") + " message " + f.m.message
+				return "ended " + strings.Join(f.l.landed, ",")
 			}
 			return ""
 		}},
@@ -200,6 +194,7 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			m, k, _ := setup(t)
 			f := fixture{c: k, l: &launches{}}
 			k.Launches = f.l
+			signals(k, false)
 			k.Port = func(cwd, id, to string) (string, error) {
 				f.ported = append(f.ported, id+" "+to)
 				return id + "2", nil

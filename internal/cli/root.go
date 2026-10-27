@@ -161,7 +161,6 @@ func NewRoot() *cobra.Command {
 		switchCmd(routed),
 		newCmd(with),
 		reviveCmd(routed),
-		landCmd(routed),
 		gcCmd(with),
 		killCmd(routed),
 		launchedCmd(with),

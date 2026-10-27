@@ -132,9 +132,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 				}
 			}
 			if c.forget {
-				if _, err := l.Forget(rec.Key); err != nil {
-					t.Fatal(err)
-				}
+				l.forget(rec)
 			}
 
 			rows := l.Dormant()
@@ -161,7 +159,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 	}
 }
 
-func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
+func TestReviveBringsBackAKilledLaunchInItsOriginalWorktreeWithItsWork(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -183,11 +181,14 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 		target  string
 		lostSHA bool
 		want    string
+		// gone deletes the branch after the kill, so only the kill's bundle holds an unpushed commit.
+		gone, dirty bool
 	}{
-		{"pushed, branch kept", "HEAD", false, "head"},
-		{"merged, branch deleted", "HEAD:main", false, "head"},
-		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main"},
-		{"repository and origin deleted", "HEAD", false, ""},
+		{"pushed, branch kept", "HEAD", false, "head", false, false},
+		{"merged, branch deleted", "HEAD:main", false, "head", false, false},
+		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main", false, false},
+		{"repository and origin deleted", "HEAD", false, "", false, false},
+		{"unpushed commit and uncommitted files, branch deleted", "", false, "head", true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -201,9 +202,14 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 			wt := launch.WorktreePath(repo, "feature")
 			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
 			git(t, wt, "commit", "-q", "--allow-empty", "-m", "work")
-			git(t, wt, "push", "-q", "origin", c.target)
-			git(t, repo, "fetch", "-q", "origin")
+			if c.target != "" {
+				git(t, wt, "push", "-q", "origin", c.target)
+				git(t, repo, "fetch", "-q", "origin")
+			}
 			head := rev(t, wt, "HEAD")
+			if c.dirty {
+				os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("half done"), 0o644)
+			}
 
 			srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
 			conf := filepath.Join(base, "tmux.conf")
@@ -216,8 +222,16 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 			if err := l.records.Save(rec); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := l.Land(rec.Key); err != nil {
+			if _, err := l.End(rec.Key, ""); err != nil {
 				t.Fatal(err)
+			}
+			if _, err := os.Stat(wt); err == nil {
+				t.Fatalf("kill left the worktree %s", wt)
+			}
+			if c.gone {
+				git(t, repo, "branch", "-q", "-D", "feature")
+				git(t, repo, "reflog", "expire", "--expire=now", "--all")
+				git(t, repo, "gc", "-q", "--prune=now")
 			}
 			if c.lostSHA {
 				landed, _ := l.records.Find(rec.Key)
@@ -251,6 +265,9 @@ func TestReviveBringsBackALandedLaunchInItsOriginalWorktree(t *testing.T) {
 			_, st := l.state(back)
 			if got := rev(t, wt, "HEAD"); got != want || back.IsLanded() || st != "running" {
 				t.Fatalf("worktree at %s, still landed %v, pane %s; want %s, revived, running", got, back.IsLanded(), st, want)
+			}
+			if notes, _ := os.ReadFile(filepath.Join(wt, "notes.txt")); c.dirty && string(notes) != "half done" {
+				t.Fatalf("uncommitted notes.txt came back as %q", notes)
 			}
 		})
 	}

@@ -53,6 +53,10 @@ type Record struct {
 	Killed time.Time `json:"killed,omitzero"`
 	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.
 	Landed time.Time `json:"landed,omitzero"`
+	// Recovery is the work ym kill bundled out of the worktree before removing it; ym revive puts it back.
+	Recovery Recovery `json:"recovery,omitzero"`
+	// Goal is the goal or chief whose kill ended the session, so reviving it revives the session too.
+	Goal string `json:"goal,omitempty"`
 	// Running is set while ym last saw its agent run; Revive once ym's tmux server went away under it, as a restart of the host
 	// leaves it, so it resumes instead of landing.
 	Running bool `json:"running,omitempty"`

@@ -324,7 +324,7 @@ func (c *Core) ReplaceManager(b Board, ref string) (Manager, error) {
 		return m, err
 	}
 	if s, ok := b.Session(m.Session); ok {
-		if _, err := c.Kill(s); err != nil {
+		if _, err := c.Stop(s); err != nil {
 			return m, err
 		}
 	}

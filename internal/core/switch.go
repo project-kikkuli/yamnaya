@@ -70,7 +70,7 @@ func (c *Core) RelaunchWithProfile(s Live, to, selected string) (string, error) 
 		return "", err
 	}
 	defer plan.Close()
-	if _, err := c.Kill(s); err != nil {
+	if _, err := c.Stop(s); err != nil {
 		return "", fmt.Errorf("%w; not relaunched; if it ended, resume it with: %s", err, c.resumeSessionIn(s.Session))
 	}
 	id, err := plan.Write()

@@ -62,6 +62,14 @@ type lastDraw struct {
 func (m Model) prepareView() viewPage {
 	bodyModel := m
 	bodyModel.slots = m.hueSlots()
+	if len(m.killing) > 0 {
+		bodyModel.dyingAt = map[int]bool{}
+		for i, r := range m.rows() {
+			if m.rowDying(r) {
+				bodyModel.dyingAt[i] = true
+			}
+		}
+	}
 	bodyModel.width = m.tableWidth()
 	var body viewPage
 	switch m.mode {
@@ -417,7 +425,12 @@ func (m Model) hints() string {
 }
 
 func (m Model) mark(i int) string {
-	if i == m.cursor {
+	switch {
+	case m.dyingAt[i] && i == m.cursor:
+		return pal.red.Render(" >x")
+	case m.dyingAt[i]:
+		return pal.red.Render("  x")
+	case i == m.cursor:
 		return " > "
 	}
 	return "   "
@@ -1470,9 +1483,13 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    r            reply: answer an item (an idle agent in tmux gets it typed in, others on their next turn);
                 on a goal or chief, send it your message (every selected one); on a session, send it a follow-up
    g            go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS"
-   K            on a goal: drop it, so ym stops supervising it; on a chief: retire it (asks y/n)
-                on a session: kill its claude or codex process with SIGTERM (asks y/n); its terminal,
-                worktree and transcript stay, and a session ym launched shows exited, ready to revive
+   K            kill, after one y/n naming what dies (sessions, worktrees, unpushed commits, uncommitted
+                files): on a session or mission, end its agent, close its tmux pane, remove the worktree ym
+                made and drop the row; on a goal, the same for its manager, every agent under it and its
+                verifier, the goal showing killed for a day; on a chief, retire it alone, its reports
+                reporting one level up. Work no remote holds is kept in ym's state; ym revive <id> brings
+                the session or goal back with it. Teardown runs in the background, its rows marked x.
+                An exited launch with nothing to lose lands by itself
    c            chief menu: a attaches the goal or chief (and every selected one) to a chief you pick, or to
                 you; d detaches it from its chief, so it reports to you (asks y/n); n starts a new chief:
                 check the goals and chiefs it oversees with space (the selected ones start checked), enter,
@@ -1512,12 +1529,6 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated
    v            set the mission's vibe, any fitting place from Afghanistan (broken) to Hawaii (great): "place: why"
-   L            land a session ym launched: end it and remove its worktree once its branch is clean
-                and merged or pushed, deleting the branch when merged into origin (asks y/n); on an exited
-                mission, every launch in it. One whose agent exited or whose pane is gone, or one killed
-                by a signal over a day ago, lands by itself when it has nothing to lose
-   F            forget a session ym launched: end it and drop its launch record, leaving its worktree and
-                branch as they are (asks y/n); on an exited mission, every launch in it
    G            gc: remove worktrees of known repos idle 3 days that are clean, on a remote and unused,
                 then local branches merged into origin that no worktree uses (asks y/n); the board
                 runs it by itself at most hourly

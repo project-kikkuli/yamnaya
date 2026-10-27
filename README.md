@@ -84,7 +84,7 @@ The footer shows the everyday keys; `?` lists every key.
 | `enter` / `esc` | open or drill in / go back |
 | `r` | reply: answer an item; on a goal or chief, send it a message; on a session, send it a follow-up |
 | `g` | go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS" |
-| `K` | drop a goal, retire a chief, or kill a session (asks y/n) |
+| `K` | kill a session, mission or goal, or retire a chief (one y/n naming what dies; see Killing) |
 | `c` | chief menu: `a` attach the goal or chief (and the selection) to a chief, or to you; `d` detach it from its chief; `n` new chief over the goals and chiefs you check |
 | `b` | show the goal's or chief's brief |
 | `n` | new goal: pick the repository first, then type it in your words |
@@ -105,7 +105,6 @@ Behind `?`:
 | `S` | steer a goal or chief: edit its plan in `$EDITOR`, saved as the next revision; on a mission, split it |
 | `C` / `D` | new chief / detach from its chief, the same as `c n` / `c d` |
 | `R` | relaunch a manager or chief |
-| `L` / `F` | land a launched session (remove its worktree when clean and merged) / forget it |
 | `T` | relaunch an idle session in the other harness |
 | `B` | switch the session's login profile |
 | `G` | gc old worktrees and merged branches |
@@ -189,6 +188,13 @@ Hosts talk through relays:
 - Files: ym watches Claude Code's files through kernel notifications (kqueue on macOS), so an untouched file costs nothing, and rereads a session only when one of its files changes. A board whose inputs (processes, files, database, git, launches, remote hosts) did not change is reused for up to ten seconds, so a change only time causes, like a goal going quiet, shows within ten seconds. The transcript scan cache is `ym-scans.db` beside `ym.db`.
 - The board starts it detached and leaves it running when you close the board. When the ym executable changes, serve and the board each replace themselves with the new one in the same process. Serve keeps its lock through the switch, so no other ym starts a second serve meanwhile, and the board's message line says `restarted into new ym <commit>` until your next key. A serve started in the background while one already runs exits without a word.
 - Once a state directory has had a serve, any `ym` command starts one again if none runs, so a serve that died comes back the next time you or an agent run `ym`. Where `ym service keep` has a launchd agent for the state directory, that command asks launchd to start its serve instead of starting one itself, and a serve started any other way hands over to launchd's at the next binary update, so only launchd's serve runs. A serve sheds any agent session's environment it was started from (its tmux pane, Claude Code's and Codex's session variables). `YAMNAYA_NO_SERVE=1` keeps a command from starting it.
+- Killing (`K` on the board, `ym kill` on the command line, the same on this host or another, where it runs through that host's ym over ssh):
+  - A session: ends its agent with SIGTERM, closes its tmux pane, removes the worktree ym made for it (an adopted session's directory stays) and drops its row. A session ym did not launch only has its agent ended.
+  - A goal: the same for its manager, every agent working for it and a running verifier. The goal shows `killed` on the tree for a day, then leaves it as a done goal does; `x` clears it sooner.
+  - A chief: retires the chief alone. Its goals and chiefs keep running and report one level up.
+  - One y/n names what dies, such as `3 sessions, 3 worktrees, 2 unpushed commits`.
+  - Before removing a worktree, ym bundles the commits no remote or default branch holds and any uncommitted or untracked files into `recovery/<key>.bundle` in the state directory of the session's host; nothing is pushed. The launch record keeps the conversation id, prompt, branch and commit. `ym revive <key>` recreates the worktree, puts the work back and resumes the conversation; `ym revive <goal>` reopens a killed goal (or unretires a chief) and revives every session its kill ended.
+  - On the board, counting and teardown run in the background; rows being torn down are marked `x`, and the cursor moves to the next row.
 - Exited launches land by themselves once they have nothing to lose, after a day's grace when you killed them or a signal did. A launch whose pane went while its agent was running, without `ym kill`, never lands by itself; ym resumes it instead (see Restarts). A launch whose worktree and repository are both gone never lands by itself either; its row says `repo gone: conversation only, no code`.
 - A launch counts as starting, not gone, for its first two minutes until its tmux session is up, so a fresh agent is never resumed under itself.
 - `ym revive` (and `o` on an exited launched session) recreates the worktree and branch when the repository exists, from the branch, else the recorded commit, else the branch on origin, else the default branch. When the launch's own clone is gone it uses another clone of the same repository on this host. When no clone is left it makes a plain directory at the recorded path and resumes the conversation there, without a checkout, and says so.
@@ -206,7 +212,7 @@ Hosts talk through relays:
 After a restart:
 
 - A manager or chief resumes in its own session and conversation, told it stopped and what it missed. If its transcript is gone, it starts over from its prompt and brief, under the same id on Claude and under the new thread Codex records on Codex. `ym goal relaunch` still starts a fresh session.
-- Every session ym launched whose agent was running when its pane went, without `ym kill` or `ym land`, resumes in its own conversation instead of landing, whether or not it works for a goal. A goal's manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped. A session whose transcript holds no turn starts over on its first prompt.
+- Every session ym launched whose agent was running when its pane went, without `ym kill`, resumes in its own conversation instead of landing, whether or not it works for a goal. A goal's manager gets a `resumed` or `resume-failed` event, and `resume-failed` shows in your feed. `ym kill` keeps an agent stopped. A session whose transcript holds no turn starts over on its first prompt.
 - Sessions you had running in terminals outside ym's server when the host went down resume on ym's server in their own directories and conversations. `ym serve` keeps the list in `alive.json` in the state directory.
 - The default state directory's `ym serve` unloads and removes any other `io.yamnaya.ym-serve-*` LaunchAgent whose ym binary or state directory is gone, as a rehearsal in a deleted scratch directory leaves, so launchd stops retrying it at login.
 - Resumes go one at a time, at most one every 10 seconds. Once every launched session found gone has come back or failed, one desktop notification says what resumed, what started over and what could not.
@@ -255,10 +261,9 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
 | | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |
 | | `ym adopt <session>` | move a session from another terminal onto ym's server |
-| | `ym kill <session> [--yes]` | SIGTERM its agent; worktree and transcript stay |
-| | `ym launched [--landed]` / `ym revive <key>` | what ym started / resume an exited one |
+| | `ym kill <session\|goal\|chief> [--yes]` | end it completely, as `K` does; see Killing |
+| | `ym launched [--landed]` / `ym revive <key\|goal>` | what ym started / resume an exited or killed one, or a killed goal |
 | | `ym slot [--nice N] -- <command>` / `ym slot --status [--json]` | run a heavy command in a shared machine slot / who holds and waits for them |
-| | `ym land <key>` / `ym land --all` | remove worktrees that lose nothing |
 | | `ym gc [--dry-run]` | remove idle clean worktrees and merged branches |
 | | `ym switch <session> --to claude\|codex [--relaunch]` | port a session to the other harness |
 | Usage | `ym usage [--top N]` / `ym limits` / `ym health` | spend, limit windows, weekly item health |

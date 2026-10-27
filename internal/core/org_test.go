@@ -25,10 +25,10 @@ type fakeLaunches struct {
 	during func()
 }
 
-func (l *fakeLaunches) Forget(ref string) (string, error) {
+func (l *fakeLaunches) End(ref, goal string) (string, error) {
 	l.forgot = append(l.forgot, ref)
 	l.w.stop(ref)
-	return "forgot " + ref, nil
+	return "killed " + ref, nil
 }
 
 func (l *fakeLaunches) Launched() []Launched { return l.launched }

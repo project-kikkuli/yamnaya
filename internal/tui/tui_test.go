@@ -165,7 +165,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 			next, cmd = m.Update(out)
 			m = next.(Model)
 			switch out.(type) {
-			case doneMsg, adoptedMsg, reposMsg:
+			case doneMsg, adoptedMsg, reposMsg, killedMsg:
 			default:
 				cmd = nil
 			}
@@ -379,7 +379,6 @@ type launches struct {
 	sent     []string
 	started  []core.NewLaunch
 	landed   []string
-	forgot   []string
 	swept    int
 	// startErr is what Start fails with, if anything.
 	startErr   error
@@ -404,15 +403,12 @@ func (l *launches) Start(n core.NewLaunch) (core.Started, error) {
 	return core.Started{Key: n.Slug, Session: n.Session, Message: n.Harness + " " + n.Slug + "\nopen: ym open " + n.Slug}, nil
 }
 
-func (l *launches) Land(ref string) (string, error) {
+func (l *launches) End(ref, goal string) (string, error) {
 	l.landed = append(l.landed, ref)
-	return "landed " + ref, nil
+	return "killed " + ref, nil
 }
 
-func (l *launches) Forget(ref string) (string, error) {
-	l.forgot = append(l.forgot, ref)
-	return "forgot " + ref, nil
-}
+func (l *launches) Weigh(ref string) (core.Toll, error) { return core.Toll{Worktrees: 1}, nil }
 
 func (l *launches) GC() (string, error) {
 	l.swept++
@@ -500,8 +496,8 @@ func TestOOnAMissionNothingRunsInRevivesItsLatestExitedSessionAndGoesThere(t *te
 	}
 }
 
-func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
-	for _, c := range []struct{ key, verb string }{{"L", "land"}, {"F", "forget"}} {
+func TestKillOnAnExitedMissionRowEndsEveryLaunchInIt(t *testing.T) {
+	for _, c := range []struct{ key, verb string }{{"K", "kill"}} {
 		t.Run(c.key, func(t *testing.T) {
 			m, co, _ := setup(t)
 			l := &launches{dormant: []core.Dormant{
@@ -514,16 +510,12 @@ func TestLandAndForgetOnAnExitedMissionRowActOnEveryLaunchInIt(t *testing.T) {
 				return r.project != nil && r.session == nil && r.dormant == nil && len(r.project.Sessions) == 0 && len(r.project.Dormant) == 1
 			})
 			m = press(t, m, c.key)
-			if m.mode != modeConfirm || !strings.Contains(m.View().Content, c.verb+" ") {
-				t.Fatalf("%s should ask first:\n%s", c.key, m.View().Content)
+			if m.mode != modeConfirm || !strings.Contains(m.View().Content, c.verb+" ") || !strings.Contains(m.ask, "1 session, 1 worktree") {
+				t.Fatalf("%s should ask first, naming what dies:\n%s", c.key, m.View().Content)
 			}
 			m = press(t, m, "y")
-			done := l.landed
-			if c.key == "F" {
-				done = l.forgot
-			}
-			if !slices.Equal(done, []string{"docs-pass"}) || len(l.landed)+len(l.forgot) != 1 {
-				t.Fatalf("landed %v forgot %v, message %q", l.landed, l.forgot, m.message)
+			if !slices.Equal(l.landed, []string{"launch:docs-pass"}) {
+				t.Fatalf("ended %v, message %q", l.landed, m.message)
 			}
 		})
 	}

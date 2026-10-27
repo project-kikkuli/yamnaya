@@ -15,6 +15,7 @@ const DoneShown = 24 * time.Hour
 // How a goal or chief stands, worst last.
 const (
 	StandDone   = "done"
+	StandKilled = "killed"
 	StandMoving = "moving"
 	StandQuiet  = "quiet"
 	// StandAdrift is a goal whose manager or an agent of it is busy going nowhere.
@@ -25,7 +26,7 @@ const (
 	StandVerifying = "verifying"
 )
 
-var standRank = map[string]int{StandDone: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandAdrift: 3, StandDown: 4, StandStuck: 5}
+var standRank = map[string]int{StandDone: 0, StandKilled: 0, StandVerifying: 1, StandMoving: 1, StandQuiet: 2, StandAdrift: 3, StandDown: 4, StandStuck: 5}
 
 // Node is a manager or chief on the board: its goal, its live session, the agents it runs, and the reports below a chief.
 type Node struct {
@@ -121,7 +122,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	shown := map[string]bool{}
 	reports := map[string][]Manager{}
 	for _, m := range ordered {
-		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || (g.State == GoalDone && (!g.AckedAt.IsZero() || b.At.Sub(g.DoneAt) >= DoneShown))) {
+		if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalDropped || ((g.State == GoalDone || g.State == GoalKilled) && (!g.AckedAt.IsZero() || b.At.Sub(g.DoneAt) >= DoneShown))) {
 			continue
 		}
 		shown[m.ID] = true
@@ -172,6 +173,8 @@ func (c *Core) standing(b Board, n Node) string {
 		own = st
 	case n.Goal != nil && n.Goal.State == GoalDone:
 		own = StandDone
+	case n.Goal != nil && n.Goal.State == GoalKilled:
+		own = StandKilled
 	case n.Goal != nil && n.Goal.State == GoalVerifying:
 		own = StandVerifying
 	case m.Stuck() || (n.Goal != nil && n.Goal.State == GoalStuck):

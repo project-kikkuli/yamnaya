@@ -153,7 +153,12 @@ type Model struct {
 	screenKey string
 	ask       string
 	yes       tea.Cmd
-	newL      core.NewLaunch
+	// marks are the keys a yes marks killing: sessions and goal or chief nodes whose teardown runs off the UI thread.
+	marks   []string
+	killing map[string]bool
+	// dyingAt are the rows a running kill tears down, marked x while one view is drawn.
+	dyingAt map[int]bool
+	newL    core.NewLaunch
 	// launchOn is the remembered host the launch input starts on, "" for this one.
 	launchOn string
 	// repoScan streams repositories found under the roots; scanned holds them for the whole TUI session.
@@ -181,7 +186,7 @@ type Model struct {
 }
 
 func New(c *core.Core) Model {
-	m := Model{drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
+	m := Model{killing: map[string]bool{}, drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -326,9 +331,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitRepos()
 	case boardMsg:
-		keep := ""
-		if r, ok := m.selected(); ok {
-			keep = rowKey(r)
+		keep, rows := "", m.rows()
+		var after, before []string
+		if m.cursor >= 0 && m.cursor < len(rows) {
+			keep = rowKey(rows[m.cursor])
+			for _, r := range rows[m.cursor+1:] {
+				after = append(after, rowKey(r))
+			}
+			for i := m.cursor - 1; i >= 0; i-- {
+				before = append(before, rowKey(rows[i]))
+			}
 		}
 		if msg.err != nil {
 			m.err = msg.err
@@ -338,7 +350,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.listMode() == modeItems {
 			m.loadItems()
 		}
-		m.follow(keep)
+		m.follow(keep, after, before)
 		var cmds []tea.Cmd
 		if msg.tick {
 			cmds = append(cmds, m.tick())
@@ -350,6 +362,27 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, m.refresh(true)
+	case weighedMsg:
+		if msg.err != nil {
+			m.message = "error: " + msg.err.Error()
+			return m, nil
+		}
+		run, keys := msg.run, msg.keys
+		m.confirm(msg.ask, func() tea.Msg {
+			said, err := run()
+			return killedMsg{keys, said, err}
+		})
+		m.marks = keys
+		return m, nil
+	case killedMsg:
+		for _, k := range msg.keys {
+			delete(m.killing, k)
+		}
+		m.message = msg.message
+		if msg.err != nil {
+			m.message = "error: " + msg.err.Error()
+		}
+		return m, m.refresh(false)
 	case doneMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
@@ -400,11 +433,37 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// follow keeps the cursor on the row it was on when that row still exists.
-func (m *Model) follow(key string) {
-	if key != "" {
-		for i, r := range m.rows() {
-			if rowKey(r) == key {
+// follow keeps the cursor on the row it was on when that row still exists. Once it is gone the cursor stays put on a new row
+// that took its place, else moves to the nearest row that followed it, one of its kind first, else the nearest that preceded it.
+func (m *Model) follow(key string, after, before []string) {
+	rows := m.rows()
+	at := map[string]int{}
+	for i, r := range rows {
+		at[rowKey(r)] = i
+	}
+	if i, ok := at[key]; ok && key != "" {
+		m.cursor = i
+		return
+	}
+	old := map[string]bool{key: true}
+	for _, k := range append(after, before...) {
+		old[k] = true
+	}
+	if m.cursor >= 0 && m.cursor < len(rows) && !old[rowKey(rows[m.cursor])] {
+		return
+	}
+	kind, _, _ := strings.Cut(key, ":")
+	for _, near := range [][]string{after, before} {
+		for _, k := range near {
+			if i, ok := at[k]; ok && strings.HasPrefix(k, kind+":") {
+				m.cursor = i
+				return
+			}
+		}
+	}
+	for _, near := range [][]string{after, before} {
+		for _, k := range near {
+			if i, ok := at[k]; ok && k != "" {
 				m.cursor = i
 				return
 			}
@@ -662,16 +721,23 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "y":
 			m.mode, m.message = m.back, ""
+			for _, k := range m.marks {
+				m.killing[k] = true
+			}
+			if len(m.marks) > 0 {
+				m.message = "killing; teardown runs in the background"
+			}
+			m.marks = nil
 			return m, m.yes
 		case "n", "esc", "q":
-			m.mode, m.message = m.back, "cancelled"
+			m.mode, m.message, m.marks = m.back, "cancelled", nil
 		}
 		return m, nil
 	case modeWhy:
 		switch k.String() {
 		case "r", "g", "l", "x", "u", "o", "O":
 			m.mode = m.back
-			m.follow("item:" + m.why.Key())
+			m.follow("item:"+m.why.Key(), nil, nil)
 			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
 				m.message = m.why.ID + " is no longer on this list"
 				return m, nil
@@ -902,34 +968,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 	case "K":
-		if s := m.killable(r); s != nil {
-			live := *s
-			m.confirm("kill "+live.Label()+"?", m.do(func() (string, error) { return m.core.Kill(live) }))
-		} else if ids, label := m.stoppedTargets(r); len(ids) > 0 {
-			m.confirm("archive "+label+"? its worktree and transcript stay", m.do(func() (string, error) {
-				for _, id := range ids {
-					if err := m.core.StopSession(id); err != nil {
-						return "", err
-					}
-				}
-				return "archived " + label, nil
-			}))
-		}
-	case "L", "F":
-		refs, label := m.landingTargets(r)
-		if len(refs) == 0 {
-			m.message = "No session or mission to land"
-			break
-		}
-		if m.core.Launches != nil {
-			l := m.core.Launches
-			if k.String() == "F" {
-				m.confirm("forget "+label+"? it ends the agent and drops its launch record; its worktree and branch stay",
-					m.do(func() (string, error) { return each(refs, l.Forget) }))
-				break
-			}
-			m.confirm("land "+label+"? it ends the agent and removes its worktree once its branch is clean and merged or pushed",
-				m.do(func() (string, error) { return each(refs, l.Land) }))
+		if ss, label := m.killTargets(r); len(ss) > 0 && !m.dying(ss) {
+			m.message = "counting what killing " + label + " ends"
+			return m, m.weighKill(ss, label)
 		}
 	case "G":
 		if m.core.Launches != nil {
@@ -989,7 +1030,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // confirm asks ask on the footer; y runs yes, n or esc cancels.
 func (m *Model) confirm(ask string, yes tea.Cmd) {
-	m.ask, m.yes, m.back, m.mode = ask, yes, m.mode, modeConfirm
+	m.ask, m.yes, m.back, m.mode, m.marks = ask, yes, m.mode, modeConfirm, nil
 }
 
 func (m *Model) show(key, text string) {
@@ -1508,20 +1549,6 @@ func (m Model) adopt(key string) (tea.Model, tea.Cmd) {
 }
 
 // each runs f on every ref, going on past failures, and joins what it said.
-func each(refs []string, f func(string) (string, error)) (string, error) {
-	var said []string
-	var errs []error
-	for _, ref := range refs {
-		msg, err := f(ref)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		said = append(said, msg)
-	}
-	return strings.Join(said, "; "), errors.Join(errs...)
-}
-
 // sessionOf is the session a row or the open view is about.
 func (m Model) sessionOf(r row) *core.Live {
 	switch {

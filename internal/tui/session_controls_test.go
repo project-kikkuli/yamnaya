@@ -17,29 +17,29 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				m, c, _ := setup(t)
 				c.Launches = &launches{}
 				m = refresh(t, m)
-				wantKill, wantLand, wantArchive := false, false, false
+				wantKill := false
 				switch where {
 				case "board mission":
 					m = to(t, m, mission("lead"))
-					wantKill, wantLand = true, true
+					wantKill = true
 				case "session row":
 					m = to(t, m, mission("lead"))
 					m = press(t, m, "enter")
 					m = to(t, m, isSession("lead"))
-					wantKill, wantLand = true, true
+					wantKill = true
 				case "session detail":
 					m = to(t, m, mission("lead"))
 					m = press(t, m, "enter")
 					m = to(t, m, isSession("lead"))
 					m = press(t, m, "enter")
-					wantKill, wantLand = true, true
+					wantKill = true
 				case "exited launch":
 					c.Launches = &launches{dormant: []core.Dormant{{Key: "finished", Harness: "claude", Session: "old", State: "exited 0"}}}
 					m = refresh(t, m)
 					m = to(t, m, func(r row) bool {
 						return r.project != nil && len(r.project.Dormant) > 0 && len(r.project.Sessions) == 0
 					})
-					wantLand, wantArchive = true, true
+					wantKill = true
 				case "launcher unavailable":
 					c.Launches = nil
 					m = to(t, m, mission("lead"))
@@ -52,6 +52,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 					}
 					m = refresh(t, m)
 					m = to(t, m, mission("lead"))
+					wantKill = true
 				case "repository":
 					m = to(t, m, func(r row) bool { return r.repo != nil && r.project == nil })
 				}
@@ -62,7 +63,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				hints := []struct {
 					hint string
 					want bool
-				}{{"K kill", wantKill}, {"L land", wantLand}, {"K archive", wantArchive}, {"F forget", wantLand}}
+				}{{"K kill", wantKill}, {"L land", false}, {"K archive", false}, {"F forget", false}}
 				if m.mode == modeList {
 					hints = hints[:1]
 					hints[0].want = true
@@ -75,7 +76,7 @@ func TestSessionControlsStayVisibleAndOpenTheAdvertisedAction(t *testing.T) {
 				for _, action := range []struct {
 					key, label string
 					want       bool
-				}{{"K", "kill ", wantKill}, {"L", "land ", wantLand}, {"K", "archive ", wantArchive}} {
+				}{{"K", "kill ", wantKill}} {
 					if !action.want {
 						continue
 					}
