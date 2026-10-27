@@ -25,7 +25,7 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
+func TestEveryExitedLaunchIsCleanedUpAtOnceAndKeepsItsWorkForRevive(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -49,31 +49,33 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 		goal   bool
 		// deleted removes the worktree, its repository and the repository's origin.
 		deleted bool
+		// running marks the agent running when its pane went, as a restart of the host leaves it.
+		running bool
+		// bundle is set when the cleanup must keep work no remote holds.
+		bundle bool
 	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false, false},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false, false},
-		{"exit 0, dirty", "exit 0", 0, "exited 0", dirty, false, false, false, false, true, true, false, false},
-		{"exit 0, unpushed", "exit 0", 0, "exited 0", commit, false, false, false, false, true, true, false, false},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false, false},
-		{"exit 3, unpushed", "exit 3", 0, "exited 3", commit, false, false, false, false, true, true, false, false},
-		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false, false},
-		{"gone, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false, false},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "sigterm", push, false, false, false, false, true, true, false, false},
-		{"SIGKILL today, pushed", "kill -KILL $$", 0, "sigkill", push, false, false, false, false, true, true, false, false},
-		{"SIGTERM a day ago, pushed", "kill -TERM $$", day, "", push, false, false, false, true, false, true, false, false},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "sigterm", commit, false, false, false, false, true, true, false, false},
-		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false, false},
-		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false, false},
-		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false, false},
-		{"exit 0 after ym kill today, pushed", "exit 0", 0, "exited 0", push, true, false, false, false, true, true, false, false},
-		{"exit 0 after ym kill a day ago, pushed", "exit 0", day, "", push, true, false, false, true, false, true, false, false},
-		{"gone after ym kill today, merged", "", 0, "gone", merged, true, false, false, false, true, true, false, false},
-		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true, false},
-		{"gone after ym kill a day ago, merged, a goal's agent", "", day, "", merged, true, false, false, true, false, false, true, false},
-		{"exit 0, pushed, a goal's agent", "exit 0", 0, "", push, false, false, false, true, false, true, true, false},
-		{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "sigterm", commit, false, false, false, false, false, false, false, true},
-		{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "exited 0", dirty, true, false, false, false, false, false, false, true},
-		{"gone after ym kill today, repository deleted", "", 0, "gone", commit, true, false, false, false, false, false, false, true},
+		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
+		{"exit 0, dirty", "exit 0", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
+		{"exit 0, unpushed", "exit 0", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+		{"exit 3, unpushed", "exit 3", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
+		{"gone, dirty", "", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
+		{"gone while the agent ran, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false, false, true, false},
+		{"SIGTERM today, pushed", "kill -TERM $$", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+		{"SIGKILL today, unpushed", "kill -KILL $$", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "", commit, false, false, false, true, false, true, false, false, false, true},
+		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false, false, false, false},
+		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false, false, false, false},
+		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false, false, false, false},
+		{"exit 0 after ym kill today, pushed", "exit 0", 0, "", push, true, false, false, true, false, true, false, false, false, false},
+		{"gone after ym kill today, merged", "", 0, "", merged, true, false, false, true, false, false, false, false, false, false},
+		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true, false, false, false},
+		{"gone after ym kill, merged, a goal's agent", "", 0, "", merged, true, false, false, true, false, false, true, false, false, false},
+		{"exit 0, unpushed, a goal's agent", "exit 0", 0, "", commit, false, false, false, true, false, true, true, false, false, true},
+		{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "", commit, false, false, false, true, false, false, false, true, false, false},
+		{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "", dirty, true, false, false, true, false, false, false, true, false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -110,6 +112,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			if c.killed {
 				rec.Killed = rec.Started
 			}
+			rec.Running = c.running
 			if err := l.records.Save(rec); err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +138,7 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 				l.forget(rec)
 			}
 
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			rows := l.Dormant()
 			kept, recorded := l.records.Find(rec.Key)
 			_, statErr := os.Stat(wt)
@@ -155,6 +158,12 @@ func TestExitedLaunchesLandByThemselvesOnlyWhenNothingIsLost(t *testing.T) {
 			}
 			if kept := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil; kept != c.branch {
 				t.Fatalf("branch kept %v, want %v", kept, c.branch)
+			}
+			if bundled := kept.Recovery.Bundle != ""; bundled != c.bundle {
+				t.Fatalf("work bundled %+v, want a bundle %v", kept.Recovery, c.bundle)
+			}
+			if marked && !strings.Contains(string(logged), "cleaned up") && !c.killed {
+				t.Fatalf("landing log %q does not say it was cleaned up", logged)
 			}
 		})
 	}

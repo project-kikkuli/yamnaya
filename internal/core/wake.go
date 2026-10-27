@@ -20,12 +20,24 @@ func (c *Core) Loop(b Board) error {
 	return errors.Join(append(errs, c.NotifyOwner())...)
 }
 
-// sweepLaunches has the launcher land what lands alone, in serve, never while a board builds.
-func (c *Core) sweepLaunches(Board) error {
-	if s, ok := c.Launches.(interface{ Sweep() error }); ok {
-		return s.Sweep()
+// sweepLaunches has the launcher clean up the launches b saw stopped, in serve, never while a board builds. Supervise has
+// already told each goal about its agents' exits from the same board.
+func (c *Core) sweepLaunches(b Board) error {
+	if s, ok := c.Launches.(interface{ Sweep(map[string]string) error }); ok {
+		return s.Sweep(Stopped(b.Launched))
 	}
 	return nil
+}
+
+// Stopped maps each launch in ls that is not landed and does not run, or might, to its state.
+func Stopped(ls []Launched) map[string]string {
+	out := map[string]string{}
+	for _, l := range ls {
+		if l.Landed.IsZero() && !l.MayRun() {
+			out[l.Key] = l.State
+		}
+	}
+	return out
 }
 
 // RecordGoalEvent records an event of kind for the goal, now, unless key names one recorded already.

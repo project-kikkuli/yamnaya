@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
@@ -64,7 +65,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 			}
 
 			os.WriteFile(fail, nil, 0o644)
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			rows := l.Dormant()
 			_, reviveErr := l.revive(rec)
 			kept, _ := l.records.Find(rec.Key)
@@ -81,7 +82,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 
 			os.Remove(fail)
 			time.Sleep(600 * time.Millisecond)
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			kept, _ = l.records.Find(rec.Key)
 			if want := agent == "exit 0"; kept.IsLanded() != want {
 				t.Fatalf("once tmux answers, landed %v, want %v", kept.IsLanded(), want)

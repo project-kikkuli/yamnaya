@@ -1493,7 +1493,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 verifier, the goal showing killed for a day; on a chief, retire it alone, its reports
                 reporting one level up. Work no remote holds is kept in ym's state; ym revive <id> brings
                 the session or goal back with it. Teardown runs in the background, its rows marked x.
-                An exited launch with nothing to lose lands by itself
+                An exited launch is cleaned up the same way by ym serve as soon as it exits
    c            chief menu: a attaches the goal or chief (and every selected one) to a chief you pick, or to
                 you; d detaches it from its chief, so it reports to you (asks y/n); n starts a new chief:
                 check the goals and chiefs it oversees with space (the selected ones start checked), enter,

@@ -797,9 +797,9 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	return args, lost, nil
 }
 
-// landsAlone reports whether a dormant session lands by itself once its worktree loses nothing: any exit or a gone pane,
-// and a death by a signal or after ym kill only a day on. A goal's agent whose pane went without ym kill is resumed instead, as a
-// restart of the host leaves it.
+// landsAlone reports whether a dormant session is cleaned up by itself: at once on any exit, a death by a signal, a gone pane
+// or after ym kill. A session whose pane went while its agent ran, as a restart of the host leaves it, or a goal's agent whose
+// pane went without ym kill, is resumed instead; one ym only saw running elsewhere stays revivable from the board for seenKeep.
 func landsAlone(rec launch.Record, state string, now time.Time, work func(session, parent string) bool) bool {
 	switch {
 	case state == "running", state == core.LaunchUnknown:
@@ -807,9 +807,7 @@ func landsAlone(rec launch.Record, state string, now time.Time, work func(sessio
 	case !rec.Seen.IsZero():
 		return now.Sub(rec.Seen) >= seenKeep
 	case !rec.Killed.IsZero():
-		return now.Sub(rec.Killed) >= 24*time.Hour
-	case strings.HasPrefix(state, "sig"):
-		return now.Sub(rec.Started) >= 24*time.Hour
+		return true
 	case state == "gone" && (rec.Revive || rec.Running || work(rec.Session, rec.Parent)):
 		return false
 	}
@@ -839,9 +837,10 @@ func (l launcher) Dormant() []core.Dormant {
 	return out
 }
 
-// Sweep lands every dormant launch that lands alone. One killed with ym kill before kills removed worktrees is ended as a kill
-// is now, its work bundled first. A landing that refuses is recorded and not tried again until its worktree changes.
-func (l launcher) Sweep() error {
+// Sweep cleans up every dormant launch the board saw stopped, in seen by key with its state, that lands alone: one that loses
+// nothing lands, the rest end as a kill does, their work bundled first, so ym revive brings them back. A cleanup that refuses,
+// as when git fails, is recorded and not tried again until the worktree changes; one a process works in waits for it to leave.
+func (l launcher) Sweep(seen map[string]string) error {
 	l.sweepSoon()
 	all, err := l.records.All()
 	if err != nil {
@@ -850,7 +849,6 @@ func (l launcher) Sweep() error {
 	dirs := sync.OnceValue(cwds)
 	work := sync.OnceValue(l.goalWork)
 	keep := func(session, parent string) bool { return work()(session, parent) }
-	panes, listErr := l.srv.Panes()
 	var errs []error
 	for _, rec := range all {
 		if rec.Repo == "" && rec.Worktree.GitDir != "" {
@@ -859,23 +857,27 @@ func (l launcher) Sweep() error {
 				l.records.Save(rec)
 			}
 		}
-		if rec.IsLanded() || !landsAlone(rec, stateIn(panes, listErr, rec), time.Now(), keep) {
+		was, ok := seen[rec.Key]
+		if !rec.Seen.IsZero() {
+			was, ok = "gone", true
+		}
+		if rec.IsLanded() || !ok || !landsAlone(rec, was, time.Now(), keep) {
 			continue
 		}
-		if _, st := l.state(rec); !landsAlone(rec, st, time.Now(), keep) {
+		_, st := l.state(rec)
+		if !landsAlone(rec, st, time.Now(), keep) {
 			continue
 		}
 		if rec.Blocked != "" && rec.Stamp == launch.Stamp(rec.Worktree.Path) {
 			continue
 		}
-		var err error
-		if !rec.Killed.IsZero() && !rec.Adopted && codeGone(rec) == "" {
-			err = l.unused(rec, dirs)
-			if err == nil {
-				_, err = l.End(rec.Key, "")
-			}
+		if err = l.unused(rec, dirs); err != nil {
+			continue
+		}
+		if rec.Adopted {
+			_, err = l.land(rec)
 		} else {
-			_, err = l.landUnused(rec, dirs)
+			_, err = l.end(rec, "", st+", cleaned up by ym serve; ym revive "+rec.Key+" restores it")
 		}
 		if err == nil {
 			continue
@@ -993,6 +995,11 @@ func (l launcher) End(ref, goal string) (string, error) {
 	if rec.IsLanded() {
 		return fmt.Sprintf("%s already ended %s", rec.Key, rec.Landed.Format(time.DateTime)), nil
 	}
+	return l.end(rec, goal, "killed")
+}
+
+// end closes rec's pane, bundles the worktree's work no remote holds, removes the worktree and marks rec landed for why.
+func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 		return "", err
 	}
@@ -1015,7 +1022,7 @@ func (l launcher) End(ref, goal string) (string, error) {
 		}
 	}
 	rec.Goal = goal
-	if err := l.landed(rec, "killed"); err != nil {
+	if err := l.landed(rec, why); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("killed %s%s; ym revive %s brings it back", rec.Key, kept, rec.Key), nil
@@ -1073,17 +1080,6 @@ func (l launcher) forget(rec launch.Record) {
 	if l.core != nil {
 		l.core.StopSession(core.Dormant{Key: rec.Key, Session: rec.Session}.ID())
 	}
-}
-
-// landUnused lands rec unless a process in dirs works in its worktree, as an agent resumed outside ym's pane does.
-func (l launcher) landUnused(rec launch.Record, dirs func() []string) (string, error) {
-	if lost := codeGone(rec); lost != "" && !rec.Adopted {
-		return "", unlandable{rec.Key, rec.Worktree.Path, "is gone with its repository; ym revive resumes its conversation"}
-	}
-	if err := l.unused(rec, dirs); err != nil {
-		return "", err
-	}
-	return l.land(rec)
 }
 
 // unused refuses while a process in dirs works in rec's worktree.

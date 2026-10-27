@@ -35,7 +35,7 @@ func TestAManagerHearsOnceThatItsAgentStopped(t *testing.T) {
 			w.loop(t, 3)
 			var got []string
 			for _, text := range w.handedTo(m.Session) {
-				if strings.Contains(text, "stopped running") {
+				if strings.Contains(text, "stopped: its process") {
 					got = append(got, text)
 				}
 			}

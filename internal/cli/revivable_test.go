@@ -60,7 +60,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 		landed   bool
 		lost     string
 	}{
-		{"worktree and repo deleted", true, false, launch.RepoGone},
+		{"worktree and repo deleted", true, true, launch.RepoGone},
 		{"only the worktree deleted", false, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -86,7 +86,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 				os.RemoveAll(repo)
 			}
 
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			rows := l.Dormant()
 			kept, _ := l.records.Find(rec.Key)
 			if kept.IsLanded() != c.landed || (len(rows) == 1) == c.landed {
@@ -150,7 +150,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 				os.RemoveAll(dir)
 			}
 
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			rows := l.Dormant()
 			rec, _ = l.records.Find("s2")
 			if rec.IsLanded() != c.landed || (len(rows) == 1) == c.landed || (!c.landed && rows[0].State != c.state) {

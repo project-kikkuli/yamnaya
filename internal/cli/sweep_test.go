@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
-func TestTheBoardNeverRunsGitAndARefusedLandingWaitsForItsWorktreeToChange(t *testing.T) {
+func TestTheBoardNeverRunsGitAndACleanupWaitsForTheProcessInItsWorktree(t *testing.T) {
 	real, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git not installed")
@@ -21,7 +22,7 @@ func TestTheBoardNeverRunsGitAndARefusedLandingWaitsForItsWorktreeToChange(t *te
 	for _, c := range []struct {
 		name   string
 		killed bool
-	}{{"exited with uncommitted work", false}, {"killed a day ago with uncommitted work", true}} {
+	}{{"exited, a process working in its worktree", false}, {"killed a day ago with uncommitted work", true}} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
 			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
@@ -47,8 +48,17 @@ func TestTheBoardNeverRunsGitAndARefusedLandingWaitsForItsWorktreeToChange(t *te
 			l := launcher{srv: &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(base, "state", "launches")}}
 			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-72 * time.Hour),
 				Repo: "repo", Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			stop := func() {}
 			if c.killed {
 				rec.Killed = time.Now().Add(-48 * time.Hour)
+			} else {
+				busy := exec.Command("sleep", "60")
+				busy.Dir = wt
+				if err := busy.Start(); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { busy.Process.Kill(); busy.Wait() })
+				stop = func() { busy.Process.Kill(); busy.Wait() }
 			}
 			if err := l.records.Save(rec); err != nil {
 				t.Fatal(err)
@@ -56,7 +66,7 @@ func TestTheBoardNeverRunsGitAndARefusedLandingWaitsForItsWorktreeToChange(t *te
 			if rows := l.Dormant(); len(rows) != 1 || forks() != 0 {
 				t.Fatalf("board read rows %+v and ran git; want the row and no git", rows)
 			}
-			l.Sweep()
+			l.Sweep(core.Stopped(l.Launched()))
 			after, _ := l.records.Find(rec.Key)
 			if c.killed {
 				_, statErr := os.Stat(wt)
@@ -65,20 +75,20 @@ func TestTheBoardNeverRunsGitAndARefusedLandingWaitsForItsWorktreeToChange(t *te
 				}
 				return
 			}
-			if after.IsLanded() || after.Blocked == "" || forks() == 0 {
-				t.Fatalf("landed %v, blocked %q; want refused and recorded", after.IsLanded(), after.Blocked)
+			if after.IsLanded() {
+				t.Fatal("cleaned up a worktree a process works in")
 			}
 			for range 3 {
-				l.Sweep()
+				l.Sweep(core.Stopped(l.Launched()))
 				l.Dormant()
 			}
 			if n := forks(); n != 0 {
-				t.Fatalf("ran git %d times on an unchanged worktree that refused to land", n)
+				t.Fatalf("ran git %d times while a process works in the worktree", n)
 			}
-			os.Remove(filepath.Join(wt, "notes.txt"))
-			l.Sweep()
-			if after, _ := l.records.Find(rec.Key); !after.IsLanded() {
-				t.Fatalf("the worktree is clean now but did not land: %q", after.Blocked)
+			stop()
+			l.Sweep(core.Stopped(l.Launched()))
+			if after, _ := l.records.Find(rec.Key); !after.IsLanded() || after.Recovery.Files != 1 {
+				t.Fatalf("once the process left, landed %v with recovery %+v; want cleaned up with its file bundled", after.IsLanded(), after.Recovery)
 			}
 		})
 	}
