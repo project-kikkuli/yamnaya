@@ -369,6 +369,11 @@ func (c *Core) launch(b Board, o Org, m Manager) Manager { return c.start(b, o, 
 func (c *Core) relaunch(b Board, o Org, m Manager) Manager { return c.start(b, o, m, true) }
 
 func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
+	return c.begin(b, o, m, resume, nil)
+}
+
+// begin starts m's session as start does or, with r, a fresh one that reads why ym restarted it, its brief and its goal's state.
+func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager {
 	m.LaunchedAt, m.Nudges, m.NudgedAt = c.now(), 0, timeZero
 	if c.Launches == nil {
 		m.LastError = "ym's launcher is unavailable"
@@ -383,7 +388,10 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 	waiting := c.waitingFor(o, m)
 	events, heard := c.missed(o, m)
 	prompt := c.prompt(m, o, waiting)
-	if len(events) > 0 && m.Session != "" {
+	switch {
+	case r != nil:
+		prompt = c.launchPrompt(m, o) + "\n\n" + c.restartText(b, o, m, *r, waiting, events)
+	case len(events) > 0 && m.Session != "":
 		prompt += "\n\nWhile you were down, " + wakeOrChief(o, m, events)
 	}
 	if resume {

@@ -40,6 +40,11 @@ type record struct {
 		Model      string          `json:"model"`
 		Content    json.RawMessage `json:"content"`
 		StopReason *string         `json:"stop_reason"`
+		Usage      *struct {
+			Input      int64 `json:"input_tokens"`
+			CacheWrite int64 `json:"cache_creation_input_tokens"`
+			CacheRead  int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
 	} `json:"message"`
 }
 
@@ -225,6 +230,9 @@ func (t *scan) add(r record) {
 		}
 		if r.IsSidechain {
 			return
+		}
+		if u := r.Message; r.Type == "assistant" && u != nil && u.Usage != nil && u.Model != "<synthetic>" {
+			t.Facts.Sized(u.Usage.Input+u.Usage.CacheWrite+u.Usage.CacheRead, r.Timestamp)
 		}
 		if r.Origin != nil {
 			t.Marked = true

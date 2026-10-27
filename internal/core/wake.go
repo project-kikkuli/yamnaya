@@ -182,6 +182,15 @@ func (c *Core) Wake(b Board) error {
 		return err
 	}
 	var errs []error
+	held, err := c.refreshSwollen(b, o)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	if len(held) > 0 {
+		if o, err = c.LoadOrg(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+	}
 	if err := c.fireTimers(b, o); err != nil {
 		errs = append(errs, err)
 	}
@@ -194,10 +203,10 @@ func (c *Core) Wake(b Board) error {
 		}
 		var err error
 		if g, ok := o.Goals[m.GoalID]; ok {
-			if err = c.nudgeIdle(b, o, m, g); err == nil {
+			if err = c.nudgeIdle(b, o, m, g); err == nil && !held[m.ID] {
 				err = c.wakeManager(b, m, g)
 			}
-		} else if m.Role == RoleChief {
+		} else if m.Role == RoleChief && !held[m.ID] {
 			err = c.wakeChief(b, o, m)
 		}
 		if err != nil {

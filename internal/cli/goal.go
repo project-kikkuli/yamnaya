@@ -48,7 +48,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
-		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
+		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with))
 	return cmd
 }
@@ -575,6 +575,55 @@ func goalAuthorityCmd(with func(runFunc) func(*cobra.Command, []string) error) *
 	cmd.Flags().BoolVar(&merge, "merge", false, "let managers merge their own pull requests in the repository")
 	cmd.Flags().BoolVar(&noMerge, "no-merge", false, "send the repository's merge-ready pull requests to the owner")
 	return cmd
+}
+
+func goalContextCapCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "context-cap [<tokens>|off]",
+		Short: "Show, or set, the context size past which ym restarts an idle manager or chief fresh from its brief",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				n, err := readTokens(args[0])
+				if err != nil {
+					return err
+				}
+				if err := e.core.Store.SetContextCap(n); err != nil {
+					return err
+				}
+			}
+			n, err := e.core.Store.ContextCap()
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "off: ym never restarts managers and chiefs for their context")
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s tokens: ym restarts an idle manager or chief past it fresh from its brief when a wake is due\n", core.Kilo(n))
+			return nil
+		}),
+	}
+}
+
+// readTokens reads a token count such as 100000, 100k or 1.5M; off is zero.
+func readTokens(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "off" || s == "0" {
+		return 0, nil
+	}
+	mult := 1.0
+	switch {
+	case strings.HasSuffix(s, "k"):
+		mult, s = 1e3, strings.TrimSuffix(s, "k")
+	case strings.HasSuffix(s, "m"):
+		mult, s = 1e6, strings.TrimSuffix(s, "m")
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f <= 0 {
+		return 0, fmt.Errorf("cannot read %q as a token count: use 100000, 100k, 1.5M or off", s)
+	}
+	return int64(f * mult), nil
 }
 
 func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {

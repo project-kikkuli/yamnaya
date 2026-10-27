@@ -33,6 +33,8 @@ const (
 	EventMachineThrottled = "machine-throttled"
 	EventResumed          = "resumed"
 	EventResumeFailed     = "resume-failed"
+	// EventRefreshed is ym retiring a manager's or chief's large session and starting a fresh one from its brief.
+	EventRefreshed = "refreshed"
 	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, a repeat or a still-waiting note.
 	EventIdleAgain = "idle-again"
 )
@@ -185,10 +187,10 @@ func (s *Store) markDelivered(events []GoalEvent, at time.Time) error {
 	return tx.Commit()
 }
 
-// lastKind is the kind of the goal's newest event that is not an agent's reply adding nothing, "" when it has none.
+// lastKind is the kind of the goal's newest event that is not an agent's reply adding nothing or a restart, "" when it has none.
 func (s *Store) lastKind(goal string) (string, error) {
 	var kind string
-	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? AND kind != ? ORDER BY seq DESC LIMIT 1`, goal, EventIdleAgain).Scan(&kind)
+	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? AND kind NOT IN (?, ?) ORDER BY seq DESC LIMIT 1`, goal, EventIdleAgain, EventRefreshed).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

@@ -326,6 +326,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	} else {
 		meta = append(meta, n.Manager.ID)
 	}
+	if n.Live != nil && n.Live.Context > 0 {
+		meta = append(meta, "context "+core.Kilo(n.Live.Context))
+	}
 	if n.Manager.LastError != "" {
 		meta = append(meta, "launch: "+n.Manager.LastError)
 	}

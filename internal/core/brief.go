@@ -321,7 +321,7 @@ func (c *Core) watchBriefs(b Board, o Org) error {
 			errs = append(errs, err)
 			continue
 		}
-		errs = append(errs, c.Store.noteBriefNudge(m.ID, behind))
+		errs = append(errs, c.Store.noteBriefNudge(m.ID, behind), c.Store.noteBriefAsk(m.ID, now))
 	}
 	return errors.Join(errs...)
 }

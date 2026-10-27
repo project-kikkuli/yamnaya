@@ -8,11 +8,7 @@ import (
 // prompt is the launch prompt of m's session; a relaunch also carries the messages that waited for it.
 func (c *Core) prompt(m Manager, o Org, waiting []Message) string {
 	var sb strings.Builder
-	if m.Role == RoleChief {
-		c.chiefPrompt(&sb, o, m)
-	} else {
-		c.managerPrompt(&sb, o, m)
-	}
+	sb.WriteString(c.launchPrompt(m, o))
 	if m.Session != "" {
 		fmt.Fprintf(&sb, "\n\nYou are being relaunched: your previous session %s stopped. Read your brief at %s first and pick up where it leaves off.", m.Session, m.BriefPath)
 		if len(waiting) > 0 {
@@ -21,6 +17,17 @@ func (c *Core) prompt(m Manager, o Org, waiting []Message) string {
 				sb.WriteString("\n- " + oneLine(msg.Text))
 			}
 		}
+	}
+	return sb.String()
+}
+
+// launchPrompt is what every session of m starts from: who it is, its goal or reports, its plan and how it works.
+func (c *Core) launchPrompt(m Manager, o Org) string {
+	var sb strings.Builder
+	if m.Role == RoleChief {
+		c.chiefPrompt(&sb, o, m)
+	} else {
+		c.managerPrompt(&sb, o, m)
 	}
 	return sb.String()
 }

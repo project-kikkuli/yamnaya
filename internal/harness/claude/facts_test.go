@@ -3,6 +3,7 @@ package claude
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,5 +178,32 @@ func TestASubagentIsCutOnlyWhenItStoppedMidTurn(t *testing.T) {
 		if len(crew) != 1 || crew[0].Status != core.Done || crew[0].Cut != c.cut {
 			t.Errorf("%s: crew %+v, want done with cut %v", c.name, crew, c.cut)
 		}
+	}
+}
+
+func TestContextIsWhatTheLatestMainThreadReplyRead(t *testing.T) {
+	reply := func(model string, in, write, read int64, sidechain bool) string {
+		side := ""
+		if sidechain {
+			side = `"isSidechain":true,`
+		}
+		return `{"type":"assistant",` + side + `"timestamp":"2026-10-27T10:00:00Z","message":{"model":"` + model + `","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":` +
+			strconv.FormatInt(in, 10) + `,"cache_creation_input_tokens":` + strconv.FormatInt(write, 10) + `,"cache_read_input_tokens":` + strconv.FormatInt(read, 10) + `}}}`
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  int64
+	}{
+		{"one reply", []string{human("go"), reply("claude-opus-5-5", 3, 2_000, 250_000, false)}, 252_003},
+		{"the latest reply wins", []string{human("go"), reply("claude-opus-5-5", 3, 0, 250_000, false), reply("claude-opus-5-5", 1, 500, 20_000, false)}, 20_501},
+		{"a subagent's reply is not the session's", []string{human("go"), reply("claude-opus-5-5", 3, 0, 90_000, false), reply("claude-haiku-5-5", 1, 0, 9_000, true)}, 90_003},
+		{"the harness's own reply reads nothing", []string{human("go"), reply("claude-opus-5-5", 3, 0, 90_000, false), reply("<synthetic>", 0, 0, 0, false)}, 90_003},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := newWorld(t, tc.lines...).session(t, nil).Context; got != tc.want {
+				t.Fatalf("context = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }

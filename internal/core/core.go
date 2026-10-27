@@ -85,6 +85,16 @@ type Facts struct {
 	Pushes []PRBranch
 	// Drift are the ways the agent is going nowhere now, read from its transcript and where it writes.
 	Drift []drift.Sign
+	// Context is the tokens the latest main-thread reply read in, cache reads and writes included; ContextAt is when it came.
+	Context   int64
+	ContextAt time.Time
+}
+
+// Sized records a reply that read tokens of context at at; a reply that read none, such as a harness's own, leaves it.
+func (f *Facts) Sized(tokens int64, at time.Time) {
+	if tokens > 0 {
+		f.Context, f.ContextAt = tokens, at
+	}
 }
 
 // Member is a subagent or teammate running inside a session.

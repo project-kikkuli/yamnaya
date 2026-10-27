@@ -69,6 +69,11 @@ type payload struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	Info *struct {
+		Last *struct {
+			Input int64 `json:"input_tokens"`
+		} `json:"last_token_usage"`
+	} `json:"info"`
 }
 
 func (p payload) text(kind string) string {
@@ -126,6 +131,10 @@ func (t *scan) add(l rolloutLine, cwd string) {
 			t.Open = false
 		case "user_message":
 			t.prompt(p.Message)
+		case "token_count":
+			if p.Info != nil && p.Info.Last != nil {
+				t.Facts.Sized(p.Info.Last.Input, l.Timestamp)
+			}
 		}
 	case "response_item":
 		switch p.Type {

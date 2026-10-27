@@ -66,6 +66,9 @@ func (c *Core) Supervise(b Board) error {
 			o.Sessions[m.Session] = m.ID
 		}
 	}
+	if err := c.trackContexts(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	act := c.activity(b, o)
 	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
@@ -126,7 +129,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 			}
 			break
 		}
-		m = c.relaunch(b, o, m)
+		m = c.bringBack(b, o, m)
 	case alive && !starting:
 		if m.Failures > 0 || !m.NextAttempt.IsZero() {
 			m.Failures, m.NextAttempt = 0, timeZero
@@ -137,7 +140,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 	case !alive && !starting && !now.Before(m.NextAttempt) && c.slot():
 		m.Failures++
 		m.NextAttempt = now.Add(backoff(m.Failures))
-		m = c.relaunch(b, o, m)
+		m = c.bringBack(b, o, m)
 	}
 	if !hasGoal {
 		return nil
