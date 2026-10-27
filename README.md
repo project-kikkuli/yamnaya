@@ -312,6 +312,29 @@ A cutaway of the ground: mounds on the surface, nests and tunnels below. Each re
 | Kill | The mound is flattened into a puff of dust and its nest and tunnels cave in, then it is gone. |
 | Sun, moon, stars, grass, soil layers, roots, pebbles, the brood comb's cells | Decoration only. Colors never mark a goal or repository. |
 
+### Subway
+
+A transit map: each repository is a network in its own tinted district, each goal a colored line with a lettered badge, its name and progress at the left end. A chief is an interchange, a white capsule its goals' lines all run through, marked `⇄`. Line colors only tell lines apart and are never red. The map is cream paper by day and dark at night, by your local clock.
+
+| Sign | Meaning |
+|---|---|
+| ` A ` badge, name, `NN%` | A line. The thick track reaches as far as the work is done; the rest is thin, still being built. |
+| `▐█▶` | A busy agent: a train running along the line. |
+| red `▐!▌` | An agent waiting on you: a red train stopped on the line. Always red. |
+| `▭N` | Idle teammates: trains parked in the depot. |
+| `○` | A pull request: a station, further along the line for each of its six gates passed. |
+| green `◉` / red `✕` | CI passed / CI failing. |
+| `●` in the line's color | A merged pull request: a filled station. |
+| `◎` / gold `★` | The terminus; a gold star when the line is open (done). |
+| red `!` at the terminus | Something waits on you. It blinks and the line's name turns red. |
+| Clouds | Delays: grey cloud drifts over a faded line. |
+| Storm | A service disruption: dark cloud, rain and lightning `ϟ`. |
+| Eruption | The line is suspended: broken grey track, an amber `╳` barrier, smoke, no trains running. |
+| Summit | The grand opening: gold sparkles round the terminus. |
+| `▸` | Before the selected row's line or network, the line lit. |
+| Line closes | A killed unit: its stations dim and the track erases from the terminus back. |
+| Paper, river, district tint, line colors | Decoration only. |
+
 ## Remote hosts
 
     ym remote install <host>       (or H on the board, then a)

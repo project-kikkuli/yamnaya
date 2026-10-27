@@ -1,2 +1,2 @@
-// Package subway is the subway theme. It registers nothing until it is built; ../THEMES.md says how.
+// Package subway draws the board as a transit map: networks of colored lines, trains and stations.
 package subway
