@@ -24,7 +24,6 @@ func TestPaneExitSignalsHaveTheSameNamesAcrossTmuxPlatforms(t *testing.T) {
 		signal string
 		want   string
 	}{
-		{"", ""},
 		{"kill", "kill"},
 		{"term", "term"},
 		{fmt.Sprint(int(syscall.SIGKILL)), "kill"},
@@ -35,6 +34,27 @@ func TestPaneExitSignalsHaveTheSameNamesAcrossTmuxPlatforms(t *testing.T) {
 			p, err := parsePane("task", "%1\t/dev/tty1\t1\t\t123\t"+tc.signal)
 			if err != nil || !p.Dead || p.Signal != tc.want {
 				t.Fatalf("pane = %+v, %v; want dead with signal %q", p, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPaneIsDeadOnlyOnceTmuxKnowsHowItsProcessEnded(t *testing.T) {
+	for _, tc := range []struct {
+		name, line string
+		dead       bool
+		status     int
+	}{
+		{"running", "%1\t/dev/tty1\t0\t\t123\t", false, 0},
+		{"terminal closed, process not yet reaped", "%1\t/dev/tty1\t1\t\t123\t", false, 0},
+		{"exited 3", "%1\t/dev/tty1\t1\t3\t123\t", true, 3},
+		{"exited 0", "%1\t/dev/tty1\t1\t0\t123\t", true, 0},
+		{"killed", "%1\t/dev/tty1\t1\t\t123\tkill", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := parsePane("task", tc.line)
+			if err != nil || p.Dead != tc.dead || p.Status != tc.status {
+				t.Fatalf("pane = %+v, %v; want dead %v with status %d", p, err, tc.dead, tc.status)
 			}
 		})
 	}

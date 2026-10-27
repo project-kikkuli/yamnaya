@@ -188,7 +188,9 @@ func parsePane(name, out string) (Pane, error) {
 			signal = strings.ToLower(strings.TrimPrefix(name, "SIG"))
 		}
 	}
-	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: f[2] == "1", Status: status, Signal: signal, PID: pid}, nil
+	// tmux marks a pane dead when its terminal closes, before it reaps the process; until it has, the exit is not known yet.
+	dead := f[2] == "1" && (f[3] != "" || f[5] != "")
+	return Pane{Session: name, ID: f[0], TTY: f[1], Dead: dead, Status: status, Signal: signal, PID: pid}, nil
 }
 
 // Kill ends session name; a session that is already gone is not an error.
