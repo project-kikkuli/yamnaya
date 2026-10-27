@@ -196,6 +196,29 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 
 The percentage beside a name, and a mission's "done" bar, is (finished crew + gates passed) / (crew + 6 × pull requests and pushed branches not closed). Crew is every agent beyond the main session, and finished means no longer busy or waiting. A verifying goal shows at least 90%, a done goal 100%, and a merged group the mean of its members.
 
+### Stocks
+
+A trading screen. Each repository is a sector panel and each chief an index panel showing the average of its goals. Each goal is a ticker: a symbol made from its name, a price that is its progress (0 to 100), and a price line ending at that price. Busy agents are volume bars, pull requests are candles, and the weather is how the ticker trades. The top bar shows the market session for your clock.
+
+| Sign | Meaning |
+|---|---|
+| `SECTOR` / `INDEX` bar | A repository / a chief, with its goals' average price. |
+| `FLFM 50.00` | A ticker and its price: the unit's progress. |
+| `▅▅` | A busy agent, a volume bar that pulses under the line's end; names sit on the left. |
+| red `!!` | An agent stopped and waiting on you. Its name is red too. |
+| grey `▁▁` | A resting teammate. |
+| candle right of the chart | A pull request, taller for each of its six gates passed; green when CI passed, red when CI fails. |
+| gold candle with `⚑` | A merged pull request (a dividend). |
+| `100.00` | Done: the price at the top. |
+| red `!! NEEDS YOU` | Something waits on you. The ticker's top row flashes red. |
+| `▸` and `▌` | The selected row's ticker or panel, its top row lit. |
+| `FLAT` | Clouds: the line levels off, grey. |
+| violet `CRASH` | Storm: the line spikes and plunges. |
+| `HALTED` and a striped banner | Eruption: trading stops. |
+| `ATH✦` | Summit: an all-time high, a gold star with sparks. |
+| `DELISTED` | A killed unit: its line flatlines and its name strikes through, then it is gone. |
+| Clock and session, ticker tape, the line before now, the change after the price, grid dots | Decoration only. Colors never mark a goal or repository. |
+
 ## Remote hosts
 
     ym remote install <host>
