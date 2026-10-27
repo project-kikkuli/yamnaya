@@ -9,7 +9,7 @@ func (Stocks) Legend(s scene.Scene) scene.Legend {
 			{Signal: scene.SigGroup, Glyph: "SECTOR", Color: c.headText.Hex(), Look: "a header bar over a sector panel of tickers; a chief's panel reads INDEX, with its goals' average price and line"},
 			{Signal: scene.SigUnit, Glyph: "FLFM", Color: c.sym.Hex(), Look: "a ticker: a symbol made from the goal's name, then its name and price chart"},
 			{Signal: scene.SigProgress, Glyph: "50.00", Color: c.text.Hex(), Look: "the price, 0 to 100; the price line ends at it"},
-			{Signal: scene.SigBusy, Glyph: "▅▅", Color: c.busy.Hex(), Look: "a pulsing volume bar under the line's end, one per agent, its name on the left"},
+			{Signal: scene.SigBusy, Glyph: "▃▄▅▆▇", Color: c.busy.Hex(), Look: "a pulsing volume bar under the line's end, one per agent, its name on the left"},
 			{Signal: scene.SigWaiting, Glyph: "!!", Color: c.red.Hex(), Look: "a red alert tick among the volume bars, the agent's name in red"},
 			{Signal: scene.SigResting, Glyph: "▁▁", Color: c.rest.Hex(), Look: "a flat grey volume bar"},
 			{Signal: scene.SigPR, Glyph: "█", Color: c.open.Hex(), Look: "a candle right of the chart, taller the more gates it passed"},

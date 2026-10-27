@@ -34,7 +34,7 @@ type star struct {
 // glyph is a drawn character; a wide one owns the next cell too, marked cont.
 type glyph struct {
 	s               string
-	fg              rgb
+	fg, bg          rgb
 	set, wide, cont bool
 }
 
@@ -145,12 +145,6 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 		}
 		n += width
 	}
-	var bg rgb
-	for k := range n {
-		c := p.behind(x+k, y).Scale(1 / float64(n))
-		bg = rgb{R: bg.R + c.R, G: bg.G + c.G, B: bg.B + c.B}
-	}
-	fg = readable(fg, bg)
 	for rest := text; rest != ""; {
 		c, width := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
 		rest = rest[len(c):]
@@ -158,7 +152,7 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 			continue
 		}
 		i := y*p.w + x
-		p.cells[i] = glyph{s: c, fg: fg, set: true, wide: width == 2}
+		p.cells[i] = glyph{s: c, fg: fg, bg: scene.Backing(fg, p.behind(x, y)), set: true, wide: width == 2}
 		p.taken[i] = true
 		p.claim(x, y)
 		if width == 2 {
@@ -176,7 +170,7 @@ func (p *painter) put(x, y int, g string, fg rgb) bool {
 		return false
 	}
 	i := y*p.w + x
-	p.cells[i] = glyph{s: g, fg: readable(fg, p.behind(x, y)), set: true}
+	p.cells[i] = glyph{s: g, fg: fg, bg: scene.Backing(fg, p.behind(x, y)), set: true}
 	p.taken[i] = true
 	p.claim(x, y)
 	return true
@@ -222,7 +216,7 @@ func (p *painter) paintCell(c *scene.Canvas, x, y int) {
 	}
 	switch {
 	case g.set:
-		c.Set(x, y, g.fg, mix(top, bottom, .5), g.s)
+		c.Set(x, y, g.fg, g.bg, g.s)
 	case scene.Code(top) == scene.Code(bottom):
 		c.Set(x, y, top, top, " ")
 	default:

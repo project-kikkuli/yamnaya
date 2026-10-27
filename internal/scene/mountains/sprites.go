@@ -101,17 +101,17 @@ func (p *painter) crown(i int) {
 	m, g := p.l.mounts[i], p.geo[i]
 	x, row := int(g.x), cellAbove(g.y)
 	if m.weather == scene.Summit {
-		p.write(x, row, "⚑", p.th.flag)
+		p.write(x, row, "⚑", p.th.green)
 	}
 	color := p.th.label
 	if m.needsYou && m.dying == 0 {
 		lit := p.frame/4%2 == 0
-		p.write(x, row-1, "│", p.th.flag)
+		p.mark(x, row-1, "│", p.th.flag)
 		star := "✸"
 		if !lit {
 			star = "✦"
 		}
-		p.write(x, row-2, star, p.th.flag)
+		p.mark(x, row-2, star, p.th.flag)
 		row -= 2
 		color = p.th.flag
 	}
@@ -202,7 +202,7 @@ func (p *painter) team(i int) {
 		case (p.frame/4+j)%2 == 1:
 			glyph = "ƛ"
 		}
-		if !p.write(x, r, glyph, fg) {
+		if !p.mark(x, r, glyph, fg) {
 			continue
 		}
 		name := ansi.Truncate(ansi.Strip(c.Name), 18, "…")
@@ -275,7 +275,7 @@ func (p *painter) camps(i int) {
 		case scene.Merged:
 			glyph, fg = "⚑", p.th.gold
 		}
-		if p.write(x, row, glyph, fg) {
+		if p.mark(x, row, glyph, fg) {
 			p.write(x+2, row, ansi.Truncate(ansi.Strip(c.Label), 14, "…"), fg)
 		}
 	}

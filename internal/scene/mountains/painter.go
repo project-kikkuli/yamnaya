@@ -34,6 +34,9 @@ type painter struct {
 	// pre is the backdrop before its landscape was painted; only limits painting to some columns.
 	pre  []rgb
 	only []bool
+	// keep makes write leave a glyph's color as it is and change only its cell's, for marks whose color is their
+	// meaning.
+	keep bool
 	// bufs holds a frame's buffers for release.
 	bufs *frameBufs
 }
@@ -47,7 +50,7 @@ type pixel struct {
 type glyph struct {
 	r          rune
 	s          string
-	fg         rgb
+	fg, bg     rgb
 	set        bool
 	wide, cont bool
 }
@@ -197,8 +200,16 @@ func (p *painter) clear(x, y int) {
 	p.cells[i] = glyph{}
 }
 
+// mark writes a glyph whose color is its meaning, changing only its cell to read.
+func (p *painter) mark(x, y int, text string, fg rgb) bool {
+	p.keep = true
+	defer func() { p.keep = false }()
+	return p.write(x, y, text, fg)
+}
+
 // write puts text on the scene a grapheme at a time, wide ones over two cells, where every cell is free and
-// unclaimed, in a color that reads against what is behind it, and reports whether it fit.
+// unclaimed, in its own hue on what is behind it, the two moved apart where needed to read, and reports whether
+// it fit.
 func (p *painter) write(x, y int, text string, fg rgb) bool {
 	if y < 0 || y >= p.p/2 || x < 0 {
 		return false
@@ -223,15 +234,14 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 		parts = append(parts, part{c, width})
 		n += width
 	}
-	var bg rgb
-	for k := range n {
-		c := mix(p.px[2*y*p.w+x+k], p.px[(2*y+1)*p.w+x+k], .5).Scale(1 / float64(n))
-		bg = rgb{R: bg.R + c.R, G: bg.G + c.G, B: bg.B + c.B}
-	}
-	fg = readable(fg, bg)
 	for _, c := range parts {
 		p.clear(x, y)
-		p.cells[y*p.w+x] = glyph{s: c.s, fg: fg, set: true, wide: c.width == 2}
+		behind := mix(p.px[2*y*p.w+x], p.px[(2*y+1)*p.w+x], .5)
+		f, b := readable(fg, behind)
+		if p.keep {
+			f, b = fg, backing(fg, behind)
+		}
+		p.cells[y*p.w+x] = glyph{s: c.s, fg: f, bg: b, set: true, wide: c.width == 2}
 		p.taken[y*p.w+x] = true
 		p.who[y*p.w+x] = p.writer
 		if c.width == 2 {

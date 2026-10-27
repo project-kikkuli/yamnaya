@@ -38,8 +38,8 @@ one of them touches only files in its own directory. A theme under any other nam
    `Fbm2`, never from `math/rand` or the clock. Frames are `scene.Step` (250ms) apart; animate from `frame`.
    `scene.Frame` already passes frame 0 under `YM_REDUCED_MOTION` and caches a repeated frame, and
    `scene.Pace` picks the tick rate from the model, so a theme neither checks reduced motion nor chooses a pace.
-   Colors: `scene.RGB`, `Hex`, `Mix`, `Scale`, `Luma`, `Readable` (text against what is behind it), `Smooth`,
-   `Clamp`, `Lerp`.
+   Colors: `scene.RGB`, `Hex`, `Mix`, `Scale`, `Luma`, `Contrast`, `Backing`, `Readable`, `IsRed`, `Smooth`, `Clamp`,
+   `Lerp`.
 
 3. Show every signal. `scene.Scene` holds `Ranges` (groups: a repository, or a chief whose goals and nested
    chiefs sit inside it), loose `Peaks` (units), `Selected` (a unit or group id), `Now` (local time; zero means
@@ -47,7 +47,17 @@ one of them touches only files in its own directory. A theme under any other nam
    (`Clear`, `Clouds`, `Storm`, `Eruption`, `Summit`; `Range.Sky()` is a group's), `Team` (each `Climber` is
    `Climbing` = busy, `Waiting` = waiting on the owner, or `Resting`), `Camps` (pull requests: `Stage` 0..6 gates
    passed, `State` `Open`, `Green`, `Failing` or `Merged`), `NeedsYou` (blink an alert on it) and `Dying`.
-   Red is reserved for waiting agents, needs-you and failing CI, and no color may mark a goal or repository.
+   Red is reserved for waiting agents, needs-you and failing CI: no other glyph may be drawn in red, and those
+   three always show red, in a glyph or behind it. Red is what `scene.IsRed` says: a hue within 15 degrees of pure red, HSV saturation at
+   least .5 and value at least .3. Orange (from 16 degrees) and pink or salmon washed below saturation .5 are
+   not red, and pixel cells (" ", "▀", "▄", "█") are never checked, so a pink dusk sky or orange fire is fine.
+   No color may mark a goal or repository. Draw the busy, waiting and needs-you glyphs on
+   `scene.Backing(fg, bg)`, `bg` being what is behind the cell: it darkens the cell, or lightens it behind a
+   dark glyph, until the glyph reads at `scene.MinContrast` (3:1) and leaves the glyph's color alone, so busy and
+   waiting stay apart and red stays red. Put other glyphs through `f, b := scene.Readable(fg, bg)` and draw `f`
+   on `b`: it keeps the hue and never lightens the glyph, darkening it on a light cell or darkening the cell
+   behind a light one. The contrast check finds a signal's cells by the runes of its legend `Glyph`, so list
+   every rune it is drawn with there.
    A crowded screen may merge units, as the mountains do, but must keep the selection and every alert visible.
 
 4. Kill. `Peak.Dying` is 0 while the unit lives and rises from just above 0 to 1 over `scene.KillTime` (1.5s)
@@ -73,6 +83,10 @@ The tests in `internal/scene/themes` run against every registered theme with no 
 - each signal (waiting, resting, more agents, each pull request state and stage, progress, needs you, each
   weather, kill, selection) changes the picture of a lone unit;
 - `Hit` finds each unit;
+- at every quarter hour, in dark and light terminals, the busy, waiting and needs-you glyphs have at least
+  `scene.MinContrast` (3:1) against their cell, waiting and needs-you are red, and busy and waiting agents
+  differ in color;
+- red is drawn only for waiting agents, needs-you and failing CI, and each of those shows red;
 - a busy board at 200x60 (30 units, 60 agents, 40 pull requests, every weather, a kill playing) paints in at
   most 2ms of CPU per frame at the 90th percentile, and allocations per frame do not grow as frames go by.
 

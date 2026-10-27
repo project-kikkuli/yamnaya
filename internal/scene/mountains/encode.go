@@ -30,7 +30,7 @@ func (p *painter) paintCell(c *scene.Canvas, x, y int) {
 	}
 	switch {
 	case g.set:
-		c.Set(x, y, g.fg, mix(top, bottom, .5), glyph)
+		c.Set(x, y, g.fg, g.bg, glyph)
 	case scene.Code(top) == scene.Code(bottom):
 		c.Set(x, y, top, top, " ")
 	default:

@@ -91,10 +91,10 @@ func (p *painter) bg(x, y int) rgb {
 	return p.bd.bg[y*p.w+x]
 }
 
-// air draws glyph over the sky or sea at x, y, moved away from it until the two contrast.
+// air draws glyph over the sky or sea at x, y, the two moved apart until they contrast.
 func (p *painter) air(x, y int, fg rgb, glyph string) {
-	bg := p.bg(x, y)
-	p.set(x, y, scene.Readable(fg, bg), bg, glyph)
+	f, b := scene.Readable(fg, p.bg(x, y))
+	p.set(x, y, f, b, glyph)
 }
 
 // text writes s from x on row y, at most n cells, over bg when given and else over the sky or sea.
@@ -402,8 +402,8 @@ func (p *painter) sky(q *squad, y0, hidden int) {
 		if p.frame/4%2 == 1 {
 			a, b = b, a
 		}
-		p.set(x0, y0+1, lt.red, p.bg(x0, y0+1), a)
-		p.set(x0+1, y0+1, lt.red, p.bg(x0+1, y0+1), b)
+		p.set(x0, y0+1, lt.red, scene.Backing(lt.red, p.bg(x0, y0+1)), a)
+		p.set(x0+1, y0+1, lt.red, scene.Backing(lt.red, p.bg(x0+1, y0+1)), b)
 	}
 }
 

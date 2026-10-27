@@ -182,3 +182,16 @@ func appendCode(buf []byte, base, code int) []byte {
 type Rect struct{ X0, Y0, X1, Y1 int }
 
 func (r Rect) Has(x, y int) bool { return x >= r.X0 && x < r.X1 && y >= r.Y0 && y < r.Y1 }
+
+// Ink is the foreground and background drawn at x, y under TrueColor; colored is false for a plain or reset cell.
+func (c *Canvas) Ink(x, y int) (fg, bg RGB, colored bool) {
+	k := c.ink[y*c.w+x]
+	if k&inkColor == 0 {
+		return RGB{}, RGB{}, false
+	}
+	return codeRGB(int(k >> 24 & 0xffffff)), codeRGB(int(k & 0xffffff)), true
+}
+
+func codeRGB(code int) RGB {
+	return RGB{float64(code>>16) / 255, float64(code>>8&255) / 255, float64(code&255) / 255}
+}

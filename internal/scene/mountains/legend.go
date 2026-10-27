@@ -17,7 +17,7 @@ func (Mountains) Legend(s scene.Scene) scene.Legend {
 			{Signal: scene.SigPRGreen, Glyph: "▲", Color: green, Look: "a green camp"},
 			{Signal: scene.SigPRRed, Glyph: "▲", Color: red, Look: "a red camp"},
 			{Signal: scene.SigMerged, Glyph: "⚑", Color: gold, Look: "a gold flag at the camp line; several collapse to \"N merged\""},
-			{Signal: scene.SigDone, Glyph: "⚑", Color: red, Look: "a flag on the summit"},
+			{Signal: scene.SigDone, Glyph: "⚑", Color: green, Look: "a green flag on the summit"},
 			{Signal: scene.SigNeedsYou, Glyph: "│ ✸", Color: red, Look: "a blinking red flare over the peak, its name in red"},
 			{Signal: scene.SigSelected, Glyph: "▾", Look: "over the peak or range, its name lit"},
 			{Signal: scene.SigClear, Look: "open sky"},

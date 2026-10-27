@@ -177,7 +177,7 @@ The board floats over a scene of your work, drawn in one theme at a time: mounta
 
 ### Mountains
 
-Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a flag on the summit done, an avalanche a kill. The sky follows your local clock.
+Each repository is a range and each goal a peak. Busy agents climb the west face, red when stopped on you; pull requests are camps on the east face at the gate they reached (open, CI green, reviews resolved, merged). A red flare rises from work that needs you. Clouds mean quiet, a storm a failing check or a stuck goal, an eruption a dead manager, a green flag on the summit done, an avalanche a kill. Red marks only an agent waiting on you, a flare and failing CI, and every sign keeps at least 3:1 contrast with what is behind it at any hour. The sky follows your local clock.
 
 | Sign | Meaning |
 |---|---|
@@ -187,7 +187,7 @@ Each repository is a range and each goal a peak. Busy agents climb the west face
 | `▲` | A pull request camp on the east face, higher for each of its six gates passed: branch, commits, pull request, CI, threads, merged. |
 | green `▲` / red `▲` | CI passed / CI failing. |
 | gold `⚑` | A merged pull request. Several collapse to `N merged`. |
-| red `⚑` on a summit | The goal is done, or every pull request is merged. |
+| green `⚑` on a summit | The goal is done, or every pull request is merged. |
 | red `│ ✸` | A flare: something waits on you. It blinks and the name turns red. |
 | Clear | A goal that is moving or verifying; a session with an agent at work or waiting, or with both a teammate and a pull request. It outranks Summit while an agent is busy. |
 | Clouds | A goal that is quiet (nudged, or nothing moved for 30 minutes) or adrift; a session with no working agent, or with pull requests but no teammate. |
