@@ -94,7 +94,8 @@ func (p *painter) price(end, y int, v float64, fg, bg rgb) int {
 	return x
 }
 
-func (p *painter) flash() bool { return p.frame/4%2 == 0 }
+// flash is the half of each second a needs-you alert fills its row red; in the other half its tag is red text.
+func (p *painter) flash() bool { return p.frame/4%2 == 1 }
 
 func (p *painter) values(n int) []float64 {
 	if cap(p.vals) < n {
@@ -385,7 +386,8 @@ func (p *painter) ticker(bl block, rows int) {
 	x := p.text(x0+1, y0, end, sym, fade.of(symFg), bg, struck)
 	struck -= len([]rune(sym)) + 1
 	if alive && u.NeedsYou {
-		x = p.text(x+1, y0, end, " !! NEEDS YOU ", p.pal.redText, p.pal.red, 0)
+		f, b := scene.Readable(p.pal.red, bg)
+		x = p.text(x+1, y0, end, " !! NEEDS YOU ", f, b, 0)
 	}
 	p.text(x+1, y0, end, u.Name, fade.of(nameFg), bg, struck)
 
@@ -452,11 +454,13 @@ func (p *painter) volume(x0, x1, y int, u scene.Peak, seed uint64) {
 		switch a.Stance {
 		case scene.Climbing:
 			g := levels[2+int(scene.Unit(seed, p.frame/4*7+i)*6)]
-			p.put(x, y, p.pal.busy, p.pal.panel, g)
-			p.put(x+1, y, p.pal.busy, p.pal.panel, g)
+			f, b := scene.Readable(p.pal.busy, p.pal.panel)
+			p.put(x, y, f, b, g)
+			p.put(x+1, y, f, b, g)
 		case scene.Waiting:
-			p.put(x, y, p.pal.redText, p.pal.red, "!")
-			p.put(x+1, y, p.pal.redText, p.pal.red, "!")
+			f, b := scene.Readable(p.pal.redText, p.pal.red)
+			p.put(x, y, f, b, "!")
+			p.put(x+1, y, f, b, "!")
 		default:
 			p.put(x, y, p.pal.rest, p.pal.panel, "▁")
 			p.put(x+1, y, p.pal.rest, p.pal.panel, "▁")
@@ -474,7 +478,8 @@ func (p *painter) volume(x0, x1, y int, u scene.Peak, seed uint64) {
 		case scene.Resting:
 			c = p.pal.dim
 		}
-		x = p.text(x, y, bx-1, a.Name, c, p.pal.panel, 0) + 2
+		f, b := scene.Readable(c, p.pal.panel)
+		x = p.text(x, y, bx-1, a.Name, f, b, 0) + 2
 	}
 }
 
@@ -533,8 +538,8 @@ func (p *painter) quote(bl block) {
 	}
 	sym := symbol(u.Name)
 	symBg := bg
-	if alive && u.NeedsYou {
-		symFg, symBg = p.pal.redText, p.pal.red
+	if alive && u.NeedsYou && !p.flash() {
+		symFg, symBg = scene.Readable(p.pal.red, bg)
 	}
 	p.text(x0+1, y, x0+7, sym, fade.of(symFg), symBg, struckOf(d, len([]rune(sym))))
 	p.price(x0+13, y, scene.Clamp(u.Progress, 0, 1)*100, fade.of(fg), bg)
@@ -559,9 +564,11 @@ func (p *painter) quote(bl block) {
 		for i, a := range u.Team[:na] {
 			switch a.Stance {
 			case scene.Climbing:
-				p.put(end+1+i, y, p.pal.busy, p.pal.panel, levels[2+int(scene.Unit(seed, p.frame/4*7+i)*6)])
+				f, b := scene.Readable(p.pal.busy, p.pal.panel)
+				p.put(end+1+i, y, f, b, levels[2+int(scene.Unit(seed, p.frame/4*7+i)*6)])
 			case scene.Waiting:
-				p.put(end+1+i, y, p.pal.redText, p.pal.red, "!")
+				f, b := scene.Readable(p.pal.redText, p.pal.red)
+				p.put(end+1+i, y, f, b, "!")
 			default:
 				p.put(end+1+i, y, p.pal.rest, p.pal.panel, "▁")
 			}
