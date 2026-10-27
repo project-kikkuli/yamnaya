@@ -251,6 +251,9 @@ func (r *remoteHosts) call(host string, stdin []byte, args ...string) ([]byte, e
 			r.drop(host)
 			return nil, fmt.Errorf("%w: %w", core.ErrUnreachable, sshErr(err, errb.Bytes()))
 		}
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == exitGone {
+			return nil, fmt.Errorf("%w: %w", core.ErrGone, sshErr(err, errb.Bytes()))
+		}
 		return nil, sshErr(err, errb.Bytes())
 	}
 	return out, nil

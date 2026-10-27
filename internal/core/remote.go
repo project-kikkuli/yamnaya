@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -202,10 +203,23 @@ func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
 	} else if !slices.Contains(c.peerHosts(), host) {
 		return "", fmt.Errorf("%s: ym has not reached that host: %w", host, ErrNotFound)
 	}
+	queued := fmt.Sprintf("queued for %s; ym serve carries it there when it next reaches %s", host, host)
+	if args[0] == "kill" {
+		pending, err := c.Store.PendingRelays()
+		if err != nil {
+			return "", err
+		}
+		want, _ := json.Marshal(relayYM{Args: args})
+		for _, r := range pending {
+			if r.Origin == "" && r.Dest == host && r.Kind == RelayYM && r.Body == string(want) {
+				return queued, nil
+			}
+		}
+	}
 	if err := c.Relay(host, RelayYM, relayYM{Args: args}); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("queued for %s; ym serve carries it there when it next reaches %s", host, host), nil
+	return queued, nil
 }
 
 // remoteHost is the host a host-qualified id names when ym reaches that host directly or through relays.

@@ -99,8 +99,12 @@ func relayHosts(c *core.Core) error {
 	return c.SyncRelays(names, newRemoteHosts(names, 0, nil))
 }
 
-// exitFinal is ym's exit status for a refusal no later attempt changes, so a relay that ran the command ends instead of retrying.
-const exitFinal = 3
+// exitFinal is ym's exit status for a refusal no later attempt changes, so a relay that ran the command ends instead of retrying;
+// exitGone is a kill whose target already ended, which a relay counts as done.
+const (
+	exitFinal = 3
+	exitGone  = 4
+)
 
 // ExitCode is the status ym exits with for err.
 func ExitCode(err error) int {
@@ -110,6 +114,9 @@ func ExitCode(err error) int {
 	}
 	if errors.Is(err, core.ErrFinal) {
 		return exitFinal
+	}
+	if errors.Is(err, core.ErrGone) {
+		return exitGone
 	}
 	return 1
 }
@@ -124,8 +131,11 @@ func runSelf(args ...string) (string, error) {
 	if err != nil {
 		err = fmt.Errorf("ym %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == exitFinal {
+		switch {
+		case errors.As(err, &exit) && exit.ExitCode() == exitFinal:
 			err = core.Final(err)
+		case errors.As(err, &exit) && exit.ExitCode() == exitGone:
+			err = fmt.Errorf("%w: %w", core.ErrGone, err)
 		}
 		return "", err
 	}

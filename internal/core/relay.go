@@ -641,8 +641,10 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		if c.RunSelf == nil {
 			return fmt.Errorf("ym cannot run itself here: %w", errUnusable)
 		}
-		_, err := c.RunSelf(y.Args...)
-		return err
+		if _, err := c.RunSelf(y.Args...); !errors.Is(err, ErrGone) {
+			return err
+		}
+		return nil
 	}
 	return fmt.Errorf("unknown relay kind %q: %w", r.Kind, errUnusable)
 }

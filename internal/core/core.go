@@ -240,6 +240,9 @@ var ErrNotFound = errors.New("not found")
 // ErrFinal marks a refusal no later attempt changes, such as answering an item that was answered already.
 var ErrFinal = errors.New("final")
 
+// ErrGone is a kill whose target already ended, which leaves nothing for a retry to do.
+var ErrGone = errors.New("already ended")
+
 type finalError struct{ error }
 
 func (e finalError) Is(target error) bool { return target == ErrFinal }

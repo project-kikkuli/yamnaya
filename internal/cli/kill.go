@@ -72,6 +72,9 @@ func kill(c *core.Core, ref string, yes, stop, tty bool, in io.Reader, out io.Wr
 		return err
 	}
 	s, err := killable(c, ref)
+	if errors.Is(err, core.ErrNotFound) {
+		return fmt.Errorf("nothing to kill: %w: %w", core.ErrGone, err)
+	}
 	if err != nil {
 		return err
 	}

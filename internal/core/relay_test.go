@@ -574,3 +574,47 @@ func TestBriefLinksNameTheirHostOnceAnotherHostCarriesIt(t *testing.T) {
 		t.Errorf("carried host links %q, want %q", got, BriefURL("box.example/mgr1"))
 	}
 }
+
+// silentRemotes reach hosts whose latest read went unanswered.
+type silentRemotes struct{ fakeRemotes }
+
+func (s *silentRemotes) Silent(string) error { return fmt.Errorf("%w: no answer for 2m", ErrUnreachable) }
+
+func TestAQueuedKillLandsOnceWhetherItsTargetLivesEndedOrWasKilledTwice(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		kills int
+		ran   error
+	}{
+		{"live target", 1, nil},
+		{"target already ended", 1, fmt.Errorf("ym kill --yes s1: %w: session \"s1\": %w", ErrGone, ErrNotFound)},
+		{"killed twice before the host answers", 2, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			f.a.core.Remotes = &silentRemotes{fakeRemotes{boards: []RemoteBoard{{Host: "c"}}}}
+			var ran [][]string
+			f.c.core.RunSelf = func(args ...string) (string, error) {
+				ran = append(ran, args)
+				return "killed claude s1", tc.ran
+			}
+			for range tc.kills {
+				if msg, err := f.a.core.RunOrRelay("c", "kill", "--yes", "s1"); err != nil || !strings.HasPrefix(msg, "queued for c") {
+					t.Fatalf("RunOrRelay = %q, %v", msg, err)
+				}
+			}
+			if pending, _ := f.a.core.Store.PendingRelays(); len(pending) != 1 {
+				t.Fatalf("%d relays queued for %d kills of one target, want 1", len(pending), tc.kills)
+			}
+			for range RefusalsBeforeOwner {
+				f.sync(t)
+			}
+			if pending, _ := f.a.core.Store.PendingRelays(); len(pending) != 0 {
+				t.Errorf("still pending after the host answered: %+v", pending)
+			}
+			if len(ran) != 1 || strings.Join(ran[0], " ") != "kill --yes s1" {
+				t.Errorf("c ran %v, want one kill --yes s1", ran)
+			}
+		})
+	}
+}

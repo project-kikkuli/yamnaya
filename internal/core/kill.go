@@ -59,7 +59,11 @@ func (c *Core) Kill(s Live) (string, error) { return c.end(s, "") }
 
 func (c *Core) end(s Live, goal string) (string, error) {
 	if s.Remote != "" {
-		return c.RunOrRelay(s.Remote, "kill", "--yes", s.Key())
+		msg, err := c.RunOrRelay(s.Remote, "kill", "--yes", s.Key())
+		if errors.Is(err, ErrGone) {
+			return fmt.Sprintf("%s %s on %s already ended", s.Harness, Short(s.Key()), s.Remote), nil
+		}
+		return msg, err
 	}
 	msg, err := c.Stop(s)
 	if err != nil || c.Launches == nil {
