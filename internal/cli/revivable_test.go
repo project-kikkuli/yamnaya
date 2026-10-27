@@ -11,6 +11,7 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
@@ -29,8 +30,7 @@ func fakeAgent(t *testing.T) string {
 
 func testLauncher(t *testing.T, base string) launcher {
 	t.Helper()
-	srv := &tmux.Host{Socket: fmt.Sprintf("ymtest-%d-%d", os.Getpid(), time.Now().UnixNano()), Kind: tmux.Server}
-	t.Cleanup(func() { exec.Command("tmux", "-L", srv.Socket, "kill-server").Run() })
+	srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
 	conf := filepath.Join(base, "tmux.conf")
 	if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
 		t.Fatal(err)

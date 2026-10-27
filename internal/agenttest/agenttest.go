@@ -43,6 +43,7 @@ func Run(m *testing.M) int {
 		os.Unsetenv(env)
 	}
 	os.Setenv("YAMNAYA_BRIEFS_ADDR", "127.0.0.1:0")
+	pinGo()
 	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "YAMNAYA_STATE_DIR": "home/.local/state/yamnaya", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
 		path := filepath.Join(root, sub)
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -67,6 +68,29 @@ func Run(m *testing.M) int {
 }
 
 const rootEnv = "YM_AGENTTEST_ROOT"
+
+// pinGo keeps the go command a test runs on the owner's module and build caches and go env file, which would otherwise
+// follow HOME into the root and download every module there.
+func pinGo() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		gopath = filepath.Join(home, "go")
+		os.Setenv("GOPATH", gopath)
+	}
+	if os.Getenv("GOMODCACHE") == "" {
+		os.Setenv("GOMODCACHE", filepath.Join(filepath.SplitList(gopath)[0], "pkg", "mod"))
+	}
+	if cache, err := os.UserCacheDir(); err == nil && os.Getenv("GOCACHE") == "" {
+		os.Setenv("GOCACHE", filepath.Join(cache, "go-build"))
+	}
+	if config, err := os.UserConfigDir(); err == nil && os.Getenv("GOENV") == "" {
+		os.Setenv("GOENV", filepath.Join(config, "go", "env"))
+	}
+}
 
 // fence lets a signal through only to a process the test started or one working inside its root.
 type fence struct {

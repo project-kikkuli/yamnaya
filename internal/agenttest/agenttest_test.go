@@ -32,6 +32,11 @@ func TestATestProcessLivesInsideARehearsalRootAwayFromTheOwnersFiles(t *testing.
 			t.Errorf("%s = %q, want a directory under %s", env, v, root)
 		}
 	}
+	for _, env := range []string{"GOMODCACHE", "GOCACHE"} {
+		if v := os.Getenv(env); v == "" || strings.HasPrefix(v, root+string(filepath.Separator)) {
+			t.Errorf("%s = %q, want the owner's cache outside %s, so a go command a test runs downloads nothing into it", env, v, root)
+		}
+	}
 	if dir := t.TempDir(); !strings.HasPrefix(dir, root+string(filepath.Separator)) {
 		t.Errorf("t.TempDir() = %s, outside %s", dir, root)
 	}
