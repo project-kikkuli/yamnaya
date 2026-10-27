@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/charmbracelet/x/term"
@@ -35,16 +36,23 @@ func attachRelayCmd() *cobra.Command {
 }
 
 // proxyTTY runs c on a terminal of its own in place of in's, passing what in types through see to c, what c draws to out,
-// and in's size to c's terminal.
+// and in's size to c's terminal. In's mode comes back when c ends, when this process is told to end, which c is told too,
+// and when it panics.
 func proxyTTY(c *exec.Cmd, in *os.File, see func([]byte), out io.Writer) error {
 	master, slave, err := openPTY()
 	if err != nil {
 		return err
 	}
 	defer master.Close()
+	ends := make(chan os.Signal, 3)
+	signal.Notify(ends, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer func() { signal.Stop(ends); close(ends) }()
+	restore := func() {}
 	if state, err := term.MakeRaw(in.Fd()); err == nil {
-		defer term.Restore(in.Fd(), state)
+		var once sync.Once
+		restore = func() { once.Do(func() { term.Restore(in.Fd(), state) }) }
 	}
+	defer restore()
 	resize := func() {
 		if w, h, err := term.GetSize(in.Fd()); err == nil {
 			unix.IoctlSetWinsize(int(master.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: uint16(h), Col: uint16(w)})
@@ -67,6 +75,18 @@ func proxyTTY(c *exec.Cmd, in *os.File, see func([]byte), out io.Writer) error {
 		return err
 	}
 	go func() {
+		for sig := range ends {
+			restore()
+			c.Process.Signal(sig)
+		}
+	}()
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				restore()
+				panic(p)
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := in.Read(buf)

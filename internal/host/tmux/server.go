@@ -19,7 +19,7 @@ const Server = "ym"
 
 // ServerConf is ym's own server config: panes stay after their agent exits so ym can tell and revive them, what an agent
 // copies or links reaches the terminal attached to it through each tmux on the way, and a right-click on a web link asks
-// the ym that attached the client to open it.
+// the ym that attached the client to open it, naming the client's cell clicked, counting from 1.
 var ServerConf = `set -g remain-on-exit on
 set -g history-limit 50000
 set -g escape-time 10
@@ -31,7 +31,7 @@ set -s terminal-features[0] "xterm*:clipboard:ccolour:cstyle:focus:title:hyperli
 set -s terminal-features[1] "screen*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
 set -s terminal-features[2] "tmux*:clipboard:ccolour:cstyle:focus:title:hyperlinks"
 set -s terminal-features[3] "rxvt*:ignorefkeys"
-` + rightClick(`printf "\033Ptmux;\033\033]7477;open;%s\007\033\134" #{q:mouse_hyperlink} > #{pane_tty}`) + `set -g status-left "ym #S "
+` + rightClick(`printf "\033Ptmux;\033\033]7477;open;%s;%s;%s\007\033\134" #{e|+:#{mouse_x},#{e|+:#{pane_left},1}} #{e|+:#{mouse_y},#{e|+:#{pane_top},1}} #{q:mouse_hyperlink} > #{pane_tty}`) + `set -g status-left "ym #S "
 set -g status-left-length 60
 set -g status-right "C-b d: back to the board "
 `

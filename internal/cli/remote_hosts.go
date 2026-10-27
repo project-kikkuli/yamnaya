@@ -310,7 +310,7 @@ func (r *remoteHosts) relay(host string) *termRelay {
 			return
 		}
 		spec := "127.0.0.1:" + port + ":localhost:" + port
-		go exec.Command(r.ssh, sshArgs(host, "-O", "forward", "-L", spec)...).Run()
+		exec.Command(r.ssh, sshArgs(host, "-O", "forward", "-L", spec)...).Run()
 	}}
 	if runtime.GOOS == "darwin" {
 		relay.copy = func(text []byte) {
