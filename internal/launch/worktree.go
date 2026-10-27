@@ -285,6 +285,15 @@ func Stamp(path string) string {
 	return strings.Join(parts, ".")
 }
 
+// Prune drops the registration of every worktree of the repository at gitDir whose directory is gone.
+func Prune(gitDir string) error {
+	out, err := gitCommand("--git-dir="+gitDir, "worktree", "prune").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree prune in %s: %w: %s", gitDir, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Discard deletes the worktree even when it is dirty, keeping its branch.
 func Discard(w Worktree) error {
 	root := filepath.Dir(w.GitDir)

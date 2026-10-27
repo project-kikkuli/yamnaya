@@ -18,6 +18,8 @@ type Recovery struct {
 	Work    string `json:"work,omitempty"`
 	Commits int    `json:"commits,omitempty"`
 	Files   int    `json:"files,omitempty"`
+	// Origin is the repository's origin URL, so the work can be rebuilt once the repository is gone.
+	Origin string `json:"origin,omitempty"`
 }
 
 // Toll is what removing a worktree would take with it: commits no remote or default branch holds, and changed or untracked files.
@@ -62,6 +64,7 @@ func Stash(path, key, dir string) (Recovery, error) {
 		return Recovery{}, err
 	}
 	r := Recovery{Commits: t.Commits, Files: t.Files, Bundle: filepath.Join(dir, key+".bundle")}
+	r.Origin, _ = git(path, "remote", "get-url", "origin")
 	tip := "HEAD"
 	if t.Files > 0 {
 		index := filepath.Join(dir, key+".index")
@@ -111,6 +114,36 @@ func (r Recovery) Fetch(gitDir, key string) error {
 		return fmt.Errorf("fetch %s: %w: %s", r.Bundle, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// Rebuild places the work into path, an empty directory left where a worktree whose repository is gone was: a clone of the
+// origin, or a new repository when there is none, given the bundle's commits and checked out at head on branch, the
+// uncommitted changes on top. When it cannot, it says where the bundle is and how to apply it by hand.
+func (r Recovery) Rebuild(path, key, head, branch string) error {
+	ref := recoveryRef(key)
+	steps := [][]string{{"init", "-q", path}}
+	if r.Origin != "" {
+		steps = [][]string{{"clone", "-q", "--no-checkout", r.Origin, path}}
+	}
+	at := head
+	if at == "" {
+		at = ref
+	}
+	steps = append(steps, []string{"-C", path, "fetch", "-q", r.Bundle, "+" + ref + ":" + ref}, []string{"-C", path, "checkout", "-q", "-B", branch, at})
+	for _, args := range steps {
+		if out, err := gitCommand(args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("could not rebuild %s from %s (git %s: %s); apply it by hand: git clone %s %s && git -C %s fetch %s %s:%s && git -C %s checkout -B %s %s, then git -C %s diff %s %s | git -C %s apply",
+				path, r.Bundle, strings.Join(args, " "), strings.TrimSpace(string(out)), originOr(r.Origin), path, path, r.Bundle, ref, ref, path, branch, at, path, at, ref, path)
+		}
+	}
+	return r.Apply(path, key)
+}
+
+func originOr(origin string) string {
+	if origin == "" {
+		return "<origin>"
+	}
+	return origin
 }
 
 // Apply puts the uncommitted changes back into worktree path, then drops the bundle and its ref.

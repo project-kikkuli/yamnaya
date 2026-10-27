@@ -193,12 +193,16 @@ func TestReviveBringsBackAKilledLaunchInItsOriginalWorktreeWithItsWork(t *testin
 		want    string
 		// gone deletes the branch after the kill, so only the kill's bundle holds an unpushed commit.
 		gone, dirty bool
+		// moved deletes the repository after the kill, leaving no clone; stranded deletes its origin too.
+		moved, stranded bool
 	}{
-		{"pushed, branch kept", "HEAD", false, "head", false, false},
-		{"merged, branch deleted", "HEAD:main", false, "head", false, false},
-		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main", false, false},
-		{"repository and origin deleted", "HEAD", false, "", false, false},
-		{"unpushed commit and uncommitted files, branch deleted", "", false, "head", true, true},
+		{"pushed, branch kept", "HEAD", false, "head", false, false, false, false},
+		{"merged, branch deleted", "HEAD:main", false, "head", false, false, false, false},
+		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main", false, false, false, false},
+		{"repository and origin deleted", "HEAD", false, "", false, false, false, false},
+		{"unpushed commit and uncommitted files, branch deleted", "", false, "head", true, true, false, false},
+		{"unpushed commit and uncommitted files, repository moved away", "", false, "head", false, true, true, false},
+		{"unpushed commit and uncommitted files, repository and origin gone", "", false, "", false, true, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
@@ -254,17 +258,23 @@ func TestReviveBringsBackAKilledLaunchInItsOriginalWorktreeWithItsWork(t *testin
 				}
 			}
 
-			if c.want == "" {
+			if c.want == "" || c.moved {
 				os.RemoveAll(repo)
+			}
+			if c.want == "" && !c.moved || c.stranded {
 				os.RemoveAll(filepath.Join(base, "origin.git"))
 			}
-			if _, err := l.Revive(rec.Key); err != nil {
+			msg, err := l.Revive(rec.Key)
+			if err != nil {
 				t.Fatal(err)
 			}
 			back, _ := l.records.Find(rec.Key)
 			if _, st := l.state(back); c.want == "" {
 				if fi, err := os.Stat(wt); err != nil || !fi.IsDir() || back.IsLanded() || st != "running" {
 					t.Fatalf("directory %v, still landed %v, pane %s; want the conversation resumed at %s", err, back.IsLanded(), st, wt)
+				}
+				if bundle := back.Recovery.Bundle; c.stranded && (bundle == "" || !strings.Contains(msg, bundle) || !strings.Contains(msg, "apply it by hand")) {
+					t.Fatalf("revive said %q; want the kept bundle %q and how to apply it", msg, bundle)
 				}
 				return
 			}
@@ -341,4 +351,27 @@ func goalCore(t *testing.T, dir, repo string) *core.Core {
 		t.Fatal(err)
 	}
 	return c
+}
+
+func TestKillingASessionWhoseWorktreeIsGoneLeavesNoPrunableWorktree(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "-b", "main", "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	os.RemoveAll(wt)
+	l := launcher{srv: &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(base, "launches")}}
+	rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(),
+		Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").Output()
+	if err != nil || strings.Contains(string(out), "prunable") || strings.Contains(string(out), wt) {
+		t.Fatalf("worktrees after the kill: %s %v; want the gone one's registration pruned", out, err)
+	}
 }

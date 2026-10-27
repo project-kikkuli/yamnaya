@@ -763,6 +763,12 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 			return nil, "", fmt.Errorf("restore the work ym kill kept of %s: %w", rec.Key, err)
 		}
 		rec.Recovery = launch.Recovery{}
+	} else if rec.Recovery.Bundle != "" && lost == launch.RepoGone {
+		if err := rec.Recovery.Rebuild(rec.Worktree.Path, rec.Key, rec.Head, rec.Worktree.Branch); err != nil {
+			lost = err.Error()
+		} else {
+			rec.Worktree.GitDir, rec.Recovery, lost = filepath.Join(rec.Worktree.Path, ".git"), launch.Recovery{}, ""
+		}
 	}
 	if err := trustRecord(rec); err != nil {
 		return nil, "", err
@@ -1030,6 +1036,10 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 		}
 		if rec.Recovery != (launch.Recovery{}) {
 			kept = fmt.Sprintf(", kept %s", core.Toll{Commits: rec.Recovery.Commits, Files: rec.Recovery.Files}.Work())
+		}
+	} else if _, err := os.Stat(rec.Worktree.GitDir); err == nil && rec.Worktree.GitDir != "" {
+		if err := launch.Prune(rec.Worktree.GitDir); err != nil {
+			return "", err
 		}
 	}
 	rec.Goal = goal
