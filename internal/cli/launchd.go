@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -87,7 +88,7 @@ func servePlist(label, self, state string, env map[string]string) string {
 // keptEnv is what the plist hands ym service run: the home and login shell to read the owner's environment from, and the ym
 // variables that name this state directory's server, socket and brief page.
 func keptEnv(state string) map[string]string {
-	env := map[string]string{"HOME": os.Getenv("HOME"), "SHELL": loginShell()}
+	env := map[string]string{"HOME": os.Getenv("HOME"), "SHELL": accountShell()}
 	for _, k := range serveEnv {
 		if v := os.Getenv(k); v != "" {
 			env[k] = v
@@ -98,6 +99,27 @@ func keptEnv(state string) map[string]string {
 		env["YAMNAYA_STATE_DIR"] = state
 	}
 	return env
+}
+
+// accountShell is the login shell the owner's account names, the same whichever shell or agent keeps ym serve, so the plist
+// does not change, and launchd reload it, with the caller.
+func accountShell() string {
+	if u, err := user.Current(); err == nil {
+		if runtime.GOOS == "darwin" {
+			if out, err := exec.Command("dscl", ".", "-read", "/Users/"+u.Username, "UserShell").Output(); err == nil {
+				if f := strings.Fields(string(out)); len(f) == 2 {
+					return f[1]
+				}
+			}
+		} else if raw, err := os.ReadFile("/etc/passwd"); err == nil {
+			for _, line := range strings.Split(string(raw), "\n") {
+				if f := strings.Split(line, ":"); len(f) == 7 && f[0] == u.Username && f[6] != "" {
+					return f[6]
+				}
+			}
+		}
+	}
+	return loginShell()
 }
 
 func loginShell() string {
@@ -148,6 +170,9 @@ func keepLaunchd() (string, error) {
 		if out, err := launchctl("bootout", domain+"/"+label); err != nil {
 			return "", fmt.Errorf("launchctl bootout %s: %w: %s", label, err, strings.TrimSpace(string(out)))
 		}
+		if err := awaitUnloaded(domain + "/" + label); err != nil {
+			return "", err
+		}
 	}
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		return "", err
@@ -156,6 +181,22 @@ func keepLaunchd() (string, error) {
 		return "", fmt.Errorf("launchctl bootstrap %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return path, nil
+}
+
+// unloadWait is how long launchd may take to finish removing an agent after bootout returns: it waits for the serve to exit,
+// sending SIGKILL after its default 20s exit timeout.
+var unloadWait = 30 * time.Second
+
+// awaitUnloaded waits until launchd no longer holds target; bootstrap of a label still being removed fails with error 5.
+func awaitUnloaded(target string) error {
+	for deadline := time.Now().Add(unloadWait); ; time.Sleep(100 * time.Millisecond) {
+		if _, err := launchctl("print", target); err != nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("launchd still holds %s %s after bootout", target, unloadWait)
+		}
+	}
 }
 
 // unkeepLaunchd unloads and removes this state directory's LaunchAgent; ym serve keeps running until it next exits.

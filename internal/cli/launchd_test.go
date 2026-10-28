@@ -16,21 +16,33 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
-// fakeLaunchd stands in for launchctl: it records what it is asked and loads and unloads labels.
+// fakeLaunchd stands in for launchctl: it records what it is asked and loads and unloads labels. As launchd does, a label
+// booted out stays loaded for linger more prints while its process exits, and bootstrapping it meanwhile fails.
 type fakeLaunchd struct {
-	calls  []string
-	loaded map[string]bool
+	calls   []string
+	loaded  map[string]bool
+	linger  int
+	exiting map[string]int
 }
 
 func (f *fakeLaunchd) run(args ...string) ([]byte, error) {
 	f.calls = append(f.calls, args[0])
 	switch args[0] {
 	case "print":
+		if n := f.exiting[args[1]]; n > 0 {
+			if f.exiting[args[1]] = n - 1; n == 1 {
+				delete(f.loaded, args[1])
+			}
+		}
 		if f.loaded[args[1]] {
 			return []byte("state = running\n\tpid = 4242\n"), nil
 		}
 		return []byte("Could not find service"), errors.New("exit status 113")
 	case "bootout":
+		if f.linger > 0 {
+			f.exiting[args[1]] = f.linger
+			break
+		}
 		delete(f.loaded, args[1])
 	case "bootstrap":
 		raw, err := os.ReadFile(args[2])
@@ -41,6 +53,9 @@ func (f *fakeLaunchd) run(args ...string) ([]byte, error) {
 		if !strings.Contains(string(raw), "<string>"+label+"</string>") {
 			return []byte("label mismatch"), errors.New("exit status 5")
 		}
+		if f.loaded[args[1]+"/"+label] {
+			return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit status 5")
+		}
 		f.loaded[args[1]+"/"+label] = true
 	}
 	return nil, nil
@@ -48,7 +63,7 @@ func (f *fakeLaunchd) run(args ...string) ([]byte, error) {
 
 func fakeLaunchctl(t *testing.T) (*fakeLaunchd, string) {
 	t.Helper()
-	f := &fakeLaunchd{loaded: map[string]bool{}}
+	f := &fakeLaunchd{loaded: map[string]bool{}, exiting: map[string]int{}}
 	dir := t.TempDir()
 	run, agents := launchctl, agentsDir
 	launchctl, agentsDir = f.run, func() (string, error) { return dir, nil }
@@ -87,7 +102,9 @@ func TestKeepingServeLoadsOneAgentPerStateDirAndLeavesALoadedOneRunning(t *testi
 		calls []string
 	}{
 		{name: "kept again unchanged", calls: []string{"print"}},
-		{name: "plist from an older ym", edit: func() { os.WriteFile(path, []byte("old"), 0o644) }, calls: []string{"print", "bootout", "bootstrap"}},
+		{name: "plist from an older ym", edit: func() { os.WriteFile(path, []byte("old"), 0o644) }, calls: []string{"print", "bootout", "print", "bootstrap"}},
+		{name: "plist from an older ym whose serve takes a while to exit", edit: func() { os.WriteFile(path, []byte("old"), 0o644); f.linger = 3 },
+			calls: []string{"print", "bootout", "print", "print", "print", "bootstrap"}},
 		{name: "unloaded by hand", edit: func() { clear(f.loaded) }, calls: []string{"print", "bootstrap"}},
 	} {
 		t.Run(step.name, func(t *testing.T) {
@@ -103,6 +120,7 @@ func TestKeepingServeLoadsOneAgentPerStateDirAndLeavesALoadedOneRunning(t *testi
 			}
 		})
 	}
+	f.linger = 0
 	if _, loaded, pid := launchdState(); !loaded || pid != 4242 {
 		t.Fatalf("service status sees loaded %v pid %d, want the agent's pid", loaded, pid)
 	}
@@ -140,6 +158,17 @@ func TestTheDefaultStateDirsAgentNamesNoStateDir(t *testing.T) {
 		if named != tc.named || (named && keptEnv(tc.state)["YAMNAYA_STATE_DIR"] != tc.state) {
 			t.Errorf("%s: agent names a state dir %v (%q), want %v and its absolute path", tc.state, named, keptEnv(tc.state)["YAMNAYA_STATE_DIR"], tc.named)
 		}
+	}
+}
+
+func TestTheAgentNamesTheAccountsShellWhicheverShellKeepsIt(t *testing.T) {
+	var shells []string
+	for _, caller := range []string{"/bin/zsh", "/bin/sh", ""} {
+		t.Setenv("SHELL", caller)
+		shells = append(shells, keptEnv(t.TempDir())["SHELL"])
+	}
+	if shells[0] == "" || len(slices.Compact(slices.Clone(shells))) != 1 {
+		t.Fatalf("agent shell by caller's SHELL = %q, want one shell for all", shells)
 	}
 }
 
