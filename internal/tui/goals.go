@@ -475,7 +475,7 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		if st := n.PR.Status; st != nil {
 			ci, review := "no checks", "no review required"
 			if st.Passed > 0 {
-				ci = fmt.Sprintf("ci green %d/%d", st.Passed, st.Passed)
+				ci = fmt.Sprintf("ci green, %d passed", st.Passed)
 			}
 			if st.Review == "APPROVED" {
 				review = "approved"
