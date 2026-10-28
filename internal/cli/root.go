@@ -4,6 +4,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -111,6 +112,9 @@ func NewRoot() *cobra.Command {
 			}
 			defer c.Store.Close()
 			e.core = c
+			for i := range args {
+				args[i] = c.Store.Unnicked(args[i])
+			}
 			if err := e.refuseOff(cmd); err != nil {
 				return err
 			}
@@ -201,6 +205,29 @@ func NewRoot() *cobra.Command {
 const remoteWait = 8 * time.Second
 
 // caller uses --session, else the harness's calling session from ancestry and Codex's thread environment.
+// nicked writes to w with every host named by its nickname, for text a person or agent reads.
+func (e *env) nicked(w io.Writer) io.Writer { return nickWriter{w, e.core.Store} }
+
+// textOut is w nicked unless it carries JSON, whose host names other hosts route by.
+func (e *env) textOut(w io.Writer, asJSON bool) io.Writer {
+	if asJSON {
+		return w
+	}
+	return e.nicked(w)
+}
+
+type nickWriter struct {
+	w  io.Writer
+	st *core.Store
+}
+
+func (n nickWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(n.w, n.st.Nicked(string(p))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 func (e *env) caller() (core.Caller, error) {
 	if e.session != "" {
 		return e.core.CallerOf(e.session)

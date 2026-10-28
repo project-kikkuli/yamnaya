@@ -53,7 +53,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
-		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with))
+		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))
 	return cmd
 }
 
@@ -762,12 +762,13 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if len(events) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), g.ID+": nothing yet")
 			}
+			out := e.nicked(cmd.OutOrStdout())
 			for _, ev := range events {
 				mark := " "
 				if ev.OwnerNews() && ev.Seen.IsZero() {
 					mark = "*"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s  %-14s %s\n", mark, ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
+				fmt.Fprintf(out, "%s %s  %-14s %s\n", mark, ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
 			}
 			if keep {
 				return nil
@@ -808,4 +809,44 @@ func goalEventCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			return nil
 		}),
 	}
+}
+
+func goalPRCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	cmd := &cobra.Command{Use: "pr", Short: "Manage the pull requests tied to a goal"}
+	var why string
+	drop := &cobra.Command{
+		Use:   "drop <goal> <pr-url> --why <line>",
+		Short: "Untie a pull request from a goal for good, so its verification never waits on it; the goal's manager or the owner may",
+		Args:  cobra.ExactArgs(2),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if host, rest, ok := core.SplitRemote(args[0]); ok && e.core.Remotes != nil {
+				out, err := e.core.RunRemote(host, "goal", "pr", "drop", rest, args[1], "--why", why)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), out)
+				return nil
+			}
+			session := ""
+			if c, err := e.caller(); err == nil {
+				session = c.Session
+			} else if e.session != "" || !errors.Is(err, core.ErrNotFound) {
+				return err
+			}
+			ev, tied, err := e.core.DropGoalPR(session, args[0], args[1], why)
+			if err != nil {
+				return err
+			}
+			if !tied {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s did not have %s; ym never ties it to the goal now\n", ev.Goal, args[1])
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "dropped %s from %s; run ym goal done again to re-verify\n", args[1], ev.Goal)
+			return nil
+		}),
+	}
+	drop.Flags().StringVar(&why, "why", "", "one line on why the pull request is not the goal's")
+	drop.MarkFlagRequired("why")
+	cmd.AddCommand(drop)
+	return cmd
 }

@@ -143,7 +143,7 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 			fmt.Fprintln(cmd.OutOrStdout(), added.ID)
 			if added.Recipient != core.Owner {
 				if host, id, remote := core.SplitRemote(added.Recipient); remote {
-					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s on %s, who owns the answer; it comes back through ym item inbox\n", id, host)
+					fmt.Fprintf(e.nicked(cmd.ErrOrStderr()), "sent to %s on %s, who owns the answer; it comes back through ym item inbox\n", id, host)
 				} else if o, err := e.core.LoadOrg(); err == nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s, who owns the answer; it comes back through ym item inbox\n", o.Managers[added.Recipient].Label())
 				}
@@ -241,7 +241,7 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 						}
 					}
 				}
-				return printItems(cmd.OutOrStdout(), mine, asJSON)
+				return printItems(e.textOut(cmd.OutOrStdout(), asJSON), mine, asJSON)
 			}
 			key := ""
 			if !everywhere {
@@ -253,7 +253,7 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
-			return printItems(cmd.OutOrStdout(), items, asJSON)
+			return printItems(e.textOut(cmd.OutOrStdout(), asJSON), items, asJSON)
 		}),
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "include answered, dismissed and snoozed items")
@@ -292,16 +292,17 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				}
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
+			out := e.nicked(cmd.OutOrStdout())
 			for _, it := range items {
 				if it.State == core.ItemAnswered {
-					fmt.Fprintf(cmd.OutOrStdout(), "re %s: %s\n", it.Spoken(), it.Answer)
+					fmt.Fprintf(out, "re %s: %s\n", it.Spoken(), it.Answer)
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
+					fmt.Fprintf(out, "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
 			}
 			msgs, err := e.core.TakeMessages(c.Session)
 			for _, m := range msgs {
-				fmt.Fprintf(cmd.OutOrStdout(), "msg: %s\n", m.Text)
+				fmt.Fprintf(out, "msg: %s\n", m.Text)
 			}
 			if nudge != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "vibe: %s\n", nudge)
@@ -331,7 +332,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), toJSON(it))
 			}
-			w := cmd.OutOrStdout()
+			w := e.nicked(cmd.OutOrStdout())
 			id := it.Qualified()
 			if it.Alias != "" && it.Alias != it.ID {
 				id += " (was " + it.Alias + ")"

@@ -52,6 +52,10 @@ func (c *Core) Notice(b Board) error {
 	if err != nil {
 		return err
 	}
+	dropped, err := c.Store.DroppedPRs()
+	if err != nil {
+		return err
+	}
 	o := b.Org
 	var errs []error
 	seen := map[string]bool{}
@@ -74,13 +78,21 @@ func (c *Core) Notice(b Board) error {
 		for _, pr := range s.AllPRs() {
 			st, fetched := statuses[pr.URL]
 			p := places[pr.URL]
-			if seen[g.ID+pr.URL] || !fetched || !pushedPR(p.Facts, pr, st) && !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
+			if seen[g.ID+pr.URL] || dropped[g.ID][pr.URL] || !fetched || !pushedPR(p.Facts, pr, st) && !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
 				continue
 			}
 			seen[g.ID+pr.URL] = true
 			title := pr.URL
 			if fetched && st.Title != "" {
 				title = fmt.Sprintf("%q %s", st.Title, pr.URL)
+			}
+			if st.Foreign() {
+				payload := fmt.Sprintf("%s worked on %s's %s; it is theirs to land, so it never holds up this goal", who, st.Merge.Author, title)
+				now := c.now()
+				if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventPRTouched, Payload: payload, Key: g.ID + ":touched:" + pr.URL, Created: now, Delivered: now}); err != nil {
+					errs = append(errs, err)
+				}
+				continue
 			}
 			for _, e := range prEvents(pr.URL, title, who, st, fetched) {
 				if _, _, err := c.RecordGoalEvent(g.ID, e.Kind, e.Payload, g.ID+":"+e.Key); err != nil {

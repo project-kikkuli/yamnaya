@@ -10,8 +10,8 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-const landingQuery = `query($url: URI!) { resource(url: $url) { ... on PullRequest {
-  state
+const landingQuery = `query($url: URI!) { viewer { login } resource(url: $url) { ... on PullRequest {
+  state author { login }
   mergeCommit { oid statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } }
     parents(first: 1) { nodes { statusCheckRollup { state } } } }
@@ -39,8 +39,14 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 	}
 	var v struct {
 		Data struct {
+			Viewer struct {
+				Login string `json:"login"`
+			} `json:"viewer"`
 			Resource *struct {
-				State       string `json:"state"`
+				State  string `json:"state"`
+				Author struct {
+					Login string `json:"login"`
+				} `json:"author"`
 				MergeCommit *struct {
 					OID    string `json:"oid"`
 					Rollup *struct {
@@ -73,7 +79,7 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 	if pr == nil {
 		return core.Landing{State: core.PRGone}, nil
 	}
-	l := core.Landing{State: pr.State}
+	l := core.Landing{State: pr.State, Author: pr.Author.Login, Viewer: v.Data.Viewer.Login}
 	for _, t := range pr.ReviewThreads.Nodes {
 		if !t.IsResolved {
 			l.Unresolved++

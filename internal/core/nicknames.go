@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"slices"
 	"strings"
@@ -139,4 +140,86 @@ func (s *Store) RenameHost(host, nick string) (string, error) {
 	}
 	_, err = s.db.Exec(`INSERT INTO ym_host_nicknames(host,nick) VALUES(?,?) ON CONFLICT(host) DO UPDATE SET nick=excluded.nick`, host, nick)
 	return nick, err
+}
+
+// TextNicknames names, by nickname, every host this one knows: those ym remote reached, itself and the hosts its relays reach.
+func (s *Store) TextNicknames() (map[string]string, error) {
+	known, err := s.KnownHosts()
+	if err != nil {
+		return nil, err
+	}
+	set, err := s.SetNicknames()
+	if err != nil {
+		return nil, err
+	}
+	var hosts []string
+	for _, h := range known {
+		hosts = append(hosts, h.Name)
+	}
+	if r, err := s.RelaySelf(); err == nil {
+		for _, h := range append([]string{r.Name, r.Courier}, r.Peers...) {
+			if h != "" && !slices.Contains(hosts, h) {
+				hosts = append(hosts, h)
+			}
+		}
+	}
+	return Nicknames(hosts, set), nil
+}
+
+// Nicked is text with each host it names written as @nickname, as in @box/goal5.
+func (s *Store) Nicked(text string) string {
+	nicks, err := s.TextNicknames()
+	if err != nil {
+		return text
+	}
+	return nicked(text, nicks)
+}
+
+func nicked(text string, nicks map[string]string) string {
+	hosts := slices.SortedFunc(maps.Keys(nicks), func(a, b string) int { return len(b) - len(a) })
+	part := func(r byte) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '_' || r == '@'
+	}
+	for _, h := range hosts {
+		n := nicks[h]
+		if n == "" || n == h {
+			continue
+		}
+		var b strings.Builder
+		rest := text
+		for {
+			i := strings.Index(rest, h)
+			if i < 0 {
+				b.WriteString(rest)
+				break
+			}
+			end := i + len(h)
+			if (i > 0 && part(rest[i-1])) || (end < len(rest) && part(rest[end]) && !(rest[end] == '.' && (end+1 == len(rest) || !part(rest[end+1])))) {
+				b.WriteString(rest[:end])
+			} else {
+				b.WriteString(rest[:i] + "@" + n)
+			}
+			rest = rest[end:]
+		}
+		text = b.String()
+	}
+	return text
+}
+
+// Unnicked is ref with a leading @nickname/, or one after #, written as the full host name ym routes by.
+func (s *Store) Unnicked(ref string) string {
+	at, slash := strings.Index(ref, "@"), strings.Index(ref, "/")
+	if at < 0 || slash < at || ref[:at] != "" && ref[:at] != "#" {
+		return ref
+	}
+	nicks, err := s.TextNicknames()
+	if err != nil {
+		return ref
+	}
+	for h, n := range nicks {
+		if n == ref[at+1:slash] || h == ref[at+1:slash] {
+			return ref[:at] + h + ref[slash:]
+		}
+	}
+	return ref
 }

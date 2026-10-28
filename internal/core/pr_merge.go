@@ -25,6 +25,11 @@ func (s PRStatus) OwnedPR() bool {
 	return s.Merge.Author != "" && s.Merge.Viewer != "" && strings.EqualFold(s.Merge.Author, s.Merge.Viewer)
 }
 
+// Foreign reports whether GitHub shows someone other than the owner's account wrote the pull request.
+func (s PRStatus) Foreign() bool {
+	return s.Merge.Author != "" && s.Merge.Viewer != "" && !strings.EqualFold(s.Merge.Author, s.Merge.Viewer)
+}
+
 // settled is st with prev's merge state while GitHub, recomputing it lazily after the base moved, answers UNKNOWN for the same head.
 func (st PRStatus) settled(prev PRStatus) PRStatus {
 	if st.Merge.MergeState == "UNKNOWN" && st.Merge.OID != "" && st.Merge.OID == prev.Merge.OID && prev.Merge.MergeState != "" && prev.Merge.MergeState != "UNKNOWN" {

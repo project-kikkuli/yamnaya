@@ -121,3 +121,40 @@ func TestResolveHostTakesTheFullNameOrTheNickname(t *testing.T) {
 		t.Errorf("a forgotten host comes back as @%s, want its default @boxmachine", nicks[box])
 	}
 }
+
+func TestTextNamesHostsByNickname(t *testing.T) {
+	nicks := map[string]string{"prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz": "rajatsmachine", "byo-mbp-dm6tyx3m6c": "mbp", "box": "box"}
+	for _, tc := range []struct{ in, want string }{
+		{"#24 ask from manager mgr5 to byo-mbp-dm6tyx3m6c/mgr8: how?", "#24 ask from manager mgr5 to @mbp/mgr8: how?"},
+		{"wake from prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz/goal5", "wake from @rajatsmachine/goal5"},
+		{"runs on prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz.", "runs on @rajatsmachine."},
+		{"xbyo-mbp-dm6tyx3m6c and byo-mbp-dm6tyx3m6c-2 stay", "xbyo-mbp-dm6tyx3m6c and byo-mbp-dm6tyx3m6c-2 stay"},
+		{"box/goal1 keeps its own name", "box/goal1 keeps its own name"},
+	} {
+		if got := nicked(tc.in, nicks); got != tc.want {
+			t.Errorf("nicked(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestANicknamedRefRoutesByTheFullHost(t *testing.T) {
+	s, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.RecordHost("prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"@rajatsmachine/goal5", "prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz/goal5"},
+		{"#@rajatsmachine/31", "#prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz/31"},
+		{"@nobody/goal5", "@nobody/goal5"},
+		{"goal5", "goal5"},
+		{"me@example.com", "me@example.com"},
+	} {
+		if got := s.Unnicked(tc.in); got != tc.want {
+			t.Errorf("Unnicked(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

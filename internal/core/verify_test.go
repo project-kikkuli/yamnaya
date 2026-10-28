@@ -314,3 +314,104 @@ func agentPRChecked(t *testing.T, exited bool) {
 		t.Fatalf("an agent's open pull request left the goal %s with findings %q", g.State, v.Findings)
 	}
 }
+
+func TestOnlyPullRequestsTheGoalOwnsHoldUpVerification(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		author  string
+		landing Landing
+		// held is the finding verification fails on, "" when facts pass and a verifier runs.
+		held string
+	}{
+		{"owned, merged green", "me", Landing{State: "MERGED", MergeCommit: "abc", Passed: 1}, ""},
+		{"owned, open", "me", Landing{State: "OPEN"}, "still open"},
+		{"owned, merged with open threads", "me", Landing{State: "MERGED", MergeCommit: "abc", Passed: 1, Unresolved: 11}, "11 unresolved"},
+		{"touched, merged green", "ryan", Landing{State: "MERGED", MergeCommit: "abc", Passed: 1}, ""},
+		{"touched, open", "ryan", Landing{State: "OPEN"}, ""},
+		{"touched, open with threads", "ryan", Landing{State: "OPEN", Unresolved: 11}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			w.spawn("agent", w.manager.Session)
+			w.set("agent", func(s *Session) { s.Status = Busy; s.PRs = []PR{{URL: pr1, Repo: "acme/august", Number: 7}} })
+			tc.landing.Author, tc.landing.Viewer = tc.author, "me"
+			w.landings[pr1] = tc.landing
+			st := PRStatus{State: "OPEN", Title: "QA v2 contract", Fetched: w.clock, Merge: PRMergeFacts{Author: tc.author, Viewer: "me"}}
+			if err := w.core.Store.SavePRStatus(pr1, st); err != nil {
+				t.Fatal(err)
+			}
+			w.tick(t, time.Second)
+			w.stop("agent")
+			owned, _ := w.core.Store.GoalPRs()
+			touched, _ := w.core.Store.TouchedPRs()
+			if got, want := slices.Contains(owned[w.goal.ID], pr1), tc.author == "me"; got != want {
+				t.Fatalf("goal owns %s: %v, want %v (touched %q)", pr1, got, want, touched[w.goal.ID])
+			}
+			if got, want := slices.Contains(touched[w.goal.ID], pr1), tc.author != "me"; got != want {
+				t.Fatalf("goal touched %s: %v, want %v", pr1, got, want)
+			}
+			w.done(t, "importer reads CSV")
+			w.tick(t, time.Second)
+			g, v := w.state(t)
+			findings := strings.Join(v.Findings, "\n")
+			if tc.held == "" {
+				if len(w.verifiers()) != 1 || g.State != GoalVerifying {
+					t.Fatalf("goal %s with %d verifiers and findings %q, want facts to pass and a verifier to run", g.State, len(w.verifiers()), findings)
+				}
+				return
+			}
+			if g.State != GoalActive || !strings.Contains(findings, tc.held) {
+				t.Fatalf("goal %s with findings %q, want it held on %q", g.State, findings, tc.held)
+			}
+		})
+	}
+}
+
+func TestADroppedPullRequestNeverHoldsUpTheGoal(t *testing.T) {
+	for _, tc := range []struct {
+		name, by, why, refused string
+	}{
+		{name: "by its manager", by: "manager", why: "Ryan's to land"},
+		{name: "by the owner", by: "", why: "Ryan's to land"},
+		{name: "by another goal's manager", by: "other", why: "not mine", refused: "only"},
+		{name: "by an agent", by: "agent", why: "not mine", refused: "only"},
+		{name: "without a reason", by: "manager", refused: "--why"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			_, other := w.orgWorld.goal(t, "another goal", "/repo/august")
+			w.spawn("agent", w.manager.Session)
+			w.set("agent", func(s *Session) { s.Status = Busy; s.PRs = []PR{{URL: pr1, Repo: "acme/august", Number: 7}} })
+			w.landings[pr1] = Landing{State: "OPEN", Unresolved: 3}
+			if err := w.core.Store.SavePRStatus(pr1, PRStatus{State: "OPEN", Fetched: w.clock}); err != nil {
+				t.Fatal(err)
+			}
+			w.tick(t, time.Second)
+			by := map[string]string{"manager": w.manager.Session, "other": other.Session, "agent": "agent"}[tc.by]
+			_, tied, err := w.core.DropGoalPR(by, w.goal.ID, pr1, tc.why)
+			if tc.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("drop gave %v, want it refused with %q", err, tc.refused)
+				}
+				return
+			}
+			if err != nil || !tied {
+				t.Fatalf("drop: tied %v, %v", tied, err)
+			}
+			w.tick(t, time.Second)
+			owned, _ := w.core.Store.GoalPRs()
+			if slices.Contains(owned[w.goal.ID], pr1) {
+				t.Fatalf("the agent still linking %s tied it again: %q", pr1, owned[w.goal.ID])
+			}
+			w.done(t, "importer reads CSV", pr1)
+			w.tick(t, time.Second)
+			if g, v := w.state(t); g.State != GoalVerifying || len(w.verifiers()) != 1 {
+				t.Fatalf("goal %s with findings %q after the drop, want a verifier running", g.State, v.Findings)
+			}
+			events, _ := w.core.Store.GoalEvents(w.goal.ID)
+			if !slices.ContainsFunc(events, func(e GoalEvent) bool { return e.Kind == EventPRDropped && strings.Contains(e.Payload, tc.why) }) {
+				t.Fatalf("no %s event naming why in %+v", EventPRDropped, events)
+			}
+		})
+	}
+}

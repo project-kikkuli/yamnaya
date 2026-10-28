@@ -1532,6 +1532,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
    V            open the artifact a manager registered as its richer brief
    R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
+   X            on a goal: untie one of its pull requests for good, with a reason, so its verification never
+                waits on it (the same as ym goal pr drop)
    z            ym off or back on: on a goal or chief, for its manager and every agent under it; on a
                 session or mission, for that session. While off, ym delivers nothing to it and its ym
                 commands refuse, so you talk to it in its own chat; ym on hands it what waited, in one message

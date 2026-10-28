@@ -26,6 +26,8 @@ func TestLandingReadsMergeCommitCIAndOpenThreads(t *testing.T) {
 			core.Landing{State: "MERGED", MergeCommit: "cab"}},
 		{"open, threads past the first page", `{"data":{"resource":{"state":"OPEN","mergeCommit":null,"reviewThreads":{"totalCount":101,"nodes":[` + resolved(100) + `]}}}}`,
 			core.Landing{State: "OPEN", Unresolved: 1}},
+		{"someone else's", `{"data":{"viewer":{"login":"rajatscode"},"resource":{"state":"OPEN","author":{"login":"rtolsma"},"mergeCommit":null,"reviewThreads":{"totalCount":0,"nodes":[]}}}}`,
+			core.Landing{State: "OPEN", Author: "rtolsma", Viewer: "rajatscode"}},
 		{"no such pull request", `{"data":{"resource":null}}`, core.Landing{State: core.PRGone}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

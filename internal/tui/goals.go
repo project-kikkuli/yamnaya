@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -571,6 +573,15 @@ func (m Model) goalView() viewPage {
 		}
 		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
 	}
+	if f := n.Feed; len(f.PRs)+len(f.Touched) > 0 {
+		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" PULL REQUESTS (%d to land)", len(f.PRs))) + pal.dim.Render("  X unties one") + "\n")
+		for i, url := range f.PRs {
+			b.WriteString(fmt.Sprintf("   %d. %s\n", i+1, url))
+		}
+		for i, url := range f.Touched {
+			b.WriteString(pal.dim.Render(fmt.Sprintf("   %d. %s  someone else's, context only", len(f.PRs)+i+1, url)) + "\n")
+		}
+	}
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SESSIONS (%d)", len(m.rows()))) + "\n")
 	for i, r := range m.rows() {
 		label := ""
@@ -865,6 +876,12 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		m.message = "counting what killing " + n.Manager.Label() + " ends"
 		return m, m.weighGoal(n), true
+	case "X":
+		if n.Goal == nil || (m.mode != modeGoal && r.node == nil) {
+			return m, nil, false
+		}
+		m.dropPR(n)
+		return m, nil, true
 	case "D":
 		if r.node == nil || n.Manager.ParentID == "" {
 			return m, nil, false
@@ -998,4 +1015,49 @@ func relayWhat(r core.Relay) string {
 		return "ym " + strings.Join(y.Args, " ")
 	}
 	return "a " + r.Kind + " relay"
+}
+
+// dropPR asks which of the goal's pull requests to untie, and why, then drops it on the host the goal runs on.
+func (m *Model) dropPR(n core.Node) {
+	prs := append(append([]string(nil), n.Feed.PRs...), n.Feed.Touched...)
+	if len(prs) == 0 {
+		m.message = n.Goal.ID + " has no pull requests tied to it"
+		return
+	}
+	goal := n.Goal.ID
+	why := func(url string) func(Model, string) (tea.Model, tea.Cmd) {
+		return func(m Model, text string) (tea.Model, tea.Cmd) {
+			m.askLine("why "+url+" is not "+goal+"'s", "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
+				if why == "" {
+					return m, nil
+				}
+				c := m.core
+				return m, m.do(func() (string, error) {
+					if host, rest, ok := core.SplitRemote(goal); ok && n.Goal.Host != "" {
+						_, err := c.RunOrRelay(host, "goal", "pr", "drop", rest, url, "--why", why)
+						return "dropped " + url + " from " + goal, err
+					}
+					_, _, err := c.DropGoalPR("", goal, url, why)
+					return "dropped " + url + " from " + goal, err
+				})
+			})
+			return m, nil
+		}
+	}
+	if len(prs) == 1 {
+		next, _ := why(prs[0])(*m, "")
+		*m = next.(Model)
+		return
+	}
+	m.askLine(fmt.Sprintf("drop which pull request from %s? its number 1-%d, or its link", goal, len(prs)), "", false, func(m Model, text string) (tea.Model, tea.Cmd) {
+		url := text
+		if i, err := strconv.Atoi(text); err == nil && i >= 1 && i <= len(prs) {
+			url = prs[i-1]
+		}
+		if !slices.Contains(prs, url) {
+			m.message = text + " is not one of " + goal + "'s pull requests"
+			return m, nil
+		}
+		return why(url)(m, "")
+	})
 }

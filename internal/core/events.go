@@ -3,15 +3,20 @@ package core
 import (
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
 
 // Goal event kinds, recorded by ym serve without a model, by a manager's ym goal update, and by verification.
 const (
-	EventFinished         = "agent-finished"
-	EventAsked            = "asked"
-	EventPROpened         = "pr-opened"
+	EventFinished = "agent-finished"
+	EventAsked    = "asked"
+	EventPROpened = "pr-opened"
+	// EventPRTouched is a goal's agent working on someone else's pull request: context in the feed, never the goal's to land.
+	EventPRTouched = "pr-touched"
+	// EventPRDropped unties a pull request from the goal for good.
+	EventPRDropped        = "pr-dropped"
 	EventCIRed            = "ci-red"
 	EventCIGreen          = "ci-green"
 	EventReview           = "review"
@@ -130,7 +135,7 @@ func (s *Store) AddGoalEvent(e GoalEvent) (GoalEvent, bool, error) {
 	if e.Created.IsZero() {
 		e.Created = time.Now().UTC()
 	}
-	e.Payload = strings.TrimSpace(e.Payload)
+	e.Payload = s.Nicked(strings.TrimSpace(e.Payload))
 	err := s.db.QueryRow(`INSERT INTO ym_goal_events (goal, kind, payload, key, created, delivered_to_manager) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING RETURNING seq`, e.Goal, e.Kind, e.Payload, e.Key, stamp(e.Created), stamp(e.Delivered)).Scan(&e.Seq)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -139,28 +144,83 @@ func (s *Store) AddGoalEvent(e GoalEvent) (GoalEvent, bool, error) {
 	return e, err == nil, err
 }
 
-// GoalPRs maps each goal to the pull requests opened for it, in the order they opened.
+// GoalPRs maps each goal to the pull requests it owns, in the order they opened: those its sessions opened or worked on as
+// their own, less any dropped and any GitHub shows someone else wrote.
 func (s *Store) GoalPRs() (map[string][]string, error) {
-	return remembered(s, "goal prs", cloneMap[string, []string], s.goalPRs)
+	return remembered(s, "goal prs", cloneMap[string, []string], func() (map[string][]string, error) {
+		owned, _, err := s.goalPRSets()
+		return owned, err
+	})
 }
 
-func (s *Store) goalPRs() (map[string][]string, error) {
-	rows, err := s.db.Query(`SELECT goal, key FROM ym_goal_events WHERE kind = ? ORDER BY seq`, EventPROpened)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string][]string{}
-	for rows.Next() {
-		var goal, key string
-		if err := rows.Scan(&goal, &key); err != nil {
+// TouchedPRs maps each goal to the pull requests its sessions worked on that are someone else's, less any dropped.
+func (s *Store) TouchedPRs() (map[string][]string, error) {
+	return remembered(s, "touched prs", cloneMap[string, []string], func() (map[string][]string, error) {
+		_, touched, err := s.goalPRSets()
+		return touched, err
+	})
+}
+
+// DroppedPRs maps each goal to the pull requests untied from it.
+func (s *Store) DroppedPRs() (map[string]map[string]bool, error) {
+	return remembered(s, "dropped prs", cloneMap[string, map[string]bool], func() (map[string]map[string]bool, error) {
+		rows, err := s.db.Query(`SELECT goal, key FROM ym_goal_events WHERE kind = ?`, EventPRDropped)
+		if err != nil {
 			return nil, err
 		}
-		if _, url, ok := strings.Cut(key, ":pr:"); ok {
-			out[goal] = append(out[goal], url)
+		defer rows.Close()
+		out := map[string]map[string]bool{}
+		for rows.Next() {
+			var goal, key string
+			if err := rows.Scan(&goal, &key); err != nil {
+				return nil, err
+			}
+			if _, url, ok := strings.Cut(key, ":dropped:"); ok {
+				if out[goal] == nil {
+					out[goal] = map[string]bool{}
+				}
+				out[goal][url] = true
+			}
+		}
+		return out, rows.Err()
+	})
+}
+
+func (s *Store) goalPRSets() (owned, touched map[string][]string, err error) {
+	dropped, err := s.DroppedPRs()
+	if err != nil {
+		return nil, nil, err
+	}
+	statuses, err := s.PRStatuses()
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := s.db.Query(`SELECT goal, kind, key FROM ym_goal_events WHERE kind IN (?, ?) ORDER BY seq`, EventPROpened, EventPRTouched)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	owned, touched = map[string][]string{}, map[string][]string{}
+	for rows.Next() {
+		var goal, kind, key string
+		if err := rows.Scan(&goal, &kind, &key); err != nil {
+			return nil, nil, err
+		}
+		_, url, ok := strings.Cut(key, ":pr:")
+		if !ok {
+			_, url, ok = strings.Cut(key, ":touched:")
+		}
+		if !ok || dropped[goal][url] {
+			continue
+		}
+		switch {
+		case kind == EventPROpened && !statuses[url].Foreign():
+			owned[goal] = append(owned[goal], url)
+		case !slices.Contains(touched[goal], url):
+			touched[goal] = append(touched[goal], url)
 		}
 	}
-	return out, rows.Err()
+	return owned, touched, rows.Err()
 }
 
 // GoalEvents lists the goal's events, oldest first.
@@ -281,6 +341,9 @@ type Feed struct {
 	Recent []GoalEvent
 	// Progress is the manager's latest ym goal update line, however far back.
 	Progress *GoalEvent `json:",omitempty"`
+	// PRs are the pull requests the goal owns and must land; Touched those its agents worked on that are someone else's.
+	PRs     []string `json:",omitempty"`
+	Touched []string `json:",omitempty"`
 }
 
 // feedRecent is how many of a goal's newest events the board carries.
@@ -321,6 +384,14 @@ func (s *Store) feeds() (map[string]Feed, error) {
 		f := out[e.Goal]
 		f.Progress = &e
 		out[e.Goal] = f
+	}
+	owned, touched, err := s.goalPRSets()
+	if err != nil {
+		return nil, err
+	}
+	for goal, f := range out {
+		f.PRs, f.Touched = owned[goal], touched[goal]
+		out[goal] = f
 	}
 	return out, nil
 }

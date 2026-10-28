@@ -684,3 +684,43 @@ func TestAChiefRowLeadsWithItsNameAndShowsItsOwnSpendPlusItsReports(t *testing.T
 		}
 	}
 }
+
+func TestXOnAGoalUntiesTheChosenPullRequest(t *testing.T) {
+	const ours, theirs = "https://github.com/acme/august/pull/7", "https://github.com/acme/august/pull/8"
+	for _, tc := range []struct {
+		name, pick, drops string
+	}{
+		{"by number", "2", theirs},
+		{"by link", ours, ours},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make the importer handle CSV")
+			g := ms[0].GoalID
+			if err := c.Store.SavePRStatus(theirs, core.PRStatus{State: "OPEN", Merge: core.PRMergeFacts{Author: "ryan", Viewer: "me"}}); err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range []core.GoalEvent{
+				{Goal: g, Kind: core.EventPROpened, Key: g + ":pr:" + ours},
+				{Goal: g, Kind: core.EventPRTouched, Key: g + ":touched:" + theirs},
+			} {
+				if _, _, err := c.Store.AddGoalEvent(e); err != nil {
+					t.Fatal(err)
+				}
+			}
+			next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 140, Height: 50})
+			m = press(t, to(t, next.(Model), isNode(ms[0].ID)), "enter")
+			if v := m.View().Content; !strings.Contains(v, "PULL REQUESTS (1 to land)") || !strings.Contains(v, "2. "+theirs+"  someone else's") {
+				t.Fatalf("the goal should list its pull request and the one it touched:\n%s", v)
+			}
+			m = press(t, m, "X")
+			m = press(t, m, append(typed(tc.pick), "enter")...)
+			m = press(t, m, append(typed("not this goal's"), "enter")...)
+			events, _ := c.Store.GoalEvents(g)
+			if !slices.ContainsFunc(events, func(e core.GoalEvent) bool {
+				return e.Kind == core.EventPRDropped && strings.Contains(e.Payload, tc.drops) && strings.Contains(e.Payload, "not this goal's")
+			}) {
+				t.Fatalf("X did not drop %s: %+v", tc.drops, events)
+			}
+		})
+	}
+}

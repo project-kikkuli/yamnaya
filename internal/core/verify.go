@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -32,12 +33,14 @@ const verifyEvidence = "verify: "
 
 // Landing is what GitHub says about a pull request the goal claims: whether it merged, CI on its merge commit, and open threads.
 type Landing struct {
-	State       string
-	MergeCommit string
-	Passed      int
-	Failed      int
-	Pending     int
-	Unresolved  int
+	// Author wrote the pull request; Viewer is the GitHub account ym reads as.
+	Author, Viewer string
+	State          string
+	MergeCommit    string
+	Passed         int
+	Failed         int
+	Pending        int
+	Unresolved     int
 }
 
 // Landings reads a pull request's landing from GitHub.
@@ -113,7 +116,12 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 			return nil
 		}
 		v.Evidence = c.withAgentPRs(b, o, m, v.Evidence)
-		v.Facts, v.FactsAt = c.checkFacts(prsOf(v), now), now
+		dropped, err := c.Store.DroppedPRs()
+		if err != nil {
+			return err
+		}
+		prs := slices.DeleteFunc(prsOf(v), func(url string) bool { return dropped[g.ID][url] })
+		v.Facts, v.FactsAt = c.checkFacts(prs, now), now
 		var failed, pending []string
 		for _, f := range v.Facts {
 			switch {
@@ -284,18 +292,34 @@ func (c *Core) endVerifiers(b Board) error {
 	return errors.Join(errs...)
 }
 
-// withAgentPRs adds to evidence the pull requests of m's own session and its agents not already in it.
+// withAgentPRs adds to evidence the pull requests of m's own session and its agents not already in it, each marked as the goal's
+// own or as someone else's it only worked on; a dropped one is left out.
 func (c *Core) withAgentPRs(b Board, o Org, m Manager, evidence []string) []string {
 	have := map[string]bool{}
 	for _, pr := range PRsIn(strings.Join(evidence, "\n")) {
 		have[pr.URL] = true
 	}
+	dropped, _ := c.Store.DroppedPRs()
+	statuses, _ := c.Store.PRStatuses()
+	add := func(url string, touched bool) {
+		if have[url] || dropped[m.GoalID][url] {
+			return
+		}
+		have[url] = true
+		if st := statuses[url]; touched || st.Foreign() {
+			evidence = append(evidence, fmt.Sprintf("worked on by the goal's sessions, but %s's to land, so context only: %s", cmp.Or(st.Merge.Author, "someone else"), url))
+			return
+		}
+		evidence = append(evidence, "opened by the goal's sessions: "+url)
+	}
 	if tracked, err := c.Store.GoalPRs(); err == nil {
 		for _, url := range tracked[m.GoalID] {
-			if !have[url] {
-				have[url] = true
-				evidence = append(evidence, "opened by the goal's sessions: "+url)
-			}
+			add(url, false)
+		}
+	}
+	if touched, err := c.Store.TouchedPRs(); err == nil {
+		for _, url := range touched[m.GoalID] {
+			add(url, true)
 		}
 	}
 	for _, s := range b.Sessions {
@@ -303,10 +327,7 @@ func (c *Core) withAgentPRs(b Board, o Org, m Manager, evidence []string) []stri
 			continue
 		}
 		for _, pr := range s.AllPRs() {
-			if !have[pr.URL] {
-				have[pr.URL] = true
-				evidence = append(evidence, "opened by the goal's sessions: "+pr.URL)
-			}
+			add(pr.URL, false)
 		}
 	}
 	return evidence
@@ -334,6 +355,10 @@ func (c *Core) checkFacts(prs []string, now time.Time) []Fact {
 		l, err := c.Landings.Landing(url)
 		if err != nil {
 			out = append(out, Fact{Check: "merged", Subject: url, Pending: true, Detail: err.Error()})
+			continue
+		}
+		if l.Author != "" && l.Viewer != "" && !strings.EqualFold(l.Author, l.Viewer) {
+			out = append(out, Fact{Check: "touched", Subject: url, OK: true, Detail: l.Author + " wrote it, so it is theirs to land; context only"})
 			continue
 		}
 		switch l.State {
@@ -408,6 +433,7 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	sb.WriteString("Rules:\n")
 	sb.WriteString("- Read only: do not edit, commit, push, merge, comment, or message anyone. Running tests, builds and the program to check behaviour is fine.\n")
 	sb.WriteString("- Check every part of the ask, not only what the summary mentions. A part not done, done differently than asked, or not shown to work is a failure.\n")
+	sb.WriteString("- A pull request marked as someone else's to land is context: whether it merged or has open threads is never a reason to fail.\n")
 	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.ID, g.ID)
 	sb.WriteString("  Each finding is one concrete, checkable line: what is missing or wrong, and where.\n")
 	sb.WriteString("- Then stop. ym ends this session.")
