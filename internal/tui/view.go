@@ -74,7 +74,8 @@ func (m Model) prepareView() viewPage {
 	var body viewPage
 	switch m.mode {
 	case modeHelp:
-		body = textPage(ansi.Wrap(helpText(bodyModel.width, bodyModel.legendScene()), bodyModel.width, " "), "")
+		text, _ := bodyModel.helpView(bodyModel.width)
+		body = textPage(ansi.Wrap(text, bodyModel.width, " "), "")
 	case modeScreen:
 		body = textPage(linkedWrap(m.screen, bodyModel.width), "")
 	case modeWhy:
@@ -275,6 +276,12 @@ func (m Model) footer() []string {
 		lines = append(lines, " "+pal.bold.Render(m.ask)+" y/n")
 		return lines
 	}
+	if m.mode == modeHelp && (m.helpTyping || m.helpQ != "") {
+		if m.helpTyping {
+			return append(lines, " "+pal.bold.Render("/")+m.helpQ+"█", pal.dim.Render(" enter keep filter   esc clear"))
+		}
+		return append(lines, pal.dim.Render(" /"+m.helpQ+"   n N next, previous match   / new search   esc clears"))
+	}
 	if m.mode == modeInput && m.picking() {
 		keys := " ↑↓ choose · enter put it there · esc cancel"
 		switch m.inKind {
@@ -399,6 +406,9 @@ func (m Model) hints() string {
 	case modePanel:
 		return m.panelHints()
 	case modeHelp, modeScreen:
+		if m.mode == modeHelp {
+			return "↑↓ pgup pgdn scroll · / search · n N next match · esc back"
+		}
 		return "↑↓ pgup pgdn scroll · esc back"
 	case modeItems:
 		return "↑↓ move · enter expand · r reply · g go ahead · l later · u unsnooze · x dismiss · esc back"
@@ -1559,7 +1569,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    A            hide or show the scene behind the board
    L            switch the theme of that scene to the next one (mountains first); ym theme <name> sets it
                 from a shell
-   ?            this page
+   ?            this page; / searches it, n N jump between matches, esc clears the search
    ctrl+c       quit
 
  A mission's ≈ shares are its part of each current limit window. They count only this host's

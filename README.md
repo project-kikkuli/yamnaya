@@ -102,7 +102,7 @@ The footer shows the everyday keys; `?` lists every key.
 | `b` | show the goal's or chief's brief |
 | `n` | new goal: pick the repository first, then type it in your words |
 | `/` | filter rows by text or host: `local`, this machine's name, a remote's full name or its `@nickname` shown on rows |
-| `?` | every key |
+| `?` | every key; inside it `/` searches (live, case-insensitive, whole entries), `enter` keeps the filter, `n` `N` jump between matches, `esc` clears it and a second `esc` leaves |
 
 Behind `?`:
 

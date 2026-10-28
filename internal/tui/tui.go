@@ -14,7 +14,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/scene"
@@ -140,16 +139,20 @@ type Model struct {
 	sess      string
 	agent     string
 	scrollY   int
-	showStale bool
-	input     []rune
-	fresh     bool
-	inKind    inputKind
-	inItem    string
-	inLabel   string
-	inProj    string
-	filter    string
-	targets   []core.Target
-	cursor2   int
+	// helpQ is the help search; helpTyping while its prompt is open; helpAt the 1-based match n and N last jumped to, 0 for none.
+	helpQ      string
+	helpTyping bool
+	helpAt     int
+	showStale  bool
+	input      []rune
+	fresh      bool
+	inKind     inputKind
+	inItem     string
+	inLabel    string
+	inProj     string
+	filter     string
+	targets    []core.Target
+	cursor2    int
 	// beside opens the chosen target in a split next to ym instead of switching to it.
 	beside    bool
 	mergeSrc  string
@@ -767,8 +770,18 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeInput:
 		return m.inputKey(k)
 	case modeHelp:
-		last := max(0, strings.Count(ansi.Wrap(helpText(m.width, m.legendScene()), m.width, " "), "\n")-m.height+4)
+		last := m.helpLast()
+		if m.helpTyping {
+			return m.helpSearchKey(k), nil
+		}
 		switch k.String() {
+		case "/":
+			m.helpTyping, m.helpQ, m.scrollY, m.helpAt = true, "", 0, 0
+			return m, nil
+		case "n":
+			return m.helpJump(1), nil
+		case "N":
+			return m.helpJump(-1), nil
 		case "up", "k":
 			m.scrollY = max(0, m.scrollY-1)
 			return m, nil
@@ -784,8 +797,12 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "L":
 			return m.nextTheme()
 		}
+		if k.Code == tea.KeyEscape && m.helpQ != "" {
+			m.helpQ, m.scrollY, m.helpAt = "", 0, 0
+			return m, nil
+		}
 		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == "?" {
-			m.mode = m.back
+			m.mode, m.helpQ = m.back, ""
 		}
 		return m, nil
 	case modeScreen:
