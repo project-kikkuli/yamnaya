@@ -1,6 +1,8 @@
 package anthill
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/scene"
@@ -65,5 +67,59 @@ func TestChambersLieDeeperTheMoreGatesTheirPullRequestPassed(t *testing.T) {
 	}
 	if first := plan(lone(func(p *scene.Peak) { p.Camps = []scene.Camp{{Stage: 0}} }), 120, geometry(40)).ms[0].chambers[0].y; prev <= first {
 		t.Errorf("a merged-stage chamber at row %d is no deeper than a new one at %d", prev, first)
+	}
+}
+
+// busy is a crowded board: 30 units in six colonies and a nested chief, agents in every stance and pull
+// requests in every state, every weather and alarm.
+func busy() scene.Scene {
+	s := scene.Scene{Dark: true, Selected: "u7"}
+	unit := func(n int) scene.Peak {
+		p := scene.Peak{ID: strconv.Itoa(n), Name: "ship unit " + strconv.Itoa(n), Weather: scene.Weather(n % 5), Progress: float64(n%11) / 10, NeedsYou: n%6 == 0}
+		for a := range 3 {
+			p.Team = append(p.Team, scene.Climber{Name: "agent-" + strconv.Itoa(n) + "-" + strconv.Itoa(a), Stance: scene.Stance((n + a) % 3)})
+		}
+		for c := range 3 {
+			p.Camps = append(p.Camps, scene.Camp{Label: "#" + strconv.Itoa(100+n*3+c), State: scene.CampState((n + c) % 4), Stage: (n + c) % 7})
+		}
+		return p
+	}
+	n := 0
+	for range 5 {
+		g := scene.Range{ID: "repo" + strconv.Itoa(n), Name: "repo"}
+		for range 5 {
+			g.Peaks = append(g.Peaks, unit(n))
+			n++
+		}
+		s.Ranges = append(s.Ranges, g)
+	}
+	chief := scene.Range{ID: "chief", Name: "chief", Ranges: []scene.Range{{ID: "sub", Name: "nested"}}}
+	for range 3 {
+		chief.Ranges[0].Peaks = append(chief.Ranges[0].Peaks, unit(n))
+		n++
+	}
+	s.Ranges = append(s.Ranges, chief)
+	return s
+}
+
+func TestLabelsNeverTouchAnotherGlyph(t *testing.T) {
+	marks := "жЖ○●▒◆ψ╱▾"
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 60}, {260, 70}} {
+		for frame := range 8 {
+			p := still(busy(), size.w, size.h).at(frame, scene.Rect{})
+			p.motion()
+			for y := range p.p / 2 {
+				for x := 1; x < p.w; x++ {
+					a, b := p.cells[y*p.w+x-1], p.cells[y*p.w+x]
+					if !a.set || !b.set || a.cont || b.cont || a.s == " " || b.s == " " {
+						continue
+					}
+					if strings.Contains(marks, a.s) != strings.Contains(marks, b.s) || a.s == "%" {
+						t.Errorf("%dx%d frame %d: %q touches %q at %d,%d", size.w, size.h, frame, a.s, b.s, x, y)
+					}
+				}
+			}
+			p.release()
+		}
 	}
 }

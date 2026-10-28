@@ -35,6 +35,12 @@ func (p *painter) sprites() {
 	for _, i := range order {
 		p.writer = i + 1
 		if m := &p.l.ms[i]; m.dying == 0 {
+			p.waiting(m)
+		}
+	}
+	for _, i := range order {
+		p.writer = i + 1
+		if m := &p.l.ms[i]; m.dying == 0 {
 			p.crew(m)
 			p.stores(m)
 		}
@@ -109,8 +115,22 @@ func (p *painter) crown(i int) {
 	}
 }
 
-// crew puts the ants in the nest: waiting ones stand red and still beside the top of the shaft with their names,
-// busy ones march up and down the shaft and along the gallery, resting ones curl up in the brood comb.
+// waiting stands the red ants still beside the top of the shaft, before any label is written so none is crowded out.
+func (p *painter) waiting(m *mound) {
+	j := 0
+	for _, c := range m.team {
+		if c.Stance != scene.Waiting {
+			continue
+		}
+		if row := p.g.sy/2 + j; row < m.bottom/2 {
+			p.signal(m.cx-1, row, "ж", p.pal.red)
+		}
+		j++
+	}
+}
+
+// crew names the waiting ants, marches the busy ones up and down the shaft and along the gallery, and curls the
+// resting ones up in the brood comb.
 func (p *painter) crew(m *mound) {
 	surface := p.g.sy / 2
 	j := 0
@@ -120,7 +140,7 @@ func (p *painter) crew(m *mound) {
 		}
 		row := surface + j
 		j++
-		if row >= m.bottom/2 || !p.signal(m.cx-1, row, "ж", p.pal.red) {
+		if row >= m.bottom/2 || p.cells[row*p.w+m.cx-1].s != "ж" {
 			continue
 		}
 		for _, limit := range []int{14, 6} {
@@ -156,7 +176,7 @@ func (p *painter) crew(m *mound) {
 		_, cy, _, _ := m.nest(p.g)
 		row := max(surface, int(cy)/2)
 		if p.signal(m.cx+1, row, "ж", p.pal.rest) {
-			p.write(m.cx+2, row, " "+strconv.Itoa(resting)+" resting", p.pal.rest)
+			p.write(m.cx+3, row, strconv.Itoa(resting)+" resting", p.pal.rest)
 		}
 	}
 }

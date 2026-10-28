@@ -31,6 +31,8 @@ type glyph struct {
 	s               string
 	fg, bg          rgb
 	set, wide, cont bool
+	// text marks a cell written by write, which other glyphs keep a blank cell away from.
+	text bool
 }
 
 func blankPainter(pal palette, hour float64, width, height int) *painter {
@@ -118,6 +120,11 @@ func (p *painter) free(x, y int) bool {
 	return x >= 0 && x < p.w && y >= 0 && y < p.p/2 && !p.table.Has(x, y) && !p.taken[y*p.w+x]
 }
 
+// beside reports whether a written label is in the cell left or right of x, y.
+func (p *painter) beside(x, y int) bool {
+	return x > 0 && p.cells[y*p.w+x-1].text || x+1 < p.w && p.cells[y*p.w+x+1].text
+}
+
 func (p *painter) behind(x, y int) rgb { return mix(p.px[2*y*p.w+x], p.px[(2*y+1)*p.w+x], .5) }
 
 // claim marks cell x, y for the mound being written, so a click there selects it.
@@ -127,10 +134,10 @@ func (p *painter) claim(x, y int) {
 	}
 }
 
-// write puts text on the scene a grapheme at a time, wide ones over two cells, where every cell is free, made
-// readable against what is behind it, and reports whether it fit.
+// write puts text on the scene a grapheme at a time, wide ones over two cells, where every cell is free and a
+// blank cell keeps it apart from other glyphs, made readable against what is behind it, and reports whether it fit.
 func (p *painter) write(x, y int, text string, fg rgb) bool {
-	if y < 0 || y >= p.p/2 || x < 0 {
+	if y < 0 || y >= p.p/2 || x < 0 || x > 0 && p.taken[y*p.w+x-1] {
 		return false
 	}
 	n := 0
@@ -147,6 +154,9 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 		}
 		n += width
 	}
+	if x+n < p.w && p.taken[y*p.w+x+n] {
+		return false
+	}
 	for rest := text; rest != ""; {
 		c, width := ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
 		rest = rest[len(c):]
@@ -155,11 +165,11 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 		}
 		i := y*p.w + x
 		f, b := scene.Readable(fg, p.behind(x, y))
-		p.cells[i] = glyph{s: c, fg: f, bg: b, set: true, wide: width == 2}
+		p.cells[i] = glyph{s: c, fg: f, bg: b, set: true, wide: width == 2, text: true}
 		p.taken[i] = true
 		p.claim(x, y)
 		if width == 2 {
-			p.cells[i+1] = glyph{set: true, cont: true}
+			p.cells[i+1] = glyph{set: true, cont: true, text: true}
 			p.taken[i+1] = true
 		}
 		x += width
@@ -167,9 +177,9 @@ func (p *painter) write(x, y int, text string, fg rgb) bool {
 	return true
 }
 
-// put draws one narrow glyph in cell x, y if it is free, made readable against what is behind it.
+// put draws one narrow glyph in cell x, y if it is free and clear of labels, made readable against what is behind it.
 func (p *painter) put(x, y int, g string, fg rgb) bool {
-	if !p.free(x, y) {
+	if !p.free(x, y) || p.beside(x, y) {
 		return false
 	}
 	i := y*p.w + x
@@ -180,9 +190,10 @@ func (p *painter) put(x, y int, g string, fg rgb) bool {
 	return true
 }
 
-// signal draws a glyph whose color is its meaning, an ant or an alarm, keeping fg and backing it to read.
+// signal draws a glyph whose color is its meaning, an ant or an alarm, clear of labels, keeping fg and backing
+// it to read.
 func (p *painter) signal(x, y int, g string, fg rgb) bool {
-	if !p.free(x, y) {
+	if !p.free(x, y) || p.beside(x, y) {
 		return false
 	}
 	i := y*p.w + x
