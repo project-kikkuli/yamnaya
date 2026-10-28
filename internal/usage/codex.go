@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -199,7 +200,29 @@ func windowName(minutes int64) string {
 	return strconv.FormatInt(minutes, 10) + "m"
 }
 
+var (
+	rolloutMu  sync.Mutex
+	rolloutIDs = map[string]string{}
+)
+
+// rolloutConversation is the thread id a rollout's first line names, read once per path since that line never changes.
 func rolloutConversation(path string) string {
+	rolloutMu.Lock()
+	id, ok := rolloutIDs[path]
+	rolloutMu.Unlock()
+	if ok {
+		return id
+	}
+	id = readRolloutConversation(path)
+	if id != "" {
+		rolloutMu.Lock()
+		rolloutIDs[path] = id
+		rolloutMu.Unlock()
+	}
+	return id
+}
+
+func readRolloutConversation(path string) string {
 	f, err := nativefile.Open(path)
 	if err != nil {
 		return ""

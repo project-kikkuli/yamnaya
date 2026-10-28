@@ -5,9 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -37,17 +40,54 @@ func epochPath(dir, path string) string {
 	sum := sha256.Sum256([]byte(path))
 	return filepath.Join(dir, "account-epochs", hex.EncodeToString(sum[:])+".json")
 }
+
+type epochRead struct {
+	info fs.FileInfo
+	e    epochHistory
+}
+
+var (
+	epochMu    sync.Mutex
+	epochReads = map[string]epochRead{}
+)
+
+// readEpochs parses a history again only when its file was replaced or changed since this process last read it.
 func readEpochs(dir, path string) (epochHistory, error) {
 	var e epochHistory
-	b, err := os.ReadFile(epochPath(dir, path))
+	name := epochPath(dir, path)
+	info, err := os.Stat(name)
 	if os.IsNotExist(err) {
 		return e, nil
 	}
 	if err != nil {
 		return e, err
 	}
-	err = json.Unmarshal(b, &e)
-	return e, err
+	epochMu.Lock()
+	r, ok := epochReads[name]
+	epochMu.Unlock()
+	if ok && os.SameFile(r.info, info) && r.info.ModTime().Equal(info.ModTime()) && r.info.Size() == info.Size() {
+		return r.e.clone(), nil
+	}
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return e, err
+	}
+	if err = json.Unmarshal(b, &e); err != nil {
+		return e, err
+	}
+	epochMu.Lock()
+	epochReads[name] = epochRead{info: info, e: e.clone()}
+	epochMu.Unlock()
+	return e, nil
+}
+
+func (e epochHistory) clone() epochHistory {
+	e.Epochs = slices.Clone(e.Epochs)
+	if e.Identity != nil {
+		identity := *e.Identity
+		e.Identity = &identity
+	}
+	return e
 }
 func writeEpochs(dir, path string, e epochHistory) error {
 	b, err := json.Marshal(e)
