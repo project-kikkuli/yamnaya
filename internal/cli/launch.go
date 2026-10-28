@@ -644,7 +644,7 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
-	argv, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+	_, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if rec.Session != "" {
 			return resumeArgv(*rec, l.resumeNote)
 		}
@@ -654,9 +654,9 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 		return "", err
 	}
 	if lost != "" {
-		return fmt.Sprintf("revived %s (%s) in %s: %s", rec.Key, lost, rec.Worktree.Path, strings.Join(argv[1:], " ")), nil
+		return fmt.Sprintf("revived %s %s (%s) in %s; open: ym open %s", rec.Harness, rec.Key, lost, rec.Worktree.Path, rec.Key), nil
 	}
-	return fmt.Sprintf("revived %s: %s", rec.Key, strings.Join(argv[1:], " ")), nil
+	return fmt.Sprintf("revived %s %s in %s; open: ym open %s", rec.Harness, rec.Key, rec.Worktree.Path, rec.Key), nil
 }
 
 // Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +107,9 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 			}
 			if got, want := resumed(t, ran), wt+" --dangerously-skip-permissions --resume s1"; got != want {
 				t.Fatalf("agent ran as %q, want %q", got, want)
+			}
+			if env := regexp.MustCompile(`\b[A-Z][A-Z0-9_]*=\S*`).FindString(msg); env != "" || strings.Contains(msg, "--resume") || !strings.Contains(msg, " in "+wt+";") || !strings.HasSuffix(msg, "; open: ym open "+rec.Key) {
+				t.Fatalf("revive said %q; want what was revived, where and how to open it, with no command line or %q", msg, env)
 			}
 			if strings.Contains(msg, launch.RepoGone) != (c.lost != "") {
 				t.Fatalf("revive said %q; want it to say %q: %v", msg, launch.RepoGone, c.lost != "")
