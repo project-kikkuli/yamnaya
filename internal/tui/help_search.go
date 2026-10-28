@@ -12,7 +12,6 @@ type helpBlock struct {
 	blankBefore bool
 	indent      int
 	heading     bool
-	sectionEnd  bool
 }
 
 func (b helpBlock) text() string {
