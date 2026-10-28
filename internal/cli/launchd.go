@@ -241,7 +241,7 @@ func keepDefault(w io.Writer) {
 		return
 	}
 	if _, err := keepLaunchd(); err != nil {
-		fmt.Fprintln(w, "ym serve is not kept across restarts:", err)
+		fmt.Fprintf(w, "ym serve is not kept across restarts: %v. Fix: %s\n", err, keepFix)
 	}
 	for _, err := range dropDeadAgents() {
 		fmt.Fprintln(w, err)
@@ -297,7 +297,7 @@ func dropDeadAgents() []error {
 		target := fmt.Sprintf("gui/%d/%s", os.Getuid(), unescape(string(strs[0][1])))
 		if _, err := launchctl("print", target); err == nil {
 			if out, err := launchctl("bootout", target); err != nil {
-				errs = append(errs, fmt.Errorf("launchctl bootout %s: %w: %s", target, err, strings.TrimSpace(string(out))))
+				errs = append(errs, fmt.Errorf("launchctl bootout %s: %w: %s; remove %s yourself, no sudo needed", target, err, strings.TrimSpace(string(out)), path))
 				continue
 			}
 		}
@@ -365,7 +365,7 @@ func serviceRun(w io.Writer) error {
 	}
 	env, err := loginEnv(loginShell())
 	if err != nil {
-		fmt.Fprintln(w, "ym serve runs in launchd's environment:", err)
+		fmt.Fprintf(w, "ym serve runs in launchd's environment, which may miss PATH and credentials: %v. Fix: make %s -l -c /usr/bin/env succeed in a terminal, then ym service restart\n", err, loginShell())
 		env = os.Environ()
 	}
 	set := map[string]string{}

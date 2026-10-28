@@ -202,6 +202,9 @@ func New(c *core.Core) Model {
 		os.Unsetenv(RestartedEnv)
 		m.message = "restarted into new ym " + revision()
 	}
+	if c.Warning != "" {
+		m.message = pal.red.Render(c.Warning)
+	}
 	prepared := m.prepareView()
 	m.page = &prepared
 	return m

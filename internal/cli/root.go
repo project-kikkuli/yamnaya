@@ -147,6 +147,7 @@ func NewRoot() *cobra.Command {
 		defer m.Close()
 		e.core.Meter = m
 		e.core.Health = healthText
+		e.core.Warning = foreignWarning()
 		return tui.Run(e.core)
 	})
 	root.AddCommand(offCmds(with)...)

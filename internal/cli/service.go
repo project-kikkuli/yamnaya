@@ -129,7 +129,7 @@ func serviceCmd() *cobra.Command {
 			case <-cmd.Context().Done():
 				return cmd.Context().Err()
 			case <-deadline.C:
-				return fmt.Errorf("service has not stopped; inspect work-service.log")
+				return fmt.Errorf("ym serve has not stopped; see %s", filepath.Join(dir, "work-service.log"))
 			case <-ticker.C:
 			}
 		}
@@ -139,7 +139,7 @@ func serviceCmd() *cobra.Command {
 		if runtime.GOOS == "darwin" {
 			path, err := keepLaunchd()
 			if err != nil {
-				return err
+				return fmt.Errorf("%w. Fix: %s", err, keepFix)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "ym serve is kept running by %s\n", path)
 			return nil

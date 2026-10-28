@@ -255,7 +255,7 @@ func keepServing(w io.Writer) {
 		return
 	}
 	if err := ensureService(); err != nil {
-		fmt.Fprintln(w, "ym serve is down and did not restart:", err)
+		fmt.Fprintf(w, "ym serve is down and did not restart: %v. Fix: %s\n", err, keepFix)
 	}
 }
 

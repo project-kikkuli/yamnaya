@@ -590,7 +590,7 @@ func (m Model) settingRows() ([]prow, []pdo) {
 	kept, _ := d.service["kept"].(string)
 	keep := "kept running across logouts and reboots"
 	if kept == "" {
-		keep = "not kept by launchd: it runs while a board or ym command keeps it up"
+		keep = "not kept by launchd: it runs while a board or ym command keeps it up; enter keeps it, as ym service keep does, no sudo needed"
 	}
 	keepDo := pdo{"enter", "keep it running", func(m Model) (tea.Model, tea.Cmd) {
 		return m, m.runYM("panel:set:keep", "keeping ym serve", "keep", "", "", "service", "keep")

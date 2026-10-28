@@ -347,7 +347,9 @@ func (m Model) footer() []string {
 		return lines
 	}
 	if m.message != "" {
-		lines = append(lines, " "+m.message)
+		for _, l := range strings.Split(ansi.Wrap(m.message, max(20, m.width-2), ""), "\n") {
+			lines = append(lines, " "+l)
+		}
 	}
 	if m.filter != "" {
 		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
