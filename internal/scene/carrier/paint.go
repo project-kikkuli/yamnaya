@@ -447,14 +447,14 @@ func (p *painter) label(q *squad, y0 int) {
 	p.text(x, y0, room, string(p.textBuf), fg, nil)
 }
 
-// recolor writes red text over the sky as it is, without the contrast shift that would turn it pink.
+// recolor writes red text over the sky, its red kept and the sky behind it moved until the two contrast.
 func (p *painter) recolor(x, y, n int, s string, fg rgb) {
 	k := 0
 	for _, r := range s {
 		if k >= n {
 			break
 		}
-		p.set(x+k, y, fg, p.bg(x+k, y), scene.Glyph(r))
+		p.set(x+k, y, fg, scene.Backing(fg, p.bg(x+k, y)), scene.Glyph(r))
 		k++
 	}
 }
