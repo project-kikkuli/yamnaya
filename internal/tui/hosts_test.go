@@ -241,3 +241,51 @@ func TestFilterMatchesTheHostOfGoalsAndChiefs(t *testing.T) {
 		}
 	}
 }
+
+func TestFilterMatchesTheHostOfMissionsAndKeepsTheirRepoHeader(t *testing.T) {
+	m, _, _ := setup(t)
+	far := core.Live{Session: core.Session{ID: "far", Title: "x"}, Remote: box}
+	near := core.Live{Session: core.Session{ID: "near", Title: "y"}}
+	m.board = core.Board{
+		Remotes: []core.RemoteBoard{{Host: box}},
+		Repos: []core.Repo{
+			{Key: "mixed", Name: "mixedrepo", Missions: []core.Project{
+				{Key: "mixed-near", Name: "nearwork", Sessions: []core.Live{near}},
+				{Key: "mixed-far", Name: "farwork", Sessions: []core.Live{far}},
+			}},
+			{Key: "onlylocal", Name: "localrepo", Missions: []core.Project{{Key: "ol", Name: "olwork", Sessions: []core.Live{near}}}},
+		},
+	}
+	for _, c := range []struct {
+		filter   string
+		missions []string
+		repos    []string
+	}{
+		{"@boxmachine", []string{"farwork"}, []string{"mixedrepo"}},
+		{box, []string{"farwork"}, []string{"mixedrepo"}},
+		{"local", []string{"nearwork", "olwork"}, []string{"mixedrepo", "localrepo"}},
+		{"mixedrepo", []string{"nearwork", "farwork"}, []string{"mixedrepo"}},
+		{"@nowhere", nil, nil},
+	} {
+		t.Run(c.filter, func(t *testing.T) {
+			f := m
+			f.filter = c.filter
+			var missions, repos []string
+			for _, r := range f.rows() {
+				switch {
+				case r.project != nil:
+					missions = append(missions, r.project.Name)
+				case r.repo != nil:
+					repos = append(repos, r.repo.Name)
+				}
+			}
+			slices.Sort(missions)
+			slices.Sort(c.missions)
+			slices.Sort(repos)
+			slices.Sort(c.repos)
+			if !slices.Equal(missions, c.missions) || !slices.Equal(repos, c.repos) {
+				t.Fatalf("filter %q shows missions %v repos %v, want %v %v", c.filter, missions, repos, c.missions, c.repos)
+			}
+		})
+	}
+}
