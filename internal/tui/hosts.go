@@ -143,14 +143,18 @@ func hostBrief(r core.RemoteBoard, now time.Time) string {
 	return "ok"
 }
 
-// hostsLine is each host's nickname and brief state, wrapped to the width; H shows why a host fails.
+// hostsLine is each host's nickname and brief state, wrapped to the width; the first that fails says how to repair it.
 func (m Model) hostsLine() string {
 	var hosts []string
+	hinted := false
 	for _, r := range m.board.Remotes {
 		line := m.hostTag(r.Host) + " " + hostBrief(r, m.board.At)
 		switch {
 		case r.Err != nil:
 			line = pal.red.Render(line)
+			if !hinted {
+				line, hinted = line+pal.yellow.Render(" · H r to repair"), true
+			}
 		case r.Slow || r.Late(m.board.At):
 			line = pal.yellow.Render(line)
 		}

@@ -148,6 +148,7 @@ func NewRoot() *cobra.Command {
 		e.core.Meter = m
 		e.core.Health = healthText
 		e.core.Warning = foreignWarning()
+		e.core.Trouble = trouble()
 		return tui.Run(e.core)
 	})
 	root.AddCommand(offCmds(with)...)
@@ -188,6 +189,8 @@ func NewRoot() *cobra.Command {
 		remoteCmd(),
 		relayCmd(with),
 		attachRelayCmd(),
+		repairCmd(),
+		versionCmd(),
 	)
 	return root
 }

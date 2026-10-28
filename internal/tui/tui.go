@@ -195,11 +195,13 @@ type Model struct {
 	acts   map[string]act
 	queued map[string]core.Relay
 	pn     panelState
+	// trouble is the latest note on what ym repair would fix on this host.
+	trouble string
 }
 
 func New(c *core.Core) Model {
 	m := Model{killing: map[string]bool{}, acts: map[string]act{}, drawn: &lastDraw{}, core: c, host: core.ThisHost(), width: 100, height: 40, interval: time.Second, peaks: newMountains(), openURL: openInBrowser}
-	m.pn.run, m.pn.tty = selfRunner(c), selfTTY(c)
+	m.pn.run, m.pn.tty, m.pn.stream = selfRunner(c), selfTTY(c), selfStream
 	if path, err := os.Executable(); err == nil {
 		m.self, _ = watchBinary(path)
 	}
@@ -242,6 +244,8 @@ type boardMsg struct {
 	themeSeq int
 	// nicks are the nicknames the owner gave hosts.
 	nicks map[string]string
+	// trouble is what ym repair would fix on this host, "" when nothing.
+	trouble string
 }
 
 type tickMsg struct{}
@@ -288,7 +292,11 @@ func (m Model) refresh(tick bool) tea.Cmd {
 		if err == nil && c.Store != nil {
 			nicks, err = c.Store.SetNicknames()
 		}
-		return boardMsg{b, relays, err, tick, theme, seq, nicks}
+		trouble := ""
+		if c.Trouble != nil {
+			trouble = c.Trouble()
+		}
+		return boardMsg{b, relays, err, tick, theme, seq, nicks, trouble}
 	}
 }
 
@@ -379,7 +387,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			m.board, m.loaded, m.err, m.nicks = msg.board, true, nil, msg.nicks
+			m.board, m.loaded, m.err, m.nicks, m.trouble = msg.board, true, nil, msg.nicks, msg.trouble
 			m.queued, m.pn.relays = queued(msg.relays, msg.board), msg.relays
 			m.themed(msg)
 			m.fallen(time.Now())
@@ -424,6 +432,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refresh(false)
 	case actMsg:
 		return m.ended(msg)
+	case repairLineMsg:
+		return m.repairLine(msg)
 	case settingsMsg:
 		m.pn.settings = settingsData(msg)
 		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)

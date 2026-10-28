@@ -205,6 +205,7 @@ func (m Model) header() string {
 			}
 		}
 	}
+	h += m.repairHint()
 	if m.core != nil && m.core.Meter != nil {
 		h += "\n" + fleetLine(m.board.Fleet, m.board.At, m.width, m.hostTag)
 	}
@@ -1554,11 +1555,14 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
                 the launch default, x removes it; pressed on a session, enter switches the session to it
    H            hosts: each host's nickname, full name and state, with the full error when it fails;
-                i installs or updates ym on one and keeps it running, o opens its board, n renames it
-                (sets its nickname), x forgets it, a adds a host; below, what this host still carries to them,
-                x stops carrying one
-   Y            settings: restart ym serve, keep it running across reboots or stop, connect Notion
-                (the token is typed hidden), the context cap, which repositories' managers may merge, update ym
+                i installs or updates ym on one and keeps it running, o opens its board, r repairs the way
+                to it (DNS, route, VPN, port 22, ssh, the shared connection, ym and its serve, live, ending
+                in one line saying what to do), n renames it (sets its nickname), x forgets it, a adds a
+                host; below, what this host still carries to them, x stops carrying one
+   Y            settings: r repairs ym on this host (root-owned files and processes, stray serves, launchd,
+                dead sockets, stale relays and locks; what needs sudo is shown), restart ym serve, keep it running
+                across reboots or stop, connect Notion (the token is typed hidden), the context cap, which
+                repositories' managers may merge, update ym
    space f pgdown, b pgup
                 page down or up in an agent's page or a text page
    I            every item, answered, dismissed and snoozed too; in a mission, just its items

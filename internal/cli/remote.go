@@ -58,7 +58,7 @@ func remoteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd(), remoteRenameCmd())
+	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd(), remoteRenameCmd(), remoteRepairCmd())
 	return cmd
 }
 

@@ -61,6 +61,8 @@ type Core struct {
 	KeepAlive func() error
 	// Warning is what the board shows when it opens, such as files in ym's state another user owns.
 	Warning string
+	// Trouble is a short note on what ym repair would fix on this host, "" when nothing; nil checks nothing.
+	Trouble func() string
 	// Boot is when this host last started; nil reads it from the system.
 	Boot func() time.Time
 	// Woke is when this host last woke from sleep; a session's silence while it slept does not make it hung.

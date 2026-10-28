@@ -46,6 +46,9 @@ type panelState struct {
 	// run runs the ym command a user would type, on host ("" for this one), with stdin; tty hands it this terminal.
 	run func(host, stdin string, args ...string) (string, error)
 	tty func(host string, args ...string) *exec.Cmd
+	// stream runs a ym command here, handing over each line it prints; repair is the latest it ran for ym repair.
+	stream func(args ...string) (<-chan string, error)
+	repair *repairLog
 }
 
 type panelTarget struct{ ref, label, harness, host string }
@@ -231,6 +234,7 @@ func (m Model) panelView() viewPage {
 		}
 		b.WriteString(line + "\n")
 	}
+	m.repairView(&b)
 	return b
 }
 
@@ -513,6 +517,9 @@ func (m Model) hostRows() ([]prow, []pdo) {
 				return m, m.runYM(key, "installing ym on "+host, "install", "", "", "remote", "install", host)
 			}},
 			{"o", "open its board", func(m Model) (tea.Model, tea.Cmd) { return m.handOver(host, "back from "+host) }},
+			{"r", "repair: check each step from here to it and fix what ym can", func(m Model) (tea.Model, tea.Cmd) {
+				return m.startRepair("ym remote repair "+m.hostTag(host), "remote", "repair", host)
+			}},
 			{"n", "rename: set its nickname, empty for the default", func(m Model) (tea.Model, tea.Cmd) {
 				m.askLine("nickname for "+host+" (empty for the default)", strings.TrimPrefix(m.hostTag(host), "@"), false, func(m Model, nick string) (tea.Model, tea.Cmd) {
 					return m, m.runYM(key, "renaming", "rename", "", "", "remote", "rename", host, nick)
@@ -569,7 +576,8 @@ func (m Model) settingRows() ([]prow, []pdo) {
 	if !d.loaded {
 		return []prow{{text: pal.dim.Render("reading…")}}, nil
 	}
-	var rows []prow
+	fix := pdo{"r", "repair ym on this host", func(m Model) (tea.Model, tea.Cmd) { return m.startRepair("ym repair", "repair") }}
+	rows := []prow{{text: "repair: root-owned files and processes, stray serves, launchd, dead sockets, stale relays and locks", does: []pdo{{"enter", fix.what, fix.run}}}, {text: ""}}
 	if d.err != nil {
 		rows = append(rows, prow{text: pal.red.Render("could not read everything: " + oneLine(d.err.Error()))})
 	}
@@ -683,7 +691,7 @@ func (m Model) settingRows() ([]prow, []pdo) {
 		m.confirm("update ym? the board and ym serve restart into it", m.runYM("panel:set:update", "updating ym", "update", "", "", "update"))
 		return m, nil
 	}}}})
-	return rows, nil
+	return rows, []pdo{fix}
 }
 
 func (m Model) launchRows() ([]prow, []pdo) {
