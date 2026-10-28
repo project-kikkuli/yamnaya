@@ -213,7 +213,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 					left = append(left, url)
 					continue
 				}
-				if err := c.Store.SavePRStatus(url, st); err != nil {
+				if err := c.Store.SavePRStatus(url, st.settled(known[url])); err != nil {
 					if firstErr == nil {
 						firstErr = fmt.Errorf("%s: %w", url, err)
 					}
@@ -243,6 +243,9 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			}
 			if prev, ok := known[url]; ok && err == nil && st.Merge.Error != "" && st.Merge.OID != "" && st.Merge.OID == prev.Merge.OID {
 				st = prev.unreadSince(st)
+			}
+			if err == nil {
+				st = st.settled(known[url])
 			}
 			if serr := c.Store.SavePRStatus(url, st); err == nil {
 				err = serr

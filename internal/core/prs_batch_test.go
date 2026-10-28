@@ -208,3 +208,64 @@ func TestPullRequestsTheOwnerWroteStayFreshWithNoSessionOnTheBoard(t *testing.T)
 		now = now.Add(PRStale)
 	}
 }
+
+// mergeSource answers each read with the next merge state GitHub reports, for head h1 unless a state names another head.
+type mergeSource struct {
+	now   func() time.Time
+	reads []PRMergeFacts
+}
+
+func (s *mergeSource) PRStatuses(urls []string) (map[string]PRStatus, error) {
+	out := map[string]PRStatus{}
+	for _, u := range urls {
+		m := s.reads[0]
+		s.reads = s.reads[1:]
+		m.Author, m.Viewer = "mira", "mira"
+		if m.OID == "" {
+			m.OID = "h1"
+		}
+		out[u] = PRStatus{State: "OPEN", Passed: 1, Fetched: s.now(), Merge: m}
+	}
+	return out, nil
+}
+
+func (s *mergeSource) PRStatus(string) (PRStatus, error) { return PRStatus{}, errors.New("unused") }
+
+func TestAPullRequestKeepsItsMergeStateWhileGitHubRecomputesIt(t *testing.T) {
+	clean := PRMergeFacts{Mergeable: "MERGEABLE", MergeState: "CLEAN"}
+	unknown := PRMergeFacts{Mergeable: "UNKNOWN", MergeState: "UNKNOWN"}
+	for _, tc := range []struct {
+		name  string
+		reads []PRMergeFacts
+		ready bool
+	}{
+		{"clean then unknown", []PRMergeFacts{clean, unknown}, true},
+		{"unknown from the start", []PRMergeFacts{unknown, unknown}, false},
+		{"clean then conflicting", []PRMergeFacts{clean, {Mergeable: "CONFLICTING", MergeState: "DIRTY"}}, false},
+		{"clean then unknown on a new head", []PRMergeFacts{clean, {OID: "h2", Mergeable: "UNKNOWN", MergeState: "UNKNOWN"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+			c := &Core{Store: st, PRs: &mergeSource{now: func() time.Time { return now }, reads: tc.reads}, Now: func() time.Time { return now }}
+			url := "https://github.com/acme/august/pull/3"
+			if err := st.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
+				t.Fatal(err)
+			}
+			for range tc.reads {
+				if _, err := c.RefreshPRs(Board{}); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(PRStale)
+			}
+			got, _ := st.PRStatuses()
+			if got[url].ReadyToMerge() != tc.ready {
+				t.Fatalf("after %d reads %+v ready %v, want %v", len(tc.reads), got[url].Merge, got[url].ReadyToMerge(), tc.ready)
+			}
+		})
+	}
+}
