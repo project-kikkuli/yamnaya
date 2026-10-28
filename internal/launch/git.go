@@ -22,3 +22,10 @@ func noAutoMaintenance(cmd *exec.Cmd) {
 		"GIT_CONFIG_VALUE_"+strconv.Itoa(count+1)+"=false",
 	)
 }
+
+// local answers a read-only git query from objects already in the clone, never fetching a missing one from a promisor remote.
+func local(args ...string) error {
+	cmd := gitCommand(append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false"}, args...)...)
+	cmd.Env = append(cmd.Env, "GIT_NO_LAZY_FETCH=1")
+	return cmd.Run()
+}

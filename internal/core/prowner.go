@@ -38,7 +38,8 @@ func (l Live) prPlaces() map[string]Member {
 	return out
 }
 
-// branchOwns accepts the PR's upstream or related history, including a head this clone has not fetched.
+// branchOwns accepts the PR's upstream or related history, including a head this clone has not fetched, which it never
+// fetches from a promisor remote.
 func branchOwns(worktree, branch, head, oid string, ahead int, now time.Time) bool {
 	key := worktree + "\x00" + branch + "\x00" + head + "\x00" + oid
 	ownersMu.Lock()
@@ -48,7 +49,9 @@ func branchOwns(worktree, branch, head, oid string, ahead int, now time.Time) bo
 		return e.own
 	}
 	git := func(args ...string) bool {
-		return exec.Command("git", append([]string{"-C", worktree}, args...)...).Run() == nil
+		cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+		cmd.Env = append(cmd.Environ(), "GIT_NO_LAZY_FETCH=1")
+		return cmd.Run() == nil
 	}
 	config := func(key string) string {
 		out, _ := exec.Command("git", "-C", worktree, "config", "--get", "branch."+branch+"."+key).Output()

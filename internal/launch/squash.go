@@ -207,9 +207,8 @@ func (q *Squash) contains(root, slug, head, sha string) (bool, error) {
 	if head == sha {
 		return true, nil
 	}
-	if _, err := look(root, "cat-file", "-e", head+"^{commit}"); err == nil {
-		_, err := look(root, "merge-base", "--is-ancestor", sha, head)
-		return err == nil, nil
+	if local("-C", root, "cat-file", "-e", head+"^{commit}") == nil {
+		return local("-C", root, "merge-base", "--is-ancestor", sha, head) == nil, nil
 	}
 	return q.Hub.Ancestor(slug, sha, head)
 }
@@ -225,7 +224,7 @@ func (q *Squash) landed(root, slug string, pr PR) (bool, error) {
 	if pr.Merge.Oid == "" || base == "" {
 		return false, nil
 	}
-	if _, err := look(root, "cat-file", "-e", pr.Merge.Oid+"^{commit}"); err == nil {
+	if local("-C", root, "cat-file", "-e", pr.Merge.Oid+"^{commit}") == nil {
 		if _, err := look(root, "merge-base", "--is-ancestor", pr.Merge.Oid, base); err == nil {
 			return true, nil
 		}

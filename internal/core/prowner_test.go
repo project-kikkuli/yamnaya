@@ -1,10 +1,12 @@
 package core
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func headOf(t *testing.T, dir string) string {
@@ -103,5 +105,47 @@ func TestAPullRequestOnASameNamedBranchOfAnotherCloneIsNotTheSessions(t *testing
 	}
 	if len(opened) != 1 || strings.Contains(opened[0], "other-clone") || strings.Contains(opened[0], "fresh-branch") {
 		t.Errorf("pr-opened events %q, want one, from a session that owns the branch", opened)
+	}
+}
+
+// TestOwnershipIsDecidedWithoutFetchingFromAPromisorRemote checks a partial clone, where asking git about a commit it lacks
+// fetches from every promisor remote and once held the board on "reading sessions" for a minute.
+func TestOwnershipIsDecidedWithoutFetchingFromAPromisorRemote(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	origin := filepath.Join(root, "origin.git")
+	git(t, root, "init", "-q", "--bare", "-b", "main", origin)
+	git(t, origin, "config", "uploadpack.allowFilter", "true")
+	seed := clone(t, root, "seed", origin)
+	git(t, seed, "push", "-q", "origin", "main")
+	partial := filepath.Join(root, "partial")
+	git(t, root, "clone", "-q", "--filter=blob:none", "file://"+origin, partial)
+	base := headOf(t, partial)
+	git(t, partial, "switch", "-q", "-c", "elsewhere")
+	git(t, partial, "commit", "-q", "--allow-empty", "-m", "unrelated work")
+	unrelated := headOf(t, partial)
+	git(t, partial, "switch", "-q", "--no-track", "-c", "x", "main")
+	git(t, partial, "commit", "-q", "--allow-empty", "-m", "session work")
+	git(t, seed, "commit", "-q", "--allow-empty", "-m", "never fetched")
+	git(t, seed, "push", "-q", "origin", "main:pr")
+	unfetched := headOf(t, seed)
+	marker := filepath.Join(root, "fetched")
+	git(t, partial, "config", "remote.origin.uploadpack", "touch "+marker+"; git-upload-pack")
+	for _, tc := range []struct {
+		name string
+		oid  string
+		own  bool
+	}{
+		{"merge commit this clone never fetched", unfetched, true},
+		{"merge commit in the session's history", base, true},
+		{"merge commit on an unrelated local branch", unrelated, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if own := branchOwns(partial, "x", "x", tc.oid, 1, time.Now()); own != tc.own {
+				t.Fatalf("branchOwns = %v, want %v", own, tc.own)
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Fatal("deciding ownership fetched from the promisor remote")
+			}
+		})
 	}
 }

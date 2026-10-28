@@ -154,7 +154,7 @@ func recreate(w Worktree, head string) error {
 	gd := "--git-dir=" + w.GitDir
 	has := func(args ...string) bool { return gitCommand(append([]string{gd}, args...)...).Run() == nil }
 	gitCommand(gd, "worktree", "prune").Run()
-	headOK := head != "" && has("cat-file", "-e", head+"^{commit}")
+	headOK := head != "" && local(gd, "cat-file", "-e", head+"^{commit}") == nil
 	var add []string
 	switch {
 	case w.Branch == "" && headOK:
