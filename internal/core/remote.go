@@ -50,7 +50,7 @@ type RemoteBoard struct {
 	Fresh map[string]Freshness
 	// Swollen are its processes holding a large share of its memory.
 	Swollen []Swollen
-	// Missions and GoalStats are its missions' stats by project key and its goals' by manager id, as it computed them.
+	// Missions and GoalStats are its missions' stats by project key and its goals' and chiefs' by manager id, as it computed them.
 	Missions  map[string]Stats
 	GoalStats map[string]Stats
 	// Stale marks a board ym kept from an earlier read; At says when that host last answered.

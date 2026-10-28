@@ -122,10 +122,13 @@ func (st *Stats) count(s Status) {
 	}
 }
 
-// goalStats are a goal on this host by this host's reading: its workers, every pull request opened for it, its missions' vibe and
-// spend, and its manager's latest progress line.
-func goalStats(n Node, missions []Project, statuses map[string]PRStatus, opened []string, ready bool) Stats {
-	st := Stats{Started: n.Goal.CreatedAt}
+// ownStats are a goal or chief on this host by this host's reading: its workers, every pull request opened for it, its missions'
+// vibe and spend, and its manager's latest progress line; a chief's leave out its reports'.
+func ownStats(n Node, missions []Project, statuses map[string]PRStatus, opened []string, ready bool) Stats {
+	st := Stats{Started: n.Manager.LaunchedAt}
+	if n.Goal != nil {
+		st.Started = n.Goal.CreatedAt
+	}
 	var prs []PR
 	for _, w := range n.Workers {
 		switch w.State {
@@ -217,11 +220,12 @@ func (c *Core) settleStats(b *Board) error {
 			n := &out[i]
 			n.Children = settle(n.Children)
 			switch {
-			case n.Goal == nil:
 			case n.Manager.Host != "":
 				n.Stats = goals[n.Manager.ID]
+			case n.Goal != nil:
+				n.Stats = ownStats(*n, byManager[n.Manager.ID], statuses, opened[n.Goal.ID], b.Fleet.Ready)
 			default:
-				n.Stats = goalStats(*n, byManager[n.Manager.ID], statuses, opened[n.Goal.ID], b.Fleet.Ready)
+				n.Stats = ownStats(*n, byManager[n.Manager.ID], statuses, nil, b.Fleet.Ready)
 			}
 		}
 		return out

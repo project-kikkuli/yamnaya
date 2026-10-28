@@ -45,7 +45,7 @@ type Node struct {
 	// Steer is the newest revision of what the goal or chief is about, nil when it was never steered.
 	Steer *Steer
 	Fresh Freshness
-	// Stats are the goal's numbers by the reading of the host it runs on.
+	// Stats are the goal's or chief's own numbers by the reading of the host it runs on; a chief's leave out its reports'.
 	Stats Stats
 	// Off is set while the owner has ym off for the goal or chief.
 	Off bool

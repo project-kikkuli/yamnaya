@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -102,5 +103,36 @@ func TestAnotherHostsMissionAndGoalShowTheStatsThatHostComputed(t *testing.T) {
 	}
 	if n := node(t, nb, RemoteKey("far", m.ID)); !reflect.DeepEqual(n.Stats, r.GoalStats[m.ID]) {
 		t.Errorf("remote goal stats %+v, want %+v", n.Stats, r.GoalStats[m.ID])
+	}
+}
+
+func TestAChiefsOwnStatsComeFromItsOwnSessionAndLeaveItsReportsOut(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		t.Run(fmt.Sprintf("usage ready %v", ready), func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, mg := w.goal(t, "stream the export", "/repo/august")
+			chief := w.chief(t, "platform", mg.ID)
+			w.spawn("chief-agent", chief.Session)
+			w.set("chief-agent", func(s *Session) { s.Status = Busy })
+			if _, err := w.core.Store.AddVibe(Vibe{Place: "Lisbon", Session: chief.Session, Harness: "claude", At: w.clock}); err != nil {
+				t.Fatal(err)
+			}
+			sessions := map[string]SessionSpend{}
+			for id, usd := range map[string]float64{chief.Session: 2, "chief-agent": 1.5, mg.Session: 4} {
+				key := Live{Session: Session{Harness: "claude", ID: id}}.UsageKey()
+				sessions[key] = SessionSpend{Harness: "claude", ID: id, Total: spendOf(usd)}
+			}
+			w.core.Meter = fixedMeter{Fleet{Ready: ready, Sessions: sessions}}
+			st := node(t, w.board(t), chief.ID).Stats
+			if st.Running != 1 || st.Vibe == nil || st.Vibe.Place != "Lisbon" || !st.Started.Equal(chief.LaunchedAt) {
+				t.Errorf("chief stats %+v, want its own busy agent, vibe and launch", st)
+			}
+			switch {
+			case ready && (st.Spend == nil || st.Spend.USD != 3.5):
+				t.Errorf("chief spend %+v, want $3.50 over its own session and agent", st.Spend)
+			case !ready && st.Spend != nil:
+				t.Errorf("chief spend %+v before usage is read, want unknown", st.Spend)
+			}
+		})
 	}
 }

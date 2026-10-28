@@ -135,15 +135,15 @@ func (m Model) treeMatches(ns []core.Node) bool {
 	return false
 }
 
-// minAsk is how much of a goal row its ask keeps before its numbers give way.
-const minAsk = 56
+// minAsk is how much of a goal row its ask keeps before its numbers give way; a chief row's remit gives way first.
+const (
+	minAsk   = 56
+	minRemit = 10
+)
 
-// nodeStats are a goal's stats, or the sum over every goal below a chief.
+// nodeStats are a goal's stats, or a chief's own plus the sum over every report below it.
 func nodeStats(n core.Node) core.Stats {
-	if n.Goal != nil {
-		return n.Stats
-	}
-	var out core.Stats
+	out := n.Stats
 	for _, c := range n.Children {
 		st := nodeStats(c)
 		out.Running += st.Running
@@ -288,13 +288,15 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	stand := standStyle[n.Standing](pad(n.Standing, 7))
 	var head, what string
 	host := n.Manager.Host
+	keep := minAsk
 	if n.Goal != nil {
 		_, id, _ := core.SplitRemote(n.Goal.ID)
 		head = pad(id, 8)
 		what = m.tagged(host, n.Goal.Ask)
 	} else {
-		head = pad("chief", 8)
-		what = m.tagged(host, pal.bold.Render(n.Manager.Name)+pal.dim.Render(fmt.Sprintf("  %d goals", n.Count())))
+		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Name, chiefName, "…"), chiefName))
+		what = m.tagged(host, pal.dim.Render(plural(n.Count(), "goal"))+remit(n))
+		keep = minRemit
 	}
 	st := nodeStats(n)
 	switch {
@@ -310,7 +312,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		news = pal.yellow.Render(fmt.Sprintf("%d new ", u))
 	}
 	tags := planTags(n)
-	line += m.statCells(st, m.width-ansi.StringWidth(line+news+tags)-minAsk) + news + tags
+	line += m.statCells(st, m.width-ansi.StringWidth(line+news+tags)-keep) + news + tags
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {
 		return b
@@ -325,7 +327,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 			meta = append(meta, n.Goal.Evidence)
 		}
 	} else {
-		meta = append(meta, n.Manager.ID)
+		meta = append(meta, n.Manager.Name, n.Manager.ID)
 	}
 	if n.Live != nil && n.Live.Context > 0 {
 		meta = append(meta, "context "+core.Kilo(n.Live.Context))
@@ -361,6 +363,20 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		b += pal.dim.Render(l) + "\n"
 	}
 	return b
+}
+
+// chiefName is how much of a chief's name its row's first column holds.
+const chiefName = 12
+
+// remit is what a chief is about: its latest steer, else its brief's assessment.
+func remit(n core.Node) string {
+	switch {
+	case n.Steer != nil:
+		return "  " + oneLine(n.Steer.Text)
+	case n.Fresh.Brief != nil && n.Fresh.Brief.Assessment != "":
+		return "  " + oneLine(n.Fresh.Brief.Assessment)
+	}
+	return ""
 }
 
 // briefTag is how fresh a row's brief is at a glance: its age, stale, or none yet.

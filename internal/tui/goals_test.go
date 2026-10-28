@@ -620,3 +620,67 @@ func TestAGoalRowAlwaysShowsItsVibeAndDropsElapsedThenSpendWhenNarrow(t *testing
 		}
 	}
 }
+
+func TestAChiefRowLeadsWithItsNameAndShowsItsOwnSpendPlusItsReports(t *testing.T) {
+	spent := func(usd float64) *core.Spend { return &core.Spend{USD: usd} }
+	goal := func(id string, usd float64) core.Node {
+		return core.Node{Manager: core.Manager{ID: "m" + id, Role: core.RoleManager}, Goal: &core.Goal{ID: id, Ask: "ship " + id}, Standing: core.StandMoving, Stats: core.Stats{Spend: spent(usd)}}
+	}
+	for _, tc := range []struct {
+		name      string
+		reports   []core.Node
+		own, want string
+	}{
+		{"no reports, own spend read", nil, "$2.00", "$2.00"},
+		{"no reports, own spend unread", nil, "", "$?"},
+		{"one goal, own spend read", []core.Node{goal("goal1", 3)}, "$2.00", "$5.00"},
+		{"one goal, own spend unread", []core.Node{goal("goal1", 3)}, "", "$3.00"},
+		{"nested chief, own spend read", []core.Node{goal("goal1", 3), {Manager: core.Manager{ID: "mgr7", Role: core.RoleChief, Name: "infra"}, Standing: core.StandMoving, Stats: core.Stats{Spend: spent(1)}, Children: []core.Node{goal("goal2", 4)}}}, "$2.00", "$10.00"},
+		{"nested chief, own spend unread", []core.Node{goal("goal1", 3), {Manager: core.Manager{ID: "mgr7", Role: core.RoleChief, Name: "infra"}, Standing: core.StandMoving, Stats: core.Stats{Spend: spent(1)}, Children: []core.Node{goal("goal2", 4)}}}, "", "$8.00"},
+	} {
+		for _, width := range []int{80, 160} {
+			t.Run(fmt.Sprintf("%s, %d wide", tc.name, width), func(t *testing.T) {
+				m, _, _ := goalSetup(t)
+				next, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: 50})
+				m = next.(Model)
+				m.peaks.hidden = true
+				b := m.board
+				chief := core.Node{
+					Manager:  core.Manager{ID: "mgr9", Role: core.RoleChief, Name: "harnesser"},
+					Standing: core.StandMoving,
+					Fresh:    core.Freshness{Brief: &core.Brief{Assessment: "grokking the harness design", CreatedAt: b.At}},
+					Stats:    core.Stats{Vibe: &core.Vibe{Place: "Kyoto", At: b.At}, Running: 1, Started: b.At.Add(-3 * time.Hour)},
+					Children: tc.reports,
+				}
+				if tc.own != "" {
+					chief.Stats.Spend = spent(2)
+				}
+				b.Tree = []core.Node{chief}
+				b.Gen++
+				next, _ = m.Update(boardMsg{board: b})
+				m = next.(Model)
+				row := ""
+				for _, l := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+					if strings.Contains(l, "harnesser") {
+						row = l
+						break
+					}
+				}
+				if fields := strings.Fields(row); len(fields) == 0 || fields[0] != "harnesser" {
+					t.Fatalf("chief row %q does not lead with its name", row)
+				}
+				if !strings.Contains(row, "Kyoto") || ansi.StringWidth(row) > width {
+					t.Errorf("chief row %q lacks its vibe or overflows %d columns", row, width)
+				}
+				if width < 160 {
+					return
+				}
+				for _, want := range []string{tc.want, "1▶", "3h", plural(chief.Count(), "goal"), "grokking"} {
+					if !strings.Contains(row, want) {
+						t.Errorf("chief row %q lacks %q", row, want)
+					}
+				}
+			})
+		}
+	}
+}

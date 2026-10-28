@@ -39,7 +39,7 @@ type boardJSON struct {
 	Fresh map[string]core.Freshness `json:"fresh,omitempty"`
 	// Swollen are this host's processes holding a large share of its memory.
 	Swollen []core.Swollen `json:"swollen,omitempty"`
-	// Missions are this host's missions' stats by project key; GoalStats its goals' by manager id.
+	// Missions are this host's missions' stats by project key; GoalStats its goals' and chiefs' by manager id.
 	Missions  map[string]core.Stats `json:"missions,omitempty"`
 	GoalStats map[string]core.Stats `json:"goal_stats,omitempty"`
 }
@@ -199,7 +199,7 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	var stand func(core.Node)
 	stand = func(n core.Node) {
 		out.Standing[n.Manager.ID] = n.Standing
-		if n.Goal != nil && n.Manager.Host == "" {
+		if n.Manager.Host == "" {
 			out.GoalStats[n.Manager.ID] = n.Stats
 		}
 		for _, c := range n.Children {
