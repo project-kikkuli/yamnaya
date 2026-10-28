@@ -6,15 +6,16 @@ The board shows every goal as a mountain, with your queue of things only you can
 
 ## Quickstart
 
-    go install github.com/project-kikkuli/yamnaya/cmd/ym@latest
+    git clone https://github.com/project-kikkuli/yamnaya && go -C yamnaya install ./cmd/ym
     ym install --statusline
     cd ~/dev/some-repo
     ym goal "make the export endpoint stream instead of buffering"
     ym
 
-1. `ym install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex`; `--statusline` makes Claude Code's statusline record your limits.
-2. `ym goal` records the ask in your words and starts a manager session for it on ym's own tmux server (`tmux -L ym`).
-3. `ym` opens the board and starts `ym serve` in the background if it is not running.
+1. ym builds from a clone because its `go.mod` replaces a module with a directory in the repository, which `go install ...@latest` refuses. After the first install, `ym update` does the clone and build for you.
+2. `ym install` links the `ym` skill into `~/.agents`, `~/.claude` and `~/.codex`; `--statusline` makes Claude Code's statusline record your limits.
+3. `ym goal` records the ask in your words and starts a manager session for it on ym's own tmux server (`tmux -L ym`).
+4. `ym` opens the board and starts `ym serve` in the background if it is not running.
 
 On the board you see the goal under **Goals**, moving. Its mountain grows climbers as the manager starts agents and camps as pull requests open.
 **Needs you** stays empty until the manager hits something only you can decide. When the goal passes verification, its row under **Goals** reads done with the manager's summary.
@@ -460,7 +461,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | Drift | `ym health drift [--since D] [file...]` | replay this machine's transcripts and list each time an agent was busy going nowhere |
 | Hosts | `ym remote install <host>` / `ym remote <host> [args]` / `ym remote forget <host>` | see Remote hosts |
 | | `ym relay [drop <seq>]` | what this host still has to carry, or stop carrying a refused one |
-| Setup | `ym install [--statusline]` / `ym update` | link the skill / install the latest ym; a running board restarts into it |
+| Setup | `ym install [--statusline]` / `ym update [branch-or-commit]` | link the skill / build and install ym from its repository's default branch, or the given branch or commit; a running board restarts into it |
 | | `ym service status\|restart\|keep\|unkeep` / `ym docs [connect <email>]` | background service / Notion |
 | | `ym profiles [add\|login\|default\|remove]` | login profiles; see Login profiles |
 

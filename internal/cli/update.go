@@ -27,38 +27,85 @@ func runGo(out io.Writer, args ...string) error {
 	}
 	c := exec.Command(gobin, args...)
 	c.Stdout, c.Stderr = out, out
-	c.Env = append(os.Environ(), past("GONOPROXY"), past("GONOSUMDB"))
 	return c.Run()
 }
 
-// past adds ym's module to a go list of modules fetched from their repository, since the proxy serves a stale latest for a while after a push.
-func past(key string) string {
-	if v := os.Getenv(key); v != "" {
-		return key + "=" + ymModule + "," + v
+// ymRepo is where ym update fetches ym's source; a variable so tests can serve their own.
+var ymRepo = "https://" + ymModule + ".git"
+
+// updateSource brings a clone of ymRepo under the cache directory to ref, origin's default branch when ref is empty, and
+// returns its directory and the commit it checked out. go install ym@version cannot build ym: its go.mod replaces a module
+// with a directory in the repository.
+func updateSource(ref string) (string, string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", "", err
 	}
-	return key + "=" + ymModule
+	src := filepath.Join(cache, "yamnaya", "update")
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", src}, args...)...).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	if _, err := os.Stat(filepath.Join(src, ".git")); err != nil {
+		if err := os.RemoveAll(src); err != nil {
+			return "", "", err
+		}
+		if out, err := exec.Command("git", "clone", "-q", "--filter=blob:none", "--no-checkout", ymRepo, src).CombinedOutput(); err != nil {
+			return "", "", fmt.Errorf("git clone %s: %w: %s", ymRepo, err, strings.TrimSpace(string(out)))
+		}
+	} else if _, err := git("fetch", "-q", "--prune", ymRepo, "+refs/heads/*:refs/remotes/origin/*"); err != nil {
+		return "", "", err
+	}
+	if _, err := git("remote", "set-head", "origin", "--auto"); err != nil {
+		return "", "", err
+	}
+	target := "origin/HEAD"
+	if ref != "" {
+		target = ref
+		if _, err := git("rev-parse", "--verify", "-q", "origin/"+ref+"^{commit}"); err == nil {
+			target = "origin/" + ref
+		}
+	}
+	sha, err := git("rev-parse", "--verify", target+"^{commit}")
+	if err != nil {
+		return "", "", fmt.Errorf("%s is not a branch or commit of %s", ref, ymRepo)
+	}
+	if _, err := git("checkout", "-q", "--force", "--detach", sha); err != nil {
+		return "", "", err
+	}
+	if _, err := git("clean", "-q", "-fdx"); err != nil {
+		return "", "", err
+	}
+	return src, sha, nil
 }
 
 func updateCmd(run goRunner) *cobra.Command {
 	return &cobra.Command{
-		Use:   "update",
-		Short: "Install the latest ym with go install; a running board restarts into it",
-		Args:  cobra.NoArgs,
+		Use:   "update [branch-or-commit]",
+		Short: "Build and install ym from its repository's default branch, or the given branch or commit; a running board restarts into it",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
-			if err := run(out, "install", ymPackage+"@latest"); err != nil {
-				return fmt.Errorf("go install %s@latest: %w", ymPackage, err)
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			src, sha, err := updateSource(ref)
+			if err != nil {
+				return err
+			}
+			if err := run(out, "-C", src, "install", "./cmd/ym"); err != nil {
+				return fmt.Errorf("go install ./cmd/ym at %s: %w", sha, err)
 			}
 			var env bytes.Buffer
 			if err := run(&env, "env", "GOBIN", "GOPATH"); err != nil {
 				return err
 			}
 			path := installedPath(env.String())
-			var info bytes.Buffer
-			if err := run(&info, "version", "-m", path); err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "installed ym %s at %s\n", modVersion(info.String()), path)
+			fmt.Fprintf(out, "installed ym %s at %s\n", sha[:min(12, len(sha))], path)
 			if self, err := os.Executable(); err == nil && !samePath(self, path) {
 				fmt.Fprintf(out, "this ym runs from %s, which the update did not change\n", self)
 			}
@@ -78,16 +125,6 @@ func installedPath(env string) string {
 		gopath = strings.TrimSpace(lines[1])
 	}
 	return filepath.Join(filepath.SplitList(gopath)[0], "bin", "ym")
-}
-
-// modVersion is the main module's version in go version -m output.
-func modVersion(info string) string {
-	for _, l := range strings.Split(info, "\n") {
-		if f := strings.Fields(l); len(f) >= 3 && f[0] == "mod" {
-			return f[2]
-		}
-	}
-	return "(unknown version)"
 }
 
 func samePath(a, b string) bool {

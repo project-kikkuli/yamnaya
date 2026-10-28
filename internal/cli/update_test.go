@@ -2,100 +2,115 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
 
-func TestUpdateInstallsLatestAndReportsWhatLanded(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		env      string
-		wantPath string
-	}{
-		{"GOBIN set", "/opt/gobin\n/home/u/go\n", "/opt/gobin/ym"},
-		{"GOPATH only", "\n/home/u/go\n", "/home/u/go/bin/ym"},
-		{"GOPATH list", "\n/home/u/go:/other\n", "/home/u/go/bin/ym"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var calls [][]string
-			run := func(out io.Writer, args ...string) error {
-				calls = append(calls, args)
-				switch args[0] {
-				case "install":
-					fmt.Fprintln(out, "go: downloading github.com/project-kikkuli/yamnaya v0.0.0-20261019-abc")
-				case "env":
-					io.WriteString(out, tc.env)
-				case "version":
-					fmt.Fprintf(out, "%s: go1.26.0\n\tpath\tgithub.com/project-kikkuli/yamnaya/cmd/ym\n\tmod\tgithub.com/project-kikkuli/yamnaya\tv0.0.0-20261019-abc\th1:x=\n", args[2])
-				}
-				return nil
-			}
-			cmd := updateCmd(run)
-			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetArgs(nil)
-			if err := cmd.Execute(); err != nil {
-				t.Fatal(err)
-			}
-			want := [][]string{
-				{"install", "github.com/project-kikkuli/yamnaya/cmd/ym@latest"},
-				{"env", "GOBIN", "GOPATH"},
-				{"version", "-m", tc.wantPath},
-			}
-			if !slices.EqualFunc(calls, want, slices.Equal) {
-				t.Fatalf("go calls = %q, want %q", calls, want)
-			}
-			for _, s := range []string{"go: downloading", "installed ym v0.0.0-20261019-abc at " + tc.wantPath} {
-				if !strings.Contains(out.String(), s) {
-					t.Fatalf("output %q lacks %q", out.String(), s)
-				}
-			}
-		})
+// TestUpdateBuildsTheCommitAskedForFromItsRepository serves a module whose go.mod replaces a dependency with a directory in
+// the repository, as ym's does, which go install module@version refuses to build.
+func TestUpdateBuildsTheCommitAskedForFromItsRepository(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("GOBIN", filepath.Join(root, "bin"))
+	t.Setenv("GOFLAGS", "")
+	work := filepath.Join(root, "work")
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-C", work}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
 	}
-}
-
-func TestUpdateStopsWhenInstallFails(t *testing.T) {
-	var calls int
-	cmd := updateCmd(func(out io.Writer, args ...string) error {
-		calls++
-		return fmt.Errorf("exit status 1")
-	})
-	cmd.SetOut(io.Discard)
-	cmd.SetArgs(nil)
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "go install") {
-		t.Fatalf("err = %v, want the go install failure", err)
+	write := func(path, text string) {
+		t.Helper()
+		path = filepath.Join(work, path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if calls != 1 {
-		t.Fatalf("go ran %d times after install failed, want 1", calls)
+	commit := func(says string) string {
+		write("dep/dep.go", "package dep\n\nconst Says = \""+says+"\"\n")
+		git("add", "-A")
+		git("commit", "-q", "-m", says)
+		return git("rev-parse", "HEAD")
 	}
-}
-
-func TestUpdateFetchesYmFromItsRepositoryNotTheProxysCache(t *testing.T) {
-	dir := t.TempDir()
-	script := "#!/bin/sh\necho \"$GONOPROXY|$GONOSUMDB\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(script), 0o755); err != nil {
+	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir)
-	for _, tc := range []struct{ name, before, want string }{
-		{"nothing set", "", "github.com/project-kikkuli/yamnaya|github.com/project-kikkuli/yamnaya"},
-		{"owner's own list", "corp.example/*", "github.com/project-kikkuli/yamnaya,corp.example/*|github.com/project-kikkuli/yamnaya,corp.example/*"},
+	git("init", "-q", "-b", "main")
+	write("go.mod", "module example.com/ymtest\n\ngo 1.26.0\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n")
+	write("dep/go.mod", "module example.com/dep\n\ngo 1.26.0\n")
+	write("cmd/ym/main.go", "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/dep\"\n)\n\nfunc main() { fmt.Print(dep.Says) }\n")
+	first := commit("first")
+	latest := commit("latest")
+	git("switch", "-q", "-c", "side")
+	side := commit("side")
+	git("switch", "-q", "main")
+	origin := filepath.Join(root, "origin.git")
+	git("clone", "-q", "--bare", work, origin)
+	old := ymRepo
+	ymRepo = origin
+	t.Cleanup(func() { ymRepo = old })
+	for _, tc := range []struct {
+		name, ref, sha, says string
+	}{
+		{"default branch", "", latest, "latest"},
+		{"an older commit", first, first, "first"},
+		{"a branch", "side", side, "side"},
+		{"the default branch by name", "main", latest, "latest"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("GONOPROXY", tc.before)
-			t.Setenv("GONOSUMDB", tc.before)
+			cmd := updateCmd(runGo)
 			var out bytes.Buffer
-			if err := runGo(&out, "install", ymPackage+"@latest"); err != nil {
-				t.Fatal(err)
+			cmd.SetOut(&out)
+			cmd.SetArgs(slices.DeleteFunc([]string{tc.ref}, func(s string) bool { return s == "" }))
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%v: %s", err, out.String())
 			}
-			if got := strings.TrimSpace(out.String()); got != tc.want {
-				t.Fatalf("go ran with GONOPROXY|GONOSUMDB %q, want %q", got, tc.want)
+			bin := filepath.Join(root, "bin", "ym")
+			if !strings.Contains(out.String(), "installed ym "+tc.sha[:12]+" at "+bin) {
+				t.Fatalf("output %q does not report %s at %s", out.String(), tc.sha[:12], bin)
+			}
+			got, err := exec.Command(bin).Output()
+			if err != nil || string(got) != tc.says {
+				t.Fatalf("installed ym says %q (%v), want %q", got, err, tc.says)
 			}
 		})
+	}
+}
+
+func TestUpdateRefusesARefTheRepositoryLacks(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	origin := filepath.Join(root, "origin.git")
+	if out, err := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "init", "-q", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", origin, "commit", "-q", "--allow-empty", "-m", "x").CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	old := ymRepo
+	ymRepo = origin
+	t.Cleanup(func() { ymRepo = old })
+	var ran bool
+	cmd := updateCmd(func(io.Writer, ...string) error { ran = true; return nil })
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{"no-such-branch"})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "no-such-branch") {
+		t.Fatalf("err = %v, want one naming the missing ref", err)
+	}
+	if ran {
+		t.Fatal("go ran for a ref the repository lacks")
 	}
 }
