@@ -147,7 +147,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		m.NextAttempt = now.Add(backoff(m.Failures))
 		m = c.bringBack(b, o, m)
 	}
-	if !hasGoal {
+	if !hasGoal || m.Retired {
 		return nil
 	}
 	if m.Stuck() {

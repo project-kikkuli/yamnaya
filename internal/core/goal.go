@@ -23,6 +23,10 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 		return Goal{}, Manager{}, err
 	}
 	repo = MainCheckout(repo)
+	if host, ok := c.RepoHost(repo); ok {
+		out, err := c.RunOrRelay(host, goalArgs(ask, repo, harness, firstProfile(selected))...)
+		return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
+	}
 	g, err := c.Store.AddGoal(Goal{Ask: ask, Repo: repo, CreatedAt: c.now()})
 	if err != nil {
 		return g, Manager{}, err
@@ -73,6 +77,10 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		return Manager{}, err
 	}
 	repo = MainCheckout(repo)
+	if host, ok := c.RepoHost(repo); ok {
+		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
+		return Manager{Role: RoleChief, Name: name, Repo: repo, Host: host}, err
+	}
 	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
@@ -344,6 +352,9 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 
 // begin starts m's session as start does or, with r, a fresh one that reads why ym restarted it, its brief and its goal's state.
 func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager {
+	if host, ok := c.RepoHost(m.Repo); ok {
+		return c.handOff(o, m, host)
+	}
 	m.LaunchedAt, m.Nudges, m.NudgedAt = c.now(), 0, timeZero
 	if c.Launches == nil {
 		m.LastError = "ym's launcher is unavailable"

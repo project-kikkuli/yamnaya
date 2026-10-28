@@ -272,6 +272,9 @@ func (c *Core) refresh(b Board, o Org, m Manager, s Live, tokens int64, cold boo
 	if m.LastError != "" {
 		return m, errors.New(m.LastError)
 	}
+	if m.Retired {
+		return m, nil
+	}
 	what := Kilo(tokens)
 	if cold {
 		what += " cold"

@@ -358,3 +358,35 @@ func TestBoardNamesARenamedHostByItsNicknameAndTheFilterTakesBothNames(t *testin
 		t.Errorf("H should show the nickname and the full name:\n%s", v)
 	}
 }
+
+func TestLaunchesInAnotherHostsRepositoryStartOnThatHost(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		keys []string
+		want []string
+	}{
+		{"goal", []string{"N", "ship", "enter"}, []string{box, "goal", "--repo", "august", "--", "ship"}},
+		{"session", []string{"+", "ok", "enter"}, []string{box, "new", "--repo", "august", "--", "ok"}},
+		{"chief", []string{"C", "enter", "lead", "enter", "enter"}, []string{box, "chief", "--repo", "august", "--", "lead"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, k, _ := setup(t)
+			l := &launches{}
+			k.Launches = l
+			m = place(t, m, k)
+			m, r := withBox(t, m, k)
+			r.boards[0].Sessions[0].RepoKey = "/home/exedev/august/.git"
+			m = to(t, refresh(t, m), mission("far-lead-0001"))
+			for _, key := range c.keys {
+				if len(key) > 1 && key != "enter" {
+					m = press(t, m, strings.Split(key, "")...)
+					continue
+				}
+				m = press(t, m, key)
+			}
+			if len(r.ran) != 1 || !reflect.DeepEqual(r.ran[0], c.want) || len(l.started) != 0 {
+				t.Fatalf("ran on hosts %v and started %d here, want only %v", r.ran, len(l.started), c.want)
+			}
+		})
+	}
+}

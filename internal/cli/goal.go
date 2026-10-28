@@ -33,6 +33,10 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
+			if g.Host != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s is on %s, so the goal runs there: %s\n", dir, g.Host, g.Evidence)
+				return nil
+			}
 			if err := ensureWorkService(); err != nil {
 				return err
 			}
@@ -645,6 +649,10 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 			m, err := e.core.NewChief(strings.Join(args, " "), remit, dir, harnessFlag(useCodex), children, selected)
 			if err != nil {
 				return err
+			}
+			if m.Host != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s is on %s, so the chief runs there\n", dir, m.Host)
+				return nil
 			}
 			if err := ensureWorkService(); err != nil {
 				return err

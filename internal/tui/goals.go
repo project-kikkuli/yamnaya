@@ -668,6 +668,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, m.scanRepos(), true
 		}
 		m.newL.Repo = core.MainCheckout(m.repoOf(r))
+		m.targetRepo()
 		m.startInput(inGoal, "", "", "", false)
 		return m, nil, true
 	case "+":
@@ -678,6 +679,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.forGoal = false
 		m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
 		m.loadTarget()
+		m.targetRepo()
 		m.loadHarness("session")
 		m.startInput(inNew, "", "", "", false)
 		return m, nil, true
@@ -848,6 +850,9 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		id, board := n.Manager.ID, m.board
 		m.confirm("relaunch "+n.Manager.Label()+"? its session ends and a fresh one starts from its prompt and brief", m.do(func() (string, error) {
 			mg, err := m.core.ReplaceManager(board, id)
+			if mg.Host != "" {
+				return mg.ID + " relaunched on " + m.hostTag(mg.Host), err
+			}
 			return mg.ID + " relaunched as " + core.Short(mg.Session), err
 		}))
 		return m, nil, true
@@ -917,6 +922,9 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		repo, harness := m.newL.Repo, m.newL.Harness
 		return m, m.do(func() (string, error) {
 			g, mg, err := m.core.NewGoal(text, repo, harness, m.newL.Profile)
+			if err == nil && g.Host != "" {
+				return "started on " + g.Host + ": " + strings.SplitN(g.Evidence, "\n", 2)[0], m.core.Store.SetLaunchTarget(g.Host)
+			}
 			if err == nil {
 				err = m.launchedHere("goal", harness)
 			}
@@ -940,6 +948,9 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 		m.picked = nil
 		return m, m.do(func() (string, error) {
 			c, err := m.core.NewChief(name, text, repo, harness, over, m.newL.Profile)
+			if err == nil && c.Host != "" {
+				return "chief " + name + " started on " + c.Host, m.core.Store.SetLaunchTarget(c.Host)
+			}
 			if err == nil {
 				err = m.launchedHere("chief", harness)
 			}

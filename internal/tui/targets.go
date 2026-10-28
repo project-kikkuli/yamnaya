@@ -27,6 +27,13 @@ func (m *Model) loadTarget() {
 	}
 }
 
+// targetRepo starts the launch input on the host that holds its repository when that is another host.
+func (m *Model) targetRepo() {
+	if host, ok := core.HostHolding(m.board.Remotes, m.newL.Repo); ok {
+		m.launchOn = host
+	}
+}
+
 // loadHarness starts the launch input on the harness the board last started kind on: a session, goal or chief.
 func (m *Model) loadHarness(kind string) {
 	m.newL.Harness = "claude"

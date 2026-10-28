@@ -108,6 +108,7 @@ func (m Model) chiefMenu(key string) (tea.Model, tea.Cmd) {
 func (m *Model) newChief(r row) {
 	m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
 	m.loadTarget()
+	m.targetRepo()
 	m.loadHarness("chief")
 	m.openOverPicker()
 }

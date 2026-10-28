@@ -235,6 +235,20 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 
 // StartNew launches n and remembers its repository so pickers offer it first.
 func (c *Core) StartNew(n NewLaunch) (string, error) {
+	if host, ok := c.RepoHost(n.Repo); ok {
+		args := []string{"new", "--repo", MainCheckout(n.Repo)}
+		if n.Harness == "codex" {
+			args = append(args, "--codex")
+		}
+		if n.Slug != "" {
+			args = append(args, "--slug", n.Slug)
+		}
+		if n.Profile != "" {
+			args = append(args, "--profile", n.Profile)
+		}
+		out, err := c.RunOrRelay(host, append(args, "--", n.Prompt)...)
+		return "on " + host + ": " + strings.TrimSpace(out), err
+	}
 	if c.Launches == nil {
 		return "", errors.New("ym's launcher is unavailable")
 	}
