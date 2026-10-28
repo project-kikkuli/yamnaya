@@ -140,7 +140,11 @@ func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
 // Respawn restarts a session's pane with argv in cwd, killing whatever still runs there.
 func (h *Host) Respawn(name, cwd string, argv []string) error {
 	defer h.forget()
-	out, err := h.command(append([]string{"respawn-pane", "-k", "-t", "=" + name + ":", "-c", cwd}, argv...)...).CombinedOutput()
+	p, err := h.Pane(name)
+	if err != nil {
+		return err
+	}
+	out, err := h.command(append([]string{"respawn-pane", "-k", "-t", p.ID, "-c", cwd}, argv...)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux respawn-pane %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
@@ -149,13 +153,17 @@ func (h *Host) Respawn(name, cwd string, argv []string) error {
 
 // Capture is the visible text of session name's pane.
 func (h *Host) Capture(name string) (string, error) {
-	return h.run("capture-pane", "-p", "-t", "="+name+":")
+	p, err := h.Pane(name)
+	if err != nil {
+		return "", err
+	}
+	return h.run("capture-pane", "-p", "-t", p.ID)
 }
 
-// Pane reads the pane of session name; ErrNotFound when tmux says the session or its server is gone, any other error when tmux
-// could not say.
+// Pane reads the pane of session name, its first, which ym started, whichever window the session shows; ErrNotFound when tmux
+// says the session or its server is gone, any other error when tmux could not say.
 func (h *Host) Pane(name string) (Pane, error) {
-	out, err := h.run("list-panes", "-t", "="+name+":", "-F", paneFormat)
+	out, err := h.run("list-panes", "-s", "-t", "="+name, "-F", paneFormat)
 	if gone(err) {
 		return Pane{}, fmt.Errorf("%s: %w", name, core.ErrNotFound)
 	}
@@ -227,17 +235,16 @@ func (h *Host) KillServer() error {
 	return nil
 }
 
-// Attach is the command that shows the session holding hd in the caller's terminal until the owner detaches.
+// Attach is the command that shows the session holding hd in the caller's terminal, on hd's pane, until the owner detaches.
 // Inside this server, Focus switches the client instead, so Attach is nil there.
 func (h *Host) Attach(hd core.Handle) *exec.Cmd {
 	if h.Kind != Server || h.inside() {
 		return nil
 	}
-	name, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}")
-	if err != nil {
+	if _, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}"); err != nil {
 		return nil
 	}
-	cmd := h.command("attach-session", "-t", "="+name)
+	cmd := h.command("attach-session", "-t", hd.ID)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd
 }

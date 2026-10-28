@@ -17,6 +17,7 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
 func TestOnlyARightClickHereOpensALinkFromARemoteSession(t *testing.T) {
@@ -174,6 +175,113 @@ func TestAttachRelayGivesTheTerminalBackWhenToldToEnd(t *testing.T) {
 			}
 			if !cooked() {
 				t.Errorf("after %v the terminal is left raw", sig)
+			}
+		})
+	}
+}
+
+func TestOpeningARemoteLaunchThroughTheRelayShowsItsAgentWhicheverWindowItsSessionShows(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, state, sock := t.TempDir(), t.TempDir(), tmuxtest.Socket(t)
+	t.Setenv("HOME", home)
+	t.Setenv("YAMNAYA_STATE_DIR", state)
+	t.Setenv("YAMNAYA_YM_SOCKET", sock)
+	t.Setenv("YAMNAYA_NO_SERVE", "1")
+	bin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "ym"), []byte("#!/bin/sh\nexec "+self+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ssh := filepath.Join(t.TempDir(), "ssh")
+	script := "#!/bin/sh\nwhile [ \"$1\" = -o ] || [ \"$1\" = -t ]; do [ \"$1\" = -o ] && shift; shift; done\nshift\nexec sh -c \"$*\"\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(state, "tmux.conf")
+	if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := &tmux.Host{Socket: sock, Kind: tmux.Server}
+	agent, err := h.Start(conf, "k", home, []string{"sleep", "600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		c := exec.Command("tmux", append([]string{"-L", sock}, args...)...)
+		c.Env = tmux.AgentEnv(os.Environ())
+		out, _ := c.Output()
+		return strings.TrimSpace(string(out))
+	}
+	records := launch.Records{Dir: filepath.Join(state, "launches")}
+	if err := records.Save(launch.Record{Key: "k", Harness: "claude", Session: "s1", Started: time.Now(), Worktree: launch.Worktree{Path: home}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, window, dead string
+	}{
+		{"its only window", "", ""},
+		{"a shell window that exited", "true", "1 0"},
+		{"a shell window still running", "sleep 600", "0"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.window != "" {
+				run("new-window", "-t", "=k:", c.window)
+				t.Cleanup(func() { run("kill-window", "-a", "-t", agent.ID) })
+				for deadline := time.Now().Add(5 * time.Second); run("display-message", "-p", "-t", "=k:", "#{pane_dead} #{pane_dead_status}") != c.dead; time.Sleep(20 * time.Millisecond) {
+					if time.Now().After(deadline) {
+						t.Fatalf("the shell window never reached %q", c.dead)
+					}
+				}
+			}
+			owner, tty, err := openPTY()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer owner.Close()
+			defer tty.Close()
+			unix.IoctlSetWinsize(int(owner.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: 24, Col: 80})
+			var mu sync.Mutex
+			var out bytes.Buffer
+			go io.Copy(writerFunc(func(p []byte) (int, error) { mu.Lock(); defer mu.Unlock(); return out.Write(p) }), owner)
+			attach := (&remoteHosts{ssh: ssh}).Attach("vm.example", "open", "--no-board", "k")
+			attach.Env = append(os.Environ(), testRun+"=1", "YAMNAYA_SSH_BIN="+ssh)
+			attach.Stdin, attach.Stdout, attach.Stderr = tty, tty, tty
+			if err := attach.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := make(chan error, 1)
+			go func() { waited <- attach.Wait() }()
+			for deadline := time.Now().Add(10 * time.Second); run("list-clients") == ""; time.Sleep(50 * time.Millisecond) {
+				select {
+				case err := <-waited:
+					mu.Lock()
+					defer mu.Unlock()
+					t.Fatalf("the attach ended (%v) without showing the session: %q", err, out.String())
+				default:
+				}
+				if time.Now().After(deadline) {
+					attach.Process.Kill()
+					t.Fatal("no client ever attached")
+				}
+			}
+			if shown := run("list-clients", "-F", "#{pane_id}"); shown != agent.ID {
+				t.Errorf("the client shows pane %s, want the agent's %s", shown, agent.ID)
+			}
+			run("detach-client", "-a", "-s", "=k")
+			run("detach-client", "-s", "=k")
+			select {
+			case <-waited:
+			case <-time.After(5 * time.Second):
+				attach.Process.Kill()
+				t.Fatal("the attach outlived its detach")
 			}
 		})
 	}

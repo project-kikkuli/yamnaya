@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -262,5 +263,39 @@ func TestBoardSeesHostsRememberedAndForgottenWhileItRuns(t *testing.T) {
 		if got := e.core.Remotes.Hosts(); strings.Join(got, ",") != strings.Join(c.want, ",") {
 			t.Fatalf("%s: hosts %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestYmRemoteRemembersOnlyAHostSshReached(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssh := fakeSSH(t)
+	for _, c := range []struct {
+		host string
+		kept bool
+	}{
+		{"box", true},
+		{"dead", false},
+	} {
+		t.Run(c.host, func(t *testing.T) {
+			state := t.TempDir()
+			cmd := exec.Command(self, "remote", c.host, "sessions")
+			cmd.Env = append(os.Environ(), testRun+"=1", "YAMNAYA_SSH_BIN="+ssh, "YAMNAYA_STATE_DIR="+state, "YAMNAYA_NO_SERVE=1")
+			cmd.Run()
+			st, err := core.OpenStore(filepath.Join(state, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			hosts, err := st.KnownHosts()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kept := len(hosts) == 1 && hosts[0].Name == c.host; kept != c.kept || len(hosts) > 1 {
+				t.Fatalf("ym remembers %v after ym remote %s; want %s remembered: %v", hosts, c.host, c.host, c.kept)
+			}
+		})
 	}
 }

@@ -35,22 +35,25 @@ func remoteCmd() *cobra.Command {
 			if args[0] == "-h" || args[0] == "--help" {
 				return cmd.Help()
 			}
-			if err := rememberHost(args[0]); err != nil {
-				return err
-			}
 			c := exec.Command(sshBin(), append(sshArgs(args[0]), remoteCommand(args[1:]))...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
 				c = (&remoteHosts{ssh: sshBin()}).Attach(args[0], args[1:]...)
 			}
-			if err := c.Run(); err != nil {
-				if exit, ok := err.(*exec.ExitError); ok {
-					if exit.ExitCode() == 255 {
-						(&remoteHosts{ssh: sshBin()}).drop(args[0])
-					}
-					os.Exit(exit.ExitCode())
-				}
+			err := c.Run()
+			exit, exited := err.(*exec.ExitError)
+			if exited && exit.ExitCode() == 255 {
+				(&remoteHosts{ssh: sshBin()}).drop(args[0])
+				os.Exit(255)
+			}
+			if err != nil && !exited {
 				return err
+			}
+			if err := rememberHost(args[0]); err != nil {
+				return err
+			}
+			if exited {
+				os.Exit(exit.ExitCode())
 			}
 			return nil
 		},
@@ -125,14 +128,14 @@ func remoteInstallCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			host, out := args[0], cmd.OutOrStdout()
 			start := time.Now()
-			if err := rememberHost(host); err != nil {
-				return err
-			}
 			probe, err := exec.Command(sshBin(), host, "uname -m; sha256sum "+remoteBin+" 2>/dev/null; true").Output()
 			if exit, ok := err.(*exec.ExitError); ok {
 				return fmt.Errorf("ssh %s: %w: %s", host, err, bytes.TrimSpace(exit.Stderr))
 			} else if err != nil {
 				return fmt.Errorf("ssh %s: %w", host, err)
+			}
+			if err := rememberHost(host); err != nil {
+				return err
 			}
 			lines := strings.Fields(string(probe))
 			if len(lines) == 0 {

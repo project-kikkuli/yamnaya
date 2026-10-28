@@ -133,7 +133,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != p {
 		t.Errorf("Panes()[repo-wt-x] = %+v, want the respawned pane %+v", all["repo-wt-x"], p)
 	}
-	if c := h.Attach(core.Handle{ID: p.ID}); c == nil || !slices.Contains(c.Args, "=repo-wt-x") || slices.ContainsFunc(c.Env, func(kv string) bool { return len(kv) > 5 && kv[:5] == "TMUX=" }) {
+	if c := h.Attach(core.Handle{ID: p.ID}); c == nil || !slices.Contains(c.Args, p.ID) || slices.ContainsFunc(c.Env, func(kv string) bool { return len(kv) > 5 && kv[:5] == "TMUX=" }) {
 		t.Errorf("Attach outside the server = %v", c)
 	}
 	sock, _ := h.run("display-message", "-p", "#{socket_path}")
