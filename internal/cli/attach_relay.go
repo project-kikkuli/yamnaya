@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 
@@ -22,9 +24,10 @@ func attachRelayCmd() *cobra.Command {
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r := &remoteHosts{ssh: sshBin()}
-			c := exec.Command(r.ssh, append(sshArgs(args[0], "-t"), attachCommand(args[1:]))...)
+			own := attachSSH()
+			c := exec.Command(r.ssh, append(sshArgs(args[0], append(own, "-t")...), attachCommand(args[1:]))...)
 			clicks := &rightClicks{}
-			relay := r.relay(args[0])
+			relay := r.relay(args[0], own...)
 			relay.clicked = clicks.take
 			err := proxyTTY(c, os.Stdin, clicks.see, relay)
 			if exit, ok := err.(*exec.ExitError); ok {
@@ -33,6 +36,13 @@ func attachRelayCmd() *cobra.Command {
 			return err
 		},
 	}
+}
+
+// attachSSH are the ssh options of an attach: a connection of its own, so a board read that gives up on the host and ends the
+// shared one leaves the session open, and timeouts that outlast a host whose ssh front end stalls for seconds at a time.
+func attachSSH() []string {
+	return []string{"-o", "ControlPath=" + filepath.Join("/tmp", fmt.Sprintf("ym-%d-a%d-%%C", os.Getuid(), os.Getpid())), "-o", "ControlPersist=no",
+		"-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=6"}
 }
 
 // proxyTTY runs c on a terminal of its own in place of in's, passing what in types through see to c, what c draws to out,

@@ -303,14 +303,14 @@ func (r *remoteHosts) Attach(host string, args ...string) *exec.Cmd {
 	return c
 }
 
-// relay is what passes host's session to this terminal for Attach.
-func (r *remoteHosts) relay(host string) *termRelay {
+// relay is what passes host's session to this terminal for Attach, forwarding ports over the connection opts name.
+func (r *remoteHosts) relay(host string, opts ...string) *termRelay {
 	relay := &termRelay{out: os.Stdout, forward: func(port string) {
 		if "127.0.0.1:"+port == core.BriefsAddr() {
 			return
 		}
 		spec := "127.0.0.1:" + port + ":localhost:" + port
-		exec.Command(r.ssh, sshArgs(host, "-O", "forward", "-L", spec)...).Run()
+		exec.Command(r.ssh, sshArgs(host, append(opts, "-O", "forward", "-L", spec)...)...).Run()
 	}}
 	if runtime.GOOS == "darwin" {
 		relay.copy = func(text []byte) {
