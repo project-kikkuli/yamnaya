@@ -134,10 +134,18 @@ func Backing(fg, bg RGB) RGB {
 // IsRed reports whether a color reads as red, the color reserved for waiting agents, needs-you and failing CI:
 // a hue within 15 degrees of pure red, saturation at least .5 and value at least .3 (HSV). Orange, from 16
 // degrees, and pink or salmon washed below saturation .5 are not red.
-func IsRed(c RGB) bool {
+func IsRed(c RGB) bool { return redness(c) <= 15 }
+
+// NearRed reports whether a color is red or so close to it, a hue within 20 degrees of pure red, that it reads as
+// red on some terminals. Nothing but a waiting agent, needs-you or failing CI may be drawn in it, glyph or pixel.
+func NearRed(c RGB) bool { return redness(c) < 20 }
+
+// redness is how many degrees the color's hue is from pure red, or 180 when it is too dark or washed out to read
+// as red at all.
+func redness(c RGB) float64 {
 	hi, lo := max(c.R, c.G, c.B), min(c.R, c.G, c.B)
 	if hi < .3 || hi-lo < .5*hi {
-		return false
+		return 180
 	}
 	var hue float64
 	switch hi {
@@ -148,7 +156,7 @@ func IsRed(c RGB) bool {
 	default:
 		hue = (c.R-c.G)/(hi-lo)*60 + 240
 	}
-	return hue <= 15 || hue >= 345
+	return min(hue, 360-hue)
 }
 
 // drawn is the color rounded to the bytes a truecolor terminal gets.

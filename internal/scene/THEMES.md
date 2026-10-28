@@ -47,10 +47,13 @@ one of them touches only files in its own directory. A theme under any other nam
    (`Clear`, `Clouds`, `Storm`, `Eruption`, `Summit`; `Range.Sky()` is a group's), `Team` (each `Climber` is
    `Climbing` = busy, `Waiting` = waiting on the owner, or `Resting`), `Camps` (pull requests: `Stage` 0..6 gates
    passed, `State` `Open`, `Green`, `Failing` or `Merged`), `NeedsYou` (blink an alert on it) and `Dying`.
-   Red is reserved for waiting agents, needs-you and failing CI: no other glyph may be drawn in red, and those
-   three always show red, in a glyph or behind it. Red is what `scene.IsRed` says: a hue within 15 degrees of pure red, HSV saturation at
-   least .5 and value at least .3. Orange (from 16 degrees) and pink or salmon washed below saturation .5 are
-   not red, and pixel cells (" ", "▀", "▄", "█") are never checked, so a pink dusk sky or orange fire is fine.
+   Red is reserved for waiting agents, needs-you and failing CI, and those three always show red, in a glyph or
+   behind it. Red is what `scene.IsRed` says: a hue within 15 degrees of pure red, HSV saturation at least .5
+   and value at least .3. Nothing else may be drawn in `scene.NearRed`, that band widened to 20 degrees because a
+   16 to 19 degree orange reads as red on many terminals, and that holds for pixels as much as glyphs: the
+   background of a space, both halves of a half block, a full block, and the background behind a glyph. Fire,
+   lava, embers, brick, earth and rock use orange or amber, a hue of 20 degrees or more, or wash below saturation
+   .5 (a pink dusk sky, a grey-brown), or darken below value .3.
    No color may mark a goal or repository. Draw the busy, waiting and needs-you glyphs on
    `scene.Backing(fg, bg)`, `bg` being what is behind the cell: it darkens the cell, or lightens it behind a
    dark glyph, until the glyph reads at `scene.MinContrast` (3:1) and leaves the glyph's color alone, so busy and
@@ -59,6 +62,14 @@ one of them touches only files in its own directory. A theme under any other nam
    behind a light one. The contrast check finds a signal's cells by the runes of its legend `Glyph`, so list
    every rune it is drawn with there.
    A crowded screen may merge units, as the mountains do, but must keep the selection and every alert visible.
+
+   Labels (names, progress, pull request numbers) keep a blank cell between themselves and any other label or
+   signal glyph on their row: a cell that is not a letter, digit, `%`, `#` or `…` and not an agent, pull request
+   or alert glyph. Cut a name only with `scene.Short`, which keeps at least `scene.ShortMin` (8) characters and the
+   name's `scene.UniquePrefix` among the names of its kind, and refuses when there is less room: fold those units
+   ("5 trees") rather than cut them further. `scene.NewLabels(c)` keeps the spacing: `Reserve` the cells of
+   each signal glyph, then `Place` each label at the first of its candidate spots that keeps clear, which draws it
+   `Readable` on whatever is behind it.
 
 4. Kill. `Peak.Dying` is 0 while the unit lives and rises from just above 0 to 1 over `scene.KillTime` (1.5s)
    after the owner kills it; the board then removes the unit. Play the theme's kill animation from it (the
@@ -86,9 +97,17 @@ The tests in `internal/scene/themes` run against every registered theme with no 
 - at every quarter hour, in dark and light terminals, the busy, waiting and needs-you glyphs have at least
   `scene.MinContrast` (3:1) against their cell, waiting and needs-you are red, and busy and waiting agents
   differ in color;
-- red is drawn only for waiting agents, needs-you and failing CI, and each of those shows red;
+- red is drawn only for waiting agents, needs-you and failing CI, and each of those shows red: on a board with none
+  of them nothing, glyph or pixel, is red or near red at any hour, and on the busy board at 80x24, 120x40 and
+  200x60 at most 0.2% of the colors outside the cells those signals change are;
+- on the busy board and a board of five goals whose names share their first words, at 80x24, 120x40 and 200x60,
+  no label touches another label or a signal glyph on its row, and no unit, group or agent name is cut below 8
+  characters or to a prefix another name of its kind shares;
 - a busy board at 200x60 (30 units, 60 agents, 40 pull requests, every weather, a kill playing) paints in at
   most 2ms of CPU per frame at the 90th percentile, and allocations per frame do not grow as frames go by.
+
+`pending` in `internal/scene/themes/pending_test.go` holds off the checks a theme fails until it is fixed; a fixed
+theme fails until its entry is removed.
 
 Run them, and the benchmark for one theme:
 
