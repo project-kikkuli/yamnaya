@@ -31,3 +31,21 @@ func TestProjectSpendCountsEachSessionOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestDollarsNeverShowsASpendAboveZeroAsNothing(t *testing.T) {
+	for _, c := range []struct {
+		spend Spend
+		want  string
+	}{
+		{Spend{}, "$0.00"},
+		{Spend{USD: 0.0026}, "<$0.01"},
+		{Spend{USD: 0.0099}, "<$0.01"},
+		{Spend{USD: 0.01}, "$0.01"},
+		{Spend{USD: 0.0026, Unpriced: 1}, "<$0.01+"},
+		{Spend{USD: 138.4}, "$138"},
+	} {
+		if got := c.spend.Dollars(); got != c.want {
+			t.Errorf("%v: %q, want %q", c.spend.USD, got, c.want)
+		}
+	}
+}

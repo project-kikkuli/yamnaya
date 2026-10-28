@@ -58,7 +58,9 @@ func (s Spend) Plus(o Spend) Spend {
 // Dollars formats the spend, with a + when some tokens had no price.
 func (s Spend) Dollars() string {
 	v := fmt.Sprintf("$%.2f", s.USD)
-	if s.USD >= 100 {
+	if s.USD > 0 && s.USD < 0.01 {
+		v = "<$0.01"
+	} else if s.USD >= 100 {
 		v = fmt.Sprintf("$%.0f", s.USD)
 	}
 	if s.Unpriced > 0 {

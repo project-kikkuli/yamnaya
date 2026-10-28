@@ -155,3 +155,18 @@ func TestGoingToASessionOnAHostChecksItAnswersBeforeTakingTheTerminal(t *testing
 		})
 	}
 }
+
+func TestAKillQueuedByAnyNameForTheSessionShowsPendingOnItsRow(t *testing.T) {
+	for _, ref := range []string{"far-lead-0001", "far-lead", "far-wt-lead"} {
+		t.Run(ref, func(t *testing.T) {
+			m, c, h := onHost(t, hostStates[1])
+			h.boards[0].Launched = []core.Launched{{Key: core.RemoteKey(box, "far-wt-lead"), Harness: "claude", Session: "far-lead-0001", State: "running"}}
+			if err := c.Relay(box, core.RelayYM, map[string][]string{"args": {"kill", "--yes", ref}}); err != nil {
+				t.Fatal(err)
+			}
+			if note := farRow(t, to(t, refresh(t, m), mission("far-lead-0001"))); !strings.HasPrefix(note, "kill pending since") {
+				t.Errorf("row %q", note)
+			}
+		})
+	}
+}

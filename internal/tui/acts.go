@@ -92,8 +92,9 @@ func sessionKey(s core.Live) string {
 	return s.Key()
 }
 
-// queued are the board's own commands waiting for a host that did not answer, by the row key they act on.
-func queued(relays []core.Relay) map[string]core.Relay {
+// queued are the board's own commands waiting for a host that did not answer, by the row key they act on: the session as
+// the command named it and, when b knows that session by a launch key or shorter id, by its full id.
+func queued(relays []core.Relay, b core.Board) map[string]core.Relay {
 	out := map[string]core.Relay{}
 	for _, r := range relays {
 		var y struct {
@@ -102,14 +103,38 @@ func queued(relays []core.Relay) map[string]core.Relay {
 		if r.Kind != core.RelayYM || r.Origin != "" || json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) < 2 {
 			continue
 		}
+		var ref string
 		switch y.Args[0] {
 		case "kill":
-			out[core.RemoteKey(r.Dest, y.Args[len(y.Args)-1])] = r
+			ref = y.Args[len(y.Args)-1]
 		case "send":
-			out[core.RemoteKey(r.Dest, y.Args[1])] = r
+			ref = y.Args[1]
+		default:
+			continue
+		}
+		out[core.RemoteKey(r.Dest, ref)] = r
+		if id := sessionOn(b, r.Dest, ref); id != "" {
+			out[core.RemoteKey(r.Dest, id)] = r
 		}
 	}
 	return out
+}
+
+// sessionOn is the full id of the session on host that ref names by launch key, id or shorthand, or "".
+func sessionOn(b core.Board, host, ref string) string {
+	for _, l := range b.Launched {
+		if l.Key == core.RemoteKey(host, ref) && l.Session != "" {
+			return l.Session
+		}
+	}
+	var ids []string
+	for _, s := range b.Sessions {
+		if s.Remote == host {
+			ids = append(ids, s.ID)
+		}
+	}
+	id, _ := core.SessionRef(ref, ids)
+	return id
 }
 
 // note is how the latest action on the rows keyed keys stands, "" when none is worth saying.
