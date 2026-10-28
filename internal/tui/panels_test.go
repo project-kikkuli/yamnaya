@@ -99,6 +99,8 @@ func TestPanelActionsRunTheCommandTheCLIRuns(t *testing.T) {
 		{"install ym on a host", "H", box, []string{"i"}, ymCall{args: []string{"remote", "install", box}}},
 		{"forget a host", "H", box, []string{"x", "y"}, ymCall{args: []string{"remote", "forget", box}}},
 		{"open a host's board", "H", box, []string{"o"}, ymCall{host: box, tty: true}},
+		{"rename a host", "H", box, append(append([]string{"n", "ctrl+u"}, typed("far")...), "enter"), ymCall{args: []string{"remote", "rename", box, "far"}}},
+		{"give a host its default nickname back", "H", box, []string{"n", "ctrl+u", "enter"}, ymCall{args: []string{"remote", "rename", box, ""}}},
 		{"add a host", "H", "", append(append([]string{"a"}, typed("newbox")...), "enter"), ymCall{args: []string{"remote", "install", "newbox"}}},
 		{"drop a refused relay", "H", "ym kill", []string{"x", "y"}, ymCall{args: []string{"relay", "drop", "7"}}},
 		{"restart ym serve", "Y", "running", []string{"enter", "y"}, ymCall{args: []string{"service", "restart"}}},

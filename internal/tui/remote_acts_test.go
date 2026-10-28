@@ -110,7 +110,7 @@ func TestKillOnAHostNeverWaitsOnItAndTheRowSaysHowItStands(t *testing.T) {
 				if len(pending) != 1 || !strings.Contains(pending[0].Body, `"kill","--yes","far-lead-0001"`) || !strings.HasPrefix(note, "kill pending since") {
 					t.Errorf("pending %v, row %q", pending, note)
 				}
-				if st.silent != nil && !strings.Contains(note, "@boxmachine not answering: no answer for 2m") {
+				if st.silent != nil && !strings.Contains(note, "@boxmachine not answering: no answer 2m") {
 					t.Errorf("row %q does not say the host is not answering", note)
 				}
 			}

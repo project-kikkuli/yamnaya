@@ -341,7 +341,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		}
 	}
 	if state := m.hostState(host); state != "" {
-		meta = append(meta, "on "+host+": "+state)
+		meta = append(meta, m.hostTag(host)+" "+state)
 	}
 	keys := "enter open · r reply · b brief · c chief · S steer plan · R relaunch · W brief page · o session · space select"
 	switch {

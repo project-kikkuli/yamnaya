@@ -632,7 +632,7 @@ func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 func TestHeaderSaysSpendIsStillLoading(t *testing.T) {
 	now := time.Now()
 	f := core.Fleet{Limits: []core.Limit{{Harness: "claude", Name: "5h", Used: 30, Window: 5 * time.Hour, ResetsAt: now.Add(time.Hour), Seen: now}}}
-	if l := fleetLine(f, now); !strings.Contains(l, "claude") || !strings.Contains(l, "reading transcripts") {
+	if l := fleetLine(f, now, 0, nil); !strings.Contains(l, "claude") || !strings.Contains(l, "reading transcripts") {
 		t.Fatalf("header before the first usage scan = %q, want the claude limits and a note that spend is loading", l)
 	}
 }

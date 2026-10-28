@@ -79,7 +79,7 @@ func (m Model) silent(host string) error {
 		return nil
 	}
 	if err := m.core.Silent(host); err != nil {
-		return fmt.Errorf("%s not answering: %s", m.hostTag(host), m.hostState(host))
+		return fmt.Errorf("%s not answering: %s; H shows why", m.hostTag(host), m.hostState(host))
 	}
 	return nil
 }

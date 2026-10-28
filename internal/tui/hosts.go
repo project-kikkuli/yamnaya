@@ -1,44 +1,15 @@
 package tui
 
 import (
-	"net"
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
-
-// shortHosts names each host by the shortest dash-separated tail of its first DNS label that no other host's label ends in.
-func shortHosts(hosts []string) map[string]string {
-	label := func(h string) string {
-		if _, after, ok := strings.Cut(h, "@"); ok {
-			h = after
-		}
-		if net.ParseIP(h) != nil {
-			return h
-		}
-		first, _, _ := strings.Cut(h, ".")
-		return first
-	}
-	out := map[string]string{}
-	for _, h := range hosts {
-		own := label(h)
-		parts := strings.Split(own, "-")
-		out[h] = h
-		for k := 1; k <= len(parts); k++ {
-			tail := strings.Join(parts[len(parts)-k:], "-")
-			if !slices.ContainsFunc(hosts, func(o string) bool {
-				return o != h && (label(o) == tail || strings.HasSuffix(label(o), "-"+tail))
-			}) {
-				out[h] = tail
-				break
-			}
-		}
-	}
-	return out
-}
 
 // hostNames are every host the board reads or ym can launch on.
 func (m Model) hostNames() []string {
@@ -56,12 +27,15 @@ func (m Model) hostNames() []string {
 	return hosts
 }
 
-// hostTag marks a row from another host with that host's short name; this host's rows carry none.
+// hostTag marks a row from another host with that host's nickname; this host's rows carry none.
 func (m Model) hostTag(host string) string {
 	if host == "" {
 		return ""
 	}
-	return "@" + shortHosts(m.hostNames())[host]
+	if n := core.Nicknames(m.hostNames(), m.nicks)[host]; n != "" {
+		return "@" + n
+	}
+	return "@" + host
 }
 
 // tagged puts host's tag before text.
@@ -141,12 +115,67 @@ func (m Model) whereWidth(sessions []core.Live) int {
 	return w
 }
 
-// hostState is how a host whose rows the board shows stands when that is worth saying: unreachable or not yet read.
+// hostState is how a host whose rows the board shows stands when that is worth saying: unreachable or not yet read; H says why.
 func (m Model) hostState(host string) string {
 	for _, r := range m.board.Remotes {
 		if r.Host == host && (r.Err != nil || r.Stale || r.Late(m.board.At)) {
-			return r.StateAt(m.board.At)
+			return hostBrief(r, m.board.At)
 		}
 	}
 	return ""
+}
+
+// hostBrief is how a host stands in a word or two: ok, checking, slow, behind or no answer, with how long.
+func hostBrief(r core.RemoteBoard, now time.Time) string {
+	switch {
+	case r.Err != nil && !r.FailingSince.IsZero():
+		return "no answer " + core.Span(now.Sub(r.FailingSince))
+	case r.Err != nil && !r.At.IsZero():
+		return "no answer " + core.Span(now.Sub(r.At))
+	case r.Err != nil:
+		return "unreachable"
+	case r.At.IsZero(), r.Stale:
+		return "checking"
+	case r.Slow:
+		return "slow " + core.Span(now.Sub(r.At))
+	case r.Late(now):
+		return "behind " + core.Span(now.Sub(r.At))
+	}
+	return "ok"
+}
+
+// hostsLine is each host's nickname and brief state, as many as fit the width; H shows the rest and why a host fails.
+func (m Model) hostsLine() string {
+	var hosts []string
+	for _, r := range m.board.Remotes {
+		line := m.hostTag(r.Host) + " " + hostBrief(r, m.board.At)
+		switch {
+		case r.Err != nil:
+			line = pal.red.Render(line)
+		case r.Slow || r.Late(m.board.At):
+			line = pal.yellow.Render(line)
+		}
+		hosts = append(hosts, line)
+	}
+	render := func(n int) string {
+		line := " " + pal.dim.Render("hosts ") + strings.Join(hosts[:n], "   ")
+		if n < len(hosts) {
+			line += pal.dim.Render(fmt.Sprintf("   +%d more (H)", len(hosts)-n))
+		}
+		return line
+	}
+	for n := len(hosts); n > 0; n-- {
+		if line := render(n); m.width <= 0 || ansi.StringWidth(line) < m.width {
+			return line
+		}
+	}
+	return m.fit(render(0))
+}
+
+// fit cuts s to the board's width.
+func (m Model) fit(s string) string {
+	if m.width <= 0 {
+		return s
+	}
+	return ansi.Truncate(s, max(20, m.width-1), "…")
 }

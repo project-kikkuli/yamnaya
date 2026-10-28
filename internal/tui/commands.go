@@ -10,6 +10,7 @@ var Commands = map[string]string{
 	"ym remote":           "H",
 	"ym remote install":   "H",
 	"ym remote forget":    "H",
+	"ym remote rename":    "H",
 	"ym relay":            "H",
 	"ym relay drop":       "H",
 	"ym service status":   "Y",

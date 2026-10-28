@@ -56,6 +56,9 @@ func (s *Store) ForgetHost(host string) (bool, error) {
 	if _, err := s.db.Exec(`DELETE FROM ym_host_boards WHERE host=?`, host); err != nil {
 		return false, err
 	}
+	if _, err := s.db.Exec(`DELETE FROM ym_host_nicknames WHERE host=?`, host); err != nil {
+		return false, err
+	}
 	n, err := res.RowsAffected()
 	return n > 0, err
 }

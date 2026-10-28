@@ -4,6 +4,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +128,7 @@ type Model struct {
 	core      *core.Core
 	host      string
 	board     core.Board
+	nicks     map[string]string
 	loaded    bool
 	err       error
 	mode      mode
@@ -235,6 +237,8 @@ type boardMsg struct {
 	// theme is the theme ym state names, read after themeSeq L presses.
 	theme    string
 	themeSeq int
+	// nicks are the nicknames the owner gave hosts.
+	nicks map[string]string
 }
 
 type tickMsg struct{}
@@ -277,7 +281,11 @@ func (m Model) refresh(tick bool) tea.Cmd {
 		if err == nil && c.Store != nil {
 			theme, err = c.Store.Theme()
 		}
-		return boardMsg{b, relays, err, tick, theme, seq}
+		var nicks map[string]string
+		if err == nil && c.Store != nil {
+			nicks, err = c.Store.SetNicknames()
+		}
+		return boardMsg{b, relays, err, tick, theme, seq, nicks}
 	}
 }
 
@@ -314,7 +322,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line() == m.board.Machine.Slots.Pressure.Line() && maps.Equal(b.nicks, m.nicks) {
 			m.board = b.board
 			m.themed(b)
 			if b.tick {
@@ -368,7 +376,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			m.board, m.loaded, m.err = msg.board, true, nil
+			m.board, m.loaded, m.err, m.nicks = msg.board, true, nil, msg.nicks
 			m.queued, m.pn.relays = queued(msg.relays, msg.board), msg.relays
 			m.themed(msg)
 			m.fallen(time.Now())

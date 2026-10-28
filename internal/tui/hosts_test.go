@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"errors"
+	"fmt"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -47,27 +49,6 @@ func withBox(t *testing.T, m Model, c *core.Core) (Model, *remotes) {
 	return refresh(t, m), r
 }
 
-func TestShortHostsKeepTheShortestTailNoOtherHostShares(t *testing.T) {
-	for _, c := range []struct {
-		name  string
-		hosts []string
-		want  map[string]string
-	}{
-		{"one host", []string{box}, map[string]string{box: "boxmachine"}},
-		{"shared tail grows", []string{"a-prod-box.x", "b-prod-box.y"}, map[string]string{"a-prod-box.x": "a-prod-box", "b-prod-box.y": "b-prod-box"}},
-		{"distinct tails", []string{"stg-runner.x", "prod-builder.x"}, map[string]string{"stg-runner.x": "runner", "prod-builder.x": "builder"}},
-		{"user and plain name", []string{"me@laptop"}, map[string]string{"me@laptop": "laptop"}},
-		{"address", []string{"10.0.0.7"}, map[string]string{"10.0.0.7": "10.0.0.7"}},
-		{"same label everywhere", []string{"box.a", "box.b"}, map[string]string{"box.a": "box.a", "box.b": "box.b"}},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			if got := shortHosts(c.hosts); !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("shortHosts(%v) = %v, want %v", c.hosts, got, c.want)
-			}
-		})
-	}
-}
-
 func TestRowsFromAnotherHostCarryItsShortNameAndLocalRowsNone(t *testing.T) {
 	m, c, _ := setup(t)
 	m, _ = withBox(t, m, c)
@@ -88,7 +69,7 @@ func TestRowsFromAnotherHostCarryItsShortNameAndLocalRowsNone(t *testing.T) {
 		{"Far work ", "@boxmachine"},
 		{"Lead work ", ""},
 		{"Ship it?", ""},
-		{box, "@boxmachine"},
+		{"hosts ", "@boxmachine ok"},
 	} {
 		if l := line(c.row); c.tag != "" && !strings.Contains(l, c.tag) || c.tag == "" && strings.Contains(l, "@") {
 			t.Errorf("row %q = %q, want host tag %q", c.row, l, c.tag)
@@ -287,5 +268,86 @@ func TestFilterMatchesTheHostOfMissionsAndKeepsTheirRepoHeader(t *testing.T) {
 				t.Fatalf("filter %q shows missions %v repos %v, want %v %v", c.filter, missions, repos, c.missions, c.repos)
 			}
 		})
+	}
+}
+
+func TestHeaderFitsTheWidthAndNamesHostsByNickname(t *testing.T) {
+	now := time.Now()
+	limit := func(harness, name string, used float64, seen time.Time) core.Limit {
+		return core.Limit{Harness: harness, Name: name, Used: used, Window: 7 * 24 * time.Hour, ResetsAt: now.Add(6*time.Hour + 12*time.Minute), Seen: seen}
+	}
+	states := []struct {
+		name  string
+		board core.RemoteBoard
+		brief string
+	}{
+		{"answering", core.RemoteBoard{At: now}, "@boxmachine ok"},
+		{"slow", core.RemoteBoard{At: now.Add(-12 * time.Second), Slow: true}, "@boxmachine slow 12s"},
+		{"not answering", core.RemoteBoard{At: now.Add(-7 * time.Minute), FailingSince: now.Add(-5 * time.Minute),
+			Err: errors.New("exit status 255: Connection timed out during banner exchange")}, "@boxmachine no answer 5m"},
+	}
+	for _, width := range []int{80, 120, 200} {
+		for _, st := range states {
+			t.Run(fmt.Sprintf("%d %s", width, st.name), func(t *testing.T) {
+				m, c, _ := setup(t)
+				c.Meter = meter{core.Fleet{Ready: true, At: now, Limits: []core.Limit{
+					limit("claude", "5h", 3, now), limit("claude", "7d", 55, now), limit("codex", "codex 7d", 0, now)}}}
+				b := st.board
+				b.Host, b.Usage = box, &core.Fleet{Ready: true, At: now, Limits: []core.Limit{limit("claude", "7d", 46, now.Add(-4*time.Hour-2*time.Minute))}}
+				c.Remotes, c.ShowRemotes = &remotes{boards: []core.RemoteBoard{b}}, true
+				m.width, m.peaks.hidden = width, true
+				m = refresh(t, m)
+				m.board.At = now
+				header := ansi.Strip(m.header())
+				t.Logf("header at %d columns:\n%s", width, header)
+				for _, l := range strings.Split(header, "\n") {
+					if ansi.StringWidth(l) >= width {
+						t.Errorf("line is %d columns wide on a %d-column board: %q", ansi.StringWidth(l), width, l)
+					}
+					if strings.Contains(l, "…") {
+						t.Errorf("line is cut mid-item: %q", l)
+					}
+				}
+				for _, want := range []string{"hosts " + st.brief, "@boxmachine/claude 7d 46%", "claude 5h 3%", "codex 7d 0%"} {
+					if !strings.Contains(header, want) {
+						t.Errorf("header lacks %q", want)
+					}
+				}
+				if strings.Contains(header, box) || strings.Contains(header, "exit status") {
+					t.Errorf("header shows the full host name or its error; H does")
+				}
+				if width >= 120 && !strings.Contains(header, "spend today") {
+					t.Errorf("at %d columns the spend should fit", width)
+				}
+				if wide := width >= 200; strings.Contains(header, "(4h2m old)") != wide || strings.Contains(header, "46% ↻6h") != wide {
+					t.Errorf("at %d columns the remote account's age and reset show %v, want %v", width, !wide, wide)
+				}
+			})
+		}
+	}
+}
+
+func TestBoardNamesARenamedHostByItsNicknameAndTheFilterTakesBothNames(t *testing.T) {
+	m, c, _ := setup(t)
+	if err := c.Store.RecordHost(box, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Store.RenameHost(box, "far"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = withBox(t, m, c)
+	v := ansi.Strip(m.View().Content)
+	if !strings.Contains(v, "hosts @far ok") || !strings.Contains(v, "@far Far work") || strings.Contains(v, "@boxmachine") {
+		t.Fatalf("board after renaming %s to far:\n%s", box, v)
+	}
+	for _, f := range []string{"@far", "boxmachine.example"} {
+		v := ansi.Strip(press(t, m, "/", "paste:"+f, "enter").View().Content)
+		if !strings.Contains(v, "Merge the far branch?") || strings.Contains(v, "Ship it?") {
+			t.Errorf("filter %q should keep exactly the renamed host's rows:\n%s", f, v)
+		}
+	}
+	m = press(t, m, "H")
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "@far") || !strings.Contains(v, box) {
+		t.Errorf("H should show the nickname and the full name:\n%s", v)
 	}
 }

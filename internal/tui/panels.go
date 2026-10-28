@@ -513,6 +513,12 @@ func (m Model) hostRows() ([]prow, []pdo) {
 				return m, m.runYM(key, "installing ym on "+host, "install", "", "", "remote", "install", host)
 			}},
 			{"o", "open its board", func(m Model) (tea.Model, tea.Cmd) { return m.handOver(host, "back from "+host) }},
+			{"n", "rename: set its nickname, empty for the default", func(m Model) (tea.Model, tea.Cmd) {
+				m.askLine("nickname for "+host+" (empty for the default)", strings.TrimPrefix(m.hostTag(host), "@"), false, func(m Model, nick string) (tea.Model, tea.Cmd) {
+					return m, m.runYM(key, "renaming", "rename", "", "", "remote", "rename", host, nick)
+				})
+				return m, nil
+			}},
 			{"x", "forget", func(m Model) (tea.Model, tea.Cmd) {
 				m.confirm("forget "+host+"? its sessions leave this board until ym reaches it again", m.runYM(key, "forgetting", "forget", "", "", "remote", "forget", host))
 				return m, nil

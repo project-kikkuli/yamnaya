@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,12 +42,18 @@ func (m Model) usageText() string {
 	if !f.Ready {
 		b.WriteString("reading transcripts; spend fills in once the first scan ends\n")
 	}
+	f.Limits = slices.Clone(f.Limits)
+	for i, l := range f.Limits {
+		if l.Host != "" {
+			f.Limits[i].Host = m.hostTag(l.Host)
+		}
+	}
 	usage.Render(&b, f, m.host, 15)
 	for _, r := range m.board.Remotes {
 		if r.Usage == nil {
-			b.WriteString("usage on " + r.Host + ": unknown; snapshot has no profile usage\n")
+			b.WriteString("usage on " + m.hostTag(r.Host) + ": unknown; snapshot has no profile usage\n")
 		} else if r.Stale || r.Err != nil || r.Late(m.board.At) {
-			b.WriteString("usage on " + r.Host + ": last observed " + r.Usage.At.Format(time.RFC3339) + " (" + r.State() + ")\n")
+			b.WriteString("usage on " + m.hostTag(r.Host) + ": last observed " + r.Usage.At.Format(time.RFC3339) + " (" + hostBrief(r, m.board.At) + ")\n")
 		}
 	}
 	return b.String()

@@ -58,7 +58,7 @@ func remoteCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd())
+	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd(), remoteRenameCmd())
 	return cmd
 }
 
@@ -99,6 +99,35 @@ func remoteForgetCmd() *cobra.Command {
 				return fmt.Errorf("ym does not remember %s", args[0])
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "forgot %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func remoteRenameCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <host> [nickname]",
+		Short: "Set the nickname the board shows for a host, by its full name or current nickname; no nickname restores the default",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := core.DefaultStorePath()
+			if err != nil {
+				return err
+			}
+			st, err := core.OpenStore(path)
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			host, err := st.ResolveHost(args[0])
+			if err != nil {
+				return err
+			}
+			nick, err := st.RenameHost(host, strings.Join(args[1:], ""))
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s is @%s\n", host, nick)
 			return nil
 		},
 	}

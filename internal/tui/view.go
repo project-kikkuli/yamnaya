@@ -192,30 +192,20 @@ func (m Model) header() string {
 	if m.err != nil {
 		h += "  " + pal.red.Render("refresh failed: "+m.err.Error())
 	}
+	h = m.fit(h)
 	if note := m.board.PRPace.Note(m.board.At); note != "" {
-		h += "\n " + pal.yellow.Render(note)
+		h += "\n " + pal.yellow.Render(m.fit(note))
 	}
 	if len(m.board.Remotes) > 0 {
-		var hosts []string
-		for _, r := range m.board.Remotes {
-			line := m.hostTag(r.Host) + " " + r.Host + " " + r.StateAt(m.board.At)
-			switch {
-			case r.Err != nil:
-				line = pal.red.Render(line)
-			case r.Late(m.board.At):
-				line = pal.yellow.Render(line)
-			}
-			hosts = append(hosts, line)
-		}
-		h += "\n " + pal.dim.Render("hosts ") + strings.Join(hosts, "   ")
+		h += "\n" + m.hostsLine()
 		for _, r := range m.board.Remotes {
 			for _, sw := range r.Swollen {
-				h += "\n " + pal.red.Render(m.hostTag(r.Host)+" "+sw.Line())
+				h += "\n " + pal.red.Render(m.fit(m.hostTag(r.Host)+" "+sw.Line()))
 			}
 		}
 	}
 	if m.core != nil && m.core.Meter != nil {
-		h += "\n" + fleetLine(m.board.Fleet, m.board.At)
+		h += "\n" + fleetLine(m.board.Fleet, m.board.At, m.width, m.hostTag)
 	}
 	return h + machineAlerts(m.board.Machine, m.width)
 }
@@ -1553,8 +1543,10 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    B            login profiles: every Claude and Codex login on every host with its limit windows; a adds one
                 (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
                 the launch default, x removes it; pressed on a session, enter switches the session to it
-   H            hosts: i installs or updates ym on one and keeps it running, o opens its board, x forgets it,
-                a adds a host; below, what this host still carries to them, x stops carrying one
+   H            hosts: each host's nickname, full name and state, with the full error when it fails;
+                i installs or updates ym on one and keeps it running, o opens its board, n renames it
+                (sets its nickname), x forgets it, a adds a host; below, what this host still carries to them,
+                x stops carrying one
    Y            settings: restart ym serve, keep it running across reboots or stop, connect Notion
                 (the token is typed hidden), the context cap, which repositories' managers may merge, update ym
    space f pgdown, b pgup
