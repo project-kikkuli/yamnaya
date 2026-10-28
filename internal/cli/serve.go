@@ -102,7 +102,8 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		if !once {
 			go monitorWorkService(ctx, cancel, dir, started, upgraded)
 		}
-		reviews := reviewPoll{fetch: intake.New().Requests, every: 5 * time.Minute}
+		gh := intake.New()
+		reviews := reviewPoll{fetch: gh.Requests, authored: gh.Authored, every: 5 * time.Minute}
 		docs := &docSweeper{dir: dir, every: 3 * time.Minute, recheck: 15 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
 		if discover && !once {
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
@@ -214,14 +215,16 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 	return errors.Join(append(failures, c.Brief(b))...)
 }
 
-// reviewPoll asks GitHub for the owner's personal review requests at most once per every.
+// reviewPoll asks GitHub for the owner's personal review requests and open pull requests at most once per every.
 type reviewPoll struct {
-	fetch func(context.Context) ([]intake.Request, error)
-	every time.Duration
-	last  time.Time
+	fetch    func(context.Context) ([]intake.Request, error)
+	authored func(context.Context) ([]intake.Request, error)
+	every    time.Duration
+	last     time.Time
 }
 
-// poll reads the owner's review requests on the owner's own host only: a host whose relays another host carries leaves them to it.
+// poll reads the owner's review requests and pull requests on the owner's own host only: a host whose relays another host carries
+// leaves them to it.
 func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
 	if time.Since(r.last) < r.every {
 		return nil
@@ -230,15 +233,26 @@ func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
 		return err
 	}
 	r.last = time.Now()
-	reqs, err := r.fetch(ctx)
-	if err != nil {
-		return err
+	var errs []error
+	if reqs, err := r.fetch(ctx); err != nil {
+		errs = append(errs, err)
+	} else {
+		out := make([]core.ReviewRequest, len(reqs))
+		for i, q := range reqs {
+			out[i] = core.ReviewRequest{URL: q.URL, Updated: q.Updated, Title: q.Title, Author: q.Author}
+		}
+		errs = append(errs, c.Store.SyncReviews(out))
 	}
-	out := make([]core.ReviewRequest, len(reqs))
-	for i, q := range reqs {
-		out[i] = core.ReviewRequest{URL: q.URL, Updated: q.Updated, Title: q.Title, Author: q.Author}
+	if prs, err := r.authored(ctx); err != nil {
+		errs = append(errs, err)
+	} else {
+		out := map[string]string{}
+		for _, q := range prs {
+			out[q.URL] = q.Title
+		}
+		errs = append(errs, c.Store.SyncAuthored(out))
 	}
-	return c.Store.SyncReviews(out)
+	return errors.Join(errs...)
 }
 
 // ensureService starts ym serve when its lock is free; a variable so tests can watch it.

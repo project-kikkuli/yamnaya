@@ -207,6 +207,7 @@ func (c *Core) standing(b Board, n Node) string {
 }
 
 // queue adds the owner's other duties to the needs list: stuck goals, pull requests ready to merge that no manager may merge,
+// whether a session on the board opened them or the owner's GitHub account wrote them anywhere,
 // review requests GitHub addresses to the owner personally, and document asks no goal claims.
 func (c *Core) queue(b *Board, o Org) error {
 	dismissed, err := c.Store.queueDismissed()
@@ -278,6 +279,47 @@ func (c *Core) queue(b *Board, o Org) error {
 			if !dismissed[n.Key()] {
 				extra = append(extra, n)
 			}
+		}
+	}
+	authored, err := c.Store.Authored()
+	if err != nil {
+		return err
+	}
+	tracked, err := c.Store.GoalPRs()
+	if err != nil {
+		return err
+	}
+	managers := map[string]string{}
+	for id, urls := range tracked {
+		if g, ok := o.Goals[id]; ok && o.Active(o.Managers[g.ManagerID]) {
+			for _, url := range urls {
+				managers[url] = g.ManagerID
+			}
+		}
+	}
+	var urls []string
+	for url := range authored {
+		urls = append(urls, url)
+	}
+	sort.Strings(urls)
+	for _, url := range urls {
+		st, ok := statuses[url]
+		found := PRsIn(url)
+		if seen[url] || !ok || len(found) != 1 || !st.ReadyToMerge() || !st.OwnedPR() {
+			continue
+		}
+		seen[url] = true
+		pr, manager := found[0], managers[url]
+		if manager != "" && canMerge(prRepoName(pr)) {
+			continue
+		}
+		if st.Title == "" {
+			st.Title = authored[url]
+		}
+		pr.Status = &st
+		n := Need{PR: &pr, Manager: manager}
+		if !dismissed[n.Key()] {
+			extra = append(extra, n)
 		}
 	}
 	reviews, err := c.Store.OpenReviews()

@@ -114,7 +114,7 @@ func prStale(left float64, goal bool) time.Duration {
 	return PRStale + time.Duration(slow*float64(PRSlowest-PRStale))
 }
 
-// RefreshPRs fetches every pull request on the board whose status is missing or stale, active goals' first: in batches from a
+// RefreshPRs fetches every pull request on the board or written by the owner whose status is missing or stale, active goals' first: in batches from a
 // PRBatch, then one at a time, a few at once, for any a batch answered without. A batch that fails ends the cycle's reads, so a
 // GitHub outage or an exhausted budget never turns into one request per pull request; they stay due for the next cycle.
 // It never runs on the render path; callers start it in the background.
@@ -170,6 +170,16 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 				seen[url] = true
 				candidates = append(candidates, url)
 			}
+		}
+	}
+	authored, err := c.Store.Authored()
+	if err != nil {
+		return 0, err
+	}
+	for url := range authored {
+		if !seen[url] {
+			seen[url] = true
+			candidates = append(candidates, url)
 		}
 	}
 	var due, later []string

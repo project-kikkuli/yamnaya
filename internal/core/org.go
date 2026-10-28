@@ -130,6 +130,10 @@ CREATE TABLE IF NOT EXISTS ym_review_requests (
 	state TEXT NOT NULL,
 	seen_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_authored_prs (
+	url TEXT PRIMARY KEY,
+	title TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS ym_queue_dismissed (
 	key TEXT PRIMARY KEY,
 	at TEXT NOT NULL
@@ -406,6 +410,46 @@ func (s *Store) SyncReviews(reqs []ReviewRequest) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// SyncAuthored makes the owner's open pull requests exactly urls, each with its title, as GitHub's search last listed them.
+func (s *Store) SyncAuthored(prs map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM ym_authored_prs`); err != nil {
+		return err
+	}
+	for url, title := range prs {
+		if _, err = tx.Exec(`INSERT INTO ym_authored_prs (url, title) VALUES (?, ?)`, url, title); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Authored is the owner's open pull requests by link, with their titles, wherever they were opened from.
+func (s *Store) Authored() (map[string]string, error) {
+	return remembered(s, "authored", cloneMap[string, string], s.authored)
+}
+
+func (s *Store) authored() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT url, title FROM ym_authored_prs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var url, title string
+		if err := rows.Scan(&url, &title); err != nil {
+			return nil, err
+		}
+		out[url] = title
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) OpenReviews() ([]ReviewRequest, error) {

@@ -1,4 +1,4 @@
-// Package intake finds the pull requests whose review GitHub asks of the owner directly.
+// Package intake finds the pull requests GitHub asks the owner to review directly and those the owner wrote.
 package intake
 
 import (

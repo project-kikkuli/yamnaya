@@ -65,3 +65,33 @@ func TestGitHubRequestsRequireAnIndividualReviewerEvenWithStaleSearchResults(t *
 		})
 	}
 }
+
+func TestAuthoredListsEveryOpenPullRequestTheOwnerWroteOrFailsWhole(t *testing.T) {
+	for _, tc := range []struct {
+		name, page string
+		want       int
+		fail       bool
+	}{
+		{"two", `[{"total_count":2,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}},{"title":"B","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/c/d/pull/2"}}]}]`, 2, false},
+		{"none", `[{"total_count":0,"items":[]}]`, 0, false},
+		{"incomplete", `[{"total_count":2,"incomplete_results":true,"items":[]}]`, 0, true},
+		{"short page", `[{"total_count":3,"items":[{"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}]`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if args[1] == "user" {
+					return []byte("owner\n"), nil
+				}
+				endpoint, err := url.Parse(args[len(args)-1])
+				if err != nil || endpoint.Query().Get("q") != "is:pr is:open author:owner" {
+					t.Fatalf("search is not the owner's open pull requests: %v", args)
+				}
+				return []byte(tc.page), nil
+			}}
+			got, err := f.Authored(context.Background())
+			if (err != nil) != tc.fail || len(got) != tc.want {
+				t.Fatalf("authored = %+v, %v; want %d, fail %v", got, err, tc.want, tc.fail)
+			}
+		})
+	}
+}

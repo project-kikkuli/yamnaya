@@ -183,3 +183,28 @@ func TestReadsSlowAsTheBudgetFallsAndGoalsKeepTheirsLongest(t *testing.T) {
 		})
 	}
 }
+
+func TestPullRequestsTheOwnerWroteStayFreshWithNoSessionOnTheBoard(t *testing.T) {
+	st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	src := &batchSource{now: func() time.Time { return now }, unreadable: map[string]bool{}}
+	c := &Core{Store: st, PRs: src, Now: func() time.Time { return now }}
+	url := "https://github.com/acme/august/pull/3"
+	if err := st.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := c.RefreshPRs(Board{}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := st.PRStatuses()
+		if got[url].Fetched != now {
+			t.Fatalf("status fetched %v, want %v", got[url].Fetched, now)
+		}
+		now = now.Add(PRStale)
+	}
+}

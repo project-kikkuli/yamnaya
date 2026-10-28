@@ -363,46 +363,109 @@ func TestAQuietManagerIsNudgedThenShowsStuckUnlessItsWorkMoves(t *testing.T) {
 }
 
 func TestGreenPullRequestsGoToTheOwnerOnlyWhereNoManagerMayMerge(t *testing.T) {
+	green := func(st *PRStatus) {}
 	for _, tc := range []struct {
+		name         string
 		repo         string
-		managed      bool
+		kind         string
+		status       func(*PRStatus)
 		wantQueue    bool
 		wantNotified bool
 	}{
-		{repo: "august", managed: true, wantQueue: true},
-		{repo: "auth-plane", managed: true, wantNotified: true},
-		{repo: "auth-plane", managed: false, wantQueue: true},
-		{repo: "august", managed: false, wantQueue: true},
+		{name: "goal agent, manager not cleared", repo: "august", kind: "goal", status: green, wantQueue: true},
+		{name: "goal agent, manager cleared", repo: "auth-plane", kind: "goal", status: green, wantNotified: true},
+		{name: "goal agent gone, manager not cleared", repo: "august", kind: "goal-gone", status: green, wantQueue: true},
+		{name: "goal agent gone, manager cleared", repo: "auth-plane", kind: "goal-gone", status: green},
+		{name: "owner's session, repo cleared", repo: "auth-plane", kind: "self", status: green, wantQueue: true},
+		{name: "owner's session, repo not cleared", repo: "august", kind: "self", status: green, wantQueue: true},
+		{name: "owner's session gone", repo: "august", kind: "self-gone", status: green, wantQueue: true},
+		{name: "written elsewhere, repo cleared", repo: "auth-plane", kind: "authored", status: green, wantQueue: true},
+		{name: "written elsewhere, repo not cleared", repo: "august", kind: "authored", status: green, wantQueue: true},
+		{name: "written by someone else", repo: "august", kind: "self", status: func(st *PRStatus) { st.Merge.Author = "bo" }},
+		{name: "red CI", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Failed = 1 }},
+		{name: "CI running", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Pending = 1 }},
+		{name: "open thread", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Unresolved = 1 }},
+		{name: "draft", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Merge.Draft = true }},
+		{name: "review required", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Review = "REVIEW_REQUIRED"; st.Merge.MergeState = "BLOCKED" }},
+		{name: "merged", repo: "august", kind: "authored", status: func(st *PRStatus) { st.State = "MERGED" }},
 	} {
-		t.Run(fmt.Sprintf("%s managed=%v", tc.repo, tc.managed), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
-			_, m := w.goal(t, "ship it", "/repo/"+tc.repo)
-			parent := ""
-			if tc.managed {
-				parent = m.Session
-			}
+			g, m := w.goal(t, "ship it", "/repo/"+tc.repo)
 			url := "https://github.com/acme/" + tc.repo + "/pull/7"
-			w.spawn("agent", parent)
-			w.set("agent", func(s *Session) { s.PRs = []PR{{URL: url, Repo: "acme/" + tc.repo, Number: 7}} })
-			green := PRStatus{State: "OPEN", Passed: 4, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
-			if err := w.core.Store.SavePRStatus(url, green); err != nil {
+			pr := PR{URL: url, Repo: "acme/" + tc.repo, Number: 7}
+			switch tc.kind {
+			case "goal", "self":
+				parent := ""
+				if tc.kind == "goal" {
+					parent = m.Session
+				}
+				w.spawn("agent", parent)
+				w.set("agent", func(s *Session) { s.PRs = []PR{pr} })
+			case "goal-gone":
+				if _, _, err := w.core.RecordGoalEvent(g.ID, EventPROpened, "opened "+url, g.ID+":pr:"+url); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.kind != "goal" && tc.kind != "self" {
+				if err := w.core.Store.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := PRStatus{State: "OPEN", Title: "Ship it", Passed: 4, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+			tc.status(&st)
+			if err := w.core.Store.SavePRStatus(url, st); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
 				w.supervise(t)
 			}
 			b := w.board(t)
-			queued := slices.ContainsFunc(b.Needs, func(n Need) bool { return n.PR != nil && n.PR.URL == url })
+			var rows []Need
+			for _, n := range b.Needs {
+				if n.PR != nil && n.PR.URL == url {
+					rows = append(rows, n)
+				}
+			}
 			notices := 0
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, url) {
 					notices++
 				}
 			}
-			if queued != tc.wantQueue || (notices == 1) != tc.wantNotified || notices > 1 {
-				t.Fatalf("in owner queue %v, manager told %d times; want queue %v, told %v", queued, notices, tc.wantQueue, tc.wantNotified)
+			if (len(rows) == 1) != tc.wantQueue || len(rows) > 1 || (notices == 1) != tc.wantNotified || notices > 1 {
+				t.Fatalf("%d owner queue rows, manager told %d times; want queue %v, told %v", len(rows), notices, tc.wantQueue, tc.wantNotified)
+			}
+			if tc.wantQueue && (rows[0].PR.Repo != pr.Repo || rows[0].PR.Number != 7 || rows[0].PR.Status.Title != "Ship it") {
+				t.Fatalf("queue row %+v lacks the pull request's repo, number and title", rows[0].PR)
+			}
+			if tc.wantQueue && strings.HasPrefix(tc.kind, "goal") != (rows[0].Manager == m.ID) {
+				t.Fatalf("queue row manager %q, want the goal's manager only for its own pull request", rows[0].Manager)
 			}
 		})
+	}
+}
+
+func TestAnAuthoredPullRequestLeavesTheQueueOnceGitHubStopsListingIt(t *testing.T) {
+	w := newOrgWorld(t)
+	url := "https://github.com/acme/august/pull/9"
+	if err := w.core.Store.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
+		t.Fatal(err)
+	}
+	st := PRStatus{State: "OPEN", Passed: 1, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	if err := w.core.Store.SavePRStatus(url, st); err != nil {
+		t.Fatal(err)
+	}
+	for _, listed := range []bool{true, false} {
+		if !listed {
+			if err := w.core.Store.SyncAuthored(nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		queued := slices.ContainsFunc(w.board(t).Needs, func(n Need) bool { return n.PR != nil && n.PR.URL == url })
+		if queued != listed {
+			t.Fatalf("listed by GitHub %v, queued %v", listed, queued)
+		}
 	}
 }
 
