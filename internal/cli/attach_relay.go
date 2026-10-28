@@ -38,11 +38,9 @@ func attachRelayCmd() *cobra.Command {
 	}
 }
 
-// attachSSH are the ssh options of an attach: a connection of its own, so a board read that gives up on the host and ends the
-// shared one leaves the session open, and timeouts that outlast a host whose ssh front end stalls for seconds at a time.
+// attachSSH are the ssh options of an attach: a connection of its own, so ending the shared one never closes the session.
 func attachSSH() []string {
-	return []string{"-o", "ControlPath=" + filepath.Join("/tmp", fmt.Sprintf("ym-%d-a%d-%%C", os.Getuid(), os.Getpid())), "-o", "ControlPersist=no",
-		"-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=6"}
+	return []string{"-o", "ControlPath=" + filepath.Join("/tmp", fmt.Sprintf("ym-%d-a%d-%%C", os.Getuid(), os.Getpid())), "-o", "ControlPersist=no"}
 }
 
 // proxyTTY runs c on a terminal of its own in place of in's, passing what in types through see to c, what c draws to out,

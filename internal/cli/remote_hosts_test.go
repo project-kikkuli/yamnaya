@@ -177,6 +177,47 @@ func TestAHostReadsAsHowOldItsBoardIsAndHowLongItHasGoneWithoutAnswering(t *test
 	}
 }
 
+func TestAHostWhoseReadRunsLongReadsAsSlowUntilItAnswersOrTimesOut(t *testing.T) {
+	dir := t.TempDir()
+	board, hang := filepath.Join(dir, "board.json"), filepath.Join(dir, "hang")
+	script := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile [ -e "+hang+" ]; do sleep 0.05; done\nexec cat "+board+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Minute)
+	if err := os.WriteFile(board, []byte(`{"at":"`+at.UTC().Format(time.RFC3339)+`",`+fakeBoard[1:]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := newRemoteHosts([]string{"box"}, 5*time.Second, nil)
+	r.ssh, r.every, r.slow, r.timeout = script, 0, 200*time.Millisecond, 3*time.Second
+	state := func() string { return r.Boards()[0].State() }
+	if got := state(); got != "1 sessions" {
+		t.Fatalf("first read %q", got)
+	}
+	os.WriteFile(hang, nil, 0o644)
+	for _, step := range []struct {
+		after time.Duration
+		want  string
+	}{
+		{0, "1 sessions"},
+		{400 * time.Millisecond, "slow (last answer 1m"},
+		{2 * time.Second, "slow (last answer 1m"},
+	} {
+		time.Sleep(step.after)
+		if got := state(); !strings.HasPrefix(got, step.want) {
+			t.Errorf("%s into the read: state %q, want it to start %q", step.after, got, step.want)
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); !strings.HasPrefix(state(), "no answer for "); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("state %q once the read timed out, want no answer", state())
+		}
+	}
+	if err := r.Silent("box"); !errors.Is(err, core.ErrUnreachable) {
+		t.Errorf("after the read timed out Silent = %v, want unreachable", err)
+	}
+}
+
 func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("YAMNAYA_STATE_DIR", dir)
@@ -207,11 +248,11 @@ func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
 	}
 }
 
-func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnection(t *testing.T) {
+func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnectionOnlyWhenSshFailedOnIt(t *testing.T) {
 	for _, c := range []struct {
-		host   string
-		silent bool
-	}{{"box", false}, {"dead", true}, {"slow", true}} {
+		host            string
+		silent, dropped bool
+	}{{"box", false, false}, {"dead", true, true}, {"slow", true, false}} {
 		t.Run(c.host, func(t *testing.T) {
 			bin := fakeSSH(t)
 			log := filepath.Join(t.TempDir(), "calls")
@@ -227,7 +268,7 @@ func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnection(t *testing.T
 			if err := r.Silent(c.host); (err != nil) != c.silent || c.silent && !errors.Is(err, core.ErrUnreachable) {
 				t.Errorf("Silent = %v", err)
 			}
-			if dropped != c.silent {
+			if dropped != c.dropped {
 				t.Errorf("shared connection dropped %v; ssh calls:\n%s", dropped, calls)
 			}
 			if err := r.Reach(c.host); (err != nil) != (c.host != "box") {

@@ -57,6 +57,8 @@ type RemoteBoard struct {
 	Stale bool
 	// FailingSince is when reads of the host started failing, zero while the last read answered.
 	FailingSince time.Time
+	// Slow marks a host whose read is taking longer than an answering host takes, though it has not timed out.
+	Slow bool
 }
 
 // RemoteWaiting is a session on another host whose last reply asks the owner.
@@ -88,6 +90,8 @@ func (r RemoteBoard) StateAt(now time.Time) string {
 		return "unreachable: " + r.Err.Error()
 	case r.At.IsZero():
 		return "checking"
+	case r.Slow:
+		return fmt.Sprintf("slow (last answer %s ago)", Span(now.Sub(r.At)))
 	case r.Stale:
 		return fmt.Sprintf("checking, last answered %s", r.At.Local().Format(time.Kitchen))
 	case r.Late(now):

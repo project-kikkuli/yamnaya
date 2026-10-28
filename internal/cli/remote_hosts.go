@@ -27,8 +27,8 @@ type remoteHosts struct {
 	rereadAt time.Time
 	ssh      string
 	// timeout bounds one host's read; every is how old a read gets before the next Boards starts another; wait is how long
-	// Boards waits for a host it has never read.
-	timeout, every, wait time.Duration
+	// Boards waits for a host it has never read; slow is how long a read runs before the host reads as slow.
+	timeout, every, wait, slow time.Duration
 	// seen hears each host that answered, with what it printed.
 	seen func(host string, at time.Time, board []byte)
 
@@ -43,7 +43,7 @@ type remoteHosts struct {
 }
 
 func newRemoteHosts(names []string, wait time.Duration, seen func(string, time.Time, []byte)) *remoteHosts {
-	return &remoteHosts{names: names, ssh: sshBin(), timeout: 8 * time.Second, every: 5 * time.Second, wait: wait, seen: seen,
+	return &remoteHosts{names: names, ssh: sshBin(), timeout: 40 * time.Second, every: 5 * time.Second, slow: 5 * time.Second, wait: wait, seen: seen,
 		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}, kept: map[string]core.RemoteBoard{}, silent: map[string]error{}}
 }
 
@@ -133,6 +133,8 @@ wait:
 				b.Err = fmt.Errorf("no answer in %s", r.wait)
 			}
 		}
+		_, busy := r.running[h]
+		b.Slow = busy && time.Since(r.polled[h]) >= r.slow
 		out = append(out, b)
 	}
 	return out
@@ -193,7 +195,6 @@ func (r *remoteHosts) board(host string) ([]byte, error) {
 	out, err := c.Output()
 	switch {
 	case ctx.Err() != nil:
-		r.drop(host)
 		return nil, wrapped{core.ErrUnreachable, fmt.Errorf("no answer in %s", r.timeout)}
 	case err != nil:
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 255 {
@@ -212,7 +213,8 @@ func (w wrapped) Error() string   { return w.err.Error() }
 func (w wrapped) Unwrap() error   { return w.err }
 func (w wrapped) Is(t error) bool { return t == w.mark }
 
-// drop ends the connection ym shares to host, so the next ssh there connects afresh instead of waiting on one that went silent.
+// drop ends the connection ym shares to host once ssh failed on it, so the next ssh there connects afresh instead of reusing
+// one that ssh's keepalives found dead. A read that only ran long keeps it: the host's ssh front end may just be stalling.
 func (r *remoteHosts) drop(host string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -238,10 +240,11 @@ func (r *remoteHosts) Reach(host string) error {
 	err := c.Run()
 	switch {
 	case ctx.Err() != nil:
-		r.drop(host)
 		return fmt.Errorf("%s: no answer in %s: %w", host, r.timeout, core.ErrUnreachable)
 	case err != nil:
-		r.drop(host)
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 255 {
+			r.drop(host)
+		}
 		return fmt.Errorf("%s: %w: %w", host, core.ErrUnreachable, sshErr(err, errb.Bytes()))
 	}
 	return nil
@@ -261,7 +264,6 @@ func (r *remoteHosts) call(host string, stdin []byte, args ...string) ([]byte, e
 	out, err := c.Output()
 	switch {
 	case ctx.Err() != nil:
-		r.drop(host)
 		return nil, fmt.Errorf("no answer in %s: %w", 2*r.timeout, core.ErrUnreachable)
 	case err != nil:
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 255 {
@@ -334,12 +336,12 @@ func hostBriefLinks(text []byte, host string) []byte {
 }
 
 // sshArgs are ssh's arguments up to the remote command: opts, then one connection to host shared by every ssh ym runs
-// there and kept ten minutes after the last, so a read, relay or attach skips the handshake. A handshake that answers
-// takes under half a second, so three seconds bound one that does not; keepalives end a shared connection within six
-// seconds of the network going silent, so a call muxed onto it fails instead of hanging.
+// there and kept ten minutes after the last, so a read or relay skips the handshake. A host's ssh front end can stall
+// for up to half a minute and then answer, so a handshake gets 35 seconds and keepalives end a shared connection only
+// after 30 seconds of silence.
 func sshArgs(host string, opts ...string) []string {
-	return append(append(opts, "-o", "ConnectTimeout=3", "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join("/tmp", fmt.Sprintf("ym-%d-%%C", os.Getuid())),
-		"-o", "ControlPersist=10m", "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2"), host)
+	return append(append(opts, "-o", "ConnectTimeout=35", "-o", "ControlMaster=auto", "-o", "ControlPath="+filepath.Join("/tmp", fmt.Sprintf("ym-%d-%%C", os.Getuid())),
+		"-o", "ControlPersist=10m", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=6"), host)
 }
 
 // sshErr is err with the last line ssh or the remote ym wrote to stderr.
