@@ -15,6 +15,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/health"
+	"github.com/project-kikkuli/yamnaya/internal/host/app"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
@@ -53,6 +54,7 @@ func Wire(path string) (*core.Core, error) {
 		Scoped:    !core.DefaultStateDir(filepath.Dir(path)),
 		Harnesses: []core.Harness{cl, cx},
 		Hosts:     []core.Host{tmux.New(), srv},
+		Front:     app.New().Front,
 		Procs:     proc.List,
 		Git:       core.ReadGit,
 		PRs:       gh.New(),

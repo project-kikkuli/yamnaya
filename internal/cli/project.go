@@ -218,7 +218,11 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				}
 				t = ts[pick-1]
 			}
-			if c := e.core.AttachCmd(t); c != nil {
+			c, err := e.core.AttachCmd(t)
+			if err != nil {
+				return err
+			}
+			if c != nil {
 				return show(c)
 			}
 			err = e.core.Focus(t)

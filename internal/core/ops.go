@@ -112,6 +112,15 @@ type Target struct {
 	Resume  []string
 	// Remote is the host the session runs on when that is not this one.
 	Remote string
+	// HostErr says which terminal host ym could not read, so where the session runs is unknown.
+	HostErr string
+	// Ours is set when ym launched the session, so it runs on ym's server even when its pane is not found there.
+	Ours bool
+}
+
+// UnreadAdvice is what to tell the owner when ym could not read a terminal host: the session may run there, so ym acts on nothing.
+func UnreadAdvice(hostErr string) string {
+	return hostErr + " (try Y, then r: repair)"
 }
 
 func (t Target) String() string {
@@ -127,21 +136,25 @@ func (t Target) String() string {
 	if t.Session.PID != 0 {
 		return fmt.Sprintf("%s %s (pid %d)", t.App, strings.TrimPrefix(t.Session.TTY, "/dev/"), t.Session.PID)
 	}
-	return strings.Join(t.Resume, " ")
+	return "not running: " + Short(t.Session.Key())
 }
 
-// Advice is what to tell the owner when ym cannot jump to the target itself.
+// Advice is what to tell the owner when ym cannot jump to the target itself. It never prints a command line or environment.
 func (t Target) Advice() string {
-	resume := strings.Join(t.Resume, " ")
+	key := Short(t.Session.Key())
 	switch {
 	case t.Remote != "":
-		return fmt.Sprintf("runs on %s; ym open %s attaches to it there over ssh", t.Remote, Short(t.Session.Key()))
+		return fmt.Sprintf("runs on %s; ym open %s attaches to it there over ssh", t.Remote, key)
+	case t.HostErr != "":
+		return UnreadAdvice(t.HostErr)
 	case t.Session.Background:
 		return fmt.Sprintf("runs as a background job (pid %d) with no terminal ym can attach to; r replies and s sends reach it through its inbox", t.Session.PID)
 	case t.Handle != nil:
-		return fmt.Sprintf("runs in %s %s (pid %d); ym jumps there only when it runs inside that tmux", t.Handle.Host, t.Handle.Label, t.Session.PID)
+		return fmt.Sprintf("runs in %s %s (pid %d) with no terminal showing it; M moves it into ym once it is idle", t.Handle.Host, t.Handle.Label, t.Session.PID)
+	case t.Ours && t.Session.PID != 0:
+		return fmt.Sprintf("ym launched %s, but its pane is not on ym's tmux (try Y, then r: repair)", key)
 	case t.Session.PID == 0:
-		return "not running; resume with: " + resume
+		return fmt.Sprintf("not running; ym revive %s resumes it in ym", key)
 	}
 	where := "pid " + strconv.Itoa(t.Session.PID)
 	if t.Session.TTY != "" {
@@ -150,7 +163,7 @@ func (t Target) Advice() string {
 	if t.App != "" {
 		where += " in " + t.App
 	}
-	return "runs as " + where + "; switch to it there. To move it, quit it first, then: " + resume
+	return "runs as " + where + "; switch to it there, or M moves it into ym once it is idle"
 }
 
 // Targets lists every live copy of a session with its host; a session with no live process yields its resume command.
@@ -164,9 +177,11 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 			return []Target{{Session: s.Session, Remote: s.Remote}}
 		}
 		for _, cp := range copiesOf(s) {
-			t := Target{Session: cp, App: s.App}
-			if h, host := c.locate(cp.TTY); host != nil && !cp.Background {
+			t := Target{Session: cp, App: s.App, Ours: s.Ours}
+			if h, host, hostErr := c.locate(cp.TTY); host != nil && !cp.Background {
 				t.Handle = &h
+			} else if hostErr != "" && !cp.Background {
+				t.HostErr = hostErr
 			} else if !cp.Background {
 				t.Resume = c.resumeProfile(cp)
 			}
@@ -203,9 +218,17 @@ func (c *Core) resume(harnessName, id string) []string {
 var ErrNoHost = errors.New("no terminal host")
 
 // Focus brings the target's terminal forward, and the terminal showing that one when it is nested.
+// A session in a terminal app comes forward in its window and tab; one in a tmux ym does not run brings forward the terminal
+// that shows that tmux.
 func (c *Core) Focus(t Target) error {
-	if t.Handle == nil {
+	if t.HostErr != "" {
 		return ErrNoHost
+	}
+	if t.Handle == nil {
+		if t.Session.TTY == "" || t.Session.Background || t.Ours || c.Front == nil {
+			return ErrNoHost
+		}
+		return c.Front(t.Session.TTY)
 	}
 	host := c.host(t.Handle.Host)
 	if host == nil {
@@ -215,10 +238,16 @@ func (c *Core) Focus(t Target) error {
 	if err != nil || outer == "" {
 		return err
 	}
-	if h, oh := c.locate(outer); oh != nil && oh.Name() != host.Name() {
+	if h, oh, _ := c.locate(outer); oh != nil && oh.Name() != host.Name() {
 		_, err = oh.Focus(h)
+		return err
 	}
-	return err
+	if c.Front != nil {
+		if err := c.Front(outer); !errors.Is(err, ErrNoHost) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delivery says how an answer reached, or will reach, its agent.
@@ -376,6 +405,9 @@ func (c *Core) typeMessages(s Live, msgs []Message) string {
 	if s.Status != Idle {
 		return ""
 	}
+	if s.HostErr != "" {
+		return s.HostErr
+	}
 	if s.Handle == nil {
 		return "no terminal ym can type into"
 	}
@@ -497,6 +529,9 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 	why := ""
 	if s.Status == Idle {
 		why = "no terminal ym can type into"
+		if s.HostErr != "" {
+			why = s.HostErr
+		}
 		if s.Handle != nil {
 			host, hn := c.host(s.Handle.Host), c.harness(s.Harness)
 			if host != nil && hn != nil {

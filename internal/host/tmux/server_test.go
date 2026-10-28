@@ -108,7 +108,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hd, ok := h.Locate(p.TTY); !ok || hd.Host != Server || hd.ID != p.ID {
+	if hd, ok, _ := h.Locate(p.TTY); !ok || hd.Host != Server || hd.ID != p.ID {
 		t.Errorf("Locate(%s) = %+v, %v", p.TTY, hd, ok)
 	}
 	if _, err := h.run("send-keys", "-t", p.ID, "Enter"); err != nil {
@@ -133,12 +133,12 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != p {
 		t.Errorf("Panes()[repo-wt-x] = %+v, want the respawned pane %+v", all["repo-wt-x"], p)
 	}
-	if c := h.Attach(core.Handle{ID: p.ID}); c == nil || !slices.Contains(c.Args, p.ID) || slices.ContainsFunc(c.Env, func(kv string) bool { return len(kv) > 5 && kv[:5] == "TMUX=" }) {
+	if c, _ := h.Attach(core.Handle{ID: p.ID}); c == nil || !slices.Contains(c.Args, p.ID) || slices.ContainsFunc(c.Env, func(kv string) bool { return len(kv) > 5 && kv[:5] == "TMUX=" }) {
 		t.Errorf("Attach outside the server = %v", c)
 	}
 	sock, _ := h.run("display-message", "-p", "#{socket_path}")
 	t.Setenv("TMUX", sock+",1,0")
-	if c := h.Attach(core.Handle{ID: p.ID}); c != nil {
+	if c, _ := h.Attach(core.Handle{ID: p.ID}); c != nil {
 		t.Errorf("Attach inside the server = %v, want nil so Focus switches the client", c.Args)
 	}
 	if err := h.Kill("repo-wt-x"); err != nil {
@@ -156,7 +156,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 }
 
 func TestDefaultHostNeverAttaches(t *testing.T) {
-	if c := (&Host{}).Attach(core.Handle{ID: "%1"}); c != nil {
+	if c, _ := (&Host{}).Attach(core.Handle{ID: "%1"}); c != nil {
 		t.Errorf("default host Attach = %v", c.Args)
 	}
 }

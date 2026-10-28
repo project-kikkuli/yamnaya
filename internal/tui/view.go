@@ -268,11 +268,6 @@ func machineLines(mc core.Machine, now time.Time, width int) string {
 
 func (m Model) footer() []string {
 	var lines []string
-	if m.mode == modeInput && m.inKind == inAdopt {
-		lines = append(lines, " "+pal.bold.Render("move "+m.inLabel+" into ym?")+" it ends the process in its current terminal")
-		lines = append(lines, pal.dim.Render(" enter yes   esc no"))
-		return lines
-	}
 	if m.mode == modeConfirm {
 		lines = append(lines, " "+pal.bold.Render(m.ask)+" y/n")
 		return lines
@@ -743,7 +738,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		}
 		b.WriteString(m.mark(i) + pal.yellow.Render("PERM ") + " " + name + " " + what + "\n")
 		if sel {
-			b.WriteString(pal.dim.Render("         enter "+goVerb(*n.Session)+" · r reply") + "\n")
+			b.WriteString(pal.dim.Render("         enter go to its session · r reply") + "\n")
 		}
 		return b.String()
 	}
@@ -937,7 +932,7 @@ func (m Model) detailView() viewPage {
 			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
 		if i == m.cursor && s.Adoptable() {
-			line += pal.dim.Render("   o adopt")
+			line += pal.dim.Render("   M move in")
 		}
 		b.place = "s:" + s.Key()
 		b.WriteString(withNote(line+"\n", m.note(sessionKey(s))))
@@ -1511,10 +1506,11 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 then type its name and its remit in your words (enter leaves it empty)
    b            show the goal's or chief's brief, the newest version its manager recorded
    n            new goal: pick its repository first, then type the goal in your words; a manager starts on it
-   o            go to the selected row's session: jump to its tmux pane, or say where it runs, and mark
-                what it said read;
-                a session in another terminal app (iTerm, Terminal) is adopted: once idle, ym ends
-                it there and resumes it on its own server
+   o            go to the selected row's session: jump to its tmux pane, or bring forward the Terminal or
+                iTerm2 window and tab it runs in (your own tmux: its window, then the terminal showing it),
+                and mark what it said read; when ym cannot read its tmux, o says so and does nothing else
+   M            move the selected idle session into ym: asks y/n, ends it in its terminal, resumes the
+                same conversation on ym's tmux with the same harness and login, then opens it
    O            open the selected row's session in a new tmux pane beside ym, so the board stays in
                 view; needs ym running inside tmux
    x            dismiss the item with a reason; on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
@@ -1604,12 +1600,4 @@ func age(now, t time.Time) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-}
-
-// goVerb is what going to the session does: adopt one in a terminal ym cannot reach, else go there.
-func goVerb(s core.Live) string {
-	if s.Adoptable() {
-		return "adopt"
-	}
-	return "go to its session"
 }

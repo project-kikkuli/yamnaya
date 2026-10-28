@@ -75,13 +75,21 @@ type fakeHost struct {
 	typeErr error
 	// opens is the dialog that opens on the pane right as a paste lands in it.
 	opens map[string]string
+	// readErr is tmux failing to list its panes; ours marks ym's own server.
+	readErr error
+	ours    bool
 }
 
 func (f *fakeHost) Name() string { return f.name }
-func (f *fakeHost) Locate(tty string) (Handle, bool) {
+func (f *fakeHost) Locate(tty string) (Handle, bool, error) {
+	if f.readErr != nil {
+		return Handle{}, false, f.readErr
+	}
 	id, ok := f.ttys[tty]
-	return Handle{Host: f.name, ID: id, Label: id}, ok
+	return Handle{Host: f.name, ID: id, Label: id}, ok, nil
 }
+
+func (f *fakeHost) Ours() bool { return f.ours }
 func (f *fakeHost) Focus(h Handle) (string, error) {
 	f.focused = append(f.focused, h.ID)
 	return f.outer, nil
@@ -430,8 +438,10 @@ func TestPhasesAdvanceAndReplacingFollowsTheCurrentPhaseByName(t *testing.T) {
 	}
 }
 
-func TestOnlySessionsInATerminalAppAreAdoptable(t *testing.T) {
+func TestOnlySessionsInATerminalYmDoesNotOwnAreAdoptable(t *testing.T) {
 	w := newWorld(t)
+	ym := &fakeHost{name: "ym", ttys: map[string]string{"/dev/t5": "%5"}, screens: map[string]string{}, ours: true}
+	w.core.Hosts = append(w.core.Hosts, ym)
 	w.run(100, 1, "", "/opt/homebrew/bin/tmux", "", Idle)
 	w.run(101, 100, "/dev/t1", "zsh", "", Idle)
 	w.run(102, 101, "/dev/t1", "claude", "untracked-tmux", Idle)
@@ -440,12 +450,13 @@ func TestOnlySessionsInATerminalAppAreAdoptable(t *testing.T) {
 	w.run(202, 201, "/dev/t2", "claude", "iterm", Idle)
 	w.run(300, 1, "", "/Applications/Claude.app/Contents/MacOS/Claude", "", Idle)
 	w.run(302, 300, "", "claude", "desktop", Idle)
-	w.run(402, 1, "/dev/t4", "claude", "tracked-tmux", Idle)
+	w.run(402, 1, "/dev/t4", "claude", "owners-tmux", Idle)
 	w.tmux.ttys["/dev/t4"] = "%4"
+	w.run(502, 1, "/dev/t5", "claude", "yms-tmux", Idle)
 	if _, err := w.core.Find("desktop"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a session with no terminal, as Claude Desktop runs, was found: %v", err)
 	}
-	for id, want := range map[string]bool{"untracked-tmux": false, "iterm": true, "tracked-tmux": false} {
+	for id, want := range map[string]bool{"untracked-tmux": false, "iterm": true, "owners-tmux": true, "yms-tmux": false} {
 		s, err := w.core.Find(id)
 		if err != nil {
 			t.Fatal(err)

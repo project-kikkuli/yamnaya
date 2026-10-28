@@ -75,8 +75,10 @@ func (c *Core) find(ref string) (Live, error) {
 
 	l := Live{Session: copies[0], Copies: copies}
 	hit := c.harness(l.Harness)
-	if h, host := c.locate(l.TTY); host != nil {
-		l.Handle = &h
+	h, host, hostErr := c.locate(l.TTY)
+	l.HostErr = hostErr
+	if host != nil {
+		l.Handle, l.Ours = &h, ours(host)
 		if l.Prompt == nil {
 			if screen, err := host.Screen(h); err == nil {
 				if p, ok := hit.ParsePrompt(screen); ok {
@@ -84,7 +86,7 @@ func (c *Core) find(ref string) (Live, error) {
 				}
 			}
 		}
-	} else {
+	} else if hostErr == "" {
 		table := proc.Index(procs)
 		l.App, l.Muxed = appOf(table, l.PID), muxed(table, l.PID)
 	}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,8 @@ type host struct {
 	split []string
 	// outside is ym running outside tmux, where no split opens.
 	outside bool
+	// readErr is tmux failing to list its panes.
+	readErr error
 }
 
 func (h *host) Split(hd core.Handle) error {
@@ -55,11 +58,14 @@ func (h *host) Split(hd core.Handle) error {
 }
 
 func (h *host) Name() string { return "tmux" }
-func (h *host) Locate(tty string) (core.Handle, bool) {
-	if h.away[tty] {
-		return core.Handle{}, false
+func (h *host) Locate(tty string) (core.Handle, bool, error) {
+	if h.readErr != nil {
+		return core.Handle{}, false, h.readErr
 	}
-	return core.Handle{Host: "tmux", ID: tty, Label: tty}, true
+	if h.away[tty] {
+		return core.Handle{}, false, nil
+	}
+	return core.Handle{Host: "tmux", ID: tty, Label: tty}, true, nil
 }
 func (h *host) Focus(hd core.Handle) (string, error) {
 	h.focused = append(h.focused, hd.ID)
@@ -649,22 +655,28 @@ func TestOGoesToASessionWithNoCrewOrItems(t *testing.T) {
 	}
 }
 
-func TestGoingToASessionInAnotherTerminalAdoptsItOnceConfirmed(t *testing.T) {
+func TestOBringsAnotherTerminalForwardAndMMovesItIntoYmOnceConfirmed(t *testing.T) {
 	m, c, h := setup(t)
-	l := &launches{}
+	l := &launches{launched: []core.Launched{}}
 	c.Launches = l
+	var fronted []string
+	c.Front = func(tty string) error { fronted = append(fronted, tty); return nil }
 	h.away = map[string]bool{"/dev/a": true}
 	m = refresh(t, m)
 	m = press(t, m, "down", "down", "down", "enter")
-	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View().Content, "o adopt") {
-		t.Fatalf("lead session row should offer adopt:\n%s", m.View().Content)
+	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View().Content, "M move in") {
+		t.Fatalf("lead session row should offer M:\n%s", m.View().Content)
+	}
+	m = press(t, m, "o")
+	if len(l.adopted) != 0 || strings.Join(fronted, " ") != "/dev/a" {
+		t.Fatalf("o adopted %v, fronted %v; want its terminal forward and nothing moved", l.adopted, fronted)
 	}
 	for _, c := range []struct {
 		keys    []string
 		adopted int
 	}{
-		{[]string{"o", "esc"}, 0},
-		{[]string{"o", "y", "enter"}, 1},
+		{[]string{"M", "n"}, 0},
+		{[]string{"M", "y"}, 1},
 	} {
 		m = press(t, m, c.keys...)
 		if len(l.adopted) != c.adopted {
@@ -678,6 +690,46 @@ func TestGoingToASessionInAnotherTerminalAdoptsItOnceConfirmed(t *testing.T) {
 	press(t, refresh(t, m), "o")
 	if len(l.adopted) != 1 || !strings.Contains(strings.Join(h.focused, " "), "/dev/a") {
 		t.Fatalf("a session tmux reaches must be focused, not adopted: adopted %v focused %v", l.adopted, h.focused)
+	}
+}
+
+func TestMLeavesABusySessionWhereItRuns(t *testing.T) {
+	m, c, h := setup(t)
+	l := &launches{launched: []core.Launched{}}
+	c.Launches = l
+	h.away = map[string]bool{"/dev/a": true}
+	c.Harnesses = []core.Harness{harness{map[int]core.Session{1: {ID: "lead", Title: "Lead work", Status: core.Busy}}}}
+	m = refresh(t, m)
+	m = press(t, m, "down", "down", "down", "enter")
+	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" {
+		t.Fatalf("selected %+v, want the lead session", r)
+	}
+	m = press(t, m, "M", "y")
+	if len(l.adopted) != 0 || m.mode == modeConfirm {
+		t.Fatalf("M on a busy session adopted %v, mode %v, message %q", l.adopted, m.mode, m.message)
+	}
+}
+
+func TestOWhileYmCannotReadItsTmuxSaysSoAndMovesNothing(t *testing.T) {
+	for _, readErr := range []string{"tmux -L ym list-panes: signal: killed", `exec: "tmux": executable file not found in $PATH`} {
+		t.Run(readErr, func(t *testing.T) {
+			m, c, h := setup(t)
+			l := &launches{launched: []core.Launched{}}
+			c.Launches = l
+			var fronted []string
+			c.Front = func(tty string) error { fronted = append(fronted, tty); return nil }
+			h.readErr = errors.New(readErr)
+			m = refresh(t, m)
+			m = press(t, m, "down", "down", "down", "enter")
+			m = press(t, m, "o")
+			if !strings.Contains(m.message, "can't read your tmux: "+readErr) || !strings.Contains(m.message, "repair") || strings.Contains(m.message, "--resume") {
+				t.Fatalf("o said %q", m.message)
+			}
+			m = press(t, m, "M", "y")
+			if len(l.adopted)+len(fronted)+len(h.focused) != 0 {
+				t.Fatalf("adopted %v, fronted %v, focused %v while tmux cannot be read", l.adopted, fronted, h.focused)
+			}
+		})
 	}
 }
 

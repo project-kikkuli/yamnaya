@@ -50,11 +50,11 @@ func TestLocateTypeAndScreenByPaneTTY(t *testing.T) {
 	h := server(t)
 	h.must(t, "new-session", "-d", "-s", "work", "-x", "120", "-y", "30", "cat")
 	tty := h.must(t, "display-message", "-p", "-t", "work", "#{pane_tty}")
-	hd, ok := h.Locate(tty)
+	hd, ok, _ := h.Locate(tty)
 	if !ok || hd.Label != "work:0.0" || !strings.HasPrefix(hd.ID, "%") {
 		t.Fatalf("Locate(%s) = %+v, %v", tty, hd, ok)
 	}
-	if _, ok := h.Locate("/dev/nope"); ok {
+	if _, ok, _ := h.Locate("/dev/nope"); ok {
 		t.Fatal("located an unknown tty")
 	}
 	if err := h.Paste(hd, "re D1: ship it"); err != nil {
@@ -80,7 +80,7 @@ func TestLocateSkipsADeadPaneOnTheLiveSessionsReusedTTY(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-			hd, ok := (&Host{Socket: "fake"}).Locate("/dev/ttys006")
+			hd, ok, _ := (&Host{Socket: "fake"}).Locate("/dev/ttys006")
 			if !ok || hd.ID != "%11" || hd.Label != "cost:0.0" {
 				t.Fatalf("Locate = %+v, %v, want the live pane %%11", hd, ok)
 			}
@@ -102,7 +102,7 @@ func TestPanesAreReadAgainOnlyAfterTerminalProcessesChange(t *testing.T) {
 	}
 	h := &Host{Socket: "fake"}
 	h.Terminals(1)
-	if _, ok := h.Locate("/dev/ttys006"); !ok || read() != 1 {
+	if _, ok, _ := h.Locate("/dev/ttys006"); !ok || read() != 1 {
 		t.Fatalf("first board: located %v after %d tmux calls", ok, read())
 	}
 	time.Sleep(600 * time.Millisecond)

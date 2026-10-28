@@ -40,7 +40,7 @@ var Commands = map[string]string{
 	"ym sessions":         "enter",
 	"ym docs":             "Y",
 	"ym open":             "o",
-	"ym adopt":            "o",
+	"ym adopt":            "M",
 	"ym revive":           "E",
 	"ym send":             "s",
 	"ym waiting":          "enter",

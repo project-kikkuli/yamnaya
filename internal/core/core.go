@@ -215,13 +215,19 @@ type Handle struct {
 // Host is a terminal program that can show a session.
 type Host interface {
 	Name() string
-	Locate(tty string) (Handle, bool)
+	// Locate finds the terminal on tty; err means the host could not say, never that the terminal is not there.
+	Locate(tty string) (Handle, bool, error)
 	// Focus brings the terminal forward. When another terminal shows this one, Focus returns that terminal's tty.
 	Focus(h Handle) (outer string, err error)
 	// Paste pastes text as one bracketed paste, without pressing Enter.
 	Paste(h Handle, text string) error
 	Enter(h Handle) error
 	Screen(h Handle) (string, error)
+}
+
+// Owned is a host ym runs itself, whose sessions are ym's and never another terminal's.
+type Owned interface {
+	Ours() bool
 }
 
 // Watching is a host whose panes change only with the processes on terminals, so it rereads them after stamp changes.

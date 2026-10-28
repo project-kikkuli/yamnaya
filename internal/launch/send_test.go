@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,17 +15,24 @@ type pane struct {
 	dead    bool
 	fails   int
 	typed   []string
+	// unread are the tmux errors the next prompt reads fail with, one each.
+	unread []error
 }
 
-func (p *pane) Prompt() (bool, bool) {
+func (p *pane) Prompt() (bool, bool, error) {
+	if len(p.unread) > 0 {
+		err := p.unread[0]
+		p.unread = p.unread[1:]
+		return false, false, err
+	}
 	if p.dead {
-		return false, false
+		return false, false, nil
 	}
 	shown := p.prompts[0]
 	if len(p.prompts) > 1 {
 		p.prompts = p.prompts[1:]
 	}
-	return shown, true
+	return shown, true, nil
 }
 
 func (p *pane) Type(text string) error {
@@ -58,6 +66,7 @@ func TestSendTypesIntoAFreePaneAndQueuesTheRest(t *testing.T) {
 		{"idle or busy pane", &pane{prompts: []bool{false}}, Typed, core.MsgTyped, 1},
 		{"permission prompt", &pane{prompts: []bool{true}}, Held, core.MsgPending, 0},
 		{"agent exited", &pane{dead: true}, Queued, core.MsgPending, 0},
+		{"tmux cannot say", &pane{unread: []error{errors.New("tmux -L ym display-message: signal: killed")}, prompts: []bool{false}}, Queued, core.MsgPending, 0},
 		{"input box hidden", &pane{prompts: []bool{false}, fails: 1}, Held, core.MsgPending, 0},
 		{"not on ym's server", nil, Queued, core.MsgPending, 0},
 		{"not on ym's server, its inbox takes it", nil, Sent, core.MsgSent, 0},
@@ -108,6 +117,7 @@ func TestHoldTypesOnceThePromptClears(t *testing.T) {
 		{"prompt clears", &pane{prompts: []bool{true, true, true, false}}, false, true, core.MsgTyped, true, false},
 		{"prompt clears after ym was turned off", &pane{prompts: []bool{true, true, true, false}}, false, false, core.MsgPending, false, true},
 		{"agent exits first", &pane{dead: true}, false, false, core.MsgPending, false, false},
+		{"tmux cannot say, then the prompt clears", &pane{unread: []error{errors.New("killed"), errors.New("not found")}, prompts: []bool{false}}, false, true, core.MsgTyped, true, false},
 		{"inbox took it first", &pane{prompts: []bool{false}}, true, false, core.MsgInbox, false, false},
 		{"input box hidden until it shows", &pane{prompts: []bool{false}, fails: 2}, false, true, core.MsgTyped, true, false},
 	} {

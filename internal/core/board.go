@@ -22,9 +22,11 @@ type Core struct {
 	Store       *Store
 	Harnesses   []Harness
 	Hosts       []Host
-	Procs       func() ([]proc.Proc, error)
-	Now         func() time.Time
-	Meter       Meter
+	// Front brings forward the terminal app window and tab whose terminal is tty; ErrNoHost when no app shows it.
+	Front func(tty string) error
+	Procs func() ([]proc.Proc, error)
+	Now   func() time.Time
+	Meter Meter
 	// Git places a directory in its repository; nil leaves sessions without a repo.
 	Git func(dir string) GitInfo
 	// PRs fetches pull request status for RefreshPRs.
@@ -101,7 +103,11 @@ type Live struct {
 	// App is the program the session's terminal belongs to when no host adapter knows it, such as iTerm2.
 	App string
 	// Muxed is set when a tmux server ym does not reach runs the session's terminal.
-	Muxed   bool
+	Muxed bool
+	// HostErr says which terminal host ym could not read while looking for the session, so where it runs is unknown.
+	HostErr string
+	// Ours is set when the session runs on ym's own server or ym launched it, so it is never another terminal's.
+	Ours    bool
 	Copies  []Session
 	Project string
 	// Messages are the follow-ups the owner sent this session.
@@ -437,12 +443,13 @@ func (c *Core) Board() (Board, error) {
 			continue
 		}
 		l := Live{Session: s, Copies: copies[s.Harness+"/"+s.Profile+"/"+s.ID]}
-		h, host := c.locate(s.TTY)
-		if host == nil {
+		h, host, hostErr := c.locate(s.TTY)
+		l.HostErr = hostErr
+		if host == nil && hostErr == "" {
 			l.App, l.Muxed = appOf(table, s.PID), muxed(table, s.PID)
 		}
 		if host != nil {
-			l.Handle = &h
+			l.Handle, l.Ours = &h, ours(host)
 			if (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
 				l.Prompt = c.prompts.on(l.Session, h, b.At, func() *Prompt {
 					if screen, err := host.Screen(h); err == nil {
@@ -488,6 +495,15 @@ func (c *Core) Board() (Board, error) {
 	items, err := c.Store.Items(ItemFilter{})
 	if err != nil {
 		return b, err
+	}
+	launched := map[string]bool{}
+	for _, l := range fp.launched {
+		if l.Landed.IsZero() && l.Session != "" {
+			launched[l.Session] = true
+		}
+	}
+	for i := range b.Sessions {
+		b.Sessions[i].Ours = b.Sessions[i].Ours || launched[b.Sessions[i].ID]
 	}
 	dormant := c.dormant(fp.dormant, b.Sessions, b.moved)
 	if s, ok := c.Launches.(interface{ Saw([]Live) }); ok {
@@ -772,19 +788,39 @@ func repos(projects []Project) []Repo {
 	return out
 }
 
-func (c *Core) locate(tty string) (Handle, Host) {
+// locate finds the host showing tty. When no host has it and one could not be read, hostErr says which and why: the session
+// may run there, so it is neither outside nor gone.
+func (c *Core) locate(tty string) (h Handle, host Host, hostErr string) {
 	if tty == "" {
-		return Handle{}, nil
+		return Handle{}, nil, ""
 	}
+	var errs []string
 	for _, host := range c.Hosts {
-		if h, ok := host.Locate(tty); ok {
+		h, ok, err := host.Locate(tty)
+		if err != nil {
+			errs = append(errs, "can't read "+hostLabel(host)+": "+err.Error())
+			continue
+		}
+		if ok {
 			if h.Host == "" {
 				h.Host = host.Name()
 			}
-			return h, host
+			return h, host, ""
 		}
 	}
-	return Handle{}, nil
+	return Handle{}, nil, strings.Join(errs, "; ")
+}
+
+func hostLabel(h Host) string {
+	if ours(h) {
+		return "ym's tmux"
+	}
+	return "your " + h.Name()
+}
+
+func ours(h Host) bool {
+	o, ok := h.(Owned)
+	return ok && o.Ours()
 }
 
 func (c *Core) harness(name string) Harness {

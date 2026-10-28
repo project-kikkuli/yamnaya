@@ -110,7 +110,8 @@ Behind `?`:
 | --- | --- |
 | `N` | new goal in the selected row's repository |
 | `+` | new session of your own, no manager |
-| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in |
+| `o` / `O` | go to the session's tmux pane / open it in a pane beside the board; `o` on an exited session, or a mission where nothing runs, resumes its latest launched session (on its host too) and goes in. A session in Terminal or iTerm2 comes forward in its own window and tab; one in your own tmux gets its window selected there and the terminal showing that tmux comes forward. When ym cannot read a tmux (it failed, was killed, or is missing), `o` says `can't read ym's tmux: <error>` with `Y`, then `r` to repair, and nothing is opened, ended or moved |
+| `M` | move an idle session from a terminal ym does not own (Terminal, iTerm2, your own tmux) into ym: asks y/n, ends it in that terminal, resumes the same conversation on ym's tmux with the same harness and login, then opens it. A busy session, one ym launched, and one in a tmux ym cannot read are never moved |
 | `space` | select goal and chief rows; `r`, `s` and `c` then act on every selected one |
 | `s` | send a message to the goal, chief or session, like `r`; `tab` widens a chief to its subtree |
 | `x` `l` `u` | dismiss, later, reopen an item; `x` also clears a queue row or a done goal |
@@ -486,7 +487,8 @@ You never need these commands by hand: `ym` opens the board, and every one of th
 | --- | --- |
 | `ym goal`, `ym new`, `ym chief` | `n` / `N`, `+`, `c n` or `C` |
 | `ym sessions`, `ym waiting`, `ym goal list`, `ym goal feed`, `ym goal context` | the board itself; `enter` opens a row |
-| `ym open`, `ym adopt` | `o` / `O` |
+| `ym open` | `o` / `O` |
+| `ym adopt` | `M` |
 | `ym send`, `ym goal send` | `s`, or `r` on a goal, chief or session |
 | `ym item answer`, `go`, `dismiss`, `snooze`, `reopen`, `show`, `list` | `r`, `g`, `x`, `l`, `u`, `enter`, `I` |
 | `ym goal show` | `b`, `W` |

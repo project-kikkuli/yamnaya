@@ -24,13 +24,13 @@ type nativePane struct {
 	adapter *codex.Adapter
 }
 
-func (p nativePane) Prompt() (bool, bool) {
+func (p nativePane) Prompt() (bool, bool, error) {
 	text, err := p.host.Screen(p.handle)
 	if err != nil {
-		return false, false
+		return false, false, err
 	}
 	_, shown := p.adapter.ParsePrompt(text)
-	return shown, true
+	return shown, true, nil
 }
 func (p nativePane) Type(text string) error { return core.Type(p.host, p.handle, p.adapter, 0, text) }
 

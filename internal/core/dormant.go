@@ -58,7 +58,8 @@ type Launches interface {
 	Launched() []Launched
 }
 
-// Adoptable reports whether ym can move s onto its own server: it runs in a terminal app no host of ym's reaches.
+// Adoptable reports whether ym can move s onto its own server: it runs in a terminal ym does not own, a terminal app or the
+// owner's own tmux.
 func (l Live) Adoptable() bool { return l.Unadoptable() == "" }
 
 // Unadoptable says why ym cannot move s onto its own server, or is empty when it can.
@@ -68,8 +69,10 @@ func (l Live) Unadoptable() string {
 		return fmt.Sprintf("%s runs on %s; ym open %s reaches it there over ssh", Short(l.Key()), l.Remote, Short(l.Key()))
 	case l.Background:
 		return fmt.Sprintf("%s is a background job with no terminal to move; ym answers and sends reach it through its inbox", Short(l.Key()))
-	case l.Handle != nil:
-		return fmt.Sprintf("%s runs in %s; ym open %s reaches it there", Short(l.Key()), l.Location(), Short(l.Key()))
+	case l.HostErr != "":
+		return UnreadAdvice(l.HostErr)
+	case l.Ours:
+		return fmt.Sprintf("%s already runs in ym; ym open %s goes to it", Short(l.Key()), Short(l.Key()))
 	case l.PID == 0 || l.ID == "":
 		return fmt.Sprintf("%s has no session id yet", Short(l.Key()))
 	case l.Muxed:

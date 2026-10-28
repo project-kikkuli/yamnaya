@@ -19,8 +19,8 @@ type Mailbox interface {
 
 // Pane is the terminal on ym's server a session runs in.
 type Pane interface {
-	// Prompt reports whether a permission dialog shows; live is false once the agent has exited.
-	Prompt() (shown, live bool)
+	// Prompt reports whether a permission dialog shows; live is false once the agent has exited, and err is set when tmux could not say.
+	Prompt() (shown, live bool, err error)
 	Type(text string) error
 }
 
@@ -63,9 +63,9 @@ func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outc
 		m, err := s.Box.AddMessage(session, text, core.MsgPending)
 		return m, Queued, err
 	}
-	shown, live := pane.Prompt()
+	shown, live, err := pane.Prompt()
 	switch {
-	case !live:
+	case err != nil || !live:
 		m, err := s.Box.AddMessage(session, text, core.MsgPending)
 		return m, Queued, err
 	case shown:
@@ -94,18 +94,18 @@ func (s Sender) Send(session string, pane Pane, text string) (core.Message, Outc
 }
 
 // Hold types a held message once the pane's permission prompt clears. It gives up, leaving the message to the inbox, when the agent exits
-// or ym is off for its session, and stops when the inbox took it first.
+// or ym is off for its session, and stops when the inbox took it first; while tmux cannot say, it keeps waiting.
 func (s Sender) Hold(seq int64, pane Pane) (bool, error) {
 	for {
 		m, err := s.Box.Message(seq)
 		if err != nil || m.State != core.MsgPending {
 			return false, err
 		}
-		shown, live := pane.Prompt()
-		if !live {
+		shown, live, err := pane.Prompt()
+		if err == nil && !live {
 			return false, nil
 		}
-		if !shown {
+		if err == nil && !shown {
 			if s.Off != nil && s.Off(m.Session) {
 				return false, nil
 			}

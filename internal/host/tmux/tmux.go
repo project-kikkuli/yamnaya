@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,7 @@ type pane struct {
 }
 
 func (h *Host) run(args ...string) (string, error) {
+	verb := args[0]
 	if h.Socket != "" || (os.Getenv("TMUX") != "" && !h.inside()) {
 		args = append([]string{"-L", h.socketName()}, args...)
 	}
@@ -78,27 +80,30 @@ func (h *Host) run(args ...string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return "", &runError{args: args, err: err, stderr: strings.TrimSpace(errb.String())}
+		return "", &runError{server: h.socketName(), verb: verb, err: err, stderr: strings.TrimSpace(errb.String())}
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
 }
 
 type runError struct {
-	args   []string
-	err    error
-	stderr string
+	server, verb string
+	err          error
+	stderr       string
 }
 
 func (e *runError) Error() string {
-	return fmt.Sprintf("tmux %s: %v: %s", strings.Join(e.args, " "), e.err, e.stderr)
+	if e.stderr == "" {
+		return fmt.Sprintf("tmux -L %s %s: %v", e.server, e.verb, e.err)
+	}
+	return fmt.Sprintf("tmux -L %s %s: %v: %s", e.server, e.verb, e.err, e.stderr)
 }
 
 func (e *runError) Unwrap() error { return e.err }
 
-// absent reports whether tmux's message says the session it was asked about, or the whole server, does not exist; a server ending
+// absent reports whether tmux's message says the session or pane it was asked about, or the whole server, does not exist; a server ending
 // after its last session went says it has no current target.
 func absent(text string) bool {
-	return strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "no server running on ") || text == "no current target" ||
+	return strings.HasPrefix(text, "can't find session:") || strings.HasPrefix(text, "can't find pane:") || strings.HasPrefix(text, "no server running on ") || text == "no current target" ||
 		strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)")
 }
 
@@ -106,12 +111,6 @@ func absent(text string) bool {
 func gone(err error) bool {
 	var re *runError
 	return errors.As(err, &re) && absent(re.stderr)
-}
-
-// list caches the pane table for a moment so one board refresh runs tmux once.
-func (h *Host) list() map[string]pane {
-	panes, _, _ := h.table()
-	return panes
 }
 
 // table reads every pane once: live panes by terminal, and the first pane of each session by session name. A server that is
@@ -183,21 +182,48 @@ func (h *Host) forget() {
 	h.mu.Unlock()
 }
 
-func (h *Host) Locate(tty string) (core.Handle, bool) {
-	p, ok := h.list()[tty]
-	if !ok {
-		return core.Handle{}, false
+// Locate finds the pane on tty from a pane table cached for a moment, so one board refresh runs tmux once; an error means tmux
+// could not say, never that no pane is there.
+func (h *Host) Locate(tty string) (core.Handle, bool, error) {
+	panes, _, err := h.table()
+	if err != nil {
+		return core.Handle{}, false, err
 	}
-	return core.Handle{Host: h.Name(), ID: p.id, Label: p.target}, true
+	p, ok := panes[tty]
+	if !ok {
+		return core.Handle{}, false, nil
+	}
+	return core.Handle{Host: h.Name(), ID: p.id, Label: p.target}, true, nil
 }
 
-// Focus jumps ym's own tmux client to the pane. Outside this server it does nothing, so no other client or window ever moves.
+// Ours reports whether this is ym's own server, whose sessions ym runs.
+func (h *Host) Ours() bool { return h.Kind == Server }
+
+// Focus jumps ym's own tmux client to the pane. Outside this server it shows the pane in the server's window and returns the
+// tty of the client that last used its session, so that terminal comes forward; ym's own server attaches instead.
 func (h *Host) Focus(hd core.Handle) (string, error) {
-	if h.Self == "" || !h.inside() {
+	if h.Self != "" && h.inside() {
+		_, err := h.run("switch-client", "-t", hd.ID, ";", "select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID)
+		return "", err
+	}
+	if h.Ours() {
 		return "", core.ErrNoHost
 	}
-	_, err := h.run("switch-client", "-t", hd.ID, ";", "select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID)
-	return "", err
+	out, err := h.run("select-window", "-t", hd.ID, ";", "select-pane", "-t", hd.ID, ";", "list-clients", "-t", hd.ID, "-F", "#{client_activity}\t#{client_tty}")
+	if err != nil {
+		return "", err
+	}
+	tty, last := "", 0
+	for _, line := range strings.Split(out, "\n") {
+		at, t, ok := strings.Cut(line, "\t")
+		if n, _ := strconv.Atoi(at); ok && (tty == "" || n > last) {
+			tty, last = t, n
+		}
+	}
+	if tty == "" {
+		return "", core.ErrNoHost
+	}
+	return tty, nil
 }
 
 // Split shows hd in a new pane beside ym's own through a grouped session of hd's, so no other client's window moves.

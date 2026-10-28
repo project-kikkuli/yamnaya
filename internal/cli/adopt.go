@@ -166,20 +166,20 @@ func (l launcher) pane(id, harnessName string) *serverPane {
 	return nil
 }
 
-func (p *serverPane) Prompt() (bool, bool) {
-	pid, ok := p.l.srv.Running(p.id)
-	if !ok {
-		return false, false
+func (p *serverPane) Prompt() (bool, bool, error) {
+	pid, ok, err := p.l.srv.Running(p.id)
+	if err != nil || !ok {
+		return false, false, err
 	}
 	if w, ok := p.harness.(core.Waiter); ok && w.Waiting(pid) {
-		return true, true
+		return true, true, nil
 	}
 	screen, err := p.l.srv.Screen(core.Handle{ID: p.id})
 	if err != nil {
-		return false, false
+		return false, true, err
 	}
 	_, shown := p.harness.ParsePrompt(screen)
-	return shown, true
+	return shown, true, nil
 }
 
 // Type types into the pane one ym at a time, so one sender's Enter never submits another's paste before it sees it land.
@@ -192,7 +192,10 @@ func (p *serverPane) Type(text string) error {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	pid, ok := p.l.srv.Running(p.id)
+	pid, ok, err := p.l.srv.Running(p.id)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return fmt.Errorf("pane %s no longer runs its agent", p.id)
 	}
@@ -221,7 +224,10 @@ func adoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			if err != nil {
 				return err
 			}
-			c := e.core.AttachCmd(t)
+			c, err := e.core.AttachCmd(t)
+			if err != nil {
+				return err
+			}
 			if c == nil || !term.IsTerminal(os.Stdin.Fd()) {
 				fmt.Fprintf(out, "open: ym open %s\n", core.Short(s.ID))
 				return nil

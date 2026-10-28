@@ -49,9 +49,9 @@ type partialPane struct {
 	polls int
 }
 
-func (p *partialPane) Prompt() (bool, bool) {
+func (p *partialPane) Prompt() (bool, bool, error) {
 	p.polls++
-	return false, p.polls <= 2
+	return false, p.polls <= 2, nil
 }
 func (p *partialPane) Type(text string) error {
 	p.host.screen = "• Working (6s • esc to interrupt)\n\n› Ask Codex to do anything\n\n  GPT-6.1-Sol high fast · /repo\n  tab to queue message\n"

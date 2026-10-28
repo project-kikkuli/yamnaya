@@ -237,27 +237,34 @@ func (h *Host) KillServer() error {
 
 // Attach is the command that shows the session holding hd in the caller's terminal, on hd's pane, until the owner detaches.
 // Inside this server, Focus switches the client instead, so Attach is nil there.
-func (h *Host) Attach(hd core.Handle) *exec.Cmd {
+func (h *Host) Attach(hd core.Handle) (*exec.Cmd, error) {
 	if h.Kind != Server || h.inside() {
-		return nil
+		return nil, nil
 	}
 	if _, err := h.run("display-message", "-p", "-t", hd.ID, "#{session_name}"); err != nil {
-		return nil
+		return nil, err
 	}
 	cmd := h.command("attach-session", "-t", hd.ID)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	return cmd
+	return cmd, nil
 }
 
-// Running is the pid of the program in pane id; ok is false once the pane is gone or its program exited.
-func (h *Host) Running(id string) (pid int, ok bool) {
+// Running is the pid of the program in pane id; ok is false once the pane is gone or its program exited, and err is set when
+// tmux could not say.
+func (h *Host) Running(id string) (pid int, ok bool, err error) {
 	out, err := h.run("display-message", "-p", "-t", id, "#{pane_dead} #{pane_pid}")
+	if gone(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
 	dead, p, _ := strings.Cut(out, " ")
-	if err != nil || dead != "0" {
-		return 0, false
+	if dead != "0" {
+		return 0, false, nil
 	}
 	pid, err = strconv.Atoi(p)
-	return pid, err == nil
+	return pid, err == nil, nil
 }
 
 // Keys presses keys in pane id.

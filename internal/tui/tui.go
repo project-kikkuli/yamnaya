@@ -51,7 +51,6 @@ const (
 	inRename
 	inFilter
 	inDismissStale
-	inAdopt
 	inSend
 	inPanel
 	inNew
@@ -1121,6 +1120,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "z":
 		return m.toggleOff(r)
+	case "M":
+		return m.moveIn(r)
 	case "T":
 		if s := m.sessionOf(r); s != nil {
 			live, to := *s, core.Other(s.Harness)
@@ -1439,8 +1440,6 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		text := strings.TrimSpace(string(m.input))
 		m.mode = m.back
 		switch m.inKind {
-		case inAdopt:
-			return m.adopt(m.inItem)
 		case inGoal, inChief, inRemit, inSteer:
 			return m.goalInput(text)
 		case inPanel:
@@ -1557,7 +1556,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // typed adds text typed or pasted into the input.
 func (m Model) typed(text string) Model {
-	if m.inKind == inAdopt || m.picking() {
+	if m.picking() {
 		return m
 	}
 	if m.fresh {
@@ -1619,11 +1618,6 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 	if err := m.core.Store.MarkOpened(key, time.Now()); err != nil {
 		m.message = "error: " + err.Error()
 	}
-	if s, ok := m.board.Session(key); ok && s.Adoptable() && len(s.Copies) <= 1 && m.core.Launches != nil {
-		m.startInput(inAdopt, key, "", "", false)
-		m.inLabel = titleOf(s)
-		return m, nil
-	}
 	ts := m.core.Targets(m.board, key, harness)
 	switch len(ts) {
 	case 0:
@@ -1649,7 +1643,12 @@ func (m Model) focus(t core.Target) tea.Cmd {
 			return "opened " + t.String() + " beside", err
 		})
 	}
-	if cmd := m.core.AttachCmd(t); cmd != nil {
+	cmd, err := m.core.AttachCmd(t)
+	if err != nil {
+		hostErr := "can't read ym's tmux: " + err.Error()
+		return func() tea.Msg { return doneMsg{core.UnreadAdvice(hostErr), nil} }
+	}
+	if cmd != nil {
 		if t.Remote != "" {
 			return m.attachRemote(t, cmd)
 		}
@@ -1683,19 +1682,28 @@ func (m Model) pickKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// adopt moves the session onto ym's server in the background, then shows it.
-func (m Model) adopt(key string) (tea.Model, tea.Cmd) {
-	s, ok := m.board.Session(key)
-	if !ok {
-		m.message = m.inLabel + " is gone"
+// moveIn asks to end the row's idle session in the terminal it runs in and resume its conversation on ym's server; busy ones stay.
+func (m Model) moveIn(r row) (tea.Model, tea.Cmd) {
+	s := m.sessionOf(r)
+	switch {
+	case s == nil || m.core.Launches == nil:
+		return m, nil
+	case !s.Adoptable():
+		m.message = s.Unadoptable()
+		return m, nil
+	case len(s.Copies) > 1:
+		m.message = core.Short(s.Key()) + " runs in several processes; M moves one that runs once"
+		return m, nil
+	case !s.Settled():
+		m.message = core.Short(s.Key()) + " is busy; M moves it only while it sits idle"
 		return m, nil
 	}
-	m.message = "adopting " + m.inLabel + ": waits until it is idle, then ends it in its terminal"
-	l := m.core.Launches
-	return m, func() tea.Msg {
-		t, err := l.Adopt(s, nil)
+	live, l := *s, m.core.Launches
+	m.confirm("move "+titleOf(live)+" into ym? it ends in its terminal once idle, resumes on ym's tmux and opens", func() tea.Msg {
+		t, err := l.Adopt(live, nil)
 		return adoptedMsg{t, err}
-	}
+	})
+	return m, nil
 }
 
 // each runs f on every ref, going on past failures, and joins what it said.

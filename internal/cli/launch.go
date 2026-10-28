@@ -298,7 +298,11 @@ func (e *env) openLaunched(w io.Writer, ref string, show func(*exec.Cmd) error) 
 		return true, nil
 	}
 	t := core.Target{Session: core.Session{Harness: rec.Harness, ID: rec.Session}, Handle: &core.Handle{Host: l.srv.Name(), ID: pane.ID, Label: pane.Session}}
-	if c := e.core.AttachCmd(t); c != nil {
+	c, err := e.core.AttachCmd(t)
+	if err != nil {
+		return true, err
+	}
+	if c != nil {
 		return true, show(c)
 	}
 	return true, e.core.Focus(t)

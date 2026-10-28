@@ -13,13 +13,21 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
-func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
+func TestALaunchIsNeverLandedKilledOrRevivedWhileTmuxCannotAnswer(t *testing.T) {
 	real, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux not installed")
 	}
+	type run struct{ agent, failure string }
+	var runs []run
 	for _, agent := range []string{"exit 0", "sleep 60"} {
-		t.Run(agent, func(t *testing.T) {
+		for _, failure := range []string{"echo 'server exited unexpectedly' >&2; exit 1", "kill -9 $$", "echo 'tmux: not found' >&2; exit 127"} {
+			runs = append(runs, run{agent, failure})
+		}
+	}
+	for _, r := range runs {
+		agent := r.agent
+		t.Run(agent+" "+r.failure, func(t *testing.T) {
 			base, _ := filepath.EvalSymlinks(t.TempDir())
 			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
 			git(t, base, "init", "-q", "-b", "main", "repo")
@@ -33,7 +41,7 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 			bin := filepath.Join(base, "bin")
 			fail := filepath.Join(base, "fail")
 			os.MkdirAll(bin, 0o755)
-			wrapper := "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = list-panes ] && [ -e " + fail + " ]; then echo 'server exited unexpectedly' >&2; exit 1; fi; done\nexec " + real + " \"$@\"\n"
+			wrapper := "#!/bin/sh\nif [ -e " + fail + " ]; then " + r.failure + "; fi\nexec " + real + " \"$@\"\n"
 			if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(wrapper), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -78,6 +86,15 @@ func TestALaunchIsNeverLandedOrRevivedWhileTmuxCannotListItsPane(t *testing.T) {
 				if launched.Key == rec.Key && !launched.MayRun() {
 					t.Fatalf("launched state %q while tmux fails; want it read as possibly running", launched.State)
 				}
+			}
+			if _, err := l.End(rec.Key, ""); err == nil {
+				t.Fatal("ym kill went on while tmux fails")
+			}
+			if kept, _ := l.records.Find(rec.Key); kept.IsLanded() {
+				t.Fatal("ym kill landed the launch while tmux fails")
+			}
+			if _, err := os.Stat(wt); err != nil {
+				t.Fatalf("ym kill removed the worktree while tmux fails: %v", err)
 			}
 
 			os.Remove(fail)
