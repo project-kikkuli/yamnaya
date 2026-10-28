@@ -271,7 +271,7 @@ func TestFilterMatchesTheHostOfMissionsAndKeepsTheirRepoHeader(t *testing.T) {
 	}
 }
 
-func TestHeaderFitsTheWidthAndNamesHostsByNickname(t *testing.T) {
+func TestHeaderWrapsBetweenItemsToTheWidthAndNamesHostsByNickname(t *testing.T) {
 	now := time.Now()
 	limit := func(harness, name string, used float64, seen time.Time) core.Limit {
 		return core.Limit{Harness: harness, Name: name, Used: used, Window: 7 * 24 * time.Hour, ResetsAt: now.Add(6*time.Hour + 12*time.Minute), Seen: seen}
@@ -286,6 +286,7 @@ func TestHeaderFitsTheWidthAndNamesHostsByNickname(t *testing.T) {
 		{"not answering", core.RemoteBoard{At: now.Add(-7 * time.Minute), FailingSince: now.Add(-5 * time.Minute),
 			Err: errors.New("exit status 255: Connection timed out during banner exchange")}, "@boxmachine no answer 5m"},
 	}
+	others := []string{"ci-alpha-runner.example.net", "ci-bravo-runner.example.net", "ci-charlie-runner.example.net", "ci-delta-runner.example.net"}
 	for _, width := range []int{80, 120, 200} {
 		for _, st := range states {
 			t.Run(fmt.Sprintf("%d %s", width, st.name), func(t *testing.T) {
@@ -294,33 +295,39 @@ func TestHeaderFitsTheWidthAndNamesHostsByNickname(t *testing.T) {
 					limit("claude", "5h", 3, now), limit("claude", "7d", 55, now), limit("codex", "codex 7d", 0, now)}}}
 				b := st.board
 				b.Host, b.Usage = box, &core.Fleet{Ready: true, At: now, Limits: []core.Limit{limit("claude", "7d", 46, now.Add(-4*time.Hour-2*time.Minute))}}
-				c.Remotes, c.ShowRemotes = &remotes{boards: []core.RemoteBoard{b}}, true
+				boards := []core.RemoteBoard{b}
+				for _, h := range others {
+					boards = append(boards, core.RemoteBoard{Host: h, At: now})
+				}
+				c.Remotes, c.ShowRemotes = &remotes{boards: boards}, true
 				m.width, m.peaks.hidden = width, true
 				m = refresh(t, m)
 				m.board.At = now
 				header := ansi.Strip(m.header())
 				t.Logf("header at %d columns:\n%s", width, header)
-				for _, l := range strings.Split(header, "\n") {
+				lines := strings.Split(header, "\n")
+				for _, l := range lines {
 					if ansi.StringWidth(l) >= width {
 						t.Errorf("line is %d columns wide on a %d-column board: %q", ansi.StringWidth(l), width, l)
 					}
-					if strings.Contains(l, "…") {
-						t.Errorf("line is cut mid-item: %q", l)
+				}
+				items := []string{"hosts " + st.brief, "@alpha-runner ok", "@delta-runner ok", "claude 5h 3% ↻6h12m · 7d 55% ↻6h12m",
+					"@boxmachine/claude 7d 46% ↻6h12m (4h2m old)", "codex 7d 0% ↻6h12m", "spend today $0.00 · 7d $0.00"}
+				for _, want := range items {
+					if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, want) }) {
+						t.Errorf("no line holds %q whole", want)
 					}
 				}
-				for _, want := range []string{"hosts " + st.brief, "@boxmachine/claude 7d 46%", "claude 5h 3%", "codex 7d 0%"} {
-					if !strings.Contains(header, want) {
-						t.Errorf("header lacks %q", want)
+				for i, l := range lines[1:] {
+					if !strings.HasPrefix(l, " hosts ") && !strings.HasPrefix(l, " usage ") && !strings.HasPrefix(l, "       ") {
+						t.Errorf("line %d is neither a header line nor a continuation indented under its label: %q", i+1, l)
 					}
+				}
+				if wraps := len(lines) > 3; wraps != (width < 200) {
+					t.Errorf("at %d columns the header takes %d lines", width, len(lines))
 				}
 				if strings.Contains(header, box) || strings.Contains(header, "exit status") {
 					t.Errorf("header shows the full host name or its error; H does")
-				}
-				if width >= 120 && !strings.Contains(header, "spend today") {
-					t.Errorf("at %d columns the spend should fit", width)
-				}
-				if wide := width >= 200; strings.Contains(header, "(4h2m old)") != wide || strings.Contains(header, "46% ↻6h") != wide {
-					t.Errorf("at %d columns the remote account's age and reset show %v, want %v", width, !wide, wide)
 				}
 			})
 		}

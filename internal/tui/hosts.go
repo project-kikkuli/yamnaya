@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -144,7 +143,7 @@ func hostBrief(r core.RemoteBoard, now time.Time) string {
 	return "ok"
 }
 
-// hostsLine is each host's nickname and brief state, as many as fit the width; H shows the rest and why a host fails.
+// hostsLine is each host's nickname and brief state, wrapped to the width; H shows why a host fails.
 func (m Model) hostsLine() string {
 	var hosts []string
 	for _, r := range m.board.Remotes {
@@ -157,19 +156,7 @@ func (m Model) hostsLine() string {
 		}
 		hosts = append(hosts, line)
 	}
-	render := func(n int) string {
-		line := " " + pal.dim.Render("hosts ") + strings.Join(hosts[:n], "   ")
-		if n < len(hosts) {
-			line += pal.dim.Render(fmt.Sprintf("   +%d more (H)", len(hosts)-n))
-		}
-		return line
-	}
-	for n := len(hosts); n > 0; n-- {
-		if line := render(n); m.width <= 0 || ansi.StringWidth(line) < m.width {
-			return line
-		}
-	}
-	return m.fit(render(0))
+	return wrapItems("hosts", hosts, m.width)
 }
 
 // fit cuts s to the board's width.

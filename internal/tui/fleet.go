@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -14,88 +13,74 @@ import (
 // staleAfter is how old a limit report may be before the header shows its age.
 const staleAfter = 10 * time.Minute
 
-// fleetLine shows each harness's account-wide limit windows and this host's API-priced spend of today and the last seven days
-// in width columns, naming other hosts by tag; when it does not fit it drops report ages, then other hosts' reset times, then
-// every reset time, then the spend, then other hosts' accounts from the end.
+// fleetLine shows each harness's account-wide limit windows and this host's API-priced spend of today and the last seven days,
+// naming other hosts by tag and wrapping between accounts to fit width columns.
 func fleetLine(f core.Fleet, now time.Time, width int, tag func(string) string) string {
 	if !f.Ready && len(f.Limits) == 0 {
 		return pal.dim.Render(" usage: reading transcripts…")
 	}
-	type window struct{ text, reset string }
-	type account struct {
-		label   string
-		remote  bool
-		windows []window
-		seen    time.Time
-	}
-	var accounts []*account
-	byLabel := map[string]*account{}
+	var labels []string
+	byLabel := map[string][]core.Limit{}
 	for _, l := range f.Limits {
-		a := byLabel[l.IdentityLabel()]
-		if a == nil {
-			local := l
-			local.Host = ""
-			label := local.IdentityLabel()
-			if l.Host != "" {
-				label = tag(l.Host) + "/" + label
-			}
-			a = &account{label: label, remote: l.Host != ""}
-			byLabel[l.IdentityLabel()] = a
-			accounts = append(accounts, a)
+		if byLabel[l.IdentityLabel()] == nil {
+			labels = append(labels, l.IdentityLabel())
 		}
-		a.windows = append(a.windows, window{fmt.Sprintf("%s %.0f%%", l.Label(), l.Used), " ↻" + core.Span(l.ResetsAt.Sub(now))})
-		if l.Used >= 80 {
-			a.windows[len(a.windows)-1].text = pal.red.Render(a.windows[len(a.windows)-1].text)
-		}
-		if l.Seen.After(a.seen) {
-			a.seen = l.Seen
-		}
+		byLabel[l.IdentityLabel()] = append(byLabel[l.IdentityLabel()], l)
 	}
-	spend := pal.dim.Render("spend and codex limits: reading transcripts…")
+	var parts []string
+	for _, id := range labels {
+		ls := byLabel[id]
+		local := ls[0]
+		local.Host = ""
+		label := local.IdentityLabel()
+		if ls[0].Host != "" {
+			label = tag(ls[0].Host) + "/" + label
+		}
+		var ws []string
+		var seen time.Time
+		for _, l := range ls {
+			w := fmt.Sprintf("%s %.0f%% ↻%s", l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)))
+			if l.Used >= 80 {
+				w = pal.red.Render(w)
+			}
+			ws = append(ws, w)
+			if l.Seen.After(seen) {
+				seen = l.Seen
+			}
+		}
+		p := pal.bold.Render(label) + " " + strings.Join(ws, " · ")
+		if now.Sub(seen) > staleAfter {
+			p += pal.dim.Render(" (" + core.Span(now.Sub(seen)) + " old)")
+		}
+		parts = append(parts, p)
+	}
 	if f.Ready {
-		spend = "spend today " + f.Today.Dollars() + " · 7d " + f.Week.Dollars()
+		parts = append(parts, "spend today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
+	} else {
+		parts = append(parts, pal.dim.Render("spend and codex limits: reading transcripts…"))
 	}
-	render := func(ages, remoteResets, resets bool, shown []*account, spend string) string {
-		var parts []string
-		for _, a := range shown {
-			var ws []string
-			for _, w := range a.windows {
-				if resets && (remoteResets || !a.remote) {
-					ws = append(ws, w.text+w.reset)
-				} else {
-					ws = append(ws, w.text)
-				}
-			}
-			p := pal.bold.Render(a.label) + " " + strings.Join(ws, " · ")
-			if ages && now.Sub(a.seen) > staleAfter {
-				p += pal.dim.Render(" (" + core.Span(now.Sub(a.seen)) + " old)")
-			}
-			parts = append(parts, p)
+	return wrapItems("usage", parts, width)
+}
+
+// wrapItems puts items after label on as many lines as width needs, breaking only between items and indenting each
+// continuation under the first item; width 0 keeps one line.
+func wrapItems(label string, items []string, width int) string {
+	const sep = "   "
+	lead := " " + label + " "
+	indent := strings.Repeat(" ", ansi.StringWidth(lead))
+	var lines []string
+	line, used := " "+pal.dim.Render(label)+" ", ansi.StringWidth(lead)
+	for i, it := range items {
+		w := ansi.StringWidth(it)
+		if i > 0 && width > 0 && used+len(sep)+w >= width {
+			lines = append(lines, line)
+			line, used = indent, len(indent)
+		} else if i > 0 {
+			line, used = line+sep, used+len(sep)
 		}
-		if spend != "" {
-			parts = append(parts, spend)
-		}
-		return " " + strings.Join(parts, "   ")
+		line, used = line+it, used+w
 	}
-	fits := func(line string) bool { return width <= 0 || ansi.StringWidth(line) < width }
-	for _, step := range [][3]bool{{true, true, true}, {false, true, true}, {false, false, true}, {false, false, false}} {
-		if line := render(step[0], step[1], step[2], accounts, spend); fits(line) {
-			return line
-		}
-	}
-	shown := slices.Clone(accounts)
-	if line := render(false, false, false, shown, ""); fits(line) {
-		return line
-	}
-	for i := len(shown) - 1; i >= 0; i-- {
-		if shown[i].remote {
-			shown = slices.Delete(shown, i, i+1)
-			if line := render(false, false, false, shown, ""); fits(line) {
-				return line
-			}
-		}
-	}
-	return ansi.Truncate(render(false, false, false, shown, ""), max(20, width-1), "…")
+	return strings.Join(append(lines, line), "\n")
 }
 
 // spendText is the spend at API prices and its approximate share of each current limit window.
