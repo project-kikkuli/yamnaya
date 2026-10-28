@@ -512,6 +512,8 @@ func (m *Model) follow(key string, after, before []string) {
 
 func rowKey(r row) string {
 	switch {
+	case r.need != nil:
+		return "need:" + needID(*r.need)
 	case r.node != nil && r.session != nil:
 		return "node:" + r.node.Manager.ID + "/" + r.session.Key()
 	case r.node != nil:
@@ -532,6 +534,21 @@ func rowKey(r row) string {
 		return "repo:" + r.repo.Key
 	}
 	return ""
+}
+
+// needID names a Needs you row by what it asks about, not by the head or version of it the board last read.
+func needID(n core.Need) string {
+	switch {
+	case n.PR != nil:
+		return "merge:" + n.PR.URL
+	case n.Review != nil:
+		return "review:" + n.Review.URL
+	case n.Doc != nil:
+		return "doc:" + n.Doc.Page
+	case n.Steer != nil:
+		return "steer:" + n.Steer.Manager
+	}
+	return n.Key()
 }
 
 func (m *Model) clamp() {
@@ -804,7 +821,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch k.String() {
 		case "r", "g", "l", "x", "u", "o", "O":
 			m.mode = m.back
-			m.follow("item:"+m.why.Key(), nil, nil)
+			for i, r := range m.rows() {
+				if r.item != nil && r.item.Key() == m.why.Key() {
+					m.cursor = i
+					break
+				}
+			}
+			m.clamp()
 			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
 				m.message = m.why.ID + " is no longer on this list"
 				return m, nil

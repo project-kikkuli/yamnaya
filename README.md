@@ -133,6 +133,8 @@ Behind `?`:
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
 | `q` | back or quit |
 
+The selection stays on its row (pull request, review, doc, ask, goal or mission) through every refresh, however the rows around it move. When its row leaves the board, the selection moves to the next row in the same section, or the one above it.
+
 On an empty board, the keys that need no selection still work: `B` `H` `Y` `E` `G` `I` `U` `h` `A` `L` `?` `/` `n` `N` `+`, so a fresh install adds its first login with `B`. Keys that act on a row (`enter`, `o`, `r`, `s`, `K`, `z`, `T`, ...) say "nothing selected".
 
 **Goals** groups the goals that report to you by repository and lists every chief, with its reports nested under it, under **chiefs**, so `[` and `]` step through goals and sessions by repository alike.
