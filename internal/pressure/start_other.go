@@ -10,7 +10,7 @@ import (
 )
 
 func started(pid int) (int64, error) {
-	out, err := exec.CommandContext(context.Background(), "ps", "-p", strconv.Itoa(pid), "-o", "pid=,ppid=,ni=,pcpu=,lstart=,comm=").Output()
+	out, err := exec.CommandContext(context.Background(), "ps", "-p", strconv.Itoa(pid), "-o", "pid=,ppid=,ni=,pcpu=,rss=,lstart=,comm=").Output()
 	if err != nil {
 		return 0, os.ErrProcessDone
 	}

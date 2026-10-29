@@ -31,7 +31,7 @@ func TestTheHeaderShowsSlotHoldersWaitersAndAnOverload(t *testing.T) {
 			[]string{" slots 1/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), 1 slots held, new slots wait",
 				"   slot 1  goal1 PR tests  go test ./...  3m", " overloaded: load 24 on 12 cores"}},
 		{"recovering", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true}}, Load: 10},
-			[]string{" slots 0/4 held · load 10.0 on 12 cores", " throttle: recovering, new slots open; clears after 3 minutes below 1.25x cores"}},
+			[]string{" slots 0/4 held · load 10.0 on 12 cores", " throttle: recovering, new slots open; clears after 3 minutes without agent pressure"}},
 		{"quiet", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 3},
 			[]string{" slots 0/4 held · load 3.0 on 12 cores"}},
 		{"busy and overloaded", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 140,

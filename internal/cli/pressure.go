@@ -48,9 +48,10 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		fmt.Fprintln(w, "overload:", err)
 		return
 	}
+	var meter pressure.Meter
 	sample := func() (err error) {
 		at := time.Now()
-		load, err := slot.Load()
+		host, err := meter.Read()
 		if err != nil {
 			return err
 		}
@@ -58,13 +59,9 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		if held, err = pool.Held(); err != nil {
 			return err
 		}
-		if err = state.Observe(at, load, pool.Cores); err != nil {
-			return err
-		}
 		defer func() {
-			err = errors.Join(err, state.Save(pool.Dir))
 			if after := state.Line(held); after != before {
-				fmt.Fprintln(w, "overload:", after)
+				fmt.Fprintln(w, "overload:", state.Status(held))
 			}
 		}()
 		procs, err := pressure.Processes(ctx)
@@ -85,15 +82,12 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		}
 		roots := pressureRoots(records, panes, org)
 		sessions, dirs := pressureSources(records, org)
-		var jobs map[int]pressure.Owner
-		if state.Holding {
-			table, err := proc.List()
-			if err != nil {
-				return err
-			}
-			jobs = pressure.AppJobs(procs, pressure.AppServers(table), sessions, dirs, pressure.ReadIdentity)
+		table, err := proc.List()
+		if err != nil {
+			return err
 		}
-		sampleErr := state.Sample(at, load, pool.Cores, procs, roots, jobs, pressure.SetNice)
+		jobs := pressure.AppJobs(procs, pressure.AppServers(table), sessions, dirs, pressure.ReadIdentity)
+		sampleErr := state.Sample(at, host, procs, roots, jobs, pressure.SetNice)
 		if err = state.Save(pool.Dir); err != nil {
 			return errors.Join(sampleErr, err)
 		}

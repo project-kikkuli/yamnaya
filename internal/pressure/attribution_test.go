@@ -54,7 +54,7 @@ func TestAppServerToolChildrenAndTheirJobChildrenAreNicedWithoutChangingTheirShe
 	})
 	state := State{Active: true}
 	var got []int
-	if err := state.Sample(time.Now(), 30, 12, ps, nil, jobs, func(p Process, _ int) error { got = append(got, p.PID); return nil }); err != nil {
+	if err := state.Sample(time.Now(), strained, ps, nil, jobs, func(p Process, _ int) error { got = append(got, p.PID); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if want := []int{30, 31}; !reflect.DeepEqual(got, want) {

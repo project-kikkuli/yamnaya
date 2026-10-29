@@ -236,7 +236,7 @@ func machineAlerts(mc core.Machine, width int) string {
 	if line := mc.Slots.Throttle.Line(); line != "" {
 		h += "\n" + pal.red.Bold(true).Render(fit(" "+line))
 	}
-	if line := mc.Slots.Pressure.Line(len(mc.Holders)); line != "" {
+	if line := mc.Slots.Pressure.Status(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}
 	if o := mc.Overload(); o != "" {
@@ -255,7 +255,7 @@ func machineLines(mc core.Machine, now time.Time, width int) string {
 	}
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
 	h := "\n" + pal.dim.Render(fit(" "+mc.Summary()))
-	if line := mc.Slots.Pressure.Line(len(mc.Holders)); line != "" {
+	if line := mc.Slots.Pressure.Status(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}
 	for _, u := range mc.Holders {

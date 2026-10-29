@@ -28,7 +28,7 @@ func TestOverloadHoldsNewSlotsOnlyWhileOneIsHeld(t *testing.T) {
 				}
 				defer release()
 			}
-			if err := (pressure.State{Active: true, Holding: true, Load: 201, Cores: 12}).Save(p.Dir); err != nil {
+			if err := (pressure.State{Active: true, Holding: true}).Save(p.Dir); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())

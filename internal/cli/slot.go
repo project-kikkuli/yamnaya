@@ -111,7 +111,7 @@ func slotCmd() *cobra.Command {
 
 func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 	fmt.Fprintf(w, "%d slots (%d cores, %d GiB RAM, %d workers/slot), %d held, %d waiting, load %.1f\n", st.Capacity, st.Cores, st.Memory>>30, st.Workers, len(st.Holders), len(st.Waiters), load)
-	if line := st.Pressure.Line(len(st.Holders)); line != "" {
+	if line := st.Pressure.Status(len(st.Holders)); line != "" {
 		fmt.Fprintln(w, line)
 	}
 	for _, h := range st.Holders {
