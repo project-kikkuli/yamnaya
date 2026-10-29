@@ -167,6 +167,9 @@ func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
 					chief = n
 				}
 			}
+			if chief.Manager.Repo != "" || chief.Manager.Directory == "" {
+				t.Fatalf("chief inherited a repository: %+v", chief.Manager)
+			}
 			if chief.Manager.Name != "data team" {
 				t.Fatalf("no chief named data team on the board; message %q", m.message)
 			}

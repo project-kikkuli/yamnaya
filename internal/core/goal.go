@@ -76,7 +76,9 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 	if err != nil {
 		return Manager{}, err
 	}
-	repo = MainCheckout(repo)
+	if repo != "" {
+		repo = MainCheckout(repo)
+	}
 	if host, ok := c.RepoHost(repo); ok {
 		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
 		return Manager{Role: RoleChief, Name: name, Repo: repo, Host: host}, err
@@ -86,6 +88,7 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		return m, err
 	}
 	m.BriefPath = filepath.Join(c.StateDir, "chiefs", m.ID, "brief.md")
+	m.Directory = filepath.Join(c.StateDir, "chiefs", m.ID, "workspace")
 	if err := writeBrief(m.BriefPath, "# "+name+"\n\n"+remit+"\n"); err != nil {
 		return m, err
 	}
@@ -355,6 +358,9 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 	if host, ok := c.RepoHost(m.Repo); ok {
 		return c.handOff(o, m, host)
 	}
+	if m.Role == RoleChief && m.Directory == "" {
+		m.Directory = filepath.Join(c.StateDir, "chiefs", m.ID, "workspace")
+	}
 	m.LaunchedAt, m.Nudges, m.NudgedAt = c.now(), 0, timeZero
 	if c.Launches == nil {
 		m.LastError = "ym's launcher is unavailable"
@@ -386,7 +392,7 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 			return resumed
 		}
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Slug: m.ID + "-" + slugWords(m.Name),
+	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.ID + "-" + slugWords(m.Name),
 		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()

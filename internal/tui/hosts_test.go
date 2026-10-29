@@ -99,10 +99,10 @@ func TestLaunchesStartWhereTheTargetSaysAndTheNextOneDefaultsThere(t *testing.T)
 		{"codex on the host", []string{"+", "tab", "ctrl+t", "ok", "enter"}, []string{box, "new", "--codex", "--repo", "app", "--", "ok"}, 0, box},
 		{"switching back", []string{"+", "ctrl+t", "ctrl+t", "ok", "enter"}, nil, 1, ""},
 		{"goal on the host", []string{"N", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--repo", "app", "--", "ship"}, 0, box},
-		{"chief on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--repo", "app", "--", "lead"}, 0, box},
-		{"chief with a remit on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "ship", "enter"}, []string{box, "chief", "--remit", "ship", "--repo", "app", "--", "lead"}, 0, box},
+		{"chief on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--", "lead"}, 0, box},
+		{"chief with a remit on the host", []string{"C", "enter", "ctrl+t", "lead", "enter", "ship", "enter"}, []string{box, "chief", "--remit", "ship", "--", "lead"}, 0, box},
 		{"codex goal on the host", []string{"N", "tab", "ctrl+t", "ship", "enter"}, []string{box, "goal", "--codex", "--repo", "app", "--", "ship"}, 0, box},
-		{"codex chief on the host", []string{"C", "enter", "tab", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--codex", "--repo", "app", "--", "lead"}, 0, box},
+		{"codex chief on the host", []string{"C", "enter", "tab", "ctrl+t", "lead", "enter", "enter"}, []string{box, "chief", "--codex", "--", "lead"}, 0, box},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, _ := setup(t)
@@ -367,7 +367,7 @@ func TestLaunchesInAnotherHostsRepositoryStartOnThatHost(t *testing.T) {
 	}{
 		{"goal", []string{"N", "ship", "enter"}, []string{box, "goal", "--repo", "august", "--", "ship"}},
 		{"session", []string{"+", "ok", "enter"}, []string{box, "new", "--repo", "august", "--", "ok"}},
-		{"chief", []string{"C", "enter", "lead", "enter", "enter"}, []string{box, "chief", "--repo", "august", "--", "lead"}},
+		{"chief", []string{"C", "enter", "lead", "enter", "enter"}, []string{box, "chief", "--", "lead"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m, k, _ := setup(t)

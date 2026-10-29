@@ -853,7 +853,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
-		case "r", "g", "l", "x", "u", "o", "O", "e", "V":
+		case "r", "g", "l", "x", "u", "o", "O", "e", "V", "J":
 			m.mode = m.back
 			for i, r := range m.rows() {
 				if r.item != nil && r.item.Key() == m.why.Key() {
@@ -1087,6 +1087,10 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				_, err := m.core.Reopen(key)
 				return id + " reopened", err
 			})
+		}
+	case "J":
+		if r.item != nil && r.item.State == core.ItemOpen {
+			return m.consolidate(*r.item)
 		}
 	case "e":
 		if r.item != nil {

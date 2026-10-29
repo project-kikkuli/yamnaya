@@ -90,3 +90,56 @@ func TestAnOlderOwnerRequestOpensItsManagersCurrentConversation(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedRequestsNameTheirSourceRepositoryAndGoalEvenWhenAlone(t *testing.T) {
+	m, c, _ := setup(t)
+	it, err := c.AddOwnerItem(core.Item{Kind: core.KindChore, Session: "writer", Scope: "/src/vibe-apps/.git", Question: "approve workplane launch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Store.SaveDossier(it.Seq, core.Dossier{Goal: "goal24", Repo: "/src/vibe-apps"}); err != nil {
+		t.Fatal(err)
+	}
+	m = to(t, refresh(t, m), func(r row) bool { return r.item != nil && r.item.Seq == it.Seq })
+	for _, keys := range [][]string{nil, {"enter"}, {"esc", "I"}} {
+		m = press(t, m, keys...)
+		text := ansi.Strip(m.View().Content)
+		if !strings.Contains(text, "vibe-apps") || !strings.Contains(text, "goal24") {
+			t.Fatalf("source context missing:\n%s", text)
+		}
+	}
+}
+
+func TestConsolidatingACopyFromTheTUIKeepsTheOriginalRequest(t *testing.T) {
+	for _, detail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "list", true: "detail"}[detail], func(t *testing.T) {
+			m, c, _ := setup(t)
+			source, err := c.AddOwnerItem(core.Item{Scope: "/src/vibe-apps/.git", Session: "original-writer", Kind: core.KindChore, Question: "review workplanes"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Store.Transition(source.Key(), core.ItemAnswered, "refiled by chief"); err != nil {
+				t.Fatal(err)
+			}
+			copyItem, err := c.AddOwnerItem(core.Item{Scope: "/src/augur-capture/.git", Session: "chief", Kind: core.KindChore, Question: "refiled workplanes"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = press(t, refresh(t, m), "I")
+			m = to(t, m, func(r row) bool { return r.item != nil && r.item.Seq == copyItem.Seq })
+			if detail {
+				m = press(t, m, "enter")
+			}
+			m = press(t, m, "J")
+			m = press(t, m, strings.Split(source.Qualified(), "")...)
+			m = press(t, m, "enter")
+			m = press(t, m, strings.Split("chief copied the source request", "")...)
+			m = press(t, m, "enter")
+			got, _ := c.Store.Item(source.Key())
+			old, _ := c.Store.Item(copyItem.Key())
+			if got.State != core.ItemOpen || got.Session != source.Session || got.Scope != source.Scope || old.State != core.ItemDismissed {
+				t.Fatalf("consolidation lost source: %+v, %+v; %s", got, old, m.message)
+			}
+		})
+	}
+}

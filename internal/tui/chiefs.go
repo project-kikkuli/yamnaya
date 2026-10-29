@@ -104,11 +104,15 @@ func (m Model) chiefMenu(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// newChief opens the picker of a new chief's reports, starting it in r's repository.
+// newChief opens the picker of a new chief's reports on the selected host.
 func (m *Model) newChief(r row) {
-	m.newL = core.NewLaunch{Repo: core.MainCheckout(m.repoOf(r))}
+	m.newL = core.NewLaunch{}
 	m.loadTarget()
-	m.targetRepo()
+	if n, ok := m.nodeOf(r); ok {
+		m.launchOn = n.Manager.Host
+	} else if repo := m.repoOf(r); repo != "" {
+		m.launchOn, _ = core.HostHolding(m.board.Remotes, repo)
+	}
 	m.loadHarness("chief")
 	m.openOverPicker()
 }

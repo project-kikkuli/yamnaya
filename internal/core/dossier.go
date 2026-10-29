@@ -15,6 +15,7 @@ import (
 type Dossier struct {
 	Goal    string `json:"goal,omitempty"`
 	GoalAsk string `json:"goal_ask,omitempty"`
+	Repo    string `json:"repo,omitempty"`
 	// From names who filed the item and, for an agent, the manager it works for.
 	From     string         `json:"from,omitempty"`
 	PRs      []PRNote       `json:"prs,omitempty"`
@@ -264,7 +265,7 @@ func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 		d.From = "agent " + agentName(b, it.Session) + ", in a session you started"
 	}
 	if g, ok := o.Goals[m.GoalID]; managed && ok {
-		d.Goal, d.GoalAsk = g.ID, g.Ask
+		d.Goal, d.GoalAsk, d.Repo = g.ID, g.Ask, g.Repo
 	}
 	seenPR := map[string]bool{}
 	for _, s := range sessions {
@@ -358,6 +359,7 @@ func DossierLines(d Dossier) [][2]string {
 	if d.Goal != "" {
 		add("goal", d.Goal+" "+oneLine(d.GoalAsk))
 	}
+	add("repository", d.Repo)
 	add("from", d.From)
 	for _, pr := range d.PRs {
 		add("pr", pr.String())

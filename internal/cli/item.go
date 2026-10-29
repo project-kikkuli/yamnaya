@@ -15,7 +15,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
+	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemConsolidateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",

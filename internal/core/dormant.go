@@ -88,6 +88,7 @@ type NewLaunch struct {
 	Prompt     string
 	Harness    string
 	Repo       string
+	Directory  string
 	// Slug names the worktree and branch; empty derives it from Prompt.
 	Slug string
 	// Parent is the session that spawned this one, or empty.

@@ -244,6 +244,7 @@ func (s *Store) goals() ([]Goal, error) {
 }
 
 func (s *Store) AddManager(m Manager) (Manager, error) {
+	defer s.invalidate()
 	if m.Harness == "" {
 		m.Harness = "claude"
 	}
@@ -255,6 +256,7 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 }
 
 func (s *Store) SaveManager(m Manager) error {
+	defer s.invalidate()
 	num, err := numOf(m.ID, "mgr")
 	if err != nil {
 		return err

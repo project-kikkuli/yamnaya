@@ -19,6 +19,8 @@ import (
 
 // Record is one agent session ym launched: where it runs and how to bring it back.
 type Record struct {
+	PreviousWorktree Worktree  `json:"previous_worktree,omitzero"`
+	Access           string    `json:"access,omitempty"`
 	RootValue        string    `json:"root_value,omitempty"`
 	RootSet          bool      `json:"root_set,omitempty"`
 	SQLiteEnv        string    `json:"sqlite_env,omitempty"`

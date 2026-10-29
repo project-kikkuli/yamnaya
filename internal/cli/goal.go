@@ -638,9 +638,13 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 		Short: "Start a chief that oversees managers and other chiefs, reads their briefs and steers them",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
-			dir, err := e.repoArg(repo)
-			if err != nil {
-				return err
+			dir := ""
+			if repo != "" {
+				var err error
+				dir, err = e.repoArg(repo)
+				if err != nil {
+					return err
+				}
 			}
 			var children []string
 			if over != "" {
@@ -665,7 +669,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&repo, "repo", "", "repository the chief's session runs in (default: the current directory's)")
+	cmd.Flags().StringVar(&repo, "repo", "", "optional repository the chief can access; its session runs in a coordination workspace")
 	cmd.Flags().StringVar(&remit, "remit", "", "what the chief oversees, in your words")
 	cmd.Flags().StringVar(&over, "over", "", "managers, goals or chiefs it starts over, comma separated")
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the chief")

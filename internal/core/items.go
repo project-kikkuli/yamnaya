@@ -482,6 +482,17 @@ type Locator interface {
 
 // ScopeOf is the scope items filed by session go in: its repository, else the repository its mission's crew writes in, else its directory.
 func (c *Core) ScopeOf(b Board, session string) string {
+	if m, ok := b.Org.ManagerOf(c.Resolve(session)); ok {
+		if m.Role == RoleChief {
+			return filepath.Join(c.StateDir, "chiefs", m.ID)
+		}
+		if m.Repo != "" {
+			if g := c.gitFor(m.Repo, b.At); g.Common != "" {
+				return g.Common
+			}
+			return m.Repo
+		}
+	}
 	if s, ok := b.Session(session); ok {
 		if s.RepoKey != "" {
 			return s.RepoKey

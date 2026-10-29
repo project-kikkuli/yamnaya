@@ -94,3 +94,9 @@ func cloneSlice[T any](s []T) []T { return slices.Clone(s) }
 func cloneMap[K comparable, V any](m map[K]V) map[K]V { return maps.Clone(m) }
 
 func asIs[T any](v T) T { return v }
+
+func (s *Store) invalidate() {
+	s.memo.mu.Lock()
+	s.memo.vals = nil
+	s.memo.mu.Unlock()
+}

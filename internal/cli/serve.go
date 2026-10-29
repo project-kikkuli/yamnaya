@@ -206,7 +206,7 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 		failures = append(failures, err)
 	}
 	if l, ok := c.Launches.(launcher); ok {
-		failures = append(failures, l.RecoverProfiles(b), l.Failover(b), l.unstall(time.Now()))
+		failures = append(failures, l.RecoverProfiles(b), l.Failover(b), l.ChiefWorkspaces(b), l.unstall(time.Now()))
 	}
 	if err = relayHosts(c); err != nil {
 		failures = append(failures, err)

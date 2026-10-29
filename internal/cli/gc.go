@@ -71,6 +71,11 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 		}
 	}
 	dirs, now := cwds(), time.Now()
+	for _, rec := range recs {
+		if rec.PreviousWorktree.Path != "" {
+			dirs = append(dirs, rec.PreviousWorktree.Path)
+		}
+	}
 	var out []launch.Swept
 	for _, root := range repos {
 		if seen[root] {

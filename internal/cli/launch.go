@@ -95,6 +95,9 @@ func startArgv(rec launch.Record) ([]string, error) {
 		if model != "" {
 			argv = append(argv, "--model", model)
 		}
+		if rec.Access != "" {
+			argv = append(append(argv, accessArgs(rec)...), "--")
+		}
 		return scopedArgv(rec, append(argv, prompt)), nil
 	}
 	argv := []string{b, "--yolo"}
@@ -148,6 +151,9 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	if model != "" {
 		argv = append(argv, "--model", model)
 	}
+	if rec.Harness == claude.Name && rec.Access != "" {
+		argv = append(append(argv, accessArgs(rec)...), "--")
+	}
 	if prompt != "" {
 		argv = append(argv, prompt)
 	}
@@ -168,7 +174,7 @@ func transcript(rec launch.Record) string {
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
 // The state dir, tmux server and serve choice set in ym's environment are passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
-	var args []string
+	args := accessArgs(rec)
 	if rec.ConfigRoot != "" {
 		args = append(args, "--no-daemon")
 	}
@@ -371,10 +377,27 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	if err = provisionProfile(selected); err != nil {
 		return core.Started{}, err
 	}
-	if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
-		return core.Started{}, err
+	if n.Directory != "" {
+		if !filepath.IsAbs(n.Directory) {
+			return core.Started{}, fmt.Errorf("coordination workspace must be absolute")
+		}
+		if err := os.MkdirAll(n.Directory, 0o755); err != nil {
+			return core.Started{}, err
+		}
+		rec.Worktree = launch.Worktree{Path: n.Directory}
+		rec.Key = slug
+		for i := 2; l.records.Has(rec.Key); i++ {
+			rec.Key = slug + "-" + strconv.Itoa(i)
+		}
+		if n.Repo != "" {
+			rec.Access = n.Repo
+		}
+	} else {
+		if rec.Worktree, err = launch.Create(n.Repo, slug, func(p string) bool { return l.records.Has(filepath.Base(p)) }); err != nil {
+			return core.Started{}, err
+		}
+		rec.Key, rec.Head, rec.Repo = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path), core.RepoID(rec.Worktree.GitDir)
 	}
-	rec.Key, rec.Head, rec.Repo = filepath.Base(rec.Worktree.Path), launch.Head(rec.Worktree.Path), core.RepoID(rec.Worktree.GitDir)
 	argv, err := startArgv(rec)
 	if err != nil {
 		return core.Started{}, err
@@ -773,6 +796,11 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		} else {
 			rec.Worktree.GitDir, rec.Recovery, lost = filepath.Join(rec.Worktree.Path, ".git"), launch.Recovery{}, ""
 		}
+	}
+	var alignErr error
+	rec, alignErr = l.chiefRecord(rec)
+	if alignErr != nil {
+		return nil, "", alignErr
 	}
 	if err := trustRecord(rec); err != nil {
 		return nil, "", err

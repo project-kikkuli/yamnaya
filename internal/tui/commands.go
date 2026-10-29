@@ -29,6 +29,7 @@ var Commands = map[string]string{
 	"ym item snooze":      "l",
 	"ym item reopen":      "u",
 	"ym item escalate":    "e",
+	"ym item consolidate": "J",
 	"ym item show":        "enter",
 	"ym item list":        "I",
 	"ym phase show":       "enter",

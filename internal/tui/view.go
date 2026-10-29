@@ -407,9 +407,9 @@ func (m Model) hints() string {
 		}
 		return "↑↓ pgup pgdn scroll · esc back"
 	case modeItems:
-		return "↑↓ move · enter expand · r reply · e escalate to you · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
+		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · e escalate to you · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
+		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
@@ -766,6 +766,9 @@ func (m Model) needLines(i int, n core.Need) string {
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
 	}
+	if it.Dossier.Goal != "" {
+		meta = append(meta, "goal: "+it.Dossier.Goal)
+	}
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
 		b.WriteString(pal.dim.Render("         "+strings.Join(meta, " | ")) + "\n")
@@ -782,7 +785,7 @@ func (m Model) needLines(i int, n core.Need) string {
 
 // itemID names an item, with its project where the needs list mixes projects.
 func (m Model) itemID(it core.Item) string {
-	if m.mixed() {
+	if m.mixed() || it.Dossier.Goal != "" {
 		return it.Qualified()
 	}
 	return it.ID
@@ -802,12 +805,10 @@ func (m Model) mixed() bool {
 
 func (m Model) idWidth() int {
 	w := 5
-	if m.mixed() {
-		for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
-			for _, n := range ns {
-				if n.Item != nil {
-					w = max(w, len(n.Item.Qualified()))
-				}
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+		for _, n := range ns {
+			if n.Item != nil {
+				w = max(w, len(m.itemID(*n.Item)))
 			}
 		}
 	}
@@ -1014,7 +1015,7 @@ func (m Model) crewLine(i int, s core.Live, c core.Member) string {
 func itemIDs(items []core.Item) map[string]string {
 	label := func(it core.Item) string { return it.ID }
 	for _, it := range items {
-		if it.Scope != items[0].Scope {
+		if it.Scope != items[0].Scope || it.Dossier.Goal != "" {
 			label = core.Item.Qualified
 			break
 		}
@@ -1031,7 +1032,11 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  " + m.tagged(it.Host, it.Question)
+	origin := ""
+	if it.Dossier.Goal != "" {
+		origin = "  " + it.Dossier.Goal
+	}
+	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " to " + m.recipientName(it) + origin + "  " + m.tagged(it.Host, it.Question)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)
 	}
@@ -1422,6 +1427,8 @@ func (m Model) whyView() string {
 	}
 	field("assumption", it.Assumption)
 	field("recipient", m.recipientName(*it))
+	field("repository", core.ScopeName(it.Scope))
+	field("goal", it.Dossier.Goal)
 	if it.State == core.ItemOpen && it.Recipient == core.Owner {
 		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))
 	}
@@ -1555,6 +1562,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    C            new chief, the same as c n
    D            detach the goal or chief from its chief, the same as c d
    t            goals by repository with chiefs nesting their reports, or every goal by its own repository
+   J            consolidate an open copy into its original item: enter the original repository:ID and a reason; both histories stay
    e            on an open delegated item, escalate it to you without changing its id; otherwise rename a mission
    m            merge a mission into another
    p            advance the mission to its next phase (asks y/n)
