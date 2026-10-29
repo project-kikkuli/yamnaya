@@ -28,12 +28,20 @@ func (m Model) View() tea.View {
 			*m.drawn = lastDraw{key: key, text: text}
 		}
 		v := tea.NewView(text)
-		v.AltScreen, v.ReportFocus, v.MouseMode = true, true, tea.MouseModeCellMotion
+		v.AltScreen, v.ReportFocus, v.MouseMode = true, true, m.mouseMode()
 		return v
 	}
 	v := tea.NewView(m.drawn.text)
-	v.AltScreen, v.ReportFocus, v.MouseMode = true, true, tea.MouseModeCellMotion
+	v.AltScreen, v.ReportFocus, v.MouseMode = true, true, m.mouseMode()
 	return v
+}
+
+// mouseMode leaves the mouse to the terminal on a text page, so dragging selects text there as anywhere else.
+func (m Model) mouseMode() tea.MouseMode {
+	if m.mode == modeScreen || m.mode == modeHelp || m.mode == modeWhy {
+		return tea.MouseModeNone
+	}
+	return tea.MouseModeCellMotion
 }
 
 // drawn is what a drawn screen was drawn from; a View from the same page, frame, size and board draws nothing new.
@@ -283,7 +291,7 @@ func (m Model) footer() []string {
 		switch m.inKind {
 		case inOver:
 			keys = " ↑↓ choose · space check · enter go on to its name · esc cancel"
-		case inChiefMenu:
+		case inChiefMenu, inCopyMenu:
 			keys = " ↑↓ choose · enter or its letter picks · esc cancel"
 		}
 		return append(lines, pal.dim.Render(keys))
@@ -405,11 +413,11 @@ func (m Model) hints() string {
 		if m.mode == modeHelp {
 			return "↑↓ pgup pgdn scroll · / search · n N next match · esc back"
 		}
-		return "↑↓ pgup pgdn scroll · esc back"
+		return "↑↓ pgup pgdn scroll · y copy · esc back"
 	case modeItems:
 		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
+		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
@@ -1529,6 +1537,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 check the goals and chiefs it oversees with space (the selected ones start checked), enter,
                 then type its name and its remit in your words (enter leaves it empty)
    b            show the goal's or chief's brief, the newest version its manager recorded
+   y            copy as clean text to paste into chat, Slack or a terminal: on a goal or chief, b its brief or
+                c its context; on an item, the item; on a text page (b, h, U), all it shows, unwrapped.
+                pbcopy on this Mac; over SSH, OSC 52 sets the clipboard of the terminal you look through
    n            new goal: pick its repository first, then type the goal in your words; a manager starts on it
    o            go to the selected row's session: jump to its tmux pane, or bring forward the Terminal or
                 iTerm2 window and tab it runs in (your own tmux: its window, then the terminal showing it),

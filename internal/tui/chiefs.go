@@ -35,7 +35,7 @@ func (m Model) treeOpts(chiefsOnly bool, skip map[string]bool) []pickOpt {
 }
 
 func (m Model) picking() bool {
-	return m.inKind == inOver || m.inKind == inAttach || m.inKind == inChiefMenu
+	return m.inKind == inOver || m.inKind == inAttach || m.inKind == inChiefMenu || m.inKind == inCopyMenu
 }
 
 // menuOpt is one choice of the c menu and the key that picks it.
@@ -83,6 +83,9 @@ func (m Model) chiefMenuKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) chiefMenu(key string) (tea.Model, tea.Cmd) {
+	if m.inKind == inCopyMenu {
+		return m.copyMenu(key)
+	}
 	m.mode = m.back
 	n, ok := m.board.Node(m.menuFor)
 	switch {
@@ -175,7 +178,7 @@ func (m Model) ownerNames(ids []string) string {
 }
 
 func (m Model) optKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.inKind == inChiefMenu {
+	if m.inKind == inChiefMenu || m.inKind == inCopyMenu {
 		return m.chiefMenuKey(k)
 	}
 	switch k.String() {
@@ -232,6 +235,13 @@ func (m Model) optsView() string {
 	var b strings.Builder
 	if m.inKind == inChiefMenu {
 		b.WriteString(pal.bold.Render(" CHIEF") + pal.dim.Render("  chiefs oversee goals and other chiefs") + "\n")
+		for i, o := range m.menu {
+			b.WriteString(ansi.Truncate(m.markAt(i == m.optCur)+pal.bold.Render(o.key)+"  "+o.label, max(20, m.width-1), "…") + "\n")
+		}
+		return b.String()
+	}
+	if m.inKind == inCopyMenu {
+		b.WriteString(pal.bold.Render(" COPY") + pal.dim.Render("  as clean text, to paste into chat, Slack or a terminal") + "\n")
 		for i, o := range m.menu {
 			b.WriteString(ansi.Truncate(m.markAt(i == m.optCur)+pal.bold.Render(o.key)+"  "+o.label, max(20, m.width-1), "…") + "\n")
 		}

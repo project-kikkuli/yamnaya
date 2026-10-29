@@ -180,16 +180,57 @@ func (c *Core) WriteBrief(session string, b Brief) (Brief, error) {
 	if b, err = c.Store.addBrief(b); err != nil {
 		return b, err
 	}
-	title := m.Name
-	if g, ok := o.Goals[m.GoalID]; ok {
-		title = g.ID + ": " + oneLine(g.Ask)
-	}
 	if m.BriefPath != "" {
-		if err := writeFile(m.BriefPath, b.Markdown(title)); err != nil {
+		if err := writeFile(m.BriefPath, briefPage(o, m, b)); err != nil {
 			return b, err
 		}
 	}
 	return b, nil
+}
+
+// briefPage is b as the page kept at m's brief path: titled by the goal's short name, with the ask in full, as written, last.
+func briefPage(o Org, m Manager, b Brief) string {
+	g, ok := o.Goals[m.GoalID]
+	if !ok {
+		return b.Markdown(m.Name)
+	}
+	return b.Markdown(g.ID+": "+shortName(g.Ask)) + askSection(g.Ask)
+}
+
+// askSection is the ask as written, when the short name leaves some of it out.
+func askSection(ask string) string {
+	ask = strings.TrimSpace(ask)
+	if shortName(ask) == ask {
+		return ""
+	}
+	return "\n## Ask\n\n" + ask + "\n"
+}
+
+// BriefPage is the newest brief of the goal or chief ref names as clean text, the page kept at its brief path.
+func (c *Core) BriefPage(ref string) (string, error) {
+	if host, rest, ok := c.remoteHost(ref); ok {
+		return c.RunRemote(host, "copy", "--stdout", "brief", rest)
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return "", err
+	}
+	m, err := o.lookup(ref)
+	if err != nil {
+		return "", err
+	}
+	briefs, err := c.Store.LatestBriefs()
+	if err != nil {
+		return "", err
+	}
+	if b, ok := briefs[m.ID]; ok {
+		return briefPage(o, m, b), nil
+	}
+	page, err := os.ReadFile(m.BriefPath)
+	if err != nil {
+		return "", fmt.Errorf("%s has no brief yet: %w", m.ID, err)
+	}
+	return string(page), nil
 }
 
 func writeFile(path, text string) error {

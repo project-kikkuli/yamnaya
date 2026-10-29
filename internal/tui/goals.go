@@ -858,6 +858,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			head := " " + pal.bold.Render(m.tagged(host, n.Manager.Label())) + pal.dim.Render("  "+briefOf(n)) + "\n\n"
 			if f := n.Fresh.Brief; f != nil {
 				m.show("B", head+pal.dim.Render(briefMeta(m.board.At, n)+", as "+m.hostTag(host)+" last told this board")+"\n\n"+f.Markdown(n.Manager.Label()))
+				m.screenCopy = f.Markdown(n.Manager.Label())
 				return m, nil, true
 			}
 			if err := m.silent(host); err != nil {
@@ -871,12 +872,13 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 				return screenMsg{head + out, err}
 			}, true
 		}
-		text, err := os.ReadFile(briefOf(n))
+		text, err := m.core.BriefPage(n.Manager.ID)
 		if err != nil {
 			m.message = "error: " + err.Error()
 			return m, nil, true
 		}
-		m.show("B", " "+pal.bold.Render(n.Manager.Label())+pal.dim.Render("  "+briefOf(n))+"\n\n"+string(text))
+		m.show("B", " "+pal.bold.Render(n.Manager.Label())+pal.dim.Render("  "+briefOf(n))+"\n\n"+text)
+		m.screenCopy = text
 		return m, nil, true
 	case "W":
 		url, open := core.BriefURL(n.Manager.ID), m.openURL

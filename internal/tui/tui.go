@@ -67,6 +67,8 @@ const (
 	// inChiefMenu picks what c does: put the row under a chief, detach it, or start a new chief.
 	inChiefMenu
 	inBroadcast
+	// inCopyMenu picks what y copies from a goal or chief: its brief or its context.
+	inCopyMenu
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -159,13 +161,15 @@ type Model struct {
 	targets    []core.Target
 	cursor2    int
 	// beside opens the chosen target in a split next to ym instead of switching to it.
-	beside    bool
-	mergeSrc  string
-	why       *core.Item
-	screen    string
-	screenKey string
-	ask       string
-	yes       tea.Cmd
+	beside   bool
+	mergeSrc string
+	why      *core.Item
+	screen   string
+	// screenCopy is what y copies from the text page, when it is not the page itself.
+	screenCopy string
+	screenKey  string
+	ask        string
+	yes        tea.Cmd
 	// marks are the keys a yes marks killing: sessions and goal or chief nodes whose teardown runs off the UI thread.
 	marks   []string
 	killing map[string]bool
@@ -859,6 +863,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "pgup":
 			m.scrollY = max(0, m.scrollY-m.height/2)
 			return m, nil
+		case "y":
+			return m.copyKey(row{})
 		}
 		if k.Code == tea.KeyEscape || k.String() == "q" || k.Code == tea.KeyEnter || k.String() == m.screenKey {
 			m.mode = m.back
@@ -900,6 +906,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "enter":
 			m.mode = m.back
 			return m, nil
+		case "y":
+			return m.copyKey(row{})
 		default:
 			return m, nil
 		}
@@ -916,6 +924,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	switch k.String() {
+	case "y":
+		r, _ := m.selected()
+		return m.copyKey(r)
 	case "A":
 		m.peaks.hidden = !m.peaks.hidden
 		return m, nil
@@ -1237,7 +1248,7 @@ func (m *Model) confirm(ask string, yes tea.Cmd) {
 
 func (m *Model) show(key, text string) {
 	m.back, m.mode, m.screenKey, m.screen = m.mode, modeScreen, key, text
-	m.scrollY = 0
+	m.scrollY, m.screenCopy = 0, ""
 }
 
 func (m *Model) loadItems() {

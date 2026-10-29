@@ -32,7 +32,7 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 		return g, Manager{}, err
 	}
 	g.BriefPath = filepath.Join(c.StateDir, "goals", g.ID, "brief.md")
-	if err := writeBrief(g.BriefPath, "# "+oneLine(ask)+"\n\nNot started yet: the manager writes this brief.\n"); err != nil {
+	if err := writeBrief(g.BriefPath, "# "+g.ID+": "+shortName(ask)+"\n\nNot started yet: the manager writes this brief.\n"+askSection(ask)); err != nil {
 		return g, Manager{}, err
 	}
 	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})

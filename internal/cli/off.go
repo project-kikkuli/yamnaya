@@ -14,7 +14,7 @@ import (
 var readsOnly = map[string]bool{
 	"ym": true, "ym on": true, "ym off": true, "ym serve": true, "ym board": true, "ym sessions": true, "ym launched": true,
 	"ym waiting": true, "ym item list": true, "ym item show": true, "ym goal list": true, "ym goal show": true, "ym goal feed": true,
-	"ym goal context": true, "ym drift": true, "ym profiles": true, "ym phase show": true,
+	"ym goal context": true, "ym drift": true, "ym profiles": true, "ym phase show": true, "ym copy": true,
 }
 
 // refuseOff fails every other command run from inside a session ym is off for.

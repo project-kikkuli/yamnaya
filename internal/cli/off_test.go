@@ -27,6 +27,7 @@ func TestCommandsFromASessionYmIsOffForRefuseUnlessTheyOnlyRead(t *testing.T) {
 		{[]string{"send", "abc", "hi"}, true, true},
 		{[]string{"item", "list"}, false, false},
 		{[]string{"goal", "list"}, false, false},
+		{[]string{"copy", "--stdout", "context", "goal1"}, false, false},
 	} {
 		for _, off := range []bool{false, true} {
 			if c.launches && !off {

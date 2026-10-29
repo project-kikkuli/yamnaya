@@ -380,61 +380,12 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), toJSON(it))
 			}
-			w := e.nicked(cmd.OutOrStdout())
-			id := it.Qualified()
-			if it.Alias != "" && it.Alias != it.ID {
-				id += " (was " + it.Alias + ")"
-			}
-			fmt.Fprintf(w, "%s  %s  %s\n%s\n", id, it.Kind, it.State, it.Question)
-			line := func(k, v string) {
-				if v != "" {
-					fmt.Fprintf(w, "%s: %s\n", k, v)
-				}
-			}
-			line("action", it.Action)
-			line("rec", it.Rec)
-			for _, o := range it.Options {
-				line("option", o.Label+" = "+o.Effect)
-			}
-			line("assumption", it.Assumption)
-			if m := core.Unprepared(it); len(m) > 0 {
-				line("unprepared", "missing "+strings.Join(m, " and ")+preparedBy(e, it))
-			}
-			line("tried", it.Tried)
-			for _, ev := range it.Evidence {
-				line("evidence", ev)
-			}
-			for _, l := range core.DossierLines(it.Dossier) {
-				line(l[0], l[1])
-			}
-			line("blocks", fmt.Sprint(it.Blocks))
-			line("source", it.Harness+" "+it.Session)
-			line("answer", it.Answer)
-			line("dismissed", it.Reason)
-			for _, ev := range it.History[min(1, len(it.History)):] {
-				h := fmt.Sprintf("%s %s -> %s", ev.At.Local().Format(time.DateTime), ev.From, ev.To)
-				if ev.Text != "" {
-					h += ": " + ev.Text
-				}
-				line("history", h)
-			}
+			fmt.Fprint(e.nicked(cmd.OutOrStdout()), e.core.ItemText(it))
 			return nil
 		}),
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
-}
-
-func preparedBy(e *env, it core.Item) string {
-	if it.Preparer == "" {
-		return ""
-	}
-	if o, err := e.core.LoadOrg(); err == nil {
-		if m, ok := o.Managers[it.Preparer]; ok {
-			return "; " + m.Label() + " was told to prepare it"
-		}
-	}
-	return "; " + it.Preparer + " was told to prepare it"
 }
 
 type itemJSON struct {
