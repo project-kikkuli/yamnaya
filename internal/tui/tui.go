@@ -93,6 +93,7 @@ type frame struct {
 	cursor                    int
 	detail, sess, agent, repo string
 	goal, chief               string
+	key                       string
 	scroll                    int
 }
 
@@ -108,6 +109,8 @@ type Model struct {
 	unfolded map[string]bool
 	// flat lists every goal under its own repository, leaving chiefs out.
 	flat bool
+	// collapsed keeps chief folds by full manager id for this UI session.
+	collapsed map[string]bool
 	// menu is the c menu's choices for the manager or chief menuFor.
 	menu    []menuOpt
 	menuFor string
@@ -502,6 +505,27 @@ func (m *Model) follow(key string, after, before []string) {
 	if i, ok := at[key]; ok && key != "" {
 		m.cursor = i
 		return
+	}
+	if id, ok := strings.CutPrefix(key, "node:"); ok {
+		var ancestors func([]core.Node) ([]string, bool)
+		ancestors = func(ns []core.Node) ([]string, bool) {
+			for _, n := range ns {
+				if n.Manager.ID == id {
+					return []string{n.Manager.ID}, true
+				}
+				if path, found := ancestors(n.Children); found {
+					return append(path, n.Manager.ID), true
+				}
+			}
+			return nil, false
+		}
+		path, _ := ancestors(m.board.Tree)
+		for _, id := range path {
+			if i, visible := at["node:"+id]; visible {
+				m.cursor = i
+				return
+			}
+		}
 	}
 	old := map[string]bool{key: true}
 	for _, k := range append(after, before...) {
@@ -908,7 +932,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case len(m.stack) > 0:
 			m.pop()
 		case m.filter != "":
+			r, _ := m.selected()
 			m.filter = ""
+			m.follow(rowKey(r), nil, nil)
 		}
 		return m, nil
 	case "up", "k":
@@ -1346,7 +1372,8 @@ func lastExited(p *core.Project) (core.Dormant, bool) {
 
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
-	m.stack = append(m.stack, frame{mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, goal: m.goal, chief: m.chief, scroll: m.scrollY})
+	r, _ := m.selected()
+	m.stack = append(m.stack, frame{key: rowKey(r), mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, goal: m.goal, chief: m.chief, scroll: m.scrollY})
 	m.mode, m.cursor = to, 0
 }
 
@@ -1356,7 +1383,7 @@ func (m *Model) pop() {
 	m.mode, m.cursor = f.mode, f.cursor
 	m.detail, m.sess, m.agent, m.repo, m.goal, m.chief = f.detail, f.sess, f.agent, f.repo, f.goal, f.chief
 	m.scrollY = f.scroll
-	m.clamp()
+	m.follow(f.key, nil, nil)
 }
 
 // expand shows an item in full; its keys act on it there.
