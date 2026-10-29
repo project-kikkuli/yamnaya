@@ -460,15 +460,6 @@ func (m Model) listView() viewPage {
 	return m.treePage()
 }
 
-func (m Model) isStale(n *core.Need) bool {
-	for i := range m.board.Stale {
-		if n == &m.board.Stale[i] {
-			return true
-		}
-	}
-	return false
-}
-
 func (m Model) needsIn(r core.Repo) int {
 	keys := map[string]bool{}
 	for _, p := range r.Missions {

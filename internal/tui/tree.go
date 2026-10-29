@@ -194,7 +194,11 @@ func (m Model) boardTree() []treeNode {
 			return nil
 		}
 		out := m.goalSections(n)
-		out = append(out, heading("node/"+n.Manager.ID+"/sessions", "SESSIONS", m.nodeSessions(n)))
+		count := len(n.Agents)
+		if n.Live != nil {
+			count++
+		}
+		out = append(out, heading("node/"+n.Manager.ID+"/sessions", fmt.Sprintf("SESSIONS (%d)", count), m.nodeSessions(n)))
 		return out
 	case modeChief:
 		n, ok := m.board.Node(m.chief)
@@ -274,6 +278,9 @@ func (m Model) boardTree() []treeNode {
 	out := []treeNode{heading("needs", fmt.Sprintf("NEEDS YOU (%d)", len(m.board.Needs)), needs), heading("goals", "GOALS", groups), heading("sessions", "SESSIONS YOU STARTED", repos)}
 	for i := range out {
 		out[i].row.sectionID = i + 1
+	}
+	if len(repos) > 0 && m.missionCols(2).bar > 0 {
+		out[2].row.body = pal.dim.Render("   "+progressLegend) + "\n"
 	}
 	return out
 }
@@ -581,7 +588,20 @@ func (m Model) treeRowText(i int, r row, ids map[string]string) string {
 		}
 		return m.itemLines(i, *r.item, ids)
 	case r.project != nil:
-		return withNote(m.missionLine(i, *r.project, m.missionCols(2)), m.rowNote(r))
+		text := withNote(m.missionLine(i, *r.project, m.missionCols(2)), m.rowNote(r))
+		if m.listMode() == modeRepo && len(r.project.Sessions) > 0 {
+			lead := r.project.Sessions[0]
+			var meta []string
+			if lead.Ask != "" {
+				meta = append(meta, "ask: "+lead.Ask)
+			}
+			meta = append(meta, lead.Location())
+			if lead.Branch != "" {
+				meta = append(meta, lead.Branch)
+			}
+			text += pal.dim.Render("     "+strings.Join(meta, " | ")) + "\n"
+		}
+		return text
 	case r.repo != nil:
 		return m.repoLine(i, *r.repo, m.missionCols(2))
 	}

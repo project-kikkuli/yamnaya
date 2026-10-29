@@ -101,7 +101,7 @@ Sections, repositories and chiefs start expanded. Goals and missions start folde
 | `←` / `→` | collapse / expand any container; when already collapsed / expanded, focus its parent / first child |
 | `tab` / `shift-tab` | next / previous section: Needs you, Goals, Sessions |
 | `[` / `]` | previous / next repository group, across goals and sessions |
-| `<` `>` (`home` `end`) | top / bottom of the list |
+| `<` `>` (`home` `end`) | top / bottom of the list; on agent pages, top / bottom of the text |
 | `enter` / `esc` | open or drill in / go back |
 | `r` | reply: answer an item; on a goal or chief, send it a message; on a session, send it a follow-up |
 | `g` | go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS" |
