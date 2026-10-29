@@ -82,6 +82,8 @@ func TestMCPAuthHandsOwnerTerminalExactHostRootAndScope(t *testing.T) {
 				m, calls, c := mcpPanelFixture(t, host, h, id)
 				s := mcp.Server{Name: "notion", Scope: "user", Source: "/native/source", Effective: true, Mutable: true, Fingerprint: "revision"}
 				m.pn.mcp.inventory.Servers = []mcp.Server{s}
+				loaded, _ := m.Update(mcpMsg{choice: c, inventory: m.pn.mcp.inventory})
+				m = loaded.(Model)
 				m = press(t, m, "i")
 				want := append(c.args("login"), s.Name, "--scope", s.Scope, "--source", s.Source, "--revision", s.Fingerprint)
 				if host != "" {

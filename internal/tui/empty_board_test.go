@@ -26,6 +26,7 @@ func TestBoardWideKeysWorkOnEmptyBoard(t *testing.T) {
 		want func(Model) bool
 	}{
 		{"B", func(m Model) bool { return m.mode == modePanel && m.pn.kind == panelProfiles }},
+		{"C", func(m Model) bool { return m.mode == modePanel && m.pn.kind == panelMCP }},
 		{"H", func(m Model) bool { return m.mode == modePanel && m.pn.kind == panelHosts }},
 		{"Y", func(m Model) bool { return m.mode == modePanel && m.pn.kind == panelSettings }},
 		{"E", func(m Model) bool { return m.mode == modePanel }},
