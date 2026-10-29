@@ -248,7 +248,27 @@ func (m Model) chiefRows() []row {
 	if !ok {
 		return nil
 	}
-	return m.nodeRows(n.Children, chiefGroup, m.matches(nodeText(n), m.hostText(n.Manager.Host)))
+	all := false
+	for _, ancestor := range nodePath(m.board.Tree, m.chief) {
+		if m.matches(nodeText(ancestor), m.hostText(ancestor.Manager.Host)) {
+			all = true
+			break
+		}
+	}
+	return m.nodeRows(n.Children, chiefGroup, all)
+}
+
+// nodePath lists the node and its ancestors, nearest first, in the current hierarchy.
+func nodePath(ns []core.Node, id string) []core.Node {
+	for _, n := range ns {
+		if n.Manager.ID == id {
+			return []core.Node{n}
+		}
+		if path := nodePath(n.Children, id); len(path) > 0 {
+			return append(path, n)
+		}
+	}
+	return nil
 }
 
 func expandable(n core.Node) bool { return n.Goal == nil && len(n.Children) > 0 }
