@@ -36,11 +36,12 @@ func starts(rows []row, at int, part func(row) string) ([]int, int) {
 
 // move jumps the cursor: tab and shift+tab between sections, [ and ] between repository groups, < > home and end to the top or bottom.
 func (m *Model) move(key string) {
-	if m.mode == modeAgent && len(m.rows()) == 0 {
+	if m.mode == modeAgent {
 		switch key {
 		case "<", "home":
-			m.scrollY = 0
+			m.scrollY, m.cursor, m.agentPaging = 0, 0, true
 		case ">", "end":
+			m.agentPaging = true
 			m.scrollBy(1 << 30)
 		}
 		return

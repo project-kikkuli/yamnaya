@@ -137,7 +137,7 @@ func (m Model) prepareView() viewPage {
 		height = max(12, m.height-m.height/4)
 	}
 	room := max(1, height-len(foot))
-	if (m.mode == modeHelp || m.mode == modeScreen || m.mode == modeAgent && (len(m.rows()) == 0 || m.scrollY > 0)) && len(lines) > room && room > top {
+	if (m.mode == modeHelp || m.mode == modeScreen || m.mode == modeAgent && (len(m.rows()) == 0 || m.agentPaging)) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {

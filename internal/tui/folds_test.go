@@ -382,9 +382,10 @@ func TestDocumentAskBundleFoldsWithoutChangingEnter(t *testing.T) {
 	m.board.Needs = append(m.board.Needs, core.Need{Doc: &docs[0], Docs: docs})
 	m = treeSelect(t, m, "need:doc:page")
 	r, _ := m.selected()
-	if !r.closed {
-		t.Fatal("document bundle should start folded")
+	if r.closed {
+		t.Fatal("document bundle should retain expanded initial details")
 	}
+	m = press(t, m, "left")
 	m = press(t, m, "right", "right")
 	r, _ = m.selected()
 	if rowKey(r) != "doc-ask:thread1" {
@@ -440,5 +441,154 @@ func TestAskDetailSectionsFoldAndKeepBackSelection(t *testing.T) {
 				t.Fatal("detail fold changed source selection")
 			}
 		})
+	}
+}
+
+func TestSearchArrowsFoldTemporarily(t *testing.T) {
+	for _, tc := range []struct{ key, query string }{{"node:mid", "needle"}, {"heading:sessions", "Mission"}, {"heading:needs", "Bundle"}} {
+		t.Run(tc.key, func(t *testing.T) {
+			m := treeSelect(t, treeModel(), tc.key)
+			m = press(t, m, "left")
+			m = press(t, m, "/", "paste:"+tc.query, "enter")
+			m = to(t, m, func(r row) bool { return rowKey(r) == tc.key })
+			r, _ := m.selected()
+			if r.closed {
+				t.Fatal("search did not reveal saved folded container")
+			}
+			m = press(t, m, "left")
+			r, _ = m.selected()
+			if !r.closed || rowKey(r) != tc.key {
+				t.Fatal("left did not collapse search container")
+			}
+			m = press(t, m, "right")
+			r, _ = m.selected()
+			if r.closed {
+				t.Fatal("right did not expand search container")
+			}
+			m = press(t, m, "esc")
+			r, _ = m.selected()
+			if rowKey(r) != tc.key || !r.closed {
+				t.Fatal("clearing search did not restore saved fold")
+			}
+		})
+	}
+}
+
+func TestExitedSessionDescendantsFoldWithTheirParent(t *testing.T) {
+	for _, tc := range []struct{ name, parent string }{{"live parent", "lead"}, {"exited parent", "ended"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			m.mode, m.detail = modeDetail, "mission"
+			m.board.Projects[0].Dormant = []core.Dormant{{Key: "ended-launch", Session: "ended", Parent: "lead", Title: "Ended parent"}, {Key: "child-launch", Session: "ended-child", Parent: tc.parent, Title: "Ended child"}}
+			parent := "session:lead"
+			if tc.parent == "ended" {
+				parent = "dormant:ended-launch"
+			}
+			m = treeSelect(t, m, "dormant:child-launch")
+			r, _ := m.selected()
+			if r.parent != parent {
+				t.Fatalf("exited child parent=%s want %s", r.parent, parent)
+			}
+			m = press(t, m, "left", "left")
+			r, _ = m.selected()
+			if rowKey(r) != parent || !r.closed {
+				t.Fatal("parent did not collapse exited child")
+			}
+			if slices.ContainsFunc(m.rows(), func(r row) bool { return rowKey(r) == "dormant:child-launch" }) {
+				t.Fatal("exited child escaped parent fold")
+			}
+			m = press(t, m, "right")
+			if !slices.ContainsFunc(m.rows(), func(r row) bool { return rowKey(r) == "dormant:child-launch" }) {
+				t.Fatal("exited child did not return")
+			}
+		})
+	}
+}
+
+func TestInlineSessionEnterKeepsMissionItemsAndScope(t *testing.T) {
+	for _, route := range []string{"inline", "mission detail"} {
+		t.Run(route, func(t *testing.T) {
+			m, _, _ := setup(t)
+			m = to(t, m, mission("lead"))
+			if route == "inline" {
+				m = press(t, m, "right")
+				m = to(t, m, isSession("lead"))
+			} else {
+				m = press(t, m, "enter")
+			}
+			if m.detail != "" && route == "inline" {
+				t.Fatal("test did not start from the overview")
+			}
+			m = press(t, m, "enter")
+			if m.mode != modeSession || m.detail != "lead" {
+				t.Fatalf("session route lost mission context: mode=%d detail=%q", m.mode, m.detail)
+			}
+			if !slices.ContainsFunc(m.rows(), func(r row) bool { return r.item != nil && r.item.ID == "D1" }) {
+				t.Fatal("session lost the owner's linked open item")
+			}
+			m = press(t, m, "I")
+			if m.itemsOf != "lead" || m.mode != modeItems || !slices.ContainsFunc(m.rows(), func(r row) bool { return r.item != nil && r.item.ID == "D1" }) {
+				t.Fatal("I lost the mission item scope")
+			}
+		})
+	}
+}
+
+func TestAgentHomeEndScrollLongSectionBody(t *testing.T) {
+	for _, keys := range [][]string{{"pgdown", "home"}, {"end", "home"}, {"pgdown", "end", "home"}} {
+		t.Run(strings.Join(keys, " "), func(t *testing.T) {
+			m := treeModel()
+			m.mode, m.detail, m.sess, m.agent, m.height = modeAgent, "mission", "lead", "c", 30
+			m.board.Projects[0].Sessions[0].Crew[0].Brief = "BRIEF-FIRST\n" + strings.Repeat("middle instruction line\n", 80) + "BRIEF-LAST"
+			for _, key := range keys {
+				m = press(t, m, key)
+				view := ansi.Strip(m.View().Content)
+				if key == "end" && !strings.Contains(view, "BRIEF-LAST") {
+					t.Fatalf("End did not reach section body end: %s", view)
+				}
+				if key == "home" && (m.scrollY != 0 || !strings.Contains(view, "Crew needle") || !strings.Contains(view, "BRIEF-FIRST")) {
+					t.Fatalf("Home did not restore top viewport: %s", view)
+				}
+			}
+			m = press(t, m, "left")
+			r, _ := m.selected()
+			if !r.closed {
+				t.Fatal("Home/End broke header folding")
+			}
+		})
+	}
+}
+
+func TestSearchRefreshQueryChangeAndBundleEnter(t *testing.T) {
+	m := treeModel()
+	key := "need:" + needID(m.board.Needs[0])
+	m = press(t, m, "/", "paste:Bundle", "enter")
+	m = to(t, m, func(r row) bool { return rowKey(r) == key })
+	m = press(t, m, "enter")
+	r, _ := m.selected()
+	if !r.closed {
+		t.Fatal("Enter did not temporarily fold filtered ask bundle")
+	}
+	next, _ := m.Update(boardMsg{board: nestedBoard()})
+	m = next.(Model)
+	r, _ = m.selected()
+	if rowKey(r) != key || !r.closed {
+		t.Fatal("refresh lost same-query temporary fold")
+	}
+	m = press(t, m, "/", "ctrl+u", "paste:Bund", "enter")
+	m = to(t, m, func(r row) bool { return rowKey(r) == key })
+	r, _ = m.selected()
+	if r.closed {
+		t.Fatal("edited query did not reveal matching bundle")
+	}
+	m = press(t, m, "enter", "enter", "right")
+	r, _ = m.selected()
+	if r.item == nil || r.need != nil {
+		t.Fatal("bundle Enter/right did not reveal its item")
+	}
+	m = press(t, m, "esc")
+	r, _ = m.selected()
+	if rowKey(r) != key || !r.closed {
+		t.Fatal("clearing search did not return to the normally folded bundle")
 	}
 }
