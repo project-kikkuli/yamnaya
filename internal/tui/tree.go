@@ -558,7 +558,11 @@ func (m Model) treeRowText(i int, r row, ids map[string]string) string {
 		return m.crewLine(i, *r.session, *r.member)
 	case r.session != nil:
 		s := *r.session
-		line := m.mark(i) + pad(titleOf(s), m.nameWidth()) + " " + pad(profileDisplay(s.Harness, s.Profile), 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + m.where(s)
+		where := m.where(s)
+		if r.project != nil {
+			where = pad(where, m.whereWidth(r.project.Sessions))
+		}
+		line := m.mark(i) + pad(titleOf(s), m.nameWidth()) + " " + pad(profileDisplay(s.Harness, s.Profile), 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + where
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}
