@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -341,6 +342,7 @@ func TestAColdStartBringsBackEverySessionThatWasRunningNotJustGoalWork(t *testin
 	for _, tc := range []struct {
 		name    string
 		session string
+		cwd     string
 		setup   func(*orgWorld, *resumes)
 		back    bool
 	}{
@@ -360,6 +362,15 @@ func TestAColdStartBringsBackEverySessionThatWasRunningNotJustGoalWork(t *testin
 			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
 			w.core.Store.RecordKill("mine", w.clock)
 		}},
+		{name: "a session the owner started in the worktree of a launch ym killed", session: "mine", cwd: "/repo/august-wt-mgr14", setup: func(w *orgWorld, r *resumes) {
+			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
+			r.launched = append(r.launched, Launched{Key: "august-wt-mgr14", Session: "mgr14-old", Path: "/repo/august-wt-mgr14", State: "landed", Killed: w.clock, Landed: w.clock})
+		}},
+		{name: "a session the owner started in the worktree of a launch that runs", session: "mine", cwd: "/repo/august-wt-mgr14", back: true, setup: func(w *orgWorld, r *resumes) {
+			w.run(4000, 1, "/dev/ttys040", "claude", "mine", Idle)
+			r.launched = append(r.launched, Launched{Key: "august-wt-mgr14", Session: "mgr14-old", Path: "/repo/august-wt-mgr14", State: "landed", Killed: w.clock, Landed: w.clock},
+				Launched{Key: "august-wt-mgr14-2", Session: "mgr14-new", Path: "/repo/august-wt-mgr14", State: "gone", Revive: true})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w, r := resumeWorld(t)
@@ -370,7 +381,8 @@ func TestAColdStartBringsBackEverySessionThatWasRunningNotJustGoalWork(t *testin
 			launched := tc.session == "plain"
 			if !launched {
 				tc.setup(w, r)
-				w.set("mine", func(s *Session) { s.Cwd = "/repo/august" })
+				cwd := cmp.Or(tc.cwd, "/repo/august")
+				w.set("mine", func(s *Session) { s.Cwd = cwd })
 			}
 			w.loop(t, 1)
 			w.restart(r)

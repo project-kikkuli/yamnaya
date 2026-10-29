@@ -306,7 +306,8 @@ func (c *Core) trackRunning(b Board) {
 // freshAlive bounds how old aliveFile may be, on a host that did not restart since, for what it lists to have just gone down.
 const freshAlive = 2 * time.Minute
 
-// lastRunning is what aliveFile says ran before the host went down, less what runs again now and what ym kill stopped. It counts
+// lastRunning is what aliveFile says ran before the host went down, less what runs again now, what ym kill stopped and what ran in
+// the worktree of a launch ym killed or landed, as a stray conversation of an ended manager does. It counts
 // only when written before the host last booted, or moments ago, so a serve started long after its last look brings back nothing.
 func (c *Core) lastRunning(b Board) []Running {
 	path := filepath.Join(c.StateDir, aliveFile)
@@ -329,10 +330,21 @@ func (c *Core) lastRunning(b Board) []Running {
 	if err != nil {
 		return nil
 	}
+	ended := map[string]bool{}
+	for _, l := range b.Launched {
+		if l.Path != "" && !ended[l.Path] {
+			ended[l.Path] = !l.Killed.IsZero() || !l.Landed.IsZero()
+		}
+	}
+	for _, l := range b.Launched {
+		if l.Killed.IsZero() && l.Landed.IsZero() {
+			ended[l.Path] = false
+		}
+	}
 	return slices.DeleteFunc(was, func(r Running) bool {
 		_, live := b.Session(r.ID)
 		_, killed := kills[r.ID]
-		return live || killed
+		return live || killed || ended[r.Cwd]
 	})
 }
 
