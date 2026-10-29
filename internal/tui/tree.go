@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"sort"
 	"strings"
 
@@ -54,13 +55,18 @@ func (m *Model) setFold(r row, closed bool) {
 	m.folds[rowKey(r)] = closed
 }
 
-func (m Model) projectRows(all bool) []row {
+func (m Model) projectRows(all bool) []row { return m.projectNodes(m.uiTree(), all) }
+
+func (m Model) projectNodes(nodes []treeNode, all bool) []row {
 	var out []row
 	var walk func([]treeNode, string, int, int, string)
 	walk = func(nodes []treeNode, parent string, depth, section int, group string) {
 		for _, n := range nodes {
 			r := n.row
 			r.parent, r.depth = parent, depth
+			if r.item != nil && r.need == nil {
+				r.key = rowKey(r) + "/in:" + parent
+			}
 			if r.sectionID != 0 {
 				section = r.sectionID
 			}
@@ -77,13 +83,24 @@ func (m Model) projectRows(all bool) []row {
 			}
 		}
 	}
-	walk(m.uiTree(), "", 0, 0, "")
+	walk(nodes, "", 0, 0, "")
 	return out
 }
 
-func (m *Model) treeMove(key string) {
+func (m *Model) firstContent() {
+	for i, r := range m.rows() {
+		if r.header == "" {
+			m.cursor = i
+			return
+		}
+	}
+	m.cursor = 0
+}
+
+func (m *Model) treeMove(key string) { m.treeMoveRows(key, m.rows()) }
+
+func (m *Model) treeMoveRows(key string, rows []row) {
 	m.scrollY = 0
-	rows := m.rows()
 	if m.cursor < 0 || m.cursor >= len(rows) {
 		return
 	}
@@ -110,7 +127,7 @@ func (m *Model) treeMove(key string) {
 
 func (m Model) uiTree() []treeNode {
 	nodes := m.boardTree()
-	if m.filter == "" {
+	if m.filter == "" || m.listMode() != modeList && m.listMode() != modeChief {
 		return nodes
 	}
 	inherited := false
@@ -188,6 +205,13 @@ func (m Model) boardTree() []treeNode {
 		t := treeNode{row: r}
 		if len(n.Asks) > 1 {
 			t.children = itemTree(n.Asks, nil)
+		}
+		if n.Doc != nil && len(n.Docs) > 1 {
+			for j := range n.Docs {
+				d := &n.Docs[j]
+				child := core.Need{Doc: d, Docs: []core.DocAsk{*d}, Project: n.Project, Manager: n.Manager}
+				t.children = append(t.children, treeNode{row: row{key: "doc-ask:" + d.Key, need: &child}})
+			}
 		}
 		needs = append(needs, t)
 	}
@@ -272,7 +296,7 @@ func (m Model) nodeSessions(n core.Node) []treeNode {
 	if n.Live != nil {
 		for i := range sessions {
 			if sessions[i].Key() != n.Live.Key() && sessions[i].Parent == "" {
-				sessions[i].Parent = n.Live.Key()
+				sessions[i].Parent = treeSessionKey(*n.Live)
 			}
 		}
 	}
@@ -320,16 +344,30 @@ func (m Model) sessionParentKey(s core.Live) string {
 
 func (m Model) sessionsTree(sessions []core.Live, p *core.Project) []treeNode {
 	byKey := map[string]*core.Live{}
+	aliases := map[string]*core.Live{}
 	for i := range sessions {
-		byKey[treeSessionKey(sessions[i])] = &sessions[i]
+		s := &sessions[i]
+		byKey[treeSessionKey(*s)] = s
+		key := sessionKey(*s)
+		if _, exists := aliases[key]; exists {
+			aliases[key] = nil
+		} else {
+			aliases[key] = s
+		}
+	}
+	resolve := func(key string) *core.Live {
+		if s := byKey[key]; s != nil {
+			return s
+		}
+		return aliases[key]
 	}
 	children := map[string][]*core.Live{}
 	var roots []*core.Live
 	for i := range sessions {
 		s := &sessions[i]
-		parent := byKey[m.sessionParentKey(*s)]
+		parent := resolve(m.sessionParentKey(*s))
 		seen := map[string]bool{treeSessionKey(*s): true}
-		for a := parent; a != nil; a = byKey[m.sessionParentKey(*a)] {
+		for a := parent; a != nil; a = resolve(m.sessionParentKey(*a)) {
 			if seen[treeSessionKey(*a)] {
 				parent = nil
 				break
@@ -407,11 +445,21 @@ func (m Model) sceneNodeRows(ns []core.Node, group string, depth int) []row {
 	return out
 }
 
-func (m Model) treePage() viewPage {
+func (m Model) treePage() viewPage { return m.renderTree(m.rows()) }
+
+func (m Model) renderTree(rows []row) viewPage {
 	b := viewPage{}
-	rows := m.rows()
+	var items []core.Item
+	for _, r := range rows {
+		if r.item != nil {
+			items = append(items, *r.item)
+		}
+	}
+	ids := itemIDs(items)
 	for i, r := range rows {
-		text := m.treeRowText(i, r)
+		rowModel := m
+		rowModel.width = max(20, m.width-2*r.depth-2)
+		text := rowModel.treeRowText(i, r, ids)
 		lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 		indicator := "  "
 		if r.container {
@@ -423,8 +471,11 @@ func (m Model) treePage() viewPage {
 		indent := strings.Repeat("  ", r.depth)
 		for j, line := range lines {
 			if j == 0 {
-				line = strings.TrimPrefix(line, m.mark(i))
-				line = m.mark(i) + indent + indicator + line
+				mark := m.mark(i)
+				if r.node != nil && m.picked[r.node.Manager.ID] && !m.dyingAt[i] {
+					mark = mark[:len(mark)-1] + "*"
+				}
+				line = mark + indent + indicator + ansi.Cut(line, 3, ansi.StringWidth(line))
 			} else {
 				line = indent + "  " + line
 			}
@@ -458,12 +509,12 @@ func (m Model) rowPlace(r row) string {
 	return ""
 }
 
-func (m Model) treeRowText(i int, r row) string {
+func (m Model) treeRowText(i int, r row, ids map[string]string) string {
 	switch {
 	case r.header != "":
-		return pal.bold.Render(r.header) + "\n"
+		return m.mark(i) + pal.bold.Render(r.header) + "\n"
 	case r.stale:
-		return fmt.Sprintf("stale (%d) open items whose sessions ended\n", len(m.board.Stale))
+		return m.mark(i) + fmt.Sprintf("stale (%d) open items whose sessions ended\n", len(m.board.Stale))
 	case r.node != nil:
 		return withNote(m.nodeLines(i, *r.node, 0), m.rowNote(r))
 	case r.need != nil:
@@ -503,7 +554,7 @@ func (m Model) treeRowText(i int, r row) string {
 		if m.listMode() == modeList {
 			return m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)})
 		}
-		return m.itemLines(i, *r.item, itemIDs([]core.Item{*r.item}))
+		return m.itemLines(i, *r.item, ids)
 	case r.project != nil:
 		return withNote(m.missionLine(i, *r.project, m.missionCols(2)), m.rowNote(r))
 	case r.repo != nil:

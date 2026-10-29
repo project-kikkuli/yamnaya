@@ -420,7 +420,7 @@ func (m Model) hints() string {
 	case modeItems:
 		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
+		return "↑↓ section · ← collapse/parent · → expand/child · enter back · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
@@ -1234,28 +1234,11 @@ func (m Model) whyView() string {
 	field("filed", it.CreatedAt.Local().Format("2006-01-02 15:04"))
 	field("answer", it.Answer)
 	field("dismissed", it.Reason)
-	if !it.Dossier.Empty() {
-		b.WriteString("\n" + pal.bold.Render(" CONTEXT") + pal.dim.Render("  attached by ym "+age(m.board.At, it.Dossier.At)) + "\n")
-		last := ""
-		for _, l := range core.DossierLines(it.Dossier) {
-			k := l[0]
-			if k == last {
-				k = ""
-			}
-			last = l[0]
-			b.WriteString(" " + pal.bold.Render(pad(k, 22)) + " " + l[1] + "\n")
-		}
-	}
-	if len(it.History) > 1 {
-		b.WriteString("\n" + pal.bold.Render(" history") + "\n")
-		for _, e := range it.History[1:] {
-			line := "   " + e.At.Local().Format("01-02 15:04") + "  " + e.From + " -> " + e.To
-			if e.Text != "" {
-				line += ": " + e.Text
-			}
-			b.WriteString(line + "\n")
-		}
-	}
+	context := m
+	context.cursor = m.whyAt
+	context.filter = ""
+	b.WriteString(context.renderTree(context.projectNodes(context.whySections(), false)).String())
+
 	return b.String()
 }
 
@@ -1500,6 +1483,40 @@ func (m Model) agentSections() []treeNode {
 			b.WriteString(pal.dim.Render("   "+pad(at, 9)) + a.String() + "\n")
 		}
 		out = append(out, textSection("member/"+treeSessionKey(*s)+"/"+c.ID+"/trail", fmt.Sprintf("TRAIL (last %d actions)", len(c.Trail)), b.String()))
+	}
+	return out
+}
+
+func (m Model) whySections() []treeNode {
+	it := m.why
+	if it == nil {
+		return nil
+	}
+	var b strings.Builder
+	var out []treeNode
+	if !it.Dossier.Empty() {
+		b = strings.Builder{}
+		last := ""
+		for _, l := range core.DossierLines(it.Dossier) {
+			k := l[0]
+			if k == last {
+				k = ""
+			}
+			last = l[0]
+			b.WriteString(" " + pal.bold.Render(pad(k, 22)) + " " + l[1] + "\n")
+		}
+		out = append(out, textSection("item/"+it.Key()+"/context", "CONTEXT", b.String()))
+	}
+	if len(it.History) > 1 {
+		b = strings.Builder{}
+		for _, e := range it.History[1:] {
+			line := "   " + e.At.Local().Format("01-02 15:04") + "  " + e.From + " -> " + e.To
+			if e.Text != "" {
+				line += ": " + e.Text
+			}
+			b.WriteString(line + "\n")
+		}
+		out = append(out, textSection("item/"+it.Key()+"/history", "history", b.String()))
 	}
 	return out
 }

@@ -669,7 +669,7 @@ func TestAChiefRowLeadsWithItsNameAndShowsItsOwnSpendPlusItsReports(t *testing.T
 						break
 					}
 				}
-				if fields := strings.Fields(row); len(fields) == 0 || fields[0] != "harnesser" {
+				if fields := strings.Fields(strings.TrimLeft(row, " >▾▸")); len(fields) == 0 || fields[0] != "harnesser" {
 					t.Fatalf("chief row %q does not lead with its name", row)
 				}
 				if !strings.Contains(row, "Kyoto") || ansi.StringWidth(row) > width {

@@ -482,12 +482,9 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 		if n.Goal != nil && n.Goal.Evidence != "" {
 			b += pal.dim.Render("         "+n.Goal.Evidence) + "\n"
 		}
-		for _, d := range n.Docs {
-			lines := []string{d.Asker + ": " + d.Text, d.URL}
-			if len(n.Docs) == 1 {
-				lines = append(strings.Split(d.Evidence, "\n"), d.URL)
-			}
-			for _, l := range lines {
+		if len(n.Docs) == 1 {
+			d := n.Docs[0]
+			for _, l := range append(strings.Split(d.Evidence, "\n"), d.URL) {
 				b += pal.dim.Render("         "+ansi.Truncate(oneLine(l), max(10, m.width-10), "…")) + "\n"
 			}
 		}
@@ -682,6 +679,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if n.Goal != nil {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
+			m.firstContent()
 			m.feedFrom = m.board.At
 			if host, rest, ok := core.SplitRemote(n.Goal.ID); ok && n.Goal.Host != "" {
 				c := m.core
@@ -696,6 +694,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		} else {
 			m.push(modeChief)
 			m.chief = n.Manager.ID
+			m.firstContent()
 		}
 		return m, nil, true
 	case "space":
