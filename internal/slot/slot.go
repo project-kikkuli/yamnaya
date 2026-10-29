@@ -112,14 +112,27 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 		if readErr != nil {
 			return nil, 0, readErr
 		}
-		for n := 1; n <= p.Capacity && !state.Holding; n++ {
-			f, err := os.OpenFile(p.lockPath(n), os.O_CREATE|os.O_RDWR, 0o644)
+		for n := 1; n <= p.Capacity; n++ {
+			f, err := p.tryLock(n)
 			if err != nil {
 				return nil, 0, err
 			}
-			if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
-				f.Close()
+			if f == nil && state.Holding {
+				break
+			}
+			if f == nil {
 				continue
+			}
+			if state.Holding {
+				idle, err := p.othersIdle(n)
+				if err != nil {
+					f.Close()
+					return nil, 0, err
+				}
+				if !idle {
+					f.Close()
+					break
+				}
 			}
 			c.Slot = n
 			c.Since = time.Now()
@@ -146,6 +159,35 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 		case <-time.After(p.Poll):
 		}
 	}
+}
+
+// tryLock returns slot n's lock file held, or nil when another process holds it.
+func (p Pool) tryLock(n int) (*os.File, error) {
+	f, err := os.OpenFile(p.lockPath(n), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		f.Close()
+		return nil, nil
+	}
+	return f, nil
+}
+
+// othersIdle reports whether every slot but n is free: overload comes from jobs outside the slots, so it holds new
+// slots only while one runs, and an idle pool always grants one.
+func (p Pool) othersIdle(n int) (bool, error) {
+	for m := 1; m <= p.Capacity; m++ {
+		if m == n {
+			continue
+		}
+		f, err := p.tryLock(m)
+		if err != nil || f == nil {
+			return false, err
+		}
+		f.Close()
+	}
+	return true, nil
 }
 
 // Status reads who holds and waits for the pool's slots. A slot is held while its lock is; its claim names the holder
