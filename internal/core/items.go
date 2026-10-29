@@ -184,7 +184,7 @@ func (s *Store) AddItem(it Item) (Item, error) {
 
 func (s *Store) addItem(it Item) (Item, error) {
 	if _, ok := kindPrefix[it.Kind]; !ok {
-		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, or go)", it.Kind)
+		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, go, or review)", it.Kind)
 	}
 	if it.Action != "" && it.Action != "chat" {
 		return it, errors.New("item action must be chat or empty")

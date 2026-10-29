@@ -64,6 +64,7 @@ The **Needs you** queue holds only what needs you now, and each row leaves on it
 
 - stuck goals
 - asks that climbed past every manager and chief
+- explicit owner requests (`ym item add --to owner`) and document reviews (`ym item review <document> --question "<review request>" --rec "<recommendation>"`)
 - pull requests ready for your merge, as `merge` rows with repository and number, CI, review state and title: every open pull request your GitHub account wrote, whichever session, goal or tool opened it, once it is not a draft, no check is running and GitHub calls its checks passing, no review thread is open, the review is approved or not required, and GitHub calls the merge clean. A goal's pull request stays with its manager instead in a repository `ym goal authority` clears. `ym serve` asks GitHub for your open pull requests every 5 minutes, so one leaves once merged or closed
 - GitHub review requests addressed to you personally, not to your teams, with the pull request's title and who opened it
 - Notion discussions and reviews addressed to you that no goal claims
@@ -71,6 +72,8 @@ The **Needs you** queue holds only what needs you now, and each row leaves on it
 - managers' plan revisions you steered that they left unadopted, and relays another host keeps refusing
 
 A session you started yourself that goes idle never lands here, whatever its last message says: its row under **Sessions you started** shows `idle · <its last line>`, with a dot while it has said something since you last opened it with `o` or `O`. When one of your sessions files an ask with `ym item add`, that ask does land here.
+
+Open owner items remain visible when their source session exits or their manager starts a new session. The `I` view shows who owes each answer. Press `e` on a delegated item, or run `ym item escalate <id>`, to move that existing item to the owner without changing its id or source. An incomplete decision must be prepared with `ym item prepare` first. Press `V` on a review item to open its document. These requests are explicit records; ym does not infer them from agent prose.
 
 It stays quiet because every ask arrives ready to decide:
 

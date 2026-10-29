@@ -853,7 +853,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
-		case "r", "g", "l", "x", "u", "o", "O":
+		case "r", "g", "l", "x", "u", "o", "O", "e", "V":
 			m.mode = m.back
 			for i, r := range m.rows() {
 				if r.item != nil && r.item.Key() == m.why.Key() {
@@ -1089,8 +1089,23 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 	case "e":
+		if r.item != nil {
+			if r.item.State != core.ItemOpen || r.item.Recipient == core.Owner {
+				return m, nil
+			}
+			key := r.item.Key()
+			return m, m.do(func() (string, error) {
+				it, err := m.core.Escalate(key)
+				return it.ID + " owner escalation requested", err
+			})
+		}
 		if p := m.projectOf(r); p != nil {
 			m.startInput(inRename, "", p.Key, p.Name, true)
+		}
+	case "V":
+		if r.item != nil && r.item.Kind == core.KindReview && len(r.item.Evidence) > 0 {
+			url, open := r.item.Evidence[0], m.openURL
+			return m, m.do(func() (string, error) { return "opened " + url, open(url) })
 		}
 	case "m":
 		if p := m.projectOf(r); p != nil && (m.mode == modeList || m.mode == modeRepo) {
@@ -1599,6 +1614,9 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 		key, harness = r.session.Key(), r.session.Harness
 	case r.item != nil:
 		key, harness = r.item.Session, r.item.Harness
+		if mg, ok := m.board.Org.ManagerOf(key); ok && mg.Session != "" {
+			key, harness = mg.Session, mg.Harness
+		}
 	case r.project != nil && len(r.project.Sessions) > 0:
 		key, harness = r.project.Sessions[0].Key(), r.project.Sessions[0].Harness
 	case m.mode == modeAgent || m.mode == modeSession:
@@ -1713,7 +1731,11 @@ func (m Model) sessionOf(r row) *core.Live {
 	case r.session != nil && r.member == nil:
 		return r.session
 	case r.item != nil:
-		if s, ok := m.board.Session(r.item.Session); ok {
+		key := r.item.Session
+		if mg, ok := m.board.Org.ManagerOf(key); ok && mg.Session != "" {
+			key = mg.Session
+		}
+		if s, ok := m.board.Session(key); ok {
 			return &s
 		}
 	case m.mode == modeSession || m.mode == modeAgent:

@@ -80,6 +80,22 @@ func TestSessionName(t *testing.T) {
 	}
 }
 
+func TestAMissingSessionCanBeResumedWhileOtherSessionsRun(t *testing.T) {
+	h, conf := ymServer(t)
+	if _, err := h.Start(conf, "existing", t.TempDir(), []string{"sleep", "30"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Pane("missing"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("missing target was treated as a server failure: %v", err)
+	}
+	if _, err := h.Start(conf, "missing", t.TempDir(), []string{"sleep", "30"}); err != nil {
+		t.Fatalf("could not resume missing target: %v", err)
+	}
+	if p, err := h.Pane("existing"); err != nil || p.Dead {
+		t.Fatalf("resuming another session affected existing work: %+v, %v", p, err)
+	}
+}
+
 func TestAgentEnvDropsOnlyTheCallingAgentsOwnVariables(t *testing.T) {
 	in := []string{"PATH=/bin", "TMUX=/tmp/x,1,0", "TMUX_PANE=%1", "CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=a", "CLAUDE_CONFIG_DIR=/c", "CODEX_HOME=/h", "CODEX_THREAD_ID=t", "AI_AGENT=x", "ANTHROPIC_BASE_URL=u"}
 	want := []string{"PATH=/bin", "CLAUDE_CONFIG_DIR=/c", "CODEX_HOME=/h", "ANTHROPIC_BASE_URL=u"}

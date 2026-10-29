@@ -11,7 +11,7 @@ import (
 
 // agentOnly are commands agents or setup run, never the owner at the board.
 var agentOnly = map[string]bool{
-	"ym item add": true, "ym item inbox": true, "ym item prepare": true, "ym spawn": true, "ym limits record": true,
+	"ym item add": true, "ym item review": true, "ym item inbox": true, "ym item prepare": true, "ym spawn": true, "ym limits record": true,
 	"ym install": true, "ym completion": true, "ym board": true, "ym help": true, "ym serve": true, "ym service ensure": true, "ym slot": true,
 	"ym goal done": true, "ym goal verdict": true, "ym goal artifact": true, "ym goal update": true, "ym goal wake": true, "ym goal event": true,
 	"ym goal adopt": true, "ym goal brief": true,

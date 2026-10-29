@@ -1030,7 +1030,7 @@ func projectStatus(p Project) Status {
 }
 
 // needs orders permission prompts first, then open items by how much they block, oldest first.
-// Items whose mission has no live session are stale and listed apart.
+// Open owner requests stay visible after their source sessions end.
 func needs(b Board) (live, stale []Need) {
 	asked := map[string]bool{}
 	for i := range b.Sessions {
@@ -1049,11 +1049,14 @@ func needs(b Board) (live, stale []Need) {
 		for j := range p.Items {
 			if p.Items[j].State == ItemOpen && p.Items[j].Recipient == Owner {
 				n := Need{Item: &p.Items[j], Project: p.Key}
-				if len(p.Sessions) > 0 {
-					items = append(items, n)
-				} else {
-					stale = append(stale, n)
+				manager, managed := b.Org.ManagerOf(p.Items[j].Session)
+				if managed {
+					n.Manager = manager.ID
+					if s, ok := b.Session(manager.Session); ok {
+						n.Project = s.Project
+					}
 				}
+				items = append(items, n)
 			}
 		}
 	}

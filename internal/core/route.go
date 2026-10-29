@@ -166,10 +166,15 @@ func (c *Core) parentsFor(b Board, berr error) map[string]string {
 // manager runs goes to that manager's session instead of the owner's queue.
 func (c *Core) AddItem(it Item) (Item, error) {
 	b, err := c.Board()
-	return c.file(b, err, it)
+	return c.file(b, err, it, it.Kind == KindReview)
 }
 
-func (c *Core) file(b Board, berr error, it Item) (Item, error) {
+func (c *Core) AddOwnerItem(it Item) (Item, error) {
+	b, err := c.Board()
+	return c.file(b, err, it, true)
+}
+
+func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 	if it.Scope == "" {
 		it.Scope = c.ScopeOf(b, it.Session)
 	}
@@ -178,6 +183,9 @@ func (c *Core) file(b Board, berr error, it Item) (Item, error) {
 		return it, err
 	}
 	it.Recipient = o.Recipient(c.Resolve(it.Session), c.parentsFor(b, berr))
+	if owner {
+		it.Recipient = Owner
+	}
 	if it.Recipient == Owner {
 		if err := ready(it); err != nil {
 			return it, err

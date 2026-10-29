@@ -33,8 +33,8 @@ func TestABoardOverUnchangedInputsStillShowsEveryWrite(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(b.Stale) != i {
-					t.Fatalf("board %d shows %d open items, want %d", i, len(b.Stale), i)
+				if len(ownerItems(b)) != i {
+					t.Fatalf("board %d shows %d open items, want %d", i, len(ownerItems(b)), i)
 				}
 				if _, err := w.AddItem(Item{Kind: "decision", Question: "Ship it?", Session: "gone", Recipient: Owner}); err != nil {
 					t.Fatal(err)

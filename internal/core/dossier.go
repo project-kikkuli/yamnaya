@@ -80,11 +80,14 @@ const (
 // ErrNotReady rejects an ask that would reach the owner without what the owner needs to decide it.
 var ErrNotReady = errors.New("not ready for the owner")
 
-// Missing names what an ask bound for the owner lacks to be decided: a recommendation for a decision or default, and for a decision two options with effects.
+// Missing names what an owner request lacks: its recommendation, decision options, or review document.
 func Missing(it Item) []string {
 	var out []string
-	if (it.Kind == KindDecision || it.Kind == KindDefault) && strings.TrimSpace(it.Rec) == "" {
+	if (it.Kind == KindDecision || it.Kind == KindDefault || it.Kind == KindReview) && strings.TrimSpace(it.Rec) == "" {
 		out = append(out, "a recommendation")
+	}
+	if it.Kind == KindReview && (len(it.Evidence) == 0 || strings.TrimSpace(it.Evidence[0]) == "") {
+		out = append(out, "a document link or path")
 	}
 	if it.Kind == KindDecision {
 		n := 0
@@ -112,6 +115,7 @@ func Unprepared(it Item) []string {
 var missingFlag = map[string]string{
 	"a recommendation":               "--rec \"<what you recommend and why>\"",
 	"two options with their effects": "at least two --option \"<label>=<what happens if picked>\"",
+	"a document link or path":        "--evidence \"<document link or path>\"",
 }
 
 // ready refuses an ask bound for the owner that is missing anything the owner needs to decide it.

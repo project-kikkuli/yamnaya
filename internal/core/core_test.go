@@ -264,12 +264,12 @@ func TestNeedsListPermissionPromptsThenItemsByBlocks(t *testing.T) {
 			got = append(got, n.Session.Prompt.Tool)
 		}
 	}
-	want := []string{"Bash: ls", "Shell: rm", "high", "low"}
+	want := []string{"Bash: ls", "Shell: rm", "high", "gone session", "low"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("needs = %v, want %v", got, want)
 	}
-	if len(b.Stale) != 1 || b.Stale[0].Item.Question != "gone session" {
-		t.Errorf("stale = %+v, want the item whose session ended", b.Stale)
+	if len(b.Stale) != 0 {
+		t.Errorf("open owner requests must not be hidden as stale: %+v", b.Stale)
 	}
 	if _, ok := b.Project("ended"); !ok {
 		t.Error("an open item from an ended session should keep its project on the board")

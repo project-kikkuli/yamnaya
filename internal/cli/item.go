@@ -15,7 +15,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
+	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
@@ -120,23 +120,44 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 }
 
 func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return itemCreateCmd(with, false)
+}
+
+func itemReviewCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return itemCreateCmd(with, true)
+}
+
+func itemCreateCmd(with func(runFunc) func(*cobra.Command, []string) error, review bool) *cobra.Command {
 	var it core.Item
 	var options []string
+	var to string
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "File an item against the calling session and print its id; ym attaches the goal, its pull requests and recent activity, and refuses a decision or default bound for the owner that lacks --rec (and a decision without two --option)",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if to != "" && to != "owner" {
+				return fmt.Errorf("--to must be owner; omit it for normal manager routing")
+			}
 			c, err := e.caller()
 			if err != nil {
 				return err
 			}
 			it.Session, it.Harness = c.Session, c.Harness
+			if review {
+				it.Kind = core.KindReview
+				it.Evidence = append([]string{args[0]}, it.Evidence...)
+			}
 			for _, o := range options {
 				label, effect, _ := strings.Cut(o, "=")
 				it.Options = append(it.Options, core.Option{Label: strings.TrimSpace(label), Effect: strings.TrimSpace(effect)})
 			}
-			added, err := e.core.AddItem(it)
+			var added core.Item
+			if to == "owner" {
+				added, err = e.core.AddOwnerItem(it)
+			} else {
+				added, err = e.core.AddItem(it)
+			}
 			if err != nil {
 				return err
 			}
@@ -152,7 +173,13 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 		}),
 	}
 	cmd.Flags().StringVar(&it.Action, "action", "", "chat when the owner must act in the originating conversation")
-	cmd.Flags().StringVar(&it.Kind, "kind", "", "decision, default, chore, or go")
+	cmd.Flags().StringVar(&to, "to", "", "owner for an explicit owner request; omitted follows manager routing")
+	if review {
+		cmd.Use, cmd.Short, cmd.Args = "review <document>", "Request the owner's review of a document link or path; keeps one durable item until answered or dismissed", cobra.ExactArgs(1)
+	} else {
+		cmd.Flags().StringVar(&it.Kind, "kind", "", "decision, default, chore, go, or review")
+		cmd.MarkFlagRequired("kind")
+	}
 	cmd.Flags().StringVar(&it.Question, "question", "", "one-line question")
 	cmd.Flags().StringVar(&it.Rec, "rec", "", "what you recommend")
 	cmd.Flags().StringArrayVar(&options, "option", nil, "option as label=effect (repeatable)")
@@ -160,9 +187,30 @@ func itemAddCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.
 	cmd.Flags().StringArrayVar(&it.Evidence, "evidence", nil, "a PR, CI run, commit, file or other link the call rests on (repeatable)")
 	cmd.Flags().StringVar(&it.Tried, "tried", "", "what you tried before asking")
 	cmd.Flags().IntVar(&it.Blocks, "blocks", 0, "how many pieces of work wait on this")
-	cmd.MarkFlagRequired("kind")
 	cmd.MarkFlagRequired("question")
+	if review {
+		cmd.MarkFlagRequired("rec")
+	}
 	return cmd
+}
+
+func itemEscalateCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{Use: "escalate <id>", Short: "Send an existing prepared open item to the owner, keeping its id, source and history", Args: cobra.ExactArgs(1), RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		b, err := e.core.Board()
+		if err != nil {
+			return err
+		}
+		found, err := e.item(b, args[0])
+		if err != nil {
+			return err
+		}
+		it, err := e.core.Escalate(found.Key())
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s owner escalation requested\n", it.ID)
+		return nil
+	})}
 }
 
 func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {

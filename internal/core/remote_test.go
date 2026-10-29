@@ -91,6 +91,8 @@ func TestActionsOnRemoteSessionsRunOnTheirHost(t *testing.T) {
 			[]string{"box", "item", "dismiss", "#1", "moot"}},
 		{"snooze", func(c *Core, b Board) error { _, err := c.Snooze("box/#1"); return err },
 			[]string{"box", "item", "snooze", "#1"}},
+		{"escalate", func(c *Core, b Board) error { _, err := c.Escalate("box/#1"); return err },
+			[]string{"box", "item", "escalate", "#1"}},
 		{"archive", func(c *Core, b Board) error { return c.StopSession("launch:box/fix-typo") },
 			[]string{"box", "kill", "--yes", "fix-typo"}},
 		{"relaunch", func(c *Core, b Board) error {

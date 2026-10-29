@@ -407,9 +407,9 @@ func (m Model) hints() string {
 		}
 		return "↑↓ pgup pgdn scroll · esc back"
 	case modeItems:
-		return "↑↓ move · enter expand · r reply · g go ahead · l later · u unsnooze · x dismiss · esc back"
+		return "↑↓ move · enter expand · r reply · e escalate to you · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
+		return "r reply · e escalate to you · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
@@ -750,6 +750,10 @@ func (m Model) needLines(i int, n core.Need) string {
 	if it.Kind == core.KindGo {
 		q, keys = pal.yellow.Render("go ahead? ")+q, "enter expand · g go ahead · r reply · l later · x dismiss · o go to session · O beside"
 	}
+	if it.Kind == core.KindReview {
+		q = pal.yellow.Render("review · ") + q
+		keys += " · V document"
+	}
 	if len(core.Unprepared(*it)) > 0 {
 		q = pal.yellow.Render("unprepared · ") + q
 	}
@@ -818,6 +822,16 @@ func (m Model) sourceName(it core.Item) string {
 		return ansi.Truncate(oneLine(s.Title), 60, "…")
 	}
 	return it.Harness + " " + core.Short(it.Session)
+}
+
+func (m Model) recipientName(it core.Item) string {
+	if it.Recipient == core.Owner {
+		return "you"
+	}
+	if mg, ok := m.board.Org.Managers[it.Recipient]; ok {
+		return m.tagged(mg.Host, mg.Label())
+	}
+	return it.Recipient
 }
 
 func copiesText(p core.Project) string {
@@ -1017,7 +1031,7 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " " + m.tagged(it.Host, it.Question)
+	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  " + m.tagged(it.Host, it.Question)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)
 	}
@@ -1407,6 +1421,7 @@ func (m Model) whyView() string {
 		field("option", o.Label+" = "+o.Effect)
 	}
 	field("assumption", it.Assumption)
+	field("recipient", m.recipientName(*it))
 	if it.State == core.ItemOpen && it.Recipient == core.Owner {
 		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))
 	}
@@ -1530,7 +1545,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 revision, which shows "steer rN not adopted" until its manager runs ym goal adopt;
                 on a mission: split a merged mission back out
    W            open the goal's or chief's brief page that ym serve hosts; a chief's rolls up its reports
-   V            open the artifact a manager registered as its richer brief
+   V            open a review item's document, or the artifact a manager registered as its richer brief
    R            relaunch a manager or chief: end its session and start fresh from its prompt and brief
    X            on a goal: untie one of its pull requests for good, with a reason, so its verification never
                 waits on it (the same as ym goal pr drop)
@@ -1540,7 +1555,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    C            new chief, the same as c n
    D            detach the goal or chief from its chief, the same as c d
    t            goals by repository with chiefs nesting their reports, or every goal by its own repository
-   e            rename a mission; an empty name restores the inferred one
+   e            on an open delegated item, escalate it to you without changing its id; otherwise rename a mission
    m            merge a mission into another
    p            advance the mission to its next phase (asks y/n)
    P            set the mission's phases, comma separated

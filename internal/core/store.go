@@ -23,6 +23,7 @@ const (
 	KindDecision = "decision"
 	KindDefault  = "default"
 	KindChore    = "chore"
+	KindReview   = "review"
 	// KindGo asks the owner's go-ahead to build; answering it sends GoAhead.
 	KindGo = "go"
 
@@ -34,7 +35,7 @@ const (
 	ItemSnoozed   = "snoozed"
 )
 
-var kindPrefix = map[string]string{KindDecision: "D", KindDefault: "V", KindChore: "C", KindGo: "G"}
+var kindPrefix = map[string]string{KindDecision: "D", KindDefault: "V", KindChore: "C", KindGo: "G", KindReview: "R"}
 
 type Option struct {
 	Label  string `json:"label"`

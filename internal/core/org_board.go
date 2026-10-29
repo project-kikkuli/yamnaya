@@ -105,10 +105,22 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 		}
 	}
 	for i := range b.Projects {
+		if m, ok := o.ManagerOf(b.Projects[i].Key); ok {
+			b.Projects[i].Manager = m.ID
+			continue
+		}
 		for _, s := range b.Projects[i].Sessions {
 			if m, ok := o.Managed(s.Key(), b.parents); ok {
 				b.Projects[i].Manager = m.ID
 				break
+			}
+		}
+		if b.Projects[i].Manager == "" {
+			for _, d := range b.Projects[i].Dormant {
+				if m, ok := o.Managed(d.ID(), b.parents); ok {
+					b.Projects[i].Manager = m.ID
+					break
+				}
 			}
 		}
 	}

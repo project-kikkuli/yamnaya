@@ -68,7 +68,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	c.planNow(sb, m)
 	sb.WriteString("How you work:\n")
 	sb.WriteString("- Read your reports' briefs often. Message one with ym goal send <id> <text>; a stuck or dead one you can relaunch with ym goal relaunch <id>.\n")
-	sb.WriteString("- Escalations from your reports arrive here as one line naming the item; ym item show '<#key>' prints it whole. Answer each with ym item answer '<#key>' <answer>, or escalate it with your own ym item add, which goes to " + c.boss(o, m) + ".\n")
+	sb.WriteString("- Escalations from your reports arrive here as one line naming the item; ym item show '<#key>' prints it whole. Answer each with ym item answer '<#key>' <answer>, or use ym item escalate '<#key>' when only the owner can answer. Keep its original id and source; do not close it and create a copy.\n")
 	sb.WriteString(escalate)
 	fmt.Fprintf(sb, "- Change what a report is about with ym goal steer --file - <id> and the new plan on stdin: it becomes the report's next numbered revision, which it must adopt with ym goal adopt; ym nudges it and tells you if it does not.\n")
 	c.briefRules(sb, m)
@@ -102,7 +102,9 @@ const wakeRules = "- ym wakes you with one short ym: message, one line per event
 	"Everything else (agents' reports, pull requests opened, CI green, merges, resumes, verification passing) rides along with the next wake, or arrives as one digest at most every 30 minutes. An agent's reply that adds nothing (no new commit, no new ask, a repeat or a still-waiting note) is only counted; ym goal feed shows it. " +
 	"Never poll; act on what needs you, then end your turn.\n"
 
-const escalate = "- Make every escalation ready to decide: --rec with what you recommend and why, two or more --option \"<label>=<what happens>\" for a decision, one --evidence per pull request, CI run, commit or file it rests on, and --tried with what you already tried. ym attaches the goal, its pull requests with CI and your agents' latest activity itself. A decision or default bound for the owner without a recommendation is refused; refile it, or decide it yourself. When ym says an ask reached the owner unprepared while you were down, prepare it at once with ym item prepare '<#key>' --rec ... --option ... --evidence ... --tried ....\n"
+const escalate = "- Only the owner can review their direction, approve shared publication, or perform owner-only account actions. File those directly with ym item add --to owner, or escalate the existing item with ym item escalate '<#key>'; use ym item prepare first if its recommendation or options are missing. Saying it is for the owner in chat does not route it.\n" +
+	"- Request the owner's document review with ym item review '<document link or path>' --question '<what they should review>' --rec '<your recommendation>'. Publishing an artifact or writing a brief does not request review. The review remains in Needs You until the owner answers, dismisses or snoozes it, including after your session ends.\n" +
+	"- Make every escalation ready to decide: --rec with what you recommend and why, two or more --option \"<label>=<what happens>\" for a decision, one --evidence per pull request, CI run, commit or file it rests on, and --tried with what you already tried. ym attaches the goal, its pull requests with CI and your agents' latest activity itself. A decision or default bound for the owner without a recommendation is refused; prepare it, or decide it yourself. When ym says an ask reached the owner unprepared while you were down, prepare it at once with ym item prepare '<#key>' --rec ... --option ... --evidence ... --tried ....\n"
 
 // briefRules tells m how to keep its brief, the structured page a cold reader scans.
 func (c *Core) briefRules(sb *strings.Builder, m Manager) {

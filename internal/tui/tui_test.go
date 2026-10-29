@@ -527,7 +527,7 @@ func TestKillOnAnExitedMissionRowEndsEveryLaunchInIt(t *testing.T) {
 	}
 }
 
-func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
+func TestItemsFromEndedSessionsRemainActionableInNeedsYou(t *testing.T) {
 	m, c, _ := setup(t)
 	for _, q := range []string{"Old question?", "Older question?"} {
 		if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: q, Session: "ended", Blocks: 9}); err != nil {
@@ -536,21 +536,24 @@ func TestItemsFromEndedSessionsCollapseIntoOneStaleLine(t *testing.T) {
 	}
 	m = refresh(t, m)
 	v := m.View().Content
-	if !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "stale (2)") || strings.Contains(v, "Old question?") {
-		t.Fatalf("stale items should sit collapsed below the live ones:\n%s", v)
+	if !strings.Contains(v, "NEEDS YOU (3)") || strings.Contains(v, "stale (2)") || !strings.Contains(v, "Old question?") {
+		t.Fatalf("open owner requests must stay visible after their source exits:\n%s", v)
 	}
-	m = press(t, m, "down", "down", "enter")
+	m = to(t, press(t, m, "home"), func(r row) bool { return r.item != nil && r.item.ID == "D3" })
+	m = press(t, m, "enter")
 	if !strings.Contains(m.View().Content, "Older question?") {
-		t.Fatalf("enter on the stale line did not expand it:\n%s", m.View().Content)
+		t.Fatalf("enter did not show every owner request:\n%s", m.View().Content)
 	}
-	press(t, m, "x", "enter")
-	for _, id := range []string{"D3", "D4"} {
-		if it, _ := c.Store.Item(id); it.State != core.ItemDismissed {
-			t.Errorf("%s = %s after dismissing every stale item", id, it.State)
-		}
+	m = press(t, m, "r")
+	press(t, m, append(typed("approved"), "enter")...)
+	if it, _ := c.Store.Item("D3"); it.State != core.ItemAnswered || it.Answer != "approved" {
+		t.Errorf("ended source's item could not be answered: %+v", it)
+	}
+	if it, _ := c.Store.Item("D4"); it.State != core.ItemOpen {
+		t.Errorf("answering one item closed another: %+v", it)
 	}
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemOpen {
-		t.Errorf("a live item was dismissed with the stale ones")
+		t.Errorf("answering an ended source's item changed an unrelated request")
 	}
 }
 

@@ -62,7 +62,18 @@ An ask that climbed to the owner past a manager or chief that was stuck or retir
 - You are a manager or chief: the item goes to your chief, or to the owner when you report to no chief. A chief that is stuck or retired is passed over. What reaches the owner must be ready to decide; see above.
 - No manager is above you: the item goes to the owner's queue, folded into one row for your session.
 
-`ym item add` prints the id on stdout and, when a manager or chief owns the answer, says so on stderr.
+`ym item add` prints the id on stdout and, when a manager or chief owns the answer, says so on stderr. The TUI's `I` view shows who each item waits on.
+
+When only the owner can answer, file the item with `--to owner`. For an existing item, run `ym item escalate '<#key>'` instead of creating a copy or answering it with a referral. It preserves the item's id, source, evidence and history. If the item lacks its recommendation or decision options, use `ym item prepare` before escalating. A chat message saying the owner needs to act does not change the item's recipient.
+
+Request a document review explicitly:
+
+```
+ym item review '<document link or path>' --question '<what the owner should review>' \
+  --rec '<your recommendation>' --blocks <n>
+```
+
+This files a review item directly to the owner. They open the document with `V` in the TUI and answer the same item. Review items need a document and recommendation. Publishing an artifact, registering its URL, or mentioning review in chat does not file a review request. Open owner requests remain in Needs You after sessions end or managers refresh, until answered, dismissed or snoozed.
 
 ## Running a goal as its manager
 
