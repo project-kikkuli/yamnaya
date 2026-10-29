@@ -1574,7 +1574,11 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    B            login profiles: every Claude and Codex login on every host with its limit windows; a adds one
                 (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
-                the launch default, x removes it; on a session, goal or chief, enter switches its conversation to it
+                the launch default, x removes it, m opens its MCP connections; on a session, goal or chief,
+                enter switches its conversation to it
+   C            MCP connections for the selected session, or choose a host and login: n connects Notion,
+                a adds HTTP/SSE/stdio, i logs in in your terminal (no-browser remotely), c checks explicitly,
+                x removes the selected scope; r rereads files without starting any servers, p changes login
    H            hosts: each host's nickname, full name and state, with the full error when it fails;
                 i installs or updates ym on one and keeps it running, o opens its board, r repairs the way
                 to it (DNS, route, VPN, port 22, ssh, the shared connection, ym and its serve, live, ending
@@ -1582,7 +1586,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 host; below, what this host still carries to them, x stops carrying one
    Y            settings: r repairs ym on this host (root-owned files and processes, stray serves, launchd,
                 dead sockets, stale relays and locks; what needs sudo is shown), restart ym serve, keep it running
-                across reboots or stop, connect Notion (the token is typed hidden), the context cap, which
+                across reboots or stop, MCP connections, Notion discussion inbox (the token is typed hidden), the context cap, which
                 repositories' managers may merge, update ym
    space f pgdown, b pgup
                 page down or up in an agent's page or a text page

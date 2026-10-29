@@ -59,19 +59,20 @@ type launchedJSON struct {
 }
 
 type dormantJSON struct {
-	Profile string `json:"profile,omitempty"`
-	Account string `json:"account,omitempty"`
-	Key     string `json:"key"`
-	Harness string `json:"harness"`
-	Session string `json:"session"`
-	Parent  string `json:"parent,omitempty"`
-	Cwd     string `json:"cwd"`
-	RepoKey string `json:"repo_key,omitempty"`
-	RepoID  string `json:"repo_id,omitempty"`
-	Branch  string `json:"branch,omitempty"`
-	Title   string `json:"title"`
-	State   string `json:"state"`
-	Started string `json:"started,omitempty"`
+	ConfigRoot string `json:"config_root,omitempty"`
+	Profile    string `json:"profile,omitempty"`
+	Account    string `json:"account,omitempty"`
+	Key        string `json:"key"`
+	Harness    string `json:"harness"`
+	Session    string `json:"session"`
+	Parent     string `json:"parent,omitempty"`
+	Cwd        string `json:"cwd"`
+	RepoKey    string `json:"repo_key,omitempty"`
+	RepoID     string `json:"repo_id,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	Started    string `json:"started,omitempty"`
 }
 
 func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -170,7 +171,7 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	}
 	for _, p := range b.Projects {
 		for _, d := range p.Dormant {
-			out.Dormant = append(out.Dormant, dormantJSON{Key: d.Key, Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+			out.Dormant = append(out.Dormant, dormantJSON{ConfigRoot: d.ConfigRoot, Key: d.Key, Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
 		}
 	}
@@ -234,7 +235,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Profiles[i].Host = host
 	}
 	for _, s := range j.Sessions {
-		l := core.Live{Session: core.Session{Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
+		l := core.Live{Session: core.Session{ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
 		l.Result, l.ResultAt = s.Last, parseTS(s.LastAt)
@@ -254,7 +255,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 			Killed: parseTS(l.Killed), Recovered: l.Recovered})
 	}
 	for _, d := range j.Dormant {
-		r.Dormant = append(r.Dormant, core.Dormant{Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+		r.Dormant = append(r.Dormant, core.Dormant{ConfigRoot: d.ConfigRoot, Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
 	}
 	for _, w := range j.Waiting {

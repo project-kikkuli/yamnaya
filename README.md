@@ -542,6 +542,33 @@ An explicitly empty or relative default `CLAUDE_CONFIG_DIR` is unsupported becau
 
 `ym usage`, `ym limits`, and the board separate profile usage and subscription windows. Copied history keeps its original payer; only new destination responses and fresh limit observations belong to the destination. Account changes in an existing root create accounting epochs rather than relabeling older charges. Remote snapshots preserve host scope and deduplicate account-global quota observations; older snapshots report usage unknown.
 
+## MCP connections
+
+Press `C` on a session to inspect its exact host, login, native root and working directory. From settings (`Y`), choose **MCP connections**, or press `m` on a login in `B`. Without a selected session, choose a host/login and its working directory. An older host that does not report a session's native root must be updated before that session can manage connections. Offline hosts never fall back to this machine.
+
+Inventory reads configuration files without starting servers. Each definition shows its scope and source, whether another file definition shadows it, approval, authentication and the last explicit health result. A configured server has unknown authentication and unchecked health until checked. Plugin, cloud and managed sources are explicitly unenumerated; `o` hands your terminal to the native harness, where `/mcp` provides their inventory and project approvals.
+
+- `n` connects the Notion HTTP preset; `a` adds a custom HTTP or stdio server, or SSE with Claude. Claude asks for user, project or local scope, with user selected initially. Codex's native MCP CLI supports user scope; project entries are visible and read-only here. The confirmation shows the full destination before adding.
+- `i` runs native OAuth login in your terminal. Another host uses `--no-browser`, showing its authorization link and accepting its callback there. ym does not save those terminal streams. `l` logs out.
+- `c` checks the selected effective server explicitly. It may launch that server. Authentication and connectivity are separate; a cached catalog or definition does not establish an active connection. `r` rereads files only.
+- `x` removes the exact selected source/scope. Another login's servers and credentials are never copied. Existing sessions may need native reconnect or resume after a change.
+
+The CLI uses the same targets and operations:
+
+```sh
+ym mcp list --harness claude --profile personal --cwd /path/to/repository
+ym mcp add notion --notion --harness claude --profile personal --scope user --cwd /path/to/repository
+ym mcp login notion --harness claude --profile personal --scope user --cwd /path/to/repository
+ym mcp check notion --harness claude --profile personal --scope user --cwd /path/to/repository
+ym remote workstation mcp list --harness codex --profile default --cwd /home/user/repository
+```
+
+`--root`, `--source` and `--revision` bind operations to an inspected target and definition; the TUI supplies them. `ym mcp list` without a harness lists this host's configured logins; an explicit profile requires a harness. `ym mcp manage` opens the selected native harness for advanced configuration without collecting credentials in ym.
+
+Native command contracts were inspected on Claude 2.1.296 and Codex 0.162.1. Claude `mcp get` checks approved definitions and reports pending project approval without connecting. Both support `mcp login --no-browser`; logout receives no such flag. Codex checks use `mcpServerStatus/list` with `serverName` and `toolsAndAuthOnly`, parsing `authStatus` separately from `runtimeStatus`; missing runtime status remains unknown or initialized, not connected. Unsupported native versions report unavailable status.
+
+**Notion discussion inbox (ym docs)** is separate. Its integration token connects the background discussion sweeper and does not grant agents Notion tools.
+
 ## Development
 
     ym slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./internal/<package>/...

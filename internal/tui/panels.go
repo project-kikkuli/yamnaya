@@ -28,10 +28,11 @@ const (
 	panelHosts
 	panelSettings
 	panelLaunched
+	panelMCP
 )
 
 // panelKeys are the board keys that open each panel; the same key closes it.
-var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched}
+var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "C": panelMCP}
 
 type panelState struct {
 	kind panelKind
@@ -49,9 +50,10 @@ type panelState struct {
 	// stream runs a ym command here, handing over each line it prints; repair is the latest it ran for ym repair.
 	stream func(args ...string) (<-chan string, error)
 	repair *repairLog
+	mcp    mcpPanel
 }
 
-type panelTarget struct{ ref, label, harness, host string }
+type panelTarget struct{ ref, label, harness, host, profile, root, cwd string }
 
 // panelInput is a line a panel asks for; secret hides what is typed.
 type panelInput struct {
@@ -129,10 +131,10 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		if s.Remote != "" {
 			ref = core.RemoteKey(s.Remote, ref)
 		}
-		m.pn.target = &panelTarget{ref: ref, label: s.Label(), harness: s.Harness, host: s.Remote}
+		m.pn.target = &panelTarget{ref: ref, label: s.Label(), harness: s.Harness, host: s.Remote, profile: s.Profile, root: s.ConfigRoot, cwd: s.Cwd}
 	} else if r.dormant != nil {
 		host, _ := m.splitHost(r.dormant.Key)
-		m.pn.target = &panelTarget{ref: r.dormant.Key, label: r.dormant.Title, harness: r.dormant.Harness, host: host}
+		m.pn.target = &panelTarget{ref: r.dormant.Key, label: r.dormant.Title, harness: r.dormant.Harness, host: host, profile: r.dormant.Profile, root: r.dormant.ConfigRoot, cwd: r.dormant.Cwd}
 	} else if n, ok := m.nodeOf(r); ok && (n.Live != nil || n.Manager.Session != "") {
 		mg := n.Manager
 		ref, host := profile.SessionKey(mg.Harness, mg.Profile, mg.Session), mg.Host
@@ -143,11 +145,24 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 			ref = core.RemoteKey(host, ref)
 		}
 		m.pn.target = &panelTarget{ref: ref, label: mg.Label(), harness: mg.Harness, host: host}
+		m.pn.target.profile = mg.Profile
+		if n.Live != nil {
+			m.pn.target.root = n.Live.ConfigRoot
+			m.pn.target.cwd = n.Live.Cwd
+		} else {
+			m.pn.target.cwd = mg.Directory
+		}
 	}
 	m.push(modePanel)
 	m.pn.cur = m.firstPanelRow(0, 1)
 	if kind == panelSettings {
 		return m, m.loadSettings()
+	}
+	if kind == panelMCP {
+		m.pn.mcp = mcpPanel{}
+		if t := m.pn.target; t != nil && t.cwd != "" {
+			return m.chooseMCP(mcpChoice{host: t.host, harness: t.harness, id: t.profile, root: t.root, cwd: t.cwd}, false)
+		}
 	}
 	return m, nil
 }
@@ -215,17 +230,19 @@ func (m Model) panelRows() ([]prow, []pdo) {
 		return m.settingRows()
 	case panelLaunched:
 		return m.launchRows()
+	case panelMCP:
+		return m.mcpRows()
 	}
 	return nil, nil
 }
 
-var panelTitles = map[panelKind]string{panelProfiles: "LOGIN PROFILES", panelHosts: "HOSTS", panelSettings: "SETTINGS", panelLaunched: "LAUNCHED"}
+var panelTitles = map[panelKind]string{panelProfiles: "LOGIN PROFILES", panelHosts: "HOSTS", panelSettings: "SETTINGS", panelLaunched: "LAUNCHED", panelMCP: "MCP CONNECTIONS"}
 
 func (m Model) panelView() viewPage {
 	b := viewPage{}
 	rows, _ := m.panelRows()
 	sub := map[panelKind]string{panelProfiles: "every Claude and Codex login on every host, with its limit windows",
-		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "ym serve, Notion, the context cap, merge authority",
+		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "MCP connections, ym serve, Notion discussion inbox, the context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
 		panelLaunched: "what ym launched, and every ended session or killed goal ym revive brings back"}[m.pn.kind]
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
@@ -350,6 +367,10 @@ func (m Model) profileRow(host string, p core.LoginProfile, limits []core.Limit)
 	key := "panel:profile:" + qual(host, p.Harness+"/"+p.ID)
 	h, pid := p.Harness, p.ID
 	var does []pdo
+	does = append(does, pdo{"m", "MCP connections", func(m Model) (tea.Model, tea.Cmd) {
+		m.pn.kind = panelMCP
+		return m.chooseMCP(mcpChoice{host: host, harness: h, id: pid, root: p.Root}, true)
+	}})
 	if t := m.pn.target; t != nil && t.harness == h && t.host == host {
 		ref := t.ref
 		does = append(does, pdo{"enter", "switch " + t.label + " to it", func(m Model) (tea.Model, tea.Cmd) { return m.switchProfile(ref, pid) }})
@@ -625,7 +646,13 @@ func (m Model) settingRows() ([]prow, []pdo) {
 		}}
 	}
 	rows = append(rows, prow{text: keep, key: "panel:set:keep", does: []pdo{keepDo}})
-	rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("Notion")})
+	rows = append(rows, prow{text: "MCP connections for agents (Notion and custom servers)", does: []pdo{{"enter", "MCP connections", func(m Model) (tea.Model, tea.Cmd) {
+		m.pn.kind, m.pn.cur = panelMCP, 0
+		m.pn.mcp = mcpPanel{}
+		m.pn.cur = m.firstPanelRow(0, 1)
+		return m, nil
+	}}}})
+	rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("Notion discussion inbox (ym docs)")})
 	rows = append(rows, prow{text: d.docs, key: "panel:set:docs", does: []pdo{{"enter", "connect an integration token", func(m Model) (tea.Model, tea.Cmd) {
 		m.askLine("your Notion email", "", false, func(m Model, email string) (tea.Model, tea.Cmd) {
 			if email == "" {

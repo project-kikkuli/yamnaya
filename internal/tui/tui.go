@@ -437,6 +437,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pn.settings = settingsData(msg)
 		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)
 		return m, nil
+	case mcpMsg:
+		if m.pn.mcp.choice != nil && *m.pn.mcp.choice == msg.choice {
+			if msg.inventory != nil && (msg.inventory.Target.Root != msg.choice.root || msg.inventory.Target.Harness != msg.choice.harness || msg.inventory.Target.Profile != msg.choice.id) {
+				msg.inventory = nil
+				msg.problem = "host returned a different MCP target; reopen the exact login before acting"
+			}
+			if msg.inventory != nil {
+				m.pn.mcp.choice.cwd = msg.inventory.Target.Cwd
+			}
+			m.pn.mcp.inventory = msg.inventory
+			m.pn.mcp.problem = msg.problem
+			m.pn.cur = m.firstPanelRow(m.pn.cur, 1)
+		}
+		return m, nil
 	case reachedMsg:
 		delete(m.acts, msg.key)
 		t := msg.t
@@ -446,6 +460,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "error: " + msg.err.Error()
 		} else {
 			m.message = msg.message
+		}
+		if m.listMode() == modePanel && m.pn.kind == panelMCP {
+			return m, tea.Batch(m.refresh(false), m.loadMCP())
 		}
 		return m, m.refresh(false)
 	case revivedMsg:
@@ -958,7 +975,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		m.show("U", m.usageText())
 		return m, nil
-	case "E", "H", "Y":
+	case "E", "H", "Y", "C":
 		r, _ := m.selected()
 		return m.openPanel(panelKeys[k.String()], r)
 	case "I":

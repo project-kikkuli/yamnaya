@@ -164,6 +164,7 @@ func NewRoot() *cobra.Command {
 		serviceCmd(),
 		slotCmd(),
 		profilesCmd(with),
+		mcpCmd(),
 		goalCmd(with, withHosts),
 		chiefCmd(with, withHosts),
 		itemCmd(with, routed),
