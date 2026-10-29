@@ -291,7 +291,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inPanel: m.panelLabel(), inSend: "send " + m.inLabel,
+			inDismissStale: "dismiss every stale item because", inPanel: m.panelLabel(), inSend: "send " + m.inLabel, inBroadcast: "broadcast to " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
@@ -1550,6 +1550,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 on the harness and host the last one used; ctrl+t picks this one or a remembered host
    space        select a goal or chief row; r, s and c then act on every selected one
    s            send: like r on a goal, chief or session; tab widens a chief's message to its whole subtree
+   !            broadcast: send one message to every live agent under the cursor's level: a goal, a chief
+                and everything below it, a session, a mission, a repository, the view you drilled into;
+                on the needs-you rows at the top, every agent. The prompt names the scope and agent count
    S            on a goal or chief: edit what it is about in $EDITOR; saving makes the next numbered
                 revision, which shows "steer rN not adopted" until its manager runs ym goal adopt;
                 on a mission: split a merged mission back out

@@ -66,6 +66,7 @@ const (
 	inRemit
 	// inChiefMenu picks what c does: put the row under a chief, detach it, or start a new chief.
 	inChiefMenu
+	inBroadcast
 )
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
@@ -124,23 +125,25 @@ type Model struct {
 	chiefName string
 	steer     []string
 	subtree   bool
-	openURL   func(string) error
-	page      *viewPage
-	core      *core.Core
-	host      string
-	board     core.Board
-	nicks     map[string]string
-	loaded    bool
-	err       error
-	mode      mode
-	back      mode
-	cursor    int
-	stack     []frame
-	repo      string
-	detail    string
-	sess      string
-	agent     string
-	scrollY   int
+	// bcast are the sessions the broadcast being typed reaches.
+	bcast   []string
+	openURL func(string) error
+	page    *viewPage
+	core    *core.Core
+	host    string
+	board   core.Board
+	nicks   map[string]string
+	loaded  bool
+	err     error
+	mode    mode
+	back    mode
+	cursor  int
+	stack   []frame
+	repo    string
+	detail  string
+	sess    string
+	agent   string
+	scrollY int
 	// helpQ is the help search; helpTyping while its prompt is open; helpAt the 1-based match n and N last jumped to, 0 for none.
 	helpQ      string
 	helpTyping bool
@@ -1008,6 +1011,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if k.String() == broadcastKey {
+		return m.startBroadcast()
+	}
 	if k.String() == "B" {
 		r, _ := m.selected()
 		return m.openPanel(panelProfiles, r)
@@ -1502,6 +1508,8 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return in.then(m, text)
+		case inBroadcast:
+			return m.broadcast(text)
 		case inSend:
 			if text == "" {
 				return m, nil
