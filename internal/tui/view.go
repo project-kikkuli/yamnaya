@@ -1611,8 +1611,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    U            usage: spend today and this week, limits, and the top sessions by spend
    E            every session ym launched and whether its agent still runs, killed goals and ended sessions;
                 enter revives one with its worktree and work
-   A            hide or show the scene behind the board
-   Z            turn the scene's animation on or off (off at start)
+   A            show or hide the scene behind the board (hidden at start)
    L            switch the theme of that scene to the next one (mountains first); ym theme <name> sets it
                 from a shell
    ?            this page; / searches it, n N jump between matches, esc clears the search

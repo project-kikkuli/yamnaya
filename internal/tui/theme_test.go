@@ -139,34 +139,35 @@ func TestAFailedKillPutsTheUnitBack(t *testing.T) {
 	}
 }
 
-func TestSceneStartsStillAndZTurnsAnimationOnAndOff(t *testing.T) {
+func TestSceneStartsHiddenAndAShowsItWithAnimation(t *testing.T) {
 	defer func(was bool) { scene.ReducedMotion = was }(scene.ReducedMotion)
 	for _, tc := range []struct {
-		name    string
-		start   bool
-		presses int
-		want    bool
-	}{{"default", true, 0, true}, {"on", true, 1, false}, {"on then off", true, 2, true}, {"started on", false, 1, true}} {
+		name       string
+		presses    int
+		wantHidden bool
+	}{{"default", 0, true}, {"A shows", 1, false}, {"A twice hides", 2, true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			scene.ReducedMotion = tc.start
+			scene.ReducedMotion = false
 			m := emptyBoard(t)
+			m.out = &output{}
+			defer func(was bool) { pal.color = was }(pal.color)
+			pal.color = true
 			for range tc.presses {
-				m = press(t, m, "Z")
+				next, _ := m.Update(keyOf("A"))
+				m = next.(Model)
 			}
-			if scene.ReducedMotion != tc.want {
-				t.Fatalf("reduced motion %v, want %v", scene.ReducedMotion, tc.want)
+			if m.peaks.hidden != tc.wantHidden {
+				t.Fatalf("hidden %v, want %v", m.peaks.hidden, tc.wantHidden)
+			}
+			if tc.presses == 1 && !m.peaks.ticking {
+				t.Fatal("showing the scene schedules no frames")
+			}
+			if tc.wantHidden {
+				next, cmd := m.Update(mountainFrame{})
+				if cmd != nil || next.(Model).peaks.ticking {
+					t.Fatal("a frame is scheduled while the scene is hidden")
+				}
 			}
 		})
-	}
-}
-
-func TestStillSceneSchedulesNoFramesAndIsDrawnWhole(t *testing.T) {
-	defer func(was bool) { scene.ReducedMotion = was }(scene.ReducedMotion)
-	scene.ReducedMotion = true
-	m := emptyBoard(t)
-	m.height = 40
-	m.out = &output{}
-	if cmd := m.animate(); cmd != nil {
-		t.Fatal("a frame is scheduled while animation is off")
 	}
 }

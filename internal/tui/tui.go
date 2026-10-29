@@ -325,6 +325,10 @@ func (m Model) Init() tea.Cmd { return m.refresh(true) }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch b := msg.(type) {
 	case mountainFrame:
+		if !m.shown() {
+			m.peaks.ticking = false
+			return m, nil
+		}
 		if wait := time.Until(m.peaks.quiet); wait > 0 {
 			return m, tea.Tick(wait, func(time.Time) tea.Msg { return mountainFrame{} })
 		}
@@ -929,9 +933,6 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.copyKey(r)
 	case "A":
 		m.peaks.hidden = !m.peaks.hidden
-		return m, nil
-	case "Z":
-		scene.ReducedMotion = !scene.ReducedMotion
 		return m, nil
 	case "L":
 		return m.nextTheme()

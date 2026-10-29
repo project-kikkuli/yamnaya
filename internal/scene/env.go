@@ -18,12 +18,11 @@ const (
 var (
 	// Colors is the terminal's color depth; themes draw shapes alone, no color, under NoColor.
 	Colors = detectDepth()
-	// ReducedMotion holds every theme at frame 0 and ticks nothing. It is on at start; YM_REDUCED_MOTION=0 or the
-	// M key turns the animation on.
+	// ReducedMotion is YM_REDUCED_MOTION: every theme then draws frame 0 and nothing ticks.
 	ReducedMotion = reducedMotion(os.Getenv("YM_REDUCED_MOTION"))
 )
 
-func reducedMotion(env string) bool { return env != "0" }
+func reducedMotion(env string) bool { return env != "" && env != "0" }
 
 func detectDepth() Depth {
 	switch {

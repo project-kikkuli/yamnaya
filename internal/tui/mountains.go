@@ -51,7 +51,7 @@ const cellBytes = 40
 type mountainFrame struct{}
 
 func newMountains() mountains {
-	return mountains{kills: map[string]fall{}, dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
+	return mountains{hidden: true, kills: map[string]fall{}, dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
 }
 
 // settle moves the mountains on screen toward the scene: by what the terminal takes in a frame when step is

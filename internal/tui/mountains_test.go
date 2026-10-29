@@ -48,6 +48,7 @@ func workBoard() core.Board {
 
 func TestTheMountainsAreTheOwnersWork(t *testing.T) {
 	m := New(&core.Core{})
+	m.peaks.hidden = false
 	m.board, m.loaded = workBoard(), true
 	s := m.sceneOf()
 	if len(s.Ranges) != 1 || s.Ranges[0].Name != "august" {
@@ -85,6 +86,7 @@ func TestTheMountainsAreTheOwnersWork(t *testing.T) {
 
 func TestTheSelectedRowLightsItsPeakAndAClickOnAPeakSelectsItsRow(t *testing.T) {
 	m := New(&core.Core{})
+	m.peaks.hidden = false
 	b := workBoard()
 	b.Tree = nil
 	m.board, m.loaded = b, true
@@ -123,6 +125,7 @@ func TestKeysAndPastesComeBeforeTheMountainsMove(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			m := New(&core.Core{})
+			m.peaks.hidden = false
 			b := workBoard()
 			b.Tree = nil
 			m.board, m.loaded = b, true
@@ -148,6 +151,7 @@ func TestGoalsByRepositoryGatherEveryCloneOfARepositoryUnderItsOriginName(t *tes
 		return core.Node{Manager: core.Manager{ID: "m" + id}, Goal: &core.Goal{ID: id, Ask: "ask " + id, Repo: dir}, Repo: repo, Standing: core.StandMoving}
 	}
 	m := New(&core.Core{})
+	m.peaks.hidden = false
 	m.board = core.Board{Tree: []core.Node{
 		goal("g1", "/a/proving-ground", "github.com/o/yamnaya-proving-ground"),
 		goal("g2", "/x/atlas", "github.com/o/zeta"),
