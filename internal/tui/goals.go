@@ -74,7 +74,7 @@ func (m Model) treeRows() []row {
 	}
 	sort.SliceStable(tops, func(i, j int) bool { return groupLess(goalGroup(*tops[i]), goalGroup(*tops[j])) })
 	for _, n := range tops {
-		out = append(out, m.nodeRows([]core.Node{*n}, goalGroup(*n), false)...)
+		out = append(out, m.sceneNodeRows([]core.Node{*n}, goalGroup(*n), 0)...)
 	}
 	return out
 }
@@ -210,54 +210,6 @@ func nodeText(n core.Node) string {
 	return n.Manager.Name
 }
 
-// queueRows are the owner's queue, with every one of a session's folded asks listed under it while it is open.
-func (m Model) queueRows() []row {
-	var out []row
-	for i := range m.board.Needs {
-		n := &m.board.Needs[i]
-		if !m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
-			continue
-		}
-		out = append(out, row{need: n, item: n.Item, session: n.Session})
-		if len(n.Asks) > 1 && m.unfolded[n.Key()] {
-			for j := range n.Asks {
-				out = append(out, row{item: &n.Asks[j]})
-			}
-		}
-	}
-	return out
-}
-
-func (m Model) goalRows() []row {
-	n, ok := m.board.Node(m.goal)
-	if !ok {
-		return nil
-	}
-	var out []row
-	if n.Live != nil {
-		out = append(out, row{session: n.Live})
-	}
-	for i := range n.Agents {
-		out = append(out, row{session: &n.Agents[i]})
-	}
-	return out
-}
-
-func (m Model) chiefRows() []row {
-	n, ok := m.board.Node(m.chief)
-	if !ok {
-		return nil
-	}
-	all := false
-	for _, ancestor := range nodePath(m.board.Tree, m.chief) {
-		if m.matches(nodeText(ancestor), m.hostText(ancestor.Manager.Host)) {
-			all = true
-			break
-		}
-	}
-	return m.nodeRows(n.Children, chiefGroup, all)
-}
-
 // nodePath lists the node and its ancestors, nearest first, in the current hierarchy.
 func nodePath(ns []core.Node, id string) []core.Node {
 	for _, n := range ns {
@@ -269,31 +221,6 @@ func nodePath(ns []core.Node, id string) []core.Node {
 		}
 	}
 	return nil
-}
-
-func expandable(n core.Node) bool { return n.Goal == nil && len(n.Children) > 0 }
-
-func (m Model) folded(n core.Node) bool {
-	return m.filter == "" && m.collapsed[n.Manager.ID] && expandable(n)
-}
-
-func (m Model) nodeRows(ns []core.Node, group string, all bool) []row {
-	var out []row
-	var walk func([]core.Node, int, bool)
-	walk = func(ns []core.Node, depth int, all bool) {
-		for i := range ns {
-			n := &ns[i]
-			hit := all || m.matches(nodeText(*n), m.hostText(n.Manager.Host))
-			if hit || m.treeMatches(n.Children) {
-				out = append(out, row{node: n, depth: depth, group: group})
-				if !m.folded(*n) {
-					walk(n.Children, depth+1, hit)
-				}
-			}
-		}
-	}
-	walk(ns, 0, all)
-	return out
 }
 
 var standStyle = map[string]func(string) string{
@@ -324,14 +251,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		what = m.tagged(host, n.Goal.Ask)
 	} else {
 		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Name, chiefName, "…"), chiefName))
-		fold := ""
-		if expandable(n) {
-			fold = "▾ "
-			if m.folded(n) {
-				fold = "▸ "
-			}
-		}
-		what = fold + m.tagged(host, pal.dim.Render(plural(n.Count(), "goal"))+remit(n))
+		what = m.tagged(host, pal.dim.Render(plural(n.Count(), "goal"))+remit(n))
 		keep = minRemit
 	}
 	st := nodeStats(n)
@@ -382,7 +302,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		meta = append(meta, m.hostTag(host)+" "+state)
 	}
 	keys := "enter open · r reply · b brief · B login · c chief · S steer plan · R relaunch · W brief page · o session · space select"
-	if expandable(n) {
+	if len(n.Children)+len(n.Agents) > 0 || n.Live != nil {
 		keys += " · ← collapse · → expand"
 	}
 	switch {
@@ -597,54 +517,7 @@ func (m Model) goalView() viewPage {
 	if g.Summary != "" {
 		m.field(&b, "done", g.Summary)
 	}
-	b.WriteString("\n" + pal.bold.Render(" FEED") + pal.dim.Render("  newest first") + "\n")
-	if len(n.Feed.Recent) == 0 {
-		b.WriteString(pal.dim.Render("   nothing yet; ym records PRs, CI, merges, agent replies and the manager's updates here") + "\n")
-	}
-	for _, e := range n.Feed.Recent[:min(len(n.Feed.Recent), 12)] {
-		line := " " + pal.dim.Render(age(m.board.At, e.Created)) + " " + pad(e.Kind, 14) + " " + oneLine(e.Payload)
-		if !e.OwnerNews() {
-			line = pal.dim.Render(line)
-		} else if e.Seen.IsZero() || !e.Seen.Before(m.feedFrom) {
-			line = pal.yellow.Render("*") + line
-		}
-		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
-	}
-	if f := n.Feed; len(f.PRs)+len(f.Touched) > 0 {
-		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" PULL REQUESTS (%d to land)", len(f.PRs))) + pal.dim.Render("  X unties one") + "\n")
-		for i, url := range f.PRs {
-			b.WriteString(fmt.Sprintf("   %d. %s\n", i+1, url))
-		}
-		for i, url := range f.Touched {
-			b.WriteString(pal.dim.Render(fmt.Sprintf("   %d. %s  someone else's, context only", len(f.PRs)+i+1, url)) + "\n")
-		}
-	}
-	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SESSIONS (%d)", len(m.rows()))) + "\n")
-	for i, r := range m.rows() {
-		label := ""
-		if r.session.Key() == n.Manager.Session {
-			label = pal.dim.Render("manager  ")
-		}
-		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + doingText(m.board.At, r.session.Session) + "\n")
-	}
-	var subs []core.Worker
-	finished := 0
-	for _, w := range n.Workers {
-		switch {
-		case w.Member == nil:
-		case w.Active():
-			subs = append(subs, w)
-		default:
-			finished++
-		}
-	}
-	if len(subs)+finished > 0 {
-		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SUBAGENTS (%d running, %d done)", len(subs), finished)) + "\n")
-	}
-	for _, w := range subs {
-		line := "   " + pad(w.Name, 36) + " " + pal.state(w.State).Render(pad(w.State, 8)) + " " + oneLine(w.Activity) + pal.dim.Render(" "+age(m.board.At, w.At))
-		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -671,13 +544,7 @@ func (m Model) chiefView() viewPage {
 	m.field(&b, "session", managerState(m.board, n))
 	m.field(&b, "plan", planField(n))
 	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))
-	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" REPORTS (%d)", len(n.Children))) + "\n")
-	if len(n.Children) == 0 {
-		b.WriteString(pal.dim.Render("   none; c then a on a goal row puts it under a chief") + "\n")
-	}
-	for i, r := range m.rows() {
-		b.WriteString(m.nodeLines(i, *r.node, r.depth))
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -702,19 +569,13 @@ func (m Model) steerTargets(r row) []core.Manager {
 func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	key := k.String()
 	r, _ := m.selected()
+	if r.header != "" && key == "enter" {
+		m.treeMove("right")
+		return m, nil, true
+	}
 	switch key {
 	case "left", "right":
-		if (m.mode == modeList && !m.flat || m.mode == modeChief) && m.filter == "" && r.node != nil && expandable(*r.node) {
-			if m.collapsed == nil {
-				m.collapsed = map[string]bool{}
-			}
-			if key == "left" {
-				m.collapsed[r.node.Manager.ID] = true
-			} else {
-				delete(m.collapsed, r.node.Manager.ID)
-			}
-			m.clamp()
-		}
+		m.treeMove(key)
 		return m, nil, true
 	case "n", "N":
 		if m.core.Launches == nil {
@@ -806,10 +667,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, m.do(func() (string, error) { return id + " cleared", m.core.AckGoal(id) }), true
 	}
 	if r.need != nil && r.item != nil && len(r.need.Asks) > 1 && key == "enter" {
-		if m.unfolded == nil {
-			m.unfolded = map[string]bool{}
-		}
-		m.unfolded[r.need.Key()] = !m.unfolded[r.need.Key()]
+		m.setFold(r, !r.closed)
 		return m, nil, true
 	}
 	n, ok := m.nodeOf(r)
@@ -1121,4 +979,54 @@ func (m *Model) dropPR(n core.Node) {
 		}
 		return why(url)(m, "")
 	})
+}
+
+func (m Model) goalSections(n core.Node) []treeNode {
+	var out []treeNode
+	b := viewPage{}
+	if len(n.Feed.Recent) == 0 {
+		b.WriteString(pal.dim.Render("   nothing yet; ym records PRs, CI, merges, agent replies and the manager's updates here") + "\n")
+	}
+	for _, e := range n.Feed.Recent[:min(len(n.Feed.Recent), 12)] {
+		line := " " + pal.dim.Render(age(m.board.At, e.Created)) + " " + pad(e.Kind, 14) + " " + oneLine(e.Payload)
+		if !e.OwnerNews() {
+			line = pal.dim.Render(line)
+		} else if e.Seen.IsZero() || !e.Seen.Before(m.feedFrom) {
+			line = pal.yellow.Render("*") + line
+		}
+		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
+	}
+
+	out = append(out, textSection("node/"+n.Manager.ID+"/feed", "FEED", b.String()))
+	if f := n.Feed; len(f.PRs)+len(f.Touched) > 0 {
+		b = viewPage{}
+		for i, url := range f.PRs {
+			b.WriteString(fmt.Sprintf("   %d. %s\n", i+1, url))
+		}
+		for i, url := range f.Touched {
+			b.WriteString(pal.dim.Render(fmt.Sprintf("   %d. %s  someone else's, context only", len(f.PRs)+i+1, url)) + "\n")
+		}
+		out = append(out, textSection("node/"+n.Manager.ID+"/prs", fmt.Sprintf("PULL REQUESTS (%d to land)", len(f.PRs)), b.String()))
+	}
+
+	b = viewPage{}
+	var subs []core.Worker
+	finished := 0
+	for _, w := range n.Workers {
+		switch {
+		case w.Member == nil:
+		case w.Active():
+			subs = append(subs, w)
+		default:
+			finished++
+		}
+	}
+	for _, w := range subs {
+		line := "   " + pad(w.Name, 36) + " " + pal.state(w.State).Render(pad(w.State, 8)) + " " + oneLine(w.Activity) + pal.dim.Render(" "+age(m.board.At, w.At))
+		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
+	}
+	if len(subs)+finished > 0 {
+		out = append(out, textSection("node/"+n.Manager.ID+"/subagents", fmt.Sprintf("SUBAGENTS (%d running, %d done)", len(subs), finished), b.String()))
+	}
+	return out
 }

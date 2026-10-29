@@ -78,7 +78,7 @@ func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *tes
 			lines[r.node.Manager.ID] = ansi.Strip(m.nodeLines(-1, *r.node, r.depth))
 		}
 	}
-	want := map[string]int{lead.ID: 0, platform.ID: 1, ms[0].ID: 2, ms[1].ID: 2, ms[2].ID: 1}
+	want := map[string]int{lead.ID: 2, platform.ID: 3, ms[0].ID: 4, ms[1].ID: 4, ms[2].ID: 3}
 	if !maps.Equal(depth, want) {
 		t.Fatalf("tree depths %v, want %v", depth, want)
 	}
@@ -88,7 +88,7 @@ func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *tes
 		}
 	}
 	m = press(t, to(t, m, isNode(platform.ID)), "enter")
-	if m.mode != modeChief || len(m.rows()) != 2 || !strings.Contains(m.View().Content, "REPORTS (2)") {
+	if m.mode != modeChief || len(m.rows()) != 3 || !strings.Contains(m.View().Content, "REPORTS (2)") {
 		t.Fatalf("enter on the chief should list its two goals, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, to(t, m, isNode(ms[1].ID)), "enter")

@@ -333,6 +333,23 @@ func (b Board) Project(key string) (Project, bool) {
 	return Project{}, false
 }
 
+// ParentOf is the board's existing session ancestry, qualified by host for remote sessions.
+func (b Board) ParentOf(key string) string {
+	if s, ok := b.Session(key); ok {
+		if s.Remote != "" {
+			if s.Parent != "" {
+				return RemoteKey(s.Remote, s.Parent)
+			}
+			return ""
+		}
+		if parent := b.parents[s.Key()]; parent != "" {
+			return parent
+		}
+		return s.Parent
+	}
+	return b.parents[key]
+}
+
 // ProjectOf is the key of the project the session belongs to, live or not.
 func (b Board) ProjectOf(session string) string {
 	return projectOf(session, b.parents, b.lin)

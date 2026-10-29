@@ -241,7 +241,7 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 				t.Fatal(err)
 			}
 			m = refresh(t, m)
-			m.cursor = 0
+			m = to(t, press(t, m, "home"), func(r row) bool { return r.item != nil && r.item.ID == "G3" })
 			if v := m.View().Content; !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
 				t.Fatalf("view:\n%s", v)
 			}
@@ -314,7 +314,7 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 
 func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down", "down", "down")
+	m = to(t, m, mission("lead"))
 	r, _ := m.selected()
 	if r.project == nil || r.need != nil {
 		t.Fatalf("cursor on %+v, want the first mission", r)

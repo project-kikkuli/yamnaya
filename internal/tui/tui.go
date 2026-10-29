@@ -73,6 +73,10 @@ const (
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
+	key, parent, header, body        string
+	container, closed, initialClosed bool
+	sectionID                        int
+
 	// node is a goal's manager or a chief.
 	node    *core.Node
 	need    *core.Need
@@ -84,7 +88,7 @@ type row struct {
 	item    *core.Item
 	// stale is the collapsed line standing for every item whose mission has no live session.
 	stale bool
-	// depth is how far below a chief the node row sits in the tree.
+	// depth is the row's nesting level in the visible tree.
 	depth int
 	// group is the goal row's group on the board: its repository, or the chiefs.
 	group string
@@ -108,12 +112,10 @@ type Model struct {
 	feedFrom time.Time
 	// picked are the managers and chiefs space selected; s sends to all of them.
 	picked map[string]bool
-	// unfolded are the queue rows of sessions whose folded asks are listed.
-	unfolded map[string]bool
+	// folds overrides the initial visibility of containers for this UI session.
+	folds map[string]bool
 	// flat lists every goal under its own repository, leaving chiefs out.
 	flat bool
-	// collapsed keeps chief folds by full manager id for this UI session.
-	collapsed map[string]bool
 	// menu is the c menu's choices for the manager or chief menuFor.
 	menu    []menuOpt
 	menuFor string
@@ -386,6 +388,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.waitRepos()
 	case boardMsg:
+		wasLoaded := m.loaded
 		keep, rows := "", m.rows()
 		var after, before []string
 		if m.cursor >= 0 && m.cursor < len(rows) {
@@ -409,6 +412,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadItems()
 		}
 		m.follow(keep, after, before)
+		if !wasLoaded {
+			for i, r := range m.rows() {
+				if r.header == "" {
+					m.cursor = i
+					break
+				}
+			}
+		}
 		var cmds []tea.Cmd
 		if msg.tick {
 			cmds = append(cmds, m.tick())
@@ -534,19 +545,22 @@ func (m *Model) follow(key string, after, before []string) {
 		m.cursor = i
 		return
 	}
-	if id, ok := strings.CutPrefix(key, "node:"); ok {
-		for _, n := range nodePath(m.board.Tree, id) {
-			if i, visible := at["node:"+n.Manager.ID]; visible {
-				m.cursor = i
-				return
-			}
+	parents := map[string]string{}
+	for _, r := range m.projectRows(true) {
+		parents[rowKey(r)] = r.parent
+	}
+	for parent := parents[key]; parent != ""; parent = parents[parent] {
+		if i, ok := at[parent]; ok {
+			m.cursor = i
+			return
 		}
 	}
+
 	old := map[string]bool{key: true}
 	for _, k := range append(after, before...) {
 		old[k] = true
 	}
-	if m.cursor >= 0 && m.cursor < len(rows) && !old[rowKey(rows[m.cursor])] {
+	if m.cursor >= 0 && m.cursor < len(rows) && !old[rowKey(rows[m.cursor])] && rows[m.cursor].header == "" {
 		return
 	}
 	kind, _, _ := strings.Cut(key, ":")
@@ -570,23 +584,26 @@ func (m *Model) follow(key string, after, before []string) {
 }
 
 func rowKey(r row) string {
+	if r.key != "" {
+		return r.key
+	}
 	switch {
 	case r.need != nil:
 		return "need:" + needID(*r.need)
 	case r.node != nil && r.session != nil:
-		return "node:" + r.node.Manager.ID + "/" + r.session.Key()
+		return "node:" + r.node.Manager.ID + "/" + treeSessionKey(*r.session)
 	case r.node != nil:
 		return "node:" + r.node.Manager.ID
 	case r.item != nil:
 		return "item:" + r.item.Key()
 	case r.member != nil:
-		return "member:" + r.session.Key() + "/" + r.member.ID
+		return "member:" + treeSessionKey(*r.session) + "/" + r.member.ID
 	case r.dormant != nil:
 		return "dormant:" + r.dormant.Key
 	case r.stale:
 		return "stale"
 	case r.session != nil:
-		return "session:" + r.session.Key()
+		return "session:" + treeSessionKey(*r.session)
 	case r.project != nil:
 		return "project:" + r.project.Key
 	case r.repo != nil:
@@ -620,97 +637,13 @@ func (m *Model) clamp() {
 	}
 }
 
-func (m Model) rows() []row {
-	var out []row
-	switch m.listMode() {
-	case modeAgent:
-		return nil
-	case modeGoal:
-		return m.goalRows()
-	case modeChief:
-		return m.chiefRows()
-	case modeItems:
-		for i := range m.items {
-			out = append(out, row{item: &m.items[i]})
-		}
-	case modeSession:
-		p, _ := m.board.Project(m.detail)
-		s, ok := m.session()
-		if !ok {
-			return nil
-		}
-		for i := range s.Crew {
-			out = append(out, row{member: &s.Crew[i], session: s, project: &p})
-		}
-		for i := range p.Items {
-			if p.Items[i].Session == s.Key() {
-				out = append(out, row{item: &p.Items[i], project: &p})
-			}
-		}
-	case modeDetail:
-		p, ok := m.board.Project(m.detail)
-		if !ok {
-			return nil
-		}
-		for i := range p.Sessions {
-			s := &p.Sessions[i]
-			out = append(out, row{session: s, project: &p})
-			for j := range s.Crew {
-				out = append(out, row{member: &s.Crew[j], session: s, project: &p})
-			}
-		}
-		for i := range p.Dormant {
-			out = append(out, row{dormant: &p.Dormant[i], project: &p})
-		}
-		for i := range p.Items {
-			out = append(out, row{item: &p.Items[i], project: &p})
-		}
-	case modeRepo:
-		r, ok := m.board.Repo(m.repo)
-		if !ok {
-			return nil
-		}
-		for i := range r.Missions {
-			out = append(out, row{project: &r.Missions[i], repo: &r})
-		}
-	default:
-		out = append(out, m.queueRows()...)
-		if len(m.board.Stale) > 0 {
-			out = append(out, row{stale: true})
-			for i := range m.board.Stale {
-				n := &m.board.Stale[i]
-				if m.showStale && m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
-					out = append(out, row{need: n, item: n.Item})
-				}
-			}
-		}
-		out = append(out, m.treeRows()...)
-		for i := range m.board.Repos {
-			r := &m.board.Repos[i]
-			all := m.matches(r.Name)
-			var missions []row
-			for j := range r.Missions {
-				if r.Missions[j].Manager != "" {
-					continue
-				}
-				if all || m.matches(r.Missions[j].Name, m.hostText(m.projectHost(r.Missions[j]))) {
-					missions = append(missions, row{project: &r.Missions[j], repo: r})
-				}
-			}
-			if len(missions) > 0 {
-				out = append(out, row{repo: r})
-				out = append(out, missions...)
-			}
-		}
-	}
-	return out
-}
+func (m Model) rows() []row { return m.projectRows(false) }
 
 // session is the session the session or agent view shows.
 func (m Model) session() (*core.Live, bool) {
 	if p, ok := m.board.Project(m.detail); ok {
 		for i := range p.Sessions {
-			if p.Sessions[i].Key() == m.sess {
+			if treeSessionKey(p.Sessions[i]) == m.sess || p.Sessions[i].Key() == m.sess {
 				return &p.Sessions[i], true
 			}
 		}
@@ -960,14 +893,20 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "up", "k":
-		if m.mode == modeAgent {
+		if m.mode == modeAgent && len(m.rows()) > 0 {
+			m.scrollY = 0
+		}
+		if m.mode == modeAgent && len(m.rows()) == 0 {
 			m.scrollY = max(0, m.scrollY-1)
 		} else if m.cursor > 0 {
 			m.cursor--
 		}
 		return m, nil
 	case "down", "j":
-		if m.mode == modeAgent {
+		if m.mode == modeAgent && len(m.rows()) > 0 {
+			m.scrollY = 0
+		}
+		if m.mode == modeAgent && len(m.rows()) == 0 {
 			m.scrollBy(1)
 		} else if m.cursor < len(m.rows())-1 {
 			m.cursor++
@@ -977,7 +916,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(k.String())
 		return m, nil
 	case "pgup", "b":
-		if m.mode == modeAgent {
+		if m.mode == modeAgent && len(m.rows()) == 0 {
 			m.scrollY = max(0, m.scrollY-m.height/2)
 		}
 		return m, nil
@@ -1063,6 +1002,10 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if r.header != "" && m.mode == modeList && strings.Contains(rowScopedKeys, k.String()) {
+		m.message = "nothing selected"
+		return m, nil
+	}
 	if m.mode == modeMerge {
 		if k.Code == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
 			src, dst := m.mergeSrc, r.project.Key
@@ -1076,7 +1019,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if r.stale {
 		switch k.String() {
 		case "enter":
-			m.showStale = !m.showStale
+			m.setFold(r, !r.closed)
 		case "x":
 			m.startInput(inDismissStale, "", "", "stale: its session ended", true)
 		}
@@ -1094,13 +1037,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.revive(*r.dormant)
 		case r.member != nil:
 			m.push(modeAgent)
-			m.sess, m.agent, m.scrollY = r.session.Key(), r.member.ID, 0
+			m.sess, m.agent, m.scrollY = treeSessionKey(*r.session), r.member.ID, 0
 			if r.project != nil {
 				m.detail = r.project.Key
 			}
 		case r.session != nil:
 			m.push(modeSession)
-			m.sess = r.session.Key()
+			m.sess = treeSessionKey(*r.session)
 		case r.project != nil:
 			m.push(modeDetail)
 			m.detail = r.project.Key
