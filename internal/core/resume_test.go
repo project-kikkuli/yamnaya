@@ -206,6 +206,42 @@ func TestAGoalAgentWhosePaneWentIsResumedUnlessItWasStopped(t *testing.T) {
 	}
 }
 
+func TestARestartBringsBackNothingOfAnEndedGoalOrRetiredManager(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		manager bool
+		edit    func(*orgWorld, Goal, Manager)
+		resumed bool
+	}{
+		{name: "an agent of an active goal", resumed: true},
+		{name: "an agent of a done goal", edit: func(w *orgWorld, g Goal, m Manager) { g.State = GoalDone; w.core.Store.SaveGoal(g) }},
+		{name: "an agent of a killed goal", edit: func(w *orgWorld, g Goal, m Manager) { g.State = GoalKilled; w.core.Store.SaveGoal(g) }},
+		{name: "an agent of a retired manager", edit: func(w *orgWorld, g Goal, m Manager) { m.Retired = true; w.core.Store.SaveManager(m) }},
+		{name: "the manager of a done goal", manager: true, edit: func(w *orgWorld, g Goal, m Manager) { g.State = GoalDone; w.core.Store.SaveGoal(g) }},
+		{name: "a retired manager", manager: true, edit: func(w *orgWorld, g Goal, m Manager) { m.Retired = true; w.core.Store.SaveManager(m) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			l := Launched{Key: "wt-agent", Harness: "claude", Session: "agent", State: "gone", Revive: true, Parent: m.Session}
+			if tc.manager {
+				l = Launched{Key: "wt-manager", Harness: "claude", Session: m.Session, State: "gone", Revive: true}
+			}
+			if tc.edit != nil {
+				tc.edit(w, g, m)
+			}
+			r.launched = append(r.launched, l)
+			if err := w.core.ReviveWork(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
+			got := slices.ContainsFunc(r.resumed, func(c resumeCall) bool { return c.session == l.Session })
+			if got != tc.resumed {
+				t.Fatalf("%s resumed %v, want %v", l.Session, got, tc.resumed)
+			}
+		})
+	}
+}
+
 func TestAGoalAgentIsResumedEachTimeItsPaneGoesButAFailedResumeOnlyOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name string

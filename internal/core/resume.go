@@ -165,7 +165,7 @@ func (c *Core) tellWork(b Board, m Manager, session, kind, text, key string) err
 // ReviveWork resumes, one per ResumePace, every session ym brings back by itself: an agent of an active goal or chief whose pane
 // went without ym landing or killing it, any session ym launched that was running when its tmux server went away, and, after a cold
 // start, every session the owner started elsewhere that was running before it. A reboot brings work back and never lands it.
-// Managers and chiefs come back through Supervise.
+// Managers and chiefs come back through Supervise; nothing of an ended goal or a retired manager comes back.
 func (c *Core) ReviveWork(b Board) error {
 	r, can := c.Launches.(Resumer)
 	if !can {
@@ -187,7 +187,7 @@ func (c *Core) ReviveWork(b Board) error {
 			continue
 		}
 		m, ok := work(l.Session, l.Parent)
-		if _, killed := kills[l.Session]; killed || (!ok && !l.Revive) || (ok && m.Session == l.Session) || c.Off(l.Session) || b.throttle.Holds(l.Session) || !c.take(l.Session) {
+		if _, killed := kills[l.Session]; killed || (!ok && (!l.Revive || m.ID != "")) || (ok && m.Session == l.Session) || c.Off(l.Session) || b.throttle.Holds(l.Session) || !c.take(l.Session) {
 			continue
 		}
 		if !ok {
