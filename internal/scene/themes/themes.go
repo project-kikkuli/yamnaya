@@ -8,6 +8,7 @@ import (
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/civilizations"
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/forest"
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/islands"
+	_ "github.com/project-kikkuli/yamnaya/internal/scene/kaiju"
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/moai"
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/mountains"
 	_ "github.com/project-kikkuli/yamnaya/internal/scene/pyramids"
