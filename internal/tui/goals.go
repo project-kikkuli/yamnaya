@@ -674,6 +674,9 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.newL, m.forGoal = core.NewLaunch{}, key == "n"
 		m.loadTarget()
 		m.loadHarness("goal")
+		if n, ok := m.nodeOf(r); ok && n.Manager.Role == core.RoleChief && n.Manager.Repo == "" {
+			m.forGoal, m.launchOn = true, n.Manager.Host
+		}
 		if m.forGoal {
 			m.openRepoPicker()
 			return m, m.scanRepos(), true
@@ -692,6 +695,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.loadTarget()
 		m.targetRepo()
 		m.loadHarness("session")
+		if n, ok := m.nodeOf(r); ok && n.Manager.Role == core.RoleChief && n.Manager.Repo == "" {
+			m.newL.Repo, m.launchOn = "", n.Manager.Host
+			m.openRepoPicker()
+			return m, m.scanRepos(), true
+		}
 		m.startInput(inNew, "", "", "", false)
 		return m, nil, true
 	case "t":

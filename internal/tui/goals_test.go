@@ -727,3 +727,30 @@ func TestXOnAGoalUntiesTheChosenPullRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
+	for _, key := range []string{"N", "+"} {
+		t.Run(key, func(t *testing.T) {
+			m, c, _ := goalSetup(t, "service goal")
+			l := c.Launches.(*launches)
+			chief, err := c.NewChief("coordination", "", "", "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := len(l.started)
+			m = to(t, refresh(t, m), isNode(chief.ID))
+			m = press(t, m, key)
+			if m.inKind != inNewRepo || m.mode != modeInput {
+				t.Fatalf("neutral chief inferred a repo: kind %v mode %v", m.inKind, m.mode)
+			}
+			repo := t.TempDir()
+			m = press(t, m, strings.Split(repo, "")...)
+			m = press(t, m, "enter")
+			m = press(t, m, strings.Split("ship workplanes", "")...)
+			m = press(t, m, "enter")
+			if len(l.started) != before+1 || l.started[before].Repo != repo {
+				t.Fatalf("explicit repo lost: %s; %s", fmtLaunches(l.started), m.message)
+			}
+		})
+	}
+}
