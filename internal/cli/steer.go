@@ -158,26 +158,30 @@ func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			w := cmd.OutOrStdout()
-			if len(steers) == 0 {
-				fmt.Fprintf(w, "%s revision 0, the ask it started with:\n\n%s\n", m.ID, text)
-				return nil
-			}
-			if !all {
+			if !all && len(steers) > 0 {
 				steers = steers[len(steers)-1:]
 			}
-			for i, st := range steers {
-				if i > 0 {
-					fmt.Fprintln(w)
-				}
-				fmt.Fprintf(w, "%s revision %d by %s at %s, %s:\n\n%s\n", m.ID, st.Revision, st.By(), st.CreatedAt.Local().Format(time.DateTime), adoption(st), st.Text)
-			}
+			writeContext(cmd.OutOrStdout(), m.ID, text, steers)
 			return nil
 		}),
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "print every revision, oldest first")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the current plan as JSON")
 	return cmd
+}
+
+// writeContext prints id's context revisions, or the ask it started with when it has none.
+func writeContext(w io.Writer, id, ask string, steers []core.Steer) {
+	if len(steers) == 0 {
+		fmt.Fprintf(w, "%s revision 0, the ask it started with:\n\n%s\n", id, ask)
+		return
+	}
+	for i, st := range steers {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%s revision %d by %s at %s, %s:\n\n%s\n", id, st.Revision, st.By(), st.CreatedAt.Local().Format(time.DateTime), adoption(st), st.Text)
+	}
 }
 
 func adoption(st core.Steer) string {

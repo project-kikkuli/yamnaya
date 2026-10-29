@@ -181,19 +181,23 @@ func (c *Core) WriteBrief(session string, b Brief) (Brief, error) {
 		return b, err
 	}
 	if m.BriefPath != "" {
-		if err := writeFile(m.BriefPath, briefPage(o, m, b)); err != nil {
+		if err := writeFile(m.BriefPath, o.BriefPage(m, b)); err != nil {
 			return b, err
 		}
 	}
 	return b, nil
 }
 
-// briefPage is b as the page kept at m's brief path: titled by the goal's short name, with the ask in full, as written, last.
-func briefPage(o Org, m Manager, b Brief) string {
-	g, ok := o.Goals[m.GoalID]
-	if !ok {
-		return b.Markdown(m.Name)
+// BriefPage is b as the page kept at m's brief path.
+func (o Org) BriefPage(m Manager, b Brief) string {
+	if g, ok := o.Goals[m.GoalID]; ok {
+		return g.BriefPage(b)
 	}
+	return b.Markdown(m.Name)
+}
+
+// BriefPage is b as the page kept at the brief path of g's manager: titled by the goal's short name, with the ask in full, as written, last.
+func (g Goal) BriefPage(b Brief) string {
 	return b.Markdown(g.ID+": "+shortName(g.Ask)) + askSection(g.Ask)
 }
 
@@ -224,7 +228,7 @@ func (c *Core) BriefPage(ref string) (string, error) {
 		return "", err
 	}
 	if b, ok := briefs[m.ID]; ok {
-		return briefPage(o, m, b), nil
+		return o.BriefPage(m, b), nil
 	}
 	page, err := os.ReadFile(m.BriefPath)
 	if err != nil {
