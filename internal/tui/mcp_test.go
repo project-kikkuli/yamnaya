@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/mcp"
 )
 
@@ -131,6 +132,27 @@ func TestMCPPanelIgnoresLateInventoryForAnotherTarget(t *testing.T) {
 	m = next.(Model)
 	if m.pn.mcp.problem != "" {
 		t.Fatal("late result replaced selected target")
+	}
+}
+
+func TestMCPPublicKeyInspectsSelectedSessionsExactTarget(t *testing.T) {
+	for _, host := range []string{"", box} {
+		for _, h := range []string{"claude", "codex"} {
+			for _, id := range []string{"default", "work"} {
+				m, calls, c := mcpPanelFixture(t, host, h, id)
+				session := core.Live{Session: core.Session{ID: "conversation", Harness: h, Profile: id, ConfigRoot: c.root, Cwd: c.cwd}, Remote: host}
+				m.board = core.Board{Sessions: []core.Live{session}, Profiles: m.board.Profiles, Remotes: m.board.Remotes}
+				m.mode, m.sess, m.detail = modeSession, "conversation", ""
+				m = press(t, m, "F")
+				if m.mode != modePanel || m.pn.kind != panelMCP || m.pn.mcp.choice == nil || *m.pn.mcp.choice != c {
+					t.Fatalf("public key lost session target: %+v", m.pn.mcp.choice)
+				}
+				want := append(c.args("list"), "--json")
+				if len(*calls) != 1 || !reflect.DeepEqual((*calls)[0], ymCall{host: host, args: want}) {
+					t.Fatalf("inventory=%+v want=%v", *calls, want)
+				}
+			}
+		}
 	}
 }
 
