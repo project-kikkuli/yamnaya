@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"path/filepath"
 	"testing"
 
@@ -14,7 +15,7 @@ func emptyBoard(t *testing.T) Model {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	m := New(&core.Core{Store: st, Launches: &launches{}, Health: func() (string, error) { return "ok", nil }})
+	m := New(&core.Core{Store: st, Launches: &launches{}, Health: func() (string, error) { return "ok", nil }, Procs: func() ([]proc.Proc, error) { return nil, nil }, StateDir: t.TempDir()})
 	m.pn.run = func(host, stdin string, args ...string) (string, error) { return `{"running":true}`, nil }
 	m.loaded, m.width, m.height = true, 120, 40
 	return m

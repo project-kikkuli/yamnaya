@@ -77,7 +77,10 @@ func (m *Model) settle(step bool) {
 		sc.ver++
 	}
 	n := 0
-	if step {
+	switch {
+	case scene.ReducedMotion:
+		n = m.width * m.height
+	case step:
 		n = max(1, m.out.budget()/cellBytes)
 	}
 	c, left := sc.c.Toward(goal, n)

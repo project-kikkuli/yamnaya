@@ -138,3 +138,35 @@ func TestAFailedKillPutsTheUnitBack(t *testing.T) {
 		t.Fatal("a failed kill left its goal off the scene")
 	}
 }
+
+func TestSceneStartsStillAndZTurnsAnimationOnAndOff(t *testing.T) {
+	defer func(was bool) { scene.ReducedMotion = was }(scene.ReducedMotion)
+	for _, tc := range []struct {
+		name    string
+		start   bool
+		presses int
+		want    bool
+	}{{"default", true, 0, true}, {"on", true, 1, false}, {"on then off", true, 2, true}, {"started on", false, 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			scene.ReducedMotion = tc.start
+			m := emptyBoard(t)
+			for range tc.presses {
+				m = press(t, m, "Z")
+			}
+			if scene.ReducedMotion != tc.want {
+				t.Fatalf("reduced motion %v, want %v", scene.ReducedMotion, tc.want)
+			}
+		})
+	}
+}
+
+func TestStillSceneSchedulesNoFramesAndIsDrawnWhole(t *testing.T) {
+	defer func(was bool) { scene.ReducedMotion = was }(scene.ReducedMotion)
+	scene.ReducedMotion = true
+	m := emptyBoard(t)
+	m.height = 40
+	m.out = &output{}
+	if cmd := m.animate(); cmd != nil {
+		t.Fatal("a frame is scheduled while animation is off")
+	}
+}

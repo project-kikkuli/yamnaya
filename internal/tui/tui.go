@@ -916,6 +916,9 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		m.peaks.hidden = !m.peaks.hidden
 		return m, nil
+	case "Z":
+		scene.ReducedMotion = !scene.ReducedMotion
+		return m, nil
 	case "L":
 		return m.nextTheme()
 	case "q":

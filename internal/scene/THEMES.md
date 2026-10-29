@@ -36,7 +36,7 @@ one of them touches only files in its own directory. A theme under any other nam
    `scene.Colors == scene.NoColor` draw shapes only, with `c.Plain(x, y, glyph)`. The same arguments must give
    the same canvas: derive randomness from `scene.SeedOf(id)` and `scene.Unit`, `Noise`, `Fbm`, `Noise2`,
    `Fbm2`, never from `math/rand` or the clock. Frames are `scene.Step` (250ms) apart; animate from `frame`.
-   `scene.Frame` already passes frame 0 under `YM_REDUCED_MOTION` and caches a repeated frame, and
+   `scene.Frame` already passes frame 0 under reduced motion (the default) and caches a repeated frame, and
    `scene.Pace` picks the tick rate from the model, so a theme neither checks reduced motion nor chooses a pace.
    Colors: `scene.RGB`, `Hex`, `Mix`, `Scale`, `Luma`, `Contrast`, `Backing`, `Readable`, `IsRed`, `Smooth`, `Clamp`,
    `Lerp`.
