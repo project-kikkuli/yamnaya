@@ -122,7 +122,7 @@ Behind `?`:
 | `X` | on a goal: untie one of its pull requests for good, with a reason, the same as `ym goal pr drop` |
 | `z` | turn ym off, or back on, for the selected goal, chief, session or mission's session (see Turning ym off) |
 | `T` | relaunch an idle session in the other harness |
-| `B` | login profiles (see Login profiles); on a session, aimed at switching it |
+| `B` | login profiles (see Login profiles); on a session, goal or chief, aimed at switching its conversation |
 | `H` | hosts: each one's nickname, full name and state with ssh's reason when it fails; `i` installs or updates ym on one and keeps its `ym serve` running, `o` opens its board, `n` renames it (sets its nickname, empty for the default), `x` forgets it, `a` adds one; below, the relays this host still carries, `x` stops carrying one |
 | `Y` | settings: `enter` on a row acts on it: restart ym serve, keep it running across reboots or stop keeping it, connect Notion (the token is typed hidden), the context cap, which repositories' managers may merge, update ym |
 | `G` | gc old worktrees and merged branches |
@@ -525,7 +525,7 @@ ym keeps the existing default Claude and Codex login. `B` on the board lists eve
 - `a` adds one: type its label, with `tab` switching between claude and codex and `ctrl+t` picking the host, then accept or edit its root, `~/.claude-<label>` or `~/.codex-<label>` on that host.
 - `i` logs in: the native login runs in this terminal and the board comes back when it ends. On another host it runs there over ssh, Codex with device authorization, so the link and the one-time code show as Codex prints them; open the link in any browser.
 - `d` makes it the launch default for its harness on its host, `x` removes it (its root and the login in it stay on disk).
-- Opened with `B` on a session, `enter` switches that session to the login under the cursor, or to the first row's auto, a different verified login.
+- Opened with `B` on a session, goal or chief row, `enter` switches that session, goal's manager or chief to the login under the cursor, or to the first row's auto, a different verified login. Switching requires an idle session or a recorded exited conversation. A manager's or chief's saved profile follows the switch; existing child sessions keep their profiles.
 
 From a shell: `ym profiles add claude personal --label Personal --root ~/.claude-personal` (the root is absolute or under `~/` on that host), `ym profiles login <harness> <id>`, `ym profiles default <harness> [<id>]` and `ym profiles remove <harness> <id>`; on another host, `ym remote <host> profiles login codex personal --device-auth`. Native provider storage keeps each profile's credentials separate.
 

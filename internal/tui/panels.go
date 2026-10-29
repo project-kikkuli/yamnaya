@@ -133,6 +133,16 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 	} else if r.dormant != nil {
 		host, _ := m.splitHost(r.dormant.Key)
 		m.pn.target = &panelTarget{ref: r.dormant.Key, label: r.dormant.Title, harness: r.dormant.Harness, host: host}
+	} else if n, ok := m.nodeOf(r); ok && (n.Live != nil || n.Manager.Session != "") {
+		mg := n.Manager
+		ref, host := profile.SessionKey(mg.Harness, mg.Profile, mg.Session), mg.Host
+		if n.Live != nil {
+			ref, host = n.Live.Ref(), n.Live.Remote
+		}
+		if host != "" {
+			ref = core.RemoteKey(host, ref)
+		}
+		m.pn.target = &panelTarget{ref: ref, label: mg.Label(), harness: mg.Harness, host: host}
 	}
 	m.push(modePanel)
 	m.pn.cur = m.firstPanelRow(0, 1)

@@ -1551,7 +1551,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
    B            login profiles: every Claude and Codex login on every host with its limit windows; a adds one
                 (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
-                the launch default, x removes it; pressed on a session, enter switches the session to it
+                the launch default, x removes it; on a session, goal or chief, enter switches its conversation to it
    H            hosts: each host's nickname, full name and state, with the full error when it fails;
                 i installs or updates ym on one and keeps it running, o opens its board, r repairs the way
                 to it (DNS, route, VPN, port 22, ssh, the shared connection, ym and its serve, live, ending

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,6 +166,46 @@ func TestBSwitchesTheSessionToTheChosenLogin(t *testing.T) {
 				t.Fatalf("switched %q, want %q", sw.switched, c.want)
 			}
 		})
+	}
+}
+
+func TestBSwitchesTheSelectedChiefOrGoalWithoutSwitchingItsReports(t *testing.T) {
+	for _, role := range []string{core.RoleChief, core.RoleManager} {
+		for _, live := range []bool{true, false} {
+			for _, host := range []string{"", box} {
+				t.Run(fmt.Sprintf("%s/live=%t/host=%s", role, live, host), func(t *testing.T) {
+					m, _, sw := panelBoard(t)
+					harness, login := "claude", "work"
+					if host != "" {
+						harness, login = "codex", "far"
+					}
+					mg := core.Manager{ID: "mgr1", Role: role, Name: "platform", Session: "chief-conversation", Harness: harness, Profile: "source", Host: host}
+					n := core.Node{Manager: mg, Standing: core.StandDown, Children: []core.Node{{
+						Manager: core.Manager{ID: "mgr2", Role: core.RoleManager, Session: "report-conversation"},
+						Goal:    &core.Goal{ID: "goal2", Ask: "ship the report"}, Standing: core.StandDown,
+					}}}
+					if role == core.RoleManager {
+						n.Goal = &core.Goal{ID: "goal1", Ask: "ship the platform"}
+					}
+					if live {
+						n.Live = &core.Live{Session: core.Session{ID: mg.Session, Harness: harness, Profile: mg.Profile, Status: core.Idle}, Remote: host}
+					}
+					m.board.Tree = []core.Node{n}
+					m = press(t, to(t, m, isNode(mg.ID)), "B")
+					if v := ansi.Strip(m.View().Content); !strings.Contains(v, "enter switches "+ansi.Strip(m.tagged(host, mg.Label()))) {
+						t.Fatalf("profile panel does not name the selected agent:\n%s", v)
+					}
+					m = press(t, toPanelRow(t, m, harness+"/"+login), "enter")
+					ref := harness + ":source@" + mg.Session
+					if host != "" {
+						ref = core.RemoteKey(host, ref)
+					}
+					if want := []string{ref + " " + login}; !reflect.DeepEqual(sw.switched, want) {
+						t.Fatalf("switched %q, want only %q", sw.switched, want)
+					}
+				})
+			}
+		}
 	}
 }
 

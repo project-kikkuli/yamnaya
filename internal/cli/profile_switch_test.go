@@ -99,7 +99,31 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if err = l.records.Save(rec); err != nil {
 					t.Fatal(err)
 				}
+				chief, err := st.AddManager(core.Manager{Role: core.RoleChief, Name: "platform", Harness: harness, Profile: a.ID, ConfigRoot: a.Root})
+				if err != nil {
+					t.Fatal(err)
+				}
+				chief.Session = rec.Session
+				if err = st.SaveManager(chief); err != nil {
+					t.Fatal(err)
+				}
+				report, err := st.AddManager(core.Manager{Role: core.RoleManager, ParentID: chief.ID, Harness: harness, Profile: a.ID, ConfigRoot: a.Root})
+				if err != nil {
+					t.Fatal(err)
+				}
 				_, err = l.SwitchProfile(rec.Key, "b")
+				want := b
+				if status == "busy" {
+					want = a
+				}
+				savedChief, loadErr := st.Manager(chief.ID)
+				if loadErr != nil || savedChief.Profile != want.ID || savedChief.ConfigRoot != want.Root || savedChief.Session != chief.Session || savedChief.Role != core.RoleChief {
+					t.Fatalf("chief subscription or identity: %+v, %v", savedChief, loadErr)
+				}
+				savedReport, loadErr := st.Manager(report.ID)
+				if loadErr != nil || savedReport.Profile != a.ID || savedReport.ConfigRoot != a.Root || savedReport.ParentID != chief.ID {
+					t.Fatalf("chief switch changed its report: %+v, %v", savedReport, loadErr)
+				}
 				if status == "busy" {
 					if err == nil || signals != 0 {
 						t.Fatalf("busy action interrupted: %v signals=%d", err, signals)

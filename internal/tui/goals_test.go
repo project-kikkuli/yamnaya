@@ -714,7 +714,7 @@ func TestXOnAGoalUntiesTheChosenPullRequest(t *testing.T) {
 			}
 			m = press(t, m, "X")
 			m = press(t, m, append(typed(tc.pick), "enter")...)
-			m = press(t, m, append(typed("not this goal's"), "enter")...)
+			press(t, m, append(typed("not this goal's"), "enter")...)
 			events, _ := c.Store.GoalEvents(g)
 			if !slices.ContainsFunc(events, func(e core.GoalEvent) bool {
 				return e.Kind == core.EventPRDropped && strings.Contains(e.Payload, tc.drops) && strings.Contains(e.Payload, "not this goal's")
