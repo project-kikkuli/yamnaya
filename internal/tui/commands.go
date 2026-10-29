@@ -39,6 +39,7 @@ var Commands = map[string]string{
 	"ym item consolidate": "J",
 	"ym item show":        "enter",
 	"ym item list":        "I",
+	"ym copy":             "y",
 	"ym phase show":       "enter",
 	"ym phase next":       "p",
 	"ym phase set":        "P",
