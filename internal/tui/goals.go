@@ -68,27 +68,13 @@ func (m Model) treeRows() []row {
 		}
 		return out
 	}
-	var walk func([]*core.Node, int, bool, string)
-	walk = func(ns []*core.Node, depth int, all bool, group string) {
-		for _, n := range ns {
-			hit := all || m.matches(nodeText(*n), m.hostText(n.Manager.Host))
-			if hit || m.treeMatches(n.Children) {
-				out = append(out, row{node: n, depth: depth, group: group})
-				var kids []*core.Node
-				for i := range n.Children {
-					kids = append(kids, &n.Children[i])
-				}
-				walk(kids, depth+1, hit, group)
-			}
-		}
-	}
 	tops := make([]*core.Node, len(m.board.Tree))
 	for i := range m.board.Tree {
 		tops[i] = &m.board.Tree[i]
 	}
 	sort.SliceStable(tops, func(i, j int) bool { return groupLess(goalGroup(*tops[i]), goalGroup(*tops[j])) })
 	for _, n := range tops {
-		walk([]*core.Node{n}, 0, false, goalGroup(*n))
+		out = append(out, m.nodeRows([]core.Node{*n}, goalGroup(*n))...)
 	}
 	return out
 }
@@ -262,10 +248,31 @@ func (m Model) chiefRows() []row {
 	if !ok {
 		return nil
 	}
-	out := make([]row, 0, len(n.Children))
-	for i := range n.Children {
-		out = append(out, row{node: &n.Children[i]})
+	return m.nodeRows(n.Children, chiefGroup)
+}
+
+func expandable(n core.Node) bool { return n.Goal == nil && len(n.Children) > 0 }
+
+func (m Model) folded(n core.Node) bool {
+	return m.filter == "" && m.collapsed[n.Manager.ID] && expandable(n)
+}
+
+func (m Model) nodeRows(ns []core.Node, group string) []row {
+	var out []row
+	var walk func([]core.Node, int, bool)
+	walk = func(ns []core.Node, depth int, all bool) {
+		for i := range ns {
+			n := &ns[i]
+			hit := all || m.matches(nodeText(*n), m.hostText(n.Manager.Host))
+			if hit || m.treeMatches(n.Children) {
+				out = append(out, row{node: n, depth: depth, group: group})
+				if !m.folded(*n) {
+					walk(n.Children, depth+1, hit)
+				}
+			}
+		}
 	}
+	walk(ns, 0, false)
 	return out
 }
 
@@ -297,7 +304,14 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		what = m.tagged(host, n.Goal.Ask)
 	} else {
 		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Name, chiefName, "…"), chiefName))
-		what = m.tagged(host, pal.dim.Render(plural(n.Count(), "goal"))+remit(n))
+		fold := ""
+		if expandable(n) {
+			fold = "▾ "
+			if m.folded(n) {
+				fold = "▸ "
+			}
+		}
+		what = fold + m.tagged(host, pal.dim.Render(plural(n.Count(), "goal"))+remit(n))
 		keep = minRemit
 	}
 	st := nodeStats(n)
@@ -348,6 +362,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		meta = append(meta, m.hostTag(host)+" "+state)
 	}
 	keys := "enter open · r reply · b brief · B login · c chief · S steer plan · R relaunch · W brief page · o session · space select"
+	if expandable(n) {
+		keys += " · ← collapse · → expand"
+	}
 	switch {
 	case n.Goal != nil && n.Goal.Ended():
 		keys += " · x clear"
@@ -666,6 +683,19 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	key := k.String()
 	r, _ := m.selected()
 	switch key {
+	case "left", "right":
+		if (m.mode == modeList && !m.flat || m.mode == modeChief) && m.filter == "" && r.node != nil && expandable(*r.node) {
+			if m.collapsed == nil {
+				m.collapsed = map[string]bool{}
+			}
+			if key == "left" {
+				m.collapsed[r.node.Manager.ID] = true
+			} else {
+				delete(m.collapsed, r.node.Manager.ID)
+			}
+			m.clamp()
+		}
+		return m, nil, true
 	case "n", "N":
 		if m.core.Launches == nil {
 			m.message = "ym's launcher is unavailable"
@@ -705,6 +735,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "t":
 		if m.mode == modeList {
 			m.flat = !m.flat
+			m.follow(rowKey(r), nil, nil)
 			return m, nil, true
 		}
 	case "C":

@@ -385,7 +385,7 @@ func joinHints(parts ...string) string {
 }
 
 // boardHints are the board's footer keys; ? lists the rest.
-const boardHints = "↑↓ move · tab section · [ ] repo · < > top/bottom · enter open · r reply · g go · K kill · c chief · b brief · n new · / filter · ? more"
+const boardHints = "↑↓ move · ← collapse · → expand · tab section · [ ] repo · < > top/bottom · enter open · r reply · g go · K kill · c chief · b brief · n new · / filter · ? more"
 
 func (m Model) hints() string {
 	if r, ok := m.selected(); ok && r.item != nil && r.item.Action == "chat" && (m.mode == modeList || m.mode == modeDetail || m.mode == modeSession || m.mode == modeItems) {
@@ -425,7 +425,7 @@ func (m Model) hints() string {
 	case modeGoal:
 		return joinHints(controls, "↑↓ move · enter open session · o go to session · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more")
 	case modeChief:
-		return "↑↓ move · < > top/bottom · enter open · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more"
+		return "↑↓ move · ← collapse · → expand · < > top/bottom · enter open · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more"
 	}
 	return boardHints
 }
@@ -1501,6 +1501,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
 
    Move
    ↑↓ or k j    move
+   ← →          collapse or expand the selected chief (▸ folded, ▾ expanded), at any depth;
+                filtering reveals reports without changing folds; t lists every goal by repository
    tab          next section: needs you, goals, sessions (shift-tab: previous)
    [ ]          previous or next repository group, across goals and sessions
    < > or home end
