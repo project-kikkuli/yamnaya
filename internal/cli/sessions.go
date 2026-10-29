@@ -18,6 +18,7 @@ import (
 )
 
 type sessionJSON struct {
+	Parent       string   `json:"parent,omitempty"`
 	ConfigRoot   string   `json:"config_root,omitempty"`
 	Profile      string   `json:"profile,omitempty"`
 	ProfileLabel string   `json:"profile_label,omitempty"`
@@ -105,7 +106,7 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 	out := []sessionJSON{}
 	for _, s := range b.Sessions {
-		j := sessionJSON{ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, Ref: s.Ref(), ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, RepoID: s.RepoID, Worktree: s.Worktree,
+		j := sessionJSON{Parent: b.ParentOf(s.Ref()), ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, Ref: s.Ref(), ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, RepoID: s.RepoID, Worktree: s.Worktree,
 			Branch: s.Branch, Title: s.Title, Status: s.Status.String(), WaitingFor: s.WaitingFor, Since: ts(s.Since), Background: s.Background,
 			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies), Last: s.LastLine(), LastAt: ts(s.ResultAt)}
 		if s.Prompt != nil {

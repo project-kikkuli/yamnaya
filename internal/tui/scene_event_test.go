@@ -42,6 +42,7 @@ func TestSceneResumesWithTheCurrentBoardAfterEvents(t *testing.T) {
 				m.board.Tree[0].Standing = core.StandMoving
 				m.peaks.hidden, m.peaks.theme, m.peaks.dark = false, "kaiju", true
 				m.out = &output{rate: 1e9}
+				m.firstContent()
 				page := m.prepareView()
 				m.page = &page
 				m.settle(true)

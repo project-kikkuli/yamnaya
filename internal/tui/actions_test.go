@@ -260,7 +260,7 @@ func place(t *testing.T, m Model, c *core.Core) Model {
 	c.Harnesses[0] = placed{c.Harnesses[0]}
 	c.Git = func(string) core.GitInfo { return core.GitInfo{Common: "/src/app/.git", Top: "/src/app-wt"} }
 	m = refresh(t, m)
-	m.cursor = 0
+	m = press(t, m, "home", "down")
 	return m
 }
 

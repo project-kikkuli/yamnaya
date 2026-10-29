@@ -7,23 +7,14 @@ import (
 )
 
 // section is the part of the board a list row sits in: 0 needs you, 1 goals, 2 sessions.
-func section(r row) int {
-	switch {
-	case r.node != nil:
-		return 1
-	case r.repo != nil:
-		return 2
-	}
-	return 0
-}
+func section(r row) int { return max(0, r.sectionID-1) }
 
-// repoGroup is the group [ and ] step between: the whole queue, one repository's goals or the chiefs, or one repository's sessions.
 func repoGroup(r row) string {
 	switch section(r) {
 	case 1:
 		return "goals " + r.group
 	case 2:
-		return "sessions " + r.repo.Key
+		return "sessions " + r.group
 	}
 	return "needs"
 }
@@ -45,7 +36,7 @@ func starts(rows []row, at int, part func(row) string) ([]int, int) {
 
 // move jumps the cursor: tab and shift+tab between sections, [ and ] between repository groups, < > home and end to the top or bottom.
 func (m *Model) move(key string) {
-	if m.mode == modeAgent {
+	if m.mode == modeAgent && len(m.rows()) == 0 {
 		switch key {
 		case "<", "home":
 			m.scrollY = 0

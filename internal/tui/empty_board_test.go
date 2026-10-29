@@ -53,7 +53,7 @@ func TestBoardWideKeysWorkOnEmptyBoard(t *testing.T) {
 }
 
 func TestRowScopedKeysSayNothingSelectedOnEmptyBoard(t *testing.T) {
-	for _, key := range []string{"enter", "o", "r", "g", "x", "l", "u", "e", "m", "s", "S", "K", "z", "T", "p", "P", "v"} {
+	for _, key := range []string{"o", "r", "g", "x", "l", "u", "e", "m", "s", "S", "K", "z", "T", "p", "P", "v"} {
 		t.Run(key, func(t *testing.T) {
 			m := press(t, emptyBoard(t), key)
 			if m.mode != modeList || m.message != "nothing selected" {

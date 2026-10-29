@@ -124,6 +124,11 @@ func TestProfileRegistrationFailuresRetainRootAndTargetWithoutLocalFallback(t *t
 	}
 }
 
+// withSessions is a board reading these sessions: a board indexes its sessions once, so another list needs a board of its own.
+func withSessions(b core.Board, sessions []core.Live) core.Board {
+	return core.Board{At: b.At, Fleet: b.Fleet, Launched: b.Launched, Org: b.Org, Profiles: b.Profiles, Remotes: b.Remotes, Repos: b.Repos, Sessions: sessions}
+}
+
 func TestRepeatedNamedProfileSwitchRebindsExactConversation(t *testing.T) {
 	for _, fails := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[fails], func(t *testing.T) {
@@ -146,9 +151,8 @@ func TestRepeatedNamedProfileSwitchRebindsExactConversation(t *testing.T) {
 				}
 				return
 			}
-			b := m.board
 			s.Profile, s.ConfigRoot = "two", "/root/two"
-			b.Sessions = []core.Live{s, {Session: core.Session{ID: s.ID, Harness: "claude", Profile: "three", ConfigRoot: "/wrong"}, Remote: box}}
+			b := withSessions(m.board, []core.Live{s, {Session: core.Session{ID: s.ID, Harness: "claude", Profile: "three", ConfigRoot: "/wrong"}, Remote: box}})
 			next, _ = m.Update(boardMsg{board: b})
 			m = next.(Model)
 			if m.pn.target.profile != "two" || m.pn.target.root != "/root/two" || !strings.Contains(ansi.Strip(m.panelView().String()), "current: claude/two") {
@@ -198,8 +202,7 @@ func TestAutoSwitchRebindsOnlyAuthoritativeHostAndConversation(t *testing.T) {
 	}
 	m = toPanelRow(t, m, "claude/work")
 	key := profileRowKey("", "claude", "work")
-	b := m.board
-	b.Sessions = []core.Live{{Session: core.Session{ID: s.ID, Harness: "codex", Profile: "wrong", ConfigRoot: "/wrong"}}}
+	b := withSessions(m.board, []core.Live{{Session: core.Session{ID: s.ID, Harness: "codex", Profile: "wrong", ConfigRoot: "/wrong"}}})
 	next, _ = m.Update(boardMsg{board: b})
 	m = next.(Model)
 	if m.pn.target.profile != "far" {

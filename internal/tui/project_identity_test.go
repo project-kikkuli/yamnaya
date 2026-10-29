@@ -54,6 +54,9 @@ func TestCollidingProjectNavigationAndActionsStayOnSelectedHost(t *testing.T) {
 				t.Fatalf("mission did not open: %v", m.mode)
 			}
 			for _, row := range m.rows() {
+				if row.header != "" {
+					continue
+				}
 				if row.project == nil || core.ProjectHost(*row.project) != "box" || row.project.Verifier != nil {
 					t.Fatalf("detail contains another host's mission: %+v", row)
 				}

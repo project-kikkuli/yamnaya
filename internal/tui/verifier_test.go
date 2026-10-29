@@ -166,11 +166,16 @@ func TestVerifierGoalDetailOpensTheRightHostForACollidingUUID(t *testing.T) {
 		t.Fatalf("local owner row count %d", owner)
 	}
 	m.mode, m.goal = modeGoal, "box/mgr1"
-	rows := m.rows()
-	if len(rows) != 1 || !rows[0].verifier || rows[0].session.Remote != "box" {
-		t.Fatalf("goal rows=%+v", rows)
+	var sessions []row
+	for i, r := range m.rows() {
+		if r.session != nil {
+			sessions = append(sessions, r)
+			m.cursor = i
+		}
 	}
-	m.cursor = 0
+	if len(sessions) != 1 || !sessions[0].verifier || sessions[0].session.Remote != "box" {
+		t.Fatalf("goal session rows=%+v", sessions)
+	}
 	m = press(t, m, "enter")
 	s, ok := m.session()
 	if !ok || s.Remote != "box" || s.Title != "Remote verifier" {
