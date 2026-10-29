@@ -53,6 +53,7 @@ func TestChiefFoldsAndNavigation(t *testing.T) {
 		{"empty chief no op", []step{{"empty", "left"}, {"", "right"}}, all, "empty", nil},
 		{"navigation skips folded subtree", []step{{"mid", "left"}, {"", "down"}}, midFold, "sibling", []string{"mid"}},
 		{"group navigation skips folded subtree", []step{{"top", "left"}, {"", "]"}}, "top:0 remote/mid:0 remote/hit:1 empty:0 solo:0", "solo", []string{"top"}},
+		{"chief view retains matching chiefs descendants", []step{{"mid", "left"}, {"", "/"}, {"", "paste:mid"}, {"", "enter"}, {"mid", "enter"}}, "deep:0 hit:1 side:0", "deep", []string{"mid"}},
 		{"chief view recursively browses reports", []step{{"top", "enter"}}, "mid:0 deep:1 hit:2 side:1 sibling:0", "mid", nil},
 		{"chief view shares nested folds", []step{{"deep", "left"}, {"top", "enter"}, {"mid", "left"}, {"", "right"}}, "mid:0 deep:1 side:1 sibling:0", "mid", []string{"deep"}},
 		{"chief drill does not change parent fold", []step{{"top", "left"}, {"", "enter"}}, "mid:0 deep:1 hit:2 side:1 sibling:0", "mid", []string{"top"}},
@@ -64,7 +65,7 @@ func TestChiefFoldsAndNavigation(t *testing.T) {
 			m.board, m.loaded, m.width, m.peaks.hidden = foldBoard(), true, 220, true
 			for _, s := range tc.steps {
 				if s.target != "" {
-					m = to(t, m, isNode(s.target))
+					m = to(t, press(t, m, "home"), isNode(s.target))
 				}
 				switch s.key {
 				case "refresh", "insert", "remove":

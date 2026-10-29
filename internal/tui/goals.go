@@ -74,7 +74,7 @@ func (m Model) treeRows() []row {
 	}
 	sort.SliceStable(tops, func(i, j int) bool { return groupLess(goalGroup(*tops[i]), goalGroup(*tops[j])) })
 	for _, n := range tops {
-		out = append(out, m.nodeRows([]core.Node{*n}, goalGroup(*n))...)
+		out = append(out, m.nodeRows([]core.Node{*n}, goalGroup(*n), false)...)
 	}
 	return out
 }
@@ -248,7 +248,7 @@ func (m Model) chiefRows() []row {
 	if !ok {
 		return nil
 	}
-	return m.nodeRows(n.Children, chiefGroup)
+	return m.nodeRows(n.Children, chiefGroup, m.matches(nodeText(n), m.hostText(n.Manager.Host)))
 }
 
 func expandable(n core.Node) bool { return n.Goal == nil && len(n.Children) > 0 }
@@ -257,7 +257,7 @@ func (m Model) folded(n core.Node) bool {
 	return m.filter == "" && m.collapsed[n.Manager.ID] && expandable(n)
 }
 
-func (m Model) nodeRows(ns []core.Node, group string) []row {
+func (m Model) nodeRows(ns []core.Node, group string, all bool) []row {
 	var out []row
 	var walk func([]core.Node, int, bool)
 	walk = func(ns []core.Node, depth int, all bool) {
@@ -272,7 +272,7 @@ func (m Model) nodeRows(ns []core.Node, group string) []row {
 			}
 		}
 	}
-	walk(ns, 0, false)
+	walk(ns, 0, all)
 	return out
 }
 
