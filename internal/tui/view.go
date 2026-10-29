@@ -1576,7 +1576,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
                 the launch default, x removes it, m opens its MCP connections; on a session, goal or chief,
                 enter switches its conversation to it
-   C            MCP connections for the selected session, or choose a host and login: n connects Notion,
+   F            MCP connections for the selected session, or choose a host and login: n connects Notion,
                 a adds HTTP/SSE/stdio, i logs in in your terminal (no-browser remotely), c checks explicitly,
                 x removes the selected scope; r rereads files without starting any servers, p changes login
    H            hosts: each host's nickname, full name and state, with the full error when it fails;

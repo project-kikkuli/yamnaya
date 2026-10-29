@@ -975,7 +975,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		m.show("U", m.usageText())
 		return m, nil
-	case "E", "H", "Y", "C":
+	case "E", "H", "Y", "F":
 		r, _ := m.selected()
 		return m.openPanel(panelKeys[k.String()], r)
 	case "I":

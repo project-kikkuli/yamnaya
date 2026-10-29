@@ -2,13 +2,13 @@ package tui
 
 // Commands maps each ym command the owner runs to the board key that does the same.
 var Commands = map[string]string{
-	"ym mcp add":          "C",
-	"ym mcp check":        "C",
-	"ym mcp list":         "C",
-	"ym mcp login":        "C",
-	"ym mcp logout":       "C",
-	"ym mcp manage":       "C",
-	"ym mcp remove":       "C",
+	"ym mcp add":          "F",
+	"ym mcp check":        "F",
+	"ym mcp list":         "F",
+	"ym mcp login":        "F",
+	"ym mcp logout":       "F",
+	"ym mcp manage":       "F",
+	"ym mcp remove":       "F",
 	"ym profiles":         "B",
 	"ym profiles add":     "B",
 	"ym profiles login":   "B",

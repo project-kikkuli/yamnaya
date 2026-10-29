@@ -544,7 +544,7 @@ An explicitly empty or relative default `CLAUDE_CONFIG_DIR` is unsupported becau
 
 ## MCP connections
 
-Press `C` on a session to inspect its exact host, login, native root and working directory. From settings (`Y`), choose **MCP connections**, or press `m` on a login in `B`. Without a selected session, choose a host/login and its working directory. An older host that does not report a session's native root must be updated before that session can manage connections. Offline hosts never fall back to this machine.
+Press `F` on a session to inspect its exact host, login, native root and working directory. From settings (`Y`), choose **MCP connections**, or press `m` on a login in `B`. Without a selected session, choose a host/login and its working directory. An older host that does not report a session's native root must be updated before that session can manage connections. Offline hosts never fall back to this machine.
 
 Inventory reads configuration files without starting servers. Each definition shows its scope and source, whether another file definition shadows it, approval, authentication and the last explicit health result. A configured server has unknown authentication and unchecked health until checked. Plugin, cloud and managed sources are explicitly unenumerated; `o` hands your terminal to the native harness, where `/mcp` provides their inventory and project approvals.
 

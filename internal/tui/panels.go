@@ -32,7 +32,7 @@ const (
 )
 
 // panelKeys are the board keys that open each panel; the same key closes it.
-var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "C": panelMCP}
+var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "F": panelMCP}
 
 type panelState struct {
 	kind panelKind
