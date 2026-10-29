@@ -162,6 +162,7 @@ type scan struct {
 	Calls map[string]call
 
 	modified time.Time
+	saved    time.Time
 	// file is the transcript last read, so a file replaced under the same path is read again from the start.
 	file os.FileInfo
 }
@@ -417,9 +418,9 @@ func (a *Adapter) advance(path string) *scan {
 			t.add(rec)
 		}
 	}
-	if a.Cache != nil && t.Offset != start {
-		if data, err := json.Marshal(t); err == nil {
-			_ = a.Cache.SaveScan(path, t.Offset, data)
+	if a.Cache != nil && t.Offset != start && time.Since(t.saved) >= core.ScanSaveEvery {
+		if data, err := json.Marshal(t); err == nil && a.Cache.SaveScan(path, t.Offset, data) == nil {
+			t.saved = time.Now()
 		}
 	}
 	return t

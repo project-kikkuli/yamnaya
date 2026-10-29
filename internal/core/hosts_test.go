@@ -56,3 +56,31 @@ func TestTheLaunchTargetIsThisHostUntilOneIsChosen(t *testing.T) {
 		}
 	}
 }
+
+func TestAKeptBoardIsReplacedOnlyOnceItIsAMinuteOld(t *testing.T) {
+	st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	t0 := time.Unix(1000, 0)
+	for _, tc := range []struct {
+		after time.Duration
+		board string
+		want  string
+		at    time.Duration
+	}{
+		{0, "first", "first", 0},
+		{5 * time.Second, "five seconds on", "first", 0},
+		{59 * time.Second, "a second short", "first", 0},
+		{time.Minute, "a minute on", "a minute on", time.Minute},
+	} {
+		if err := st.KeepBoard("box", t0.Add(tc.after), []byte(tc.board)); err != nil {
+			t.Fatal(err)
+		}
+		at, board, ok, err := st.KeptBoard("box")
+		if err != nil || !ok || string(board) != tc.want || !at.Equal(t0.Add(tc.at)) {
+			t.Errorf("after %v kept %q at %v (%v, %v); want %q at %v", tc.after, board, at, ok, err, tc.want, t0.Add(tc.at))
+		}
+	}
+}

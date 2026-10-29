@@ -153,6 +153,30 @@ func TestAFreshRunResumesFromTheSavedOffset(t *testing.T) {
 	}
 }
 
+func TestAGrowingTranscriptIsSavedOnceAMinuteAndStillResumesWhole(t *testing.T) {
+	w := newWorld(t, human("first ask"))
+	cache := memCache{}
+	a := &Adapter{Dir: w.dir, Now: time.Now, Cache: cache}
+	a.Discover([]proc.Proc{p(7, "claude")})
+	saved := cache[w.transcript].off
+	for _, ask := range []string{"second ask", "third ask"} {
+		f, err := os.OpenFile(w.transcript, os.O_APPEND|os.O_WRONLY, 0)
+		must(t, err)
+		_, err = f.WriteString(human(ask) + "\n")
+		must(t, err)
+		must(t, f.Close())
+		if s := a.Discover([]proc.Proc{p(7, "claude")})[0]; s.Ask != ask {
+			t.Fatalf("live ask = %q, want %q", s.Ask, ask)
+		}
+	}
+	if cache[w.transcript].off != saved {
+		t.Fatalf("saved offset moved to %d within a minute, want it held at %d", cache[w.transcript].off, saved)
+	}
+	if s := w.session(t, cache); s.Task != "first ask" || s.Ask != "third ask" {
+		t.Fatalf("fresh run from the held save = task %q ask %q", s.Task, s.Ask)
+	}
+}
+
 func TestASubagentIsCutOnlyWhenItStoppedMidTurn(t *testing.T) {
 	ended := `{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}],"stop_reason":"end_turn"}}`
 	cases := []struct {

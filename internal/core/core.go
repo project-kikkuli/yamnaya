@@ -241,6 +241,10 @@ type ScanCache interface {
 	SaveScan(path string, offset int64, data []byte) error
 }
 
+// ScanSaveEvery spaces an adapter's saves of one file's scan: each rewrites the whole scan, and a live transcript grows every
+// few seconds. A save skipped leaves the last saved offset and scan, which still agree, so a later run only reads more.
+const ScanSaveEvery = time.Minute
+
 var ErrNotFound = errors.New("not found")
 
 // ErrFinal marks a refusal no later attempt changes, such as answering an item that was answered already.

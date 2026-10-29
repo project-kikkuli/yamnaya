@@ -115,12 +115,16 @@ func (s *Store) SetLaunchHarness(kind, harness string) error {
 	return err
 }
 
-// KeepBoard stores the board host printed at at, so a later board shows it while host cannot be reached.
+// KeepBoard stores the board host printed at at, so a later board shows it while host cannot be reached. It replaces a kept
+// board only once that is a minute old: a host answers every few seconds, and each board runs to hundreds of kilobytes.
 func (s *Store) KeepBoard(host string, at time.Time, board []byte) error {
 	_, err := s.db.Exec(`INSERT INTO ym_host_boards(host,at,board) VALUES(?,?,?)
-		ON CONFLICT(host) DO UPDATE SET at=excluded.at, board=excluded.board`, host, at.UnixNano(), board)
+		ON CONFLICT(host) DO UPDATE SET at=excluded.at, board=excluded.board WHERE excluded.at - ym_host_boards.at >= ?`,
+		host, at.UnixNano(), board, int64(keptBoardEvery))
 	return err
 }
+
+const keptBoardEvery = time.Minute
 
 // KeptBoard is the last board host printed and when; ok is false when ym never kept one.
 func (s *Store) KeptBoard(host string) (at time.Time, board []byte, ok bool, err error) {
