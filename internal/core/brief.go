@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -71,7 +72,7 @@ func (b Brief) Markdown(title string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# %s\n\nBrief v%d, %s\n", title, b.Version, b.CreatedAt.Local().Format(time.DateTime))
 	for _, s := range b.Sections() {
-		fmt.Fprintf(&sb, "\n## %s\n\n%s\n", s[0], s[1])
+		fmt.Fprintf(&sb, "\n## %s\n\n%s\n", s[0], nestHeadings(s[1], 2))
 	}
 	return sb.String()
 }
@@ -207,7 +208,49 @@ func askSection(ask string) string {
 	if shortName(ask) == ask {
 		return ""
 	}
-	return "\n## Ask\n\n" + ask + "\n"
+	return "\n## Ask\n\n" + nestHeadings(ask, 2) + "\n"
+}
+
+var (
+	atxHeading = regexp.MustCompile(`^( {0,3})(#{1,6})([ \t]|$)`)
+	codeFence  = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})")
+)
+
+// nestHeadings shifts the headings of text, outside fenced code, so its shallowest nests below a heading of level under.
+func nestHeadings(text string, under int) string {
+	lines := strings.Split(text, "\n")
+	var headings []int
+	fence := ""
+	for i, line := range lines {
+		if f := codeFence.FindStringSubmatch(line); f != nil {
+			switch {
+			case fence == "":
+				fence = f[1]
+			case f[1][0] == fence[0] && len(f[1]) >= len(fence) && strings.TrimSpace(line[len(f[0]):]) == "":
+				fence = ""
+			}
+			continue
+		}
+		if fence == "" && atxHeading.MatchString(line) {
+			headings = append(headings, i)
+		}
+	}
+	if len(headings) == 0 {
+		return text
+	}
+	shallowest := 6
+	for _, i := range headings {
+		shallowest = min(shallowest, len(atxHeading.FindStringSubmatch(lines[i])[2]))
+	}
+	shift := under + 1 - shallowest
+	if shift <= 0 {
+		return text
+	}
+	for _, i := range headings {
+		m := atxHeading.FindStringSubmatch(lines[i])
+		lines[i] = m[1] + strings.Repeat("#", min(6, len(m[2])+shift)) + lines[i][len(m[1])+len(m[2]):]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // BriefPage is the newest brief of the goal or chief ref names as clean text, the page kept at its brief path.

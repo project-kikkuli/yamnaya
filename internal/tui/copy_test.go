@@ -16,6 +16,7 @@ func TestYPutsCleanTextOfABriefAContextAndAnItemOnTheClipboard(t *testing.T) {
 	clipWay = func() clipboard.Way { return clipboard.OSC52 }
 	t.Cleanup(func() { clipWay = was })
 	ask := "fix \"copy & paste\" in the owner's briefs\n\n## Steering\n\nkeep <pre> blocks & it's done"
+	nested := "fix \"copy & paste\" in the owner's briefs\n\n### Steering\n\nkeep <pre> blocks & it's done"
 	assessment := `the "page" & its <pre> block don't wrap`
 	for _, tc := range []struct {
 		name string
@@ -23,8 +24,8 @@ func TestYPutsCleanTextOfABriefAContextAndAnItemOnTheClipboard(t *testing.T) {
 		keys []string
 		want []string
 	}{
-		{"brief from the menu", false, []string{"y", "b"}, []string{"## Assessment\n\n" + assessment + "\n", "## Ask\n\n" + ask + "\n"}},
-		{"brief from its page", false, []string{"b", "y"}, []string{"## Assessment\n\n" + assessment + "\n", "## Ask\n\n" + ask + "\n"}},
+		{"brief from the menu", false, []string{"y", "b"}, []string{"## Assessment\n\n" + assessment + "\n", "## Ask\n\n" + nested + "\n"}},
+		{"brief from its page", false, []string{"b", "y"}, []string{"## Assessment\n\n" + assessment + "\n", "## Ask\n\n" + nested + "\n"}},
 		{"context", false, []string{"y", "c"}, []string{ask + "\n"}},
 		{"item", true, []string{"y"}, []string{"Ship it?\n", "rec: yes\n", "option: a = does a\n"}},
 	} {
