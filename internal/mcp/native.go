@@ -45,7 +45,7 @@ func (a Addition) Args(harness string) ([]string, error) {
 		return nil, fmt.Errorf("scope must be user, local or project")
 	}
 	if harness == "codex" && a.Scope != "user" {
-		return nil, fmt.Errorf("Codex native MCP add supports user scope only; project definitions remain visible and read-only")
+		return nil, fmt.Errorf("native Codex MCP add supports user scope only; project definitions remain visible and read-only")
 	}
 	args := []string{"mcp", "add"}
 	if harness == "claude" {
