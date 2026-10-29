@@ -190,6 +190,33 @@ func (p Pool) othersIdle(n int) (bool, error) {
 	return true, nil
 }
 
+// Held counts the slots whose locks are taken.
+func (p Pool) Held() (int, error) {
+	held := 0
+	for n := 1; n <= p.Capacity; n++ {
+		busy, err := p.busy(n)
+		if err != nil {
+			return held, err
+		}
+		if busy {
+			held++
+		}
+	}
+	return held, nil
+}
+
+func (p Pool) busy(n int) (bool, error) {
+	f, err := os.Open(p.lockPath(n))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil, nil
+}
+
 // Status reads who holds and waits for the pool's slots. A slot is held while its lock is; its claim names the holder
 // unless an agent-slot script holds it, which leaves none.
 func (p Pool) Status() (Status, error) {
@@ -200,16 +227,11 @@ func (p Pool) Status() (Status, error) {
 		return st, pressureErr
 	}
 	for n := 1; n <= p.Capacity; n++ {
-		f, err := os.Open(p.lockPath(n))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
+		busy, err := p.busy(n)
 		if err != nil {
 			return st, err
 		}
-		free := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil
-		f.Close()
-		if free {
+		if !busy {
 			continue
 		}
 		c, err := readClaim(p.claimPath(n))

@@ -71,10 +71,13 @@ func (s State) Save(dir string) error {
 	return os.Rename(path+".new", path)
 }
 
-func (s State) Line() string {
+// Line describes the throttle given how many slots are held; with none held the next slot is still granted.
+func (s State) Line(held int) string {
 	switch {
+	case s.Holding && held == 0:
+		return fmt.Sprintf("throttle: heavy agent jobs nice 15 (%d live), 0 slots held, next slot granted", len(s.Changed))
 	case s.Holding:
-		return fmt.Sprintf("throttle: heavy agent jobs nice 15 (%d live), new slots held", len(s.Changed))
+		return fmt.Sprintf("throttle: heavy agent jobs nice 15 (%d live), %d slots held, new slots wait", len(s.Changed), held)
 	case s.Active:
 		return "throttle: recovering, new slots open; clears after 3 minutes below 1.25x cores"
 	case !s.Above.IsZero():
@@ -222,7 +225,7 @@ func protected(command string) bool {
 
 type Notice struct{ Manager, Goal, Text string }
 
-func (s State) Notices() []Notice {
+func (s State) Notices(held int) []Notice {
 	if !s.Active {
 		return nil
 	}
@@ -240,7 +243,7 @@ func (s State) Notices() []Notice {
 			top = append(top, fmt.Sprintf("%s pid %d %.0f%%", filepath.Base(c.Command), c.PID, c.CPU))
 		}
 		slots := "slots open"
-		if s.Holding {
+		if s.Holding && held > 0 {
 			slots = "slots held"
 		}
 		out = append(out, Notice{Manager: changes[0].Manager, Goal: goal, Text: fmt.Sprintf("load %.1f on %d cores; child jobs nice 15; %s; top: %s", s.Load, s.Cores, slots, strings.Join(top, ", "))})

@@ -225,7 +225,7 @@ func goalCount(ns []core.Node) int {
 func machineAlerts(mc core.Machine, width int) string {
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
 	h := ""
-	if line := mc.Slots.Pressure.Line(); line != "" {
+	if line := mc.Slots.Pressure.Line(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}
 	if o := mc.Overload(); o != "" {
@@ -244,7 +244,7 @@ func machineLines(mc core.Machine, now time.Time, width int) string {
 	}
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
 	h := "\n" + pal.dim.Render(fit(" "+mc.Summary()))
-	if line := mc.Slots.Pressure.Line(); line != "" {
+	if line := mc.Slots.Pressure.Line(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}
 	for _, u := range mc.Holders {

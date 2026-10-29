@@ -49,11 +49,11 @@ func TestOverloadNoticeSurvivesARestartBetweenRecordingAndSavingState(t *testing
 	c := &core.Core{Store: store}
 	state := pressure.State{Active: true, Holding: true, Since: time.Unix(1000, 0), Load: 30, Cores: 12,
 		Notified: map[string]bool{}, Changed: []pressure.Change{{Process: pressure.Process{PID: 11, Command: "compile", CPU: 80}, Owner: pressure.Owner{Goal: "goal1", Manager: "manager"}}}}
-	if err := recordPressureNotices(c, &state, dir); err != nil {
+	if err := recordPressureNotices(c, &state, dir, 1); err != nil {
 		t.Fatal(err)
 	}
 	state.Notified = map[string]bool{}
-	if err := recordPressureNotices(c, &state, dir); err != nil {
+	if err := recordPressureNotices(c, &state, dir, 1); err != nil {
 		t.Fatal(err)
 	}
 	events, err := store.GoalEvents("goal1")

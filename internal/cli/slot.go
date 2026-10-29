@@ -76,7 +76,7 @@ func slotCmd() *cobra.Command {
 			defer leave()
 			release, n, err := pool.Acquire(ctx, c, func() {
 				st, _ := pool.Status()
-				if st.Pressure.Holding {
+				if st.Pressure.Holding && len(st.Holders) > 0 {
 					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: overload holds new slots, waiting (ym slot --status shows load and consumers)")
 				} else {
 					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: all %d slots taken, waiting (ym slot --status shows who holds them)\n", st.Capacity)
@@ -111,7 +111,7 @@ func slotCmd() *cobra.Command {
 
 func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 	fmt.Fprintf(w, "%d slots (%d cores, %d GiB RAM, %d workers/slot), %d held, %d waiting, load %.1f\n", st.Capacity, st.Cores, st.Memory>>30, st.Workers, len(st.Holders), len(st.Waiters), load)
-	if line := st.Pressure.Line(); line != "" {
+	if line := st.Pressure.Line(len(st.Holders)); line != "" {
 		fmt.Fprintln(w, line)
 	}
 	for _, h := range st.Holders {

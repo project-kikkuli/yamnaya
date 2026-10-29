@@ -40,7 +40,11 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		fmt.Fprintln(w, "overload:", err)
 		return
 	}
-	if err := recordPressureNotices(l.core, &state, pool.Dir); err != nil {
+	held, err := pool.Held()
+	if err == nil {
+		err = recordPressureNotices(l.core, &state, pool.Dir, held)
+	}
+	if err != nil {
 		fmt.Fprintln(w, "overload:", err)
 		return
 	}
@@ -50,13 +54,16 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		if err != nil {
 			return err
 		}
-		before := state.Line()
+		before := state.Line(held)
+		if held, err = pool.Held(); err != nil {
+			return err
+		}
 		if err = state.Observe(at, load, pool.Cores); err != nil {
 			return err
 		}
 		defer func() {
 			err = errors.Join(err, state.Save(pool.Dir))
-			if after := state.Line(); after != before {
+			if after := state.Line(held); after != before {
 				fmt.Fprintln(w, "overload:", after)
 			}
 		}()
@@ -90,7 +97,7 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 		if err = state.Save(pool.Dir); err != nil {
 			return errors.Join(sampleErr, err)
 		}
-		if err = recordPressureNotices(l.core, &state, pool.Dir); err != nil {
+		if err = recordPressureNotices(l.core, &state, pool.Dir, held); err != nil {
 			return errors.Join(sampleErr, err)
 		}
 		return sampleErr
@@ -109,8 +116,8 @@ func watchPressure(ctx context.Context, l launcher, pool slot.Pool, w io.Writer)
 	}
 }
 
-func recordPressureNotices(c *core.Core, state *pressure.State, dir string) error {
-	for _, notice := range state.Notices() {
+func recordPressureNotices(c *core.Core, state *pressure.State, dir string, held int) error {
+	for _, notice := range state.Notices(held) {
 		key := "overload:" + state.Since.UTC().Format(time.RFC3339Nano) + ":" + notice.Goal
 		if _, _, err := c.RecordGoalEvent(notice.Goal, core.EventMachineThrottled, notice.Text, key); err != nil {
 			return err

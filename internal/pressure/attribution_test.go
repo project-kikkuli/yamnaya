@@ -60,8 +60,8 @@ func TestAppServerToolChildrenAndTheirJobChildrenAreNicedWithoutChangingTheirShe
 	if want := []int{30, 31}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("niced %v, want %v", got, want)
 	}
-	if len(state.Notices()) != 1 {
-		t.Fatal(state.Notices())
+	if len(state.Notices(1)) != 1 {
+		t.Fatal(state.Notices(1))
 	}
 }
 

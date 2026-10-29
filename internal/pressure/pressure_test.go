@@ -108,13 +108,13 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 	if want := []int{21, 13, 19, 12, 14}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("reniced %v, want %v", got, want)
 	}
-	if len(s.Notices()) != 2 || !strings.Contains(s.Notices()[0].Text, "python3 pid 13 70%") {
-		t.Fatal(s.Notices())
+	if len(s.Notices(1)) != 2 || !strings.Contains(s.Notices(1)[0].Text, "python3 pid 13 70%") {
+		t.Fatal(s.Notices(1))
 	}
 	s.Notified["goal1"] = true
 	s.Notified["goal2"] = true
-	if len(s.Notices()) != 0 {
-		t.Fatal("duplicate notices", s.Notices())
+	if len(s.Notices(1)) != 0 {
+		t.Fatal("duplicate notices", s.Notices(1))
 	}
 	dir := t.TempDir()
 	if err := s.Save(dir); err != nil {
@@ -128,7 +128,7 @@ func TestOnlyHeavyAgentChildTreesAreNicedHeaviestFirst(t *testing.T) {
 	if err := restored.Sample(at.Add(70*time.Second), 30, 12, processes, roots, nil, setter); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) > 0 || len(restored.Notices()) > 0 || !restored.Holding {
+	if len(got) > 0 || len(restored.Notices(1)) > 0 || !restored.Holding {
 		t.Fatal("restart repeated work or lost hold", got, restored)
 	}
 }
@@ -173,5 +173,26 @@ func TestLinuxKernelRowsWithoutNiceValuesPreserveAncestryAndDoNotAbortTheSample(
 	}
 	if len(procs) != 4 || !procs[0].NiceUnavailable || procs[0].PID != 22 || procs[0].PPID != 2 || procs[3].NiceUnavailable || procs[3].Nice != 10 {
 		t.Fatal(procs)
+	}
+}
+
+func TestThrottleLinesTellWhetherTheNextSlotIsGranted(t *testing.T) {
+	holding := State{Active: true, Holding: true, Load: 201, Cores: 12, Changed: []Change{{Process: Process{PID: 7, CPU: 90, Command: "go"}, Owner: Owner{Goal: "g", Manager: "m"}}}}
+	for _, c := range []struct {
+		name        string
+		state       State
+		held        int
+		line, slots string
+	}{
+		{"idle pool", holding, 0, "throttle: heavy agent jobs nice 15 (1 live), 0 slots held, next slot granted", "slots open"},
+		{"busy pool", holding, 2, "throttle: heavy agent jobs nice 15 (1 live), 2 slots held, new slots wait", "slots held"},
+		{"recovering", State{Active: true}, 2, "throttle: recovering, new slots open; clears after 3 minutes below 1.25x cores", ""},
+	} {
+		if got := c.state.Line(c.held); got != c.line {
+			t.Errorf("%s: line %q, want %q", c.name, got, c.line)
+		}
+		if notices := c.state.Notices(c.held); c.slots != "" && (len(notices) != 1 || !strings.Contains(notices[0].Text, "; "+c.slots+";")) {
+			t.Errorf("%s: notices %+v, want %q", c.name, notices, c.slots)
+		}
 	}
 }

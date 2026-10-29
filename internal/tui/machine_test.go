@@ -23,7 +23,11 @@ func TestTheHeaderShowsSlotHoldersWaitersAndAnOverload(t *testing.T) {
 	}{
 		{"no pool", core.Machine{}, nil},
 		{"throttled", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true}}, Load: 24},
-			[]string{" slots 0/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), new slots held", " overloaded: load 24 on 12 cores"}},
+			[]string{" slots 0/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), 0 slots held, next slot granted", " overloaded: load 24 on 12 cores"}},
+		{"throttled with a slot held", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true}}, Load: 24,
+			Holders: []core.SlotUse{use("goal1", "PR tests", "go", "test", "./...")}},
+			[]string{" slots 1/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), 1 slots held, new slots wait",
+				"   slot 1  goal1 PR tests  go test ./...  3m", " overloaded: load 24 on 12 cores"}},
 		{"recovering", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true}}, Load: 10},
 			[]string{" slots 0/4 held · load 10.0 on 12 cores", " throttle: recovering, new slots open; clears after 3 minutes below 1.25x cores"}},
 		{"quiet", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12}, Load: 3},
@@ -55,7 +59,7 @@ func TestThrottleTransitionsRefreshTheHeaderEvenWhenSessionsAreUnchanged(t *test
 		next, _ := m.Update(boardMsg{board: board})
 		m = next.(Model)
 		view := ansi.Strip(m.View().Content)
-		if want := state.Line(); want != "" && !strings.Contains(view, want) {
+		if want := state.Line(len(m.board.Machine.Holders)); want != "" && !strings.Contains(view, want) {
 			t.Fatalf("missing %q in %s", want, view)
 		}
 		if !state.Active && strings.Contains(view, "throttle:") {
