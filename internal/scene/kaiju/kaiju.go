@@ -43,7 +43,7 @@ func (Kaiju) Hit(s scene.Scene, width, height int, box scene.Rect, x, y int) str
 func (p *painter) draw() {
 	for k, ph := range p.phase {
 		if ph != noSwell {
-			p.lum[k] *= swell[(int(ph)+p.frame)&31]
+			p.lum[k] *= swell[(int(ph)+p.frame/swellBeat)&31]
 		}
 	}
 	for _, k := range p.glint {
@@ -79,6 +79,9 @@ var swell = func() (out [32]float32) {
 	}
 	return out
 }()
+
+// swellBeat is how many frames the swell holds before the waves move on a step.
+const swellBeat = 4
 
 // light is how finely the time of day moves the stock: once per bucket, so the backdrop is reused in between.
 const light = 10 * time.Minute

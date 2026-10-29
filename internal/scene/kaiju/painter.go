@@ -129,6 +129,13 @@ var grain = func() (out [1 << 13]float32) {
 
 const grainMask = len(grain) - 1
 
+// The grain and the light's flicker hold for grainBeat frames, and between them one pixel in grainCrawl rolls, so
+// the print crawls without redrawing the whole screen each frame.
+const (
+	grainBeat  = 8
+	grainCrawl = 60
+)
+
 // film prints the frame's greys: the lens darkens the corners, the light flickers, grain crawls, a scratch or a
 // fleck of dust runs down the frame now and then, and the bars stay black.
 func (p *painter) film() {
@@ -154,21 +161,29 @@ func (p *painter) film() {
 		p.put(x, y, v)
 		p.put(x+1, y, v)
 	}
-	flicker := float32(1 + .09*(scene.Noise(0xf11c, p.t*.9)-.5))
-	off := int(scene.Spread(0x9a1, p.frame) & uint64(grainMask))
+	reel := p.frame / grainBeat
+	flicker := float32(1 + .09*(scene.Noise(0xf11c, float64(reel*grainBeat)*.9)-.5))
+	off := int(scene.Spread(0x9a1, reel) & uint64(grainMask))
 	dx, dy := p.shake()
 	top, bottom := int(p.l.top), int(p.l.bottom)-1
-	for k := range p.lum {
+	expose := func(k, g int) {
 		if p.vig[k] == 0 {
 			p.px[k] = scene.Black
-			continue
+			return
 		}
 		src := k
 		if dx != 0 || dy != 0 {
 			src = min(bottom, max(top, k/p.w+dy))*p.w + min(p.w-1, max(0, k%p.w+dx))
 		}
-		v := p.lum[src]*p.vig[k]*flicker + grain[(k+off)&grainMask]
+		v := p.lum[src]*p.vig[k]*flicker + grain[g&grainMask]
 		p.px[k] = p.ink[min(255, max(0, int(v*255)))]
+	}
+	for k := range p.lum {
+		expose(k, k+off)
+	}
+	for n := range len(p.lum) / grainCrawl {
+		z := scene.Spread(0x9a2, p.frame*len(p.lum)+n)
+		expose(int(z%uint64(len(p.lum))), int(z>>32))
 	}
 	for _, t := range p.tint {
 		p.px[t.k] = mix(p.px[t.k], t.c, float64(t.a))
