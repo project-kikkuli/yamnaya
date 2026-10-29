@@ -125,13 +125,14 @@ func (p *painter) plume(i int) {
 		col = mix(col, p.th.lava, near*.75)
 		fade := .85 * smooth(life, life*.5, age)
 		for y := max(0, int(fy-r)); y <= min(p.p-1, int(fy+r)); y++ {
+			shade := mix(col, col.Scale(.7), smooth(-.3, .8, (float64(y)-fy)/r))
+			dy := float64(y) + .5 - fy
 			for x := max(0, int(fx-r*1.3)); x <= min(p.w-1, int(fx+r*1.3)); x++ {
-				dx, dy := (float64(x)+.5-fx)/1.3, float64(y)+.5-fy
+				dx := (float64(x) + .5 - fx) / 1.3
 				if dx*dx+dy*dy > r*r*1.000001 {
 					continue
 				}
 				if d := math.Hypot(dx, dy) / r; d < 1 {
-					shade := mix(col, col.Scale(.7), smooth(-.3, .8, (float64(y)-fy)/r))
 					p.blend(x, y, shade, fade*smooth(1, .35, d))
 				}
 			}

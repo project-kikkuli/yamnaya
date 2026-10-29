@@ -159,30 +159,39 @@ func redness(c RGB) float64 {
 	return min(hue, 360-hue)
 }
 
-// drawn is the color rounded to the bytes a truecolor terminal gets.
-func (c RGB) drawn() RGB {
-	r, g, b := c.Bytes()
-	return RGB{float64(r) / 255, float64(g) / 255, float64(b) / 255}
-}
-
 // MinContrast is the least contrast ratio a glyph that means something keeps with the background behind it.
 const MinContrast = 3.0
 
 // Contrast is the WCAG contrast ratio of two colors as a truecolor terminal draws them, from 1 for the same to 21
 // for black on white.
 func Contrast(a, b RGB) float64 {
-	la, lb := a.drawn().lum(), b.drawn().lum()
+	la, lb := a.drawnLum(), b.drawnLum()
 	return (max(la, lb) + .05) / (min(la, lb) + .05)
 }
 
+// drawnLum is the luminance of the color as a truecolor terminal draws it, from a table of the 256 byte values.
+func (c RGB) drawnLum() float64 {
+	r, g, b := c.Bytes()
+	return .2126*linear[r] + .7152*linear[g] + .0722*linear[b]
+}
+
+// linear is each byte value of a channel, linearized.
+var linear = func() (out [256]float64) {
+	for i := range out {
+		out[i] = channel(float64(i) / 255)
+	}
+	return out
+}()
+
 // lum is the WCAG relative luminance.
 func (c RGB) lum() float64 {
-	ch := func(v float64) float64 {
-		v = Clamp(v, 0, 1)
-		if v <= .04045 {
-			return v / 12.92
-		}
-		return math.Pow((v+.055)/1.055, 2.4)
+	return .2126*channel(c.R) + .7152*channel(c.G) + .0722*channel(c.B)
+}
+
+func channel(v float64) float64 {
+	v = Clamp(v, 0, 1)
+	if v <= .04045 {
+		return v / 12.92
 	}
-	return .2126*ch(c.R) + .7152*ch(c.G) + .0722*ch(c.B)
+	return math.Pow((v+.055)/1.055, 2.4)
 }
