@@ -9,16 +9,6 @@ import (
 // section is the part of the board a list row sits in: 0 needs you, 1 goals, 2 sessions.
 func section(r row) int { return max(0, r.sectionID-1) }
 
-func repoGroup(r row) string {
-	switch section(r) {
-	case 1:
-		return "goals " + r.group
-	case 2:
-		return "sessions " + r.group
-	}
-	return "needs"
-}
-
 // starts are the indexes of the rows that begin a new part, and the part the row at index at belongs to.
 func starts(rows []row, at int, part func(row) string) ([]int, int) {
 	var out []int
