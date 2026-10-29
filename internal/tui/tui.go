@@ -173,6 +173,7 @@ type Model struct {
 	beside    bool
 	mergeSrc  string
 	mergeHost string
+	whyAt     int
 	why       *core.Item
 	screen    string
 	// screenCopy is what y copies from the text page, when it is not the page itself.
@@ -897,12 +898,29 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modeWhy:
 		switch k.String() {
+		case "left", "right", "up", "down", "j", "k":
+			context := m
+			context.cursor = m.whyAt
+			context.filter = ""
+			rows := context.projectNodes(context.whySections(), false)
+			switch k.String() {
+			case "left", "right":
+				context.treeMoveRows(k.String(), rows)
+			case "up", "k":
+				context.cursor = max(0, context.cursor-1)
+			default:
+				context.cursor = max(0, min(len(rows)-1, context.cursor+1))
+			}
+			m.whyAt, m.folds = context.cursor, context.folds
+			return m, nil
 		case "r", "g", "l", "x", "u", "o", "O", "e", "V", "J":
 			m.mode = m.back
-			for i, r := range m.rows() {
-				if r.item != nil && r.item.Key() == m.why.Key() {
-					m.cursor = i
-					break
+			if r, ok := m.selected(); !ok || r.item == nil || r.item.Key() != m.why.Key() {
+				for i, r := range m.rows() {
+					if r.item != nil && r.item.Key() == m.why.Key() {
+						m.cursor = i
+						break
+					}
 				}
 			}
 			m.clamp()
@@ -986,7 +1004,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(k.String())
 		return m, nil
 	case "pgup", "b":
-		if m.mode == modeAgent && len(m.rows()) == 0 {
+		if m.mode == modeAgent {
 			m.scrollY = max(0, m.scrollY-m.height/2)
 		}
 		return m, nil
@@ -1121,12 +1139,15 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if r.project != nil {
 				m.detail = projectRef(*r.project)
 			}
+			m.firstContent()
 		case r.project != nil:
 			m.push(modeDetail)
 			m.detail = projectRef(*r.project)
+			m.firstContent()
 		case r.repo != nil:
 			m.push(modeRepo)
 			m.repo = r.repo.Key
+			m.firstContent()
 		}
 		return m, nil
 	case "o", "O":
@@ -1458,6 +1479,7 @@ func (m *Model) pop() {
 
 // expand shows an item in full; its keys act on it there.
 func (m Model) expand(id string) (tea.Model, tea.Cmd) {
+	m.whyAt = 0
 	if _, _, remote := m.core.RemoteRef(id); remote {
 		for _, it := range m.remoteItems() {
 			if it.Key() == id {

@@ -60,11 +60,27 @@ func (m *Model) move(key string) {
 	if m.mode != modeList {
 		return
 	}
-	part := repoGroup
+	var at []int
+	cur := 0
 	if key == "tab" || key == "shift+tab" {
-		part = func(r row) string { return string(rune('0' + section(r))) }
+		at, cur = starts(rows, m.cursor, func(r row) string { return string(rune('0' + section(r))) })
+	} else {
+		for i, r := range rows {
+			sectionHeader := r.key == "heading:needs" || (r.key == "heading:goals" || r.key == "heading:sessions") && (r.closed || i+1 == len(rows) || rows[i+1].parent != r.key)
+			if sectionHeader || r.header != "" && r.group != "" && r.parent == "heading:goals" || r.repo != nil && r.project == nil {
+				at = append(at, i)
+			}
+		}
+		for i, index := range at {
+			if index <= m.cursor {
+				cur = i
+			}
+		}
 	}
-	at, cur := starts(rows, m.cursor, part)
+	if len(at) == 0 {
+		return
+	}
+
 	switch key {
 	case "tab":
 		m.cursor = at[(cur+1)%len(at)]

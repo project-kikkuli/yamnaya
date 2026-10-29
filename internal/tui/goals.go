@@ -732,6 +732,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		if n.Goal != nil {
 			m.push(modeGoal)
 			m.goal = n.Manager.ID
+			m.firstContent()
 			m.feedFrom = m.board.At
 			if host, rest, ok := core.SplitRemote(n.Goal.ID); ok && n.Goal.Host != "" {
 				c := m.core
@@ -746,6 +747,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		} else {
 			m.push(modeChief)
 			m.chief = n.Manager.ID
+			m.firstContent()
 		}
 		return m, nil, true
 	case "space":

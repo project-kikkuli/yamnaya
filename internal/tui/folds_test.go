@@ -33,8 +33,16 @@ func nestedBoard() core.Board {
 	b.Projects = []core.Project{p}
 	b.Repos = []core.Repo{{Key: "repo", Name: "Repository", Missions: []core.Project{p}}}
 	b.Sessions = sessions
-	b.Tree[0].Children[0].Children[0].Children[0].Live = &sessions[0]
-	b.Tree[0].Children[0].Children[0].Children[0].Agents = sessions[1:]
+	managed := slices.Clone(sessions)
+	for i := range managed {
+		managed[i].ID = "managed-" + managed[i].ID
+		if managed[i].Parent != "" {
+			managed[i].Parent = "managed-" + managed[i].Parent
+		}
+	}
+	b.Sessions = append(b.Sessions, managed...)
+	b.Tree[0].Children[0].Children[0].Children[0].Live = &managed[0]
+	b.Tree[0].Children[0].Children[0].Children[0].Agents = managed[1:]
 	b.Needs = []core.Need{{Project: "mission", Item: &core.Item{Seq: 2, ID: "D2", Question: "Bundle"}, Asks: []core.Item{{Seq: 2, ID: "D2", Question: "Bundle"}, {Seq: 3, ID: "D3", Question: "Second ask"}}}}
 	return b
 }
@@ -201,11 +209,12 @@ func TestFoldIdentityAndSelectionAcrossRefresh(t *testing.T) {
 	if !m.folds["node:remote/mid"] || m.folds["node:mid"] {
 		t.Fatal("host-qualified folds collide")
 	}
+	m = treeSelect(t, m, "node:mid")
+	m = press(t, m, "left")
 	m = treeSelect(t, m, "node:solo")
 	b := nestedBoard()
 	b.Tree[0].Children[0].Children = append(b.Tree[0].Children[0].Children, b.Tree[len(b.Tree)-1])
 	b.Tree = b.Tree[:len(b.Tree)-1]
-	m.folds["node:mid"] = true
 	next, _ := m.Update(boardMsg{board: b})
 	m = next.(Model)
 	r, _ := m.selected()
@@ -216,14 +225,14 @@ func TestFoldIdentityAndSelectionAcrossRefresh(t *testing.T) {
 
 func TestBoardLineageNestsSessionsWithoutHarnessParent(t *testing.T) {
 	m, c, _ := setup(t)
-	if err := c.Store.Link("dup", "lead"); err != nil {
+	if err := c.Store.Link("twin", "lead"); err != nil {
 		t.Fatal(err)
 	}
 	m = refresh(t, m)
 	m.mode, m.detail = modeDetail, "lead"
 	found := false
 	for _, r := range m.rows() {
-		if r.session != nil && r.session.ID == "dup" && r.member == nil {
+		if r.session != nil && r.session.ID == "twin" && r.member == nil {
 			found = true
 			if r.parent != "session:lead" {
 				t.Fatalf("lineage parent=%s", r.parent)
@@ -256,5 +265,180 @@ func TestSessionFoldsKeepHostAndProfileIdentity(t *testing.T) {
 		if !m.folds[key] {
 			t.Fatalf("lost fold %s", key)
 		}
+	}
+}
+
+func TestAgentSectionPagingRoundTrip(t *testing.T) {
+	for _, key := range []string{"pgup", "b"} {
+		t.Run(key, func(t *testing.T) {
+			m := treeModel()
+			m.mode, m.detail, m.sess, m.agent, m.height = modeAgent, "mission", "lead", "c", 20
+			m.board.Projects[0].Sessions[0].Crew[0].Brief = strings.Repeat("long instruction line\n", 80)
+			m = press(t, m, "pgdown")
+			if m.scrollY == 0 {
+				t.Fatal("page down did not scroll section content")
+			}
+			m = press(t, m, key)
+			if m.scrollY != 0 {
+				t.Fatal("page up did not return to the top")
+			}
+			m = press(t, m, "left")
+			r, _ := m.selected()
+			if !r.closed {
+				t.Fatal("paging broke section folding")
+			}
+		})
+	}
+}
+
+func TestNamedProfileSessionParents(t *testing.T) {
+	for _, tc := range []struct {
+		name, host, parent string
+		goal               bool
+	}{
+		{"native parent", "", "parent", false},
+		{"remote native parent", "box", "parent", false},
+		{"profile qualified parent", "", "codex:work@parent", false},
+		{"manager implied parent", "", "", true},
+		{"remote manager implied parent", "box", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			parent := core.Live{Session: core.Session{ID: "parent", Harness: "codex", Profile: "work"}, Remote: tc.host}
+			child := core.Live{Session: core.Session{ID: "child", Harness: "codex", Profile: "work", Parent: tc.parent}, Remote: tc.host}
+			var nodes []treeNode
+			if tc.goal {
+				nodes = m.nodeSessions(core.Node{Live: &parent, Agents: []core.Live{child}})
+			} else {
+				nodes = m.sessionsTree([]core.Live{parent, child}, nil)
+			}
+			if len(nodes) != 1 || len(nodes[0].children) != 1 || nodes[0].children[0].row.session.ID != "child" {
+				t.Fatalf("named-profile parent lost: %+v", nodes)
+			}
+		})
+	}
+}
+
+func TestSearchDrillKeepsDetailContext(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		mode        mode
+		query, want string
+	}{
+		{"goal", modeGoal, "needle", "FEED"},
+		{"repository", modeRepo, "Repository", "MISSIONS"},
+		{"mission", modeDetail, "Mission", "SESSIONS AND CREW"},
+		{"session", modeSession, "Lead", "CREW"},
+		{"agent", modeAgent, "Crew needle", "BRIEF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			m.filter = tc.query
+			m.mode, m.goal, m.repo, m.detail, m.sess, m.agent = tc.mode, "hit", "repo", "mission", "lead", "c"
+			if rows := m.rows(); len(rows) == 0 {
+				t.Fatal("search removed the opened detail context")
+			}
+			if view := ansi.Strip(m.prepareView().String()); !strings.Contains(view, tc.want) {
+				t.Fatalf("search hid detail content: %s", view)
+			}
+		})
+	}
+}
+
+func TestRefreshKeepsAskOccurrence(t *testing.T) {
+	m := treeModel()
+	item := m.board.Needs[0].Asks[1]
+	m.board.Projects[0].Items = append(m.board.Projects[0].Items, item)
+	m.board.Repos[0].Missions[0] = m.board.Projects[0]
+	m = treeSelect(t, m, "project:mission")
+	m = press(t, m, "right")
+	m = treeSelect(t, m, "need:"+needID(m.board.Needs[0]))
+	m = press(t, m, "right")
+	var occurrences []int
+	for i, r := range m.rows() {
+		if r.need == nil && r.item != nil && r.item.Seq == item.Seq {
+			occurrences = append(occurrences, i)
+		}
+	}
+	if len(occurrences) != 2 {
+		t.Fatalf("ask occurrences=%v", occurrences)
+	}
+	for _, at := range occurrences {
+		m.cursor = at
+		r, _ := m.selected()
+		key := rowKey(r)
+		next, _ := m.Update(boardMsg{board: m.board})
+		m = next.(Model)
+		r, _ = m.selected()
+		if rowKey(r) != key {
+			t.Fatalf("refresh moved ask from %s to %s", key, rowKey(r))
+		}
+	}
+}
+
+func TestDocumentAskBundleFoldsWithoutChangingEnter(t *testing.T) {
+	m := treeModel()
+	docs := []core.DocAsk{{Key: "thread1", Page: "page", Title: "First discussion", URL: "https://example.test/page#first"}, {Key: "thread2", Page: "page", Title: "Second discussion", URL: "https://example.test/page#second"}}
+	m.board.Needs = append(m.board.Needs, core.Need{Doc: &docs[0], Docs: docs})
+	m = treeSelect(t, m, "need:doc:page")
+	r, _ := m.selected()
+	if !r.closed {
+		t.Fatal("document bundle should start folded")
+	}
+	m = press(t, m, "right", "right")
+	r, _ = m.selected()
+	if rowKey(r) != "doc-ask:thread1" {
+		t.Fatal("bundle did not reveal its first discussion")
+	}
+	var opened string
+	m.openURL = func(url string) error { opened = url; return nil }
+	next, cmd := m.Update(keyOf("enter"))
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("Enter did not open discussion")
+	}
+	cmd()
+	if opened != docs[0].URL {
+		t.Fatalf("Enter opened %q", opened)
+	}
+	m = press(t, m, "left", "left")
+	r, _ = m.selected()
+	if rowKey(r) != "need:doc:page" || !r.closed {
+		t.Fatal("left did not fold the document bundle")
+	}
+}
+
+func TestAskDetailSectionsFoldAndKeepBackSelection(t *testing.T) {
+	for _, at := range []int{0, 1} {
+		t.Run(string(rune('0'+at)), func(t *testing.T) {
+			m := treeModel()
+			m.mode, m.back, m.cursor = modeWhy, modeList, 1
+			m.why = &core.Item{Seq: 9, ID: "D9", Dossier: core.Dossier{Goal: "goal-context", Changes: []string{"context-content"}}, History: []core.Event{{}, {Text: "history-content"}}}
+			m.whyAt = at
+			before := m.whyView()
+			text := "context-content"
+			if at == 1 {
+				text = "history-content"
+			}
+			if !strings.Contains(before, text) {
+				t.Fatal("missing section body")
+			}
+			m = press(t, m, "left")
+			context := m
+			context.filter = ""
+			rows := context.projectNodes(context.whySections(), false)
+			if !rows[at].closed || strings.Contains(m.whyView(), text) {
+				t.Fatal("ask detail section did not fold its content")
+			}
+			m = press(t, m, "right")
+			rows = context.projectNodes(m.whySections(), false)
+			if rows[at].closed {
+				t.Fatal("ask detail section did not expand")
+			}
+			m = press(t, m, "esc")
+			if m.mode != modeList || m.cursor != 1 {
+				t.Fatal("detail fold changed source selection")
+			}
+		})
 	}
 }
