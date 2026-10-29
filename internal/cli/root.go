@@ -51,25 +51,26 @@ func Wire(path string) (*core.Core, error) {
 			}
 			return out
 		},
-		Store:     st,
-		Scoped:    !core.DefaultStateDir(filepath.Dir(path)),
-		Harnesses: []core.Harness{cl, cx},
-		Hosts:     []core.Host{tmux.New(), srv},
-		Front:     app.New().Front,
-		Procs:     proc.List,
-		Git:       core.ReadGit,
-		PRs:       gh.New(),
-		Landings:  gh.New(),
-		Port:      port,
-		Roots:     core.RepoRoots,
-		Ask:       health.Addressed,
-		Measure:   func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() },
-		StateDir:  filepath.Dir(path),
-		Notify:    desktopNotify,
-		RunSelf:   runSelf,
-		Slots:     slot.Machine,
-		CPU:       slot.CPU,
-		Mem:       slot.Mem,
+		Store:       st,
+		Scoped:      !core.DefaultStateDir(filepath.Dir(path)),
+		Harnesses:   []core.Harness{cl, cx},
+		Hosts:       []core.Host{tmux.New(), srv},
+		Front:       app.New().Front,
+		Procs:       proc.List,
+		Git:         core.ReadGit,
+		PRs:         gh.New(),
+		Landings:    gh.New(),
+		Port:        port,
+		Roots:       core.RepoRoots,
+		Ask:         health.Addressed,
+		Measure:     func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() },
+		StateDir:    filepath.Dir(path),
+		Notify:      desktopNotify,
+		RunSelf:     runSelf,
+		Slots:       slot.Machine,
+		ThrottleDir: slot.Dir,
+		CPU:         slot.CPU,
+		Mem:         slot.Mem,
 	}
 	if l, err := newLauncher(filepath.Dir(path)); err == nil {
 		l.core, l.srv = c, srv
@@ -118,7 +119,7 @@ func NewRoot() *cobra.Command {
 			if err := e.refuseOff(cmd); err != nil {
 				return err
 			}
-			if cmd.Name() != "serve" {
+			if cmd.Name() != "serve" && cmd.Name() != "throttle" {
 				keepServing(cmd.ErrOrStderr())
 			}
 			return run(e, cmd, args)

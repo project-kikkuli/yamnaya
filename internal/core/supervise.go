@@ -77,7 +77,7 @@ func (c *Core) Supervise(b Board) error {
 	}
 	for _, m := range o.Ordered() {
 		g, hasGoal := o.Goals[m.GoalID]
-		if hasGoal && g.Ended() || managerOff(off, o, b.parents, m) {
+		if hasGoal && g.Ended() || managerOff(off, o, b.parents, m) || b.throttle.Holds(m.Session) {
 			continue
 		}
 		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {

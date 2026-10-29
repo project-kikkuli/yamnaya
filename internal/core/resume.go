@@ -187,7 +187,7 @@ func (c *Core) ReviveWork(b Board) error {
 			continue
 		}
 		m, ok := work(l.Session, l.Parent)
-		if _, killed := kills[l.Session]; killed || (!ok && !l.Revive) || (ok && m.Session == l.Session) || c.Off(l.Session) || !c.take(l.Session) {
+		if _, killed := kills[l.Session]; killed || (!ok && !l.Revive) || (ok && m.Session == l.Session) || c.Off(l.Session) || b.throttle.Holds(l.Session) || !c.take(l.Session) {
 			continue
 		}
 		if !ok {
@@ -216,7 +216,7 @@ func (c *Core) ReviveWork(b Board) error {
 	orphans := slices.Clone(c.recovery.orphans)
 	c.recovery.mu.Unlock()
 	for _, o := range orphans {
-		if _, live := b.Session(o.ID); live || c.Off(o.ID) || !c.take(o.ID) {
+		if _, live := b.Session(o.ID); live || c.Off(o.ID) || b.throttle.Holds(o.ID) || !c.take(o.ID) {
 			continue
 		}
 		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Profile: o.Profile, ConfigRoot: o.ConfigRoot, Cwd: o.Cwd}}, workResumeText)

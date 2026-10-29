@@ -86,7 +86,7 @@ func TestZTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
 			if err := c.before.Save(dir); err != nil {
 				t.Fatal(err)
 			}
-			m.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: dir, Capacity: 1, Cores: 8}, nil }
+			m.core.ThrottleDir = func() (string, error) { return dir, nil }
 			m.core.Processes = func() ([]pressure.Process, error) { return nil, nil }
 			m.core.ThrottleSignal = func(pressure.Process, syscall.Signal) error { return nil }
 			m.board.Machine.Slots.Throttle = c.before

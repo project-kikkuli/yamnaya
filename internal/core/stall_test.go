@@ -91,7 +91,7 @@ func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
 				s.Doing = Action{Tool: "Bash", At: w.clock.Add(-20 * time.Minute)}
 			})
 			dir := t.TempDir()
-			w.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: dir, Capacity: 1, Cores: 8}, nil }
+			w.core.ThrottleDir = func() (string, error) { return dir, nil }
 			var th pressure.Throttle
 			if c.paused {
 				th = pressure.Throttle{Since: w.clock.Add(-25 * time.Minute), Paused: []pressure.Paused{{PID: 1, Session: m.Session}}}

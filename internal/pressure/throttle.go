@@ -22,14 +22,18 @@ type Paused struct {
 
 // Throttle is the owner's blanket throttle: every process it stopped, until it resumes them. Stopped processes use no
 // processor and allocate nothing, so the machine can page their memory out instead of thrashing. Ended is when it last
-// resumed any.
+// resumed any. Blanket holds every ym agent, so ym serve also brings none back, even those that were not running.
 type Throttle struct {
-	Since  time.Time `json:",omitempty"`
-	Ended  time.Time `json:",omitempty"`
-	Paused []Paused  `json:",omitempty"`
+	Blanket bool      `json:",omitempty"`
+	Since   time.Time `json:",omitempty"`
+	Ended   time.Time `json:",omitempty"`
+	Paused  []Paused  `json:",omitempty"`
 }
 
-func (t Throttle) On() bool { return len(t.Paused) > 0 }
+func (t Throttle) On() bool { return t.Blanket || len(t.Paused) > 0 }
+
+// Holds reports whether the throttle keeps session stopped: ym serve neither resumes, relaunches nor nudges it.
+func (t Throttle) Holds(session string) bool { return t.Blanket || t.Has(session) }
 
 // Sessions are the paused sessions' keys, sorted.
 func (t Throttle) Sessions() []string {
@@ -59,8 +63,12 @@ func (t Throttle) Line() string {
 	if !t.On() {
 		return ""
 	}
-	return fmt.Sprintf("THROTTLED: %d agents paused (%d processes stopped) since %s; Z or ym unthrottle resumes them",
-		len(t.Sessions()), len(t.Paused), t.Since.Local().Format(time.Kitchen))
+	who := fmt.Sprintf("%d agents paused", len(t.Sessions()))
+	if t.Blanket {
+		who = fmt.Sprintf("every ym agent paused (%d running), none resumed or relaunched", len(t.Sessions()))
+	}
+	return fmt.Sprintf("THROTTLED: %s, %d processes stopped since %s; Z or ym unthrottle resumes them",
+		who, len(t.Paused), t.Since.Local().Format(time.Kitchen))
 }
 
 func ReadThrottle(dir string) (Throttle, error) {

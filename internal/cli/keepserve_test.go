@@ -15,6 +15,8 @@ func TestAnyYmCommandBringsBackAServeThatDied(t *testing.T) {
 	}{
 		{"state dir that had a serve", true, []string{"goal", "authority"}, true},
 		{"fresh state dir", false, []string{"goal", "authority"}, false},
+		{"ym throttle, which must not bring agents back", true, []string{"throttle"}, false},
+		{"ym unthrottle", true, []string{"unthrottle"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()

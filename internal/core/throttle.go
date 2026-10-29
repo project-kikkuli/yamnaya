@@ -12,14 +12,14 @@ import (
 // Throttle stops (on) or continues (off) every local session ym runs under t, or every one when t is nil, with each
 // process under it. The session calling it is never stopped, so an agent that throttles can still unthrottle.
 func (c *Core) Throttle(b Board, t *OffTarget, on bool) (string, error) {
-	if c.Slots == nil {
-		return "", errors.New("throttle: this ym has no machine state")
+	if c.ThrottleDir == nil {
+		return "", errors.New("throttle: this ym keeps no throttle")
 	}
-	pool, err := c.Slots()
+	dir, err := c.ThrottleDir()
 	if err != nil {
 		return "", err
 	}
-	state, err := pressure.ReadThrottle(pool.Dir)
+	state, err := pressure.ReadThrottle(dir)
 	if err != nil {
 		return "", err
 	}
@@ -40,7 +40,13 @@ func (c *Core) Throttle(b Board, t *OffTarget, on bool) (string, error) {
 	}
 	if !on {
 		n, err := state.Resume(c.now(), in, signal)
-		if saveErr := state.Save(pool.Dir); saveErr != nil {
+		if t == nil {
+			state.Blanket = false
+		}
+		if !state.On() {
+			state.Since = timeZero
+		}
+		if saveErr := state.Save(dir); saveErr != nil {
 			return "", errors.Join(err, saveErr)
 		}
 		return fmt.Sprintf("resumed %d processes for %s; %d agents still paused", n, scope, len(state.Sessions())), err
@@ -65,8 +71,41 @@ func (c *Core) Throttle(b Board, t *OffTarget, on bool) (string, error) {
 		roots[s.PID] = s.Key()
 	}
 	n, err := state.Pause(c.now(), list, roots, signal)
-	if saveErr := state.Save(pool.Dir); saveErr != nil {
+	if t == nil {
+		state.Blanket = true
+		if state.Since.IsZero() {
+			state.Since = c.now()
+		}
+	}
+	if saveErr := state.Save(dir); saveErr != nil {
 		return "", errors.Join(err, saveErr)
 	}
-	return fmt.Sprintf("paused %d agents (%d processes) for %s; Z on the board or ym unthrottle resumes them", len(roots), n, scope), err
+	held := ""
+	if t == nil {
+		held = "; ym serve resumes and relaunches none until then"
+	}
+	return fmt.Sprintf("paused %d agents (%d processes) for %s; Z on the board or ym unthrottle resumes them%s", len(roots), n, scope, held), err
+}
+
+// markThrottled reads the owner's throttle into b and flags each session it holds stopped.
+func (c *Core) markThrottled(b *Board) {
+	if c.ThrottleDir == nil {
+		return
+	}
+	dir, err := c.ThrottleDir()
+	if err != nil {
+		return
+	}
+	if b.throttle, err = pressure.ReadThrottle(dir); err != nil {
+		return
+	}
+	mark := func(ls []Live) {
+		for i := range ls {
+			ls[i].Paused, ls[i].Resumed = b.throttle.Has(ls[i].Key()), b.throttle.Ended
+		}
+	}
+	mark(b.Sessions)
+	for i := range b.Projects {
+		mark(b.Projects[i].Sessions)
+	}
 }

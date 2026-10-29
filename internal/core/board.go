@@ -85,7 +85,9 @@ type Core struct {
 	Loads func() float64
 	CPU   func() (map[int]float64, error)
 	Mem   func() (map[int]float64, error)
-	// Processes and ThrottleSignal are how Throttle reads the process table and signals a process; nil means pressure's own.
+	// ThrottleDir holds the owner's throttle; nil has none. Processes and ThrottleSignal are how Throttle reads the process
+	// table and signals a process; nil means pressure's own.
+	ThrottleDir    func() (string, error)
 	Processes      func() ([]pressure.Process, error)
 	ThrottleSignal func(pressure.Process, syscall.Signal) error
 
@@ -251,6 +253,8 @@ type Board struct {
 
 	parents map[string]string
 	lin     Lineage
+	// throttle is the owner's throttle as the board was read.
+	throttle pressure.Throttle
 	// moved maps each live process's session that continued under another id to the session carrying it now.
 	moved map[string]string
 	// index and projects are each session's and project's first place in Sessions and Projects, once those are final.
@@ -419,6 +423,7 @@ func (c *Core) Board() (Board, error) {
 	if prev, ok := c.reuse.get(fp, reusable, b.At); ok {
 		again := c.again(prev, b.At)
 		c.machine(&again, procs)
+		c.markThrottled(&again)
 		return again, nil
 	}
 	var found []Session
@@ -603,6 +608,7 @@ func (c *Core) Board() (Board, error) {
 	}
 	c.reuse.put(fp, reusable, &b)
 	c.machine(&b, procs)
+	c.markThrottled(&b)
 	return b, nil
 }
 
