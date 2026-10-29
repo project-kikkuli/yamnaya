@@ -43,13 +43,14 @@ func (c Claim) Line() string {
 
 // Status is the pool as it stands: its capacity, who holds a slot, oldest first, and who waits, longest first.
 type Status struct {
-	Pressure pressure.State `json:"pressure"`
-	Capacity int            `json:"capacity"`
-	Cores    int            `json:"cores"`
-	Memory   uint64         `json:"memory"`
-	Workers  int            `json:"workers"`
-	Holders  []Claim        `json:"holders"`
-	Waiters  []Claim        `json:"waiters"`
+	Pressure pressure.State    `json:"pressure"`
+	Throttle pressure.Throttle `json:"throttle"`
+	Capacity int               `json:"capacity"`
+	Cores    int               `json:"cores"`
+	Memory   uint64            `json:"memory"`
+	Workers  int               `json:"workers"`
+	Holders  []Claim           `json:"holders"`
+	Waiters  []Claim           `json:"waiters"`
 }
 
 // Pool is the slots in Dir; Capacity is how many there are.
@@ -221,10 +222,12 @@ func (p Pool) busy(n int) (bool, error) {
 // unless an agent-slot script holds it, which leaves none.
 func (p Pool) Status() (Status, error) {
 	st := Status{Capacity: p.Capacity, Cores: p.Cores, Memory: p.Memory, Workers: p.Workers(), Holders: []Claim{}, Waiters: []Claim{}}
-	var pressureErr error
-	st.Pressure, pressureErr = pressure.Read(p.Dir)
-	if pressureErr != nil {
-		return st, pressureErr
+	var err error
+	if st.Pressure, err = pressure.Read(p.Dir); err != nil {
+		return st, err
+	}
+	if st.Throttle, err = pressure.ReadThrottle(p.Dir); err != nil {
+		return st, err
 	}
 	for n := 1; n <= p.Capacity; n++ {
 		busy, err := p.busy(n)

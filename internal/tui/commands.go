@@ -44,6 +44,8 @@ var Commands = map[string]string{
 	"ym phase next":       "p",
 	"ym phase set":        "P",
 	"ym vibe":             "v",
+	"ym throttle":         "Z",
+	"ym unthrottle":       "Z",
 	"ym project rename":   "e",
 	"ym project merge":    "m",
 	"ym project split":    "S",

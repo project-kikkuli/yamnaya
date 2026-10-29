@@ -26,11 +26,17 @@ func (s Live) lastActive() time.Time {
 	return latest
 }
 
-// Hung reports whether a busy session has shown no activity for HungAfter while the host was awake since woke.
+// Hung reports whether a busy session has shown no activity for HungAfter while the host was awake since woke and the
+// owner's throttle did not hold it stopped.
 func (s Live) Hung(now, woke time.Time) bool {
+	if s.Paused {
+		return false
+	}
 	quiet := s.lastActive()
-	if woke.After(quiet) {
-		quiet = woke
+	for _, t := range []time.Time{woke, s.Resumed} {
+		if t.After(quiet) {
+			quiet = t
+		}
 	}
 	return s.Status == Busy && !s.lastActive().IsZero() && now.Sub(quiet) >= HungAfter
 }

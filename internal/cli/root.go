@@ -158,6 +158,7 @@ func NewRoot() *cobra.Command {
 		return tui.Run(e.core)
 	})
 	root.AddCommand(offCmds(with)...)
+	root.AddCommand(throttleCmds(with)...)
 	root.AddCommand(
 		serveCmd(with),
 		docsCmd(with),

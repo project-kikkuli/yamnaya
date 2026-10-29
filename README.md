@@ -177,6 +177,10 @@ Existing Go, Make and Node options are retained; inherited Make jobserver descri
 
 During an overload episode, new `ym slot` acquisitions wait without occupying a machine slot and remain visible as waiters. They resume when load falls below 1.25 times the physical cores; the episode clears after three continuous minutes below that level. The header and `ym slot --status [--json]` show observation, holding and recovery. State and notification identities survive serve restarts. Child jobs finish at their lowered priority: macOS does not let an unprivileged process restore a lower nice value, so ym leaves agents and shells unchanged and never kills, stops or restarts a process to recover.
 
+### Blanket throttle
+
+When the machine is drowning (memory full, swap thrashing, the board beachballing), press `Z` on the board or run `ym throttle`. It stops every ym-launched agent on this host and every process under it with SIGSTOP, parents first: they use no processor and allocate nothing, so load falls at once and macOS can compress or page out their memory instead of fighting them for it. A bold red `THROTTLED` line heads the board while any agent is paused. `Z` again, or `ym unthrottle`, continues them with SIGCONT. `ym throttle <session|goal|chief>` and `ym unthrottle <...>` pause or resume just those agents, with the same scope as `ym off`. ym itself, tmux and the session that runs the command keep running; sessions in other terminals and on other hosts are untouched. Paused agents never count as hung, and the hung clock restarts when they resume. A request an agent had in flight may time out while it is stopped. State lives in `throttle.json` beside the slots, so it survives a ym restart.
+
 Any process holding more than a quarter of the machine's memory gets a red header line (`memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1`), on another host's board too, tagged with that host. When it runs under an agent, ym tells that agent's manager once, with how to end it. ym never stops it itself.
 
 ## Themes
@@ -467,6 +471,7 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym item prepare <id> [--rec "..."] [--option "label=effect"]... [--evidence <link>]... [--tried "..."] [--assumption "..."]` | (manager) add what an open ask lacks; `--option` replaces its options, `--evidence` appends; refused if an owner-bound ask would still not be ready |
 | | `ym item inbox` | answers and messages the calling session has not received |
 | | `ym off [<session\|goal\|chief>]` / `ym on [...]` | stop ym for the calling session, or the one named / start it again, handing over what waited in one message |
+| | `ym throttle [<session\|goal\|chief>]` / `ym unthrottle [...]` | pause every ym agent and everything it runs (SIGSTOP), or those named / resume them (SIGCONT) |
 | Sessions | `ym new [--codex] [--repo P] [--slug S] "<prompt>"` | start an agent in a new worktree on ym's tmux server |
 | | `ym open <session\|item>` / `ym send <session> <text>` | go to a session / send it a follow-up |
 | | `ym adopt <session>` | move a session from another terminal onto ym's server |

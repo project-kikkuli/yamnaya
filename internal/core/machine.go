@@ -118,6 +118,15 @@ func (c *Core) machine(b *Board, procs []proc.Proc) {
 		return
 	}
 	m := Machine{Slots: st}
+	mark := func(ls []Live) {
+		for i := range ls {
+			ls[i].Paused, ls[i].Resumed = st.Throttle.Has(ls[i].Key()), st.Throttle.Ended
+		}
+	}
+	mark(b.Sessions)
+	for i := range b.Projects {
+		mark(b.Projects[i].Sessions)
+	}
 	m.Load, _ = slot.Load()
 	if c.Loads != nil {
 		m.Load = c.Loads()

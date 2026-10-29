@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/pressure"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
@@ -64,10 +65,15 @@ func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
 	for _, c := range []struct {
 		name         string
 		woke         time.Duration
+		paused       bool
+		resumed      time.Duration
 		wantRelaunch bool
 	}{
-		{"silent while awake", 0, true},
-		{"silent mostly while the host slept", -2 * time.Minute, false},
+		{"silent while awake", 0, false, 0, true},
+		{"silent mostly while the host slept", -2 * time.Minute, false, 0, false},
+		{"paused by the owner's throttle", 0, true, 0, false},
+		{"resumed by the owner's throttle just now", 0, false, -2 * time.Minute, false},
+		{"resumed by the owner's throttle long ago", 0, false, -16 * time.Minute, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -84,6 +90,18 @@ func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
 				s.Status, s.Since = Busy, w.clock.Add(-30*time.Minute)
 				s.Doing = Action{Tool: "Bash", At: w.clock.Add(-20 * time.Minute)}
 			})
+			dir := t.TempDir()
+			w.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: dir, Capacity: 1, Cores: 8}, nil }
+			var th pressure.Throttle
+			if c.paused {
+				th = pressure.Throttle{Since: w.clock.Add(-25 * time.Minute), Paused: []pressure.Paused{{PID: 1, Session: m.Session}}}
+			}
+			if c.resumed != 0 {
+				th.Ended = w.clock.Add(c.resumed)
+			}
+			if err := th.Save(dir); err != nil {
+				t.Fatal(err)
+			}
 			w.supervise(t)
 			o, err := w.core.LoadOrg()
 			if err != nil {

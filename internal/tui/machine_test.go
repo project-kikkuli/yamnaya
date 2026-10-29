@@ -2,9 +2,11 @@ package tui
 
 import (
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/pressure"
@@ -66,4 +68,71 @@ func TestThrottleTransitionsRefreshTheHeaderEvenWhenSessionsAreUnchanged(t *test
 			t.Fatal("throttle header did not clear", view)
 		}
 	}
+}
+
+func TestZTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
+	paused := pressure.Throttle{Since: time.Now(), Paused: []pressure.Paused{{PID: 4242, Started: 1, Command: "claude", Session: "s1"}}}
+	for _, c := range []struct {
+		name   string
+		before pressure.Throttle
+		said   string
+	}{
+		{"off pauses", pressure.Throttle{}, "paused 0 agents"},
+		{"on resumes", paused, "resumed 1 processes"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := emptyBoard(t)
+			dir := t.TempDir()
+			if err := c.before.Save(dir); err != nil {
+				t.Fatal(err)
+			}
+			m.core.Slots = func() (slot.Pool, error) { return slot.Pool{Dir: dir, Capacity: 1, Cores: 8}, nil }
+			m.core.Processes = func() ([]pressure.Process, error) { return nil, nil }
+			m.core.ThrottleSignal = func(pressure.Process, syscall.Signal) error { return nil }
+			m.board.Machine.Slots.Throttle = c.before
+			if banner := ansi.Strip(machineAlerts(m.board.Machine, 200)); strings.Contains(banner, "THROTTLED") != c.before.On() {
+				t.Fatalf("header %q while throttle on=%v", banner, c.before.On())
+			}
+			next, cmd := m.Update(keyOf("Z"))
+			m = next.(Model)
+			next, _ = m.Update(done(t, cmd))
+			m = next.(Model)
+			if !strings.Contains(m.message, c.said) {
+				t.Fatalf("Z said %q, want %q", m.message, c.said)
+			}
+			after, err := pressure.ReadThrottle(dir)
+			if err != nil || after.On() {
+				t.Fatalf("throttle after Z: %+v, %v", after, err)
+			}
+		})
+	}
+}
+
+// done is the doneMsg one of cmd's batched commands produces; the others, such as animation ticks, are left running.
+func done(t *testing.T, cmd tea.Cmd) doneMsg {
+	t.Helper()
+	found := make(chan doneMsg, 1)
+	var start func(tea.Cmd)
+	start = func(c tea.Cmd) {
+		go func() {
+			switch msg := c().(type) {
+			case tea.BatchMsg:
+				for _, c := range msg {
+					if c != nil {
+						start(c)
+					}
+				}
+			case doneMsg:
+				found <- msg
+			}
+		}()
+	}
+	start(cmd)
+	select {
+	case msg := <-found:
+		return msg
+	case <-time.After(10 * time.Second):
+		t.Fatal("no doneMsg")
+	}
+	return doneMsg{}
 }

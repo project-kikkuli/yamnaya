@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/pressure"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
@@ -84,6 +85,9 @@ type Core struct {
 	Loads func() float64
 	CPU   func() (map[int]float64, error)
 	Mem   func() (map[int]float64, error)
+	// Processes and ThrottleSignal are how Throttle reads the process table and signals a process; nil means pressure's own.
+	Processes      func() ([]pressure.Process, error)
+	ThrottleSignal func(pressure.Process, syscall.Signal) error
 
 	gc          gitCache
 	fw          forwardedSet
@@ -118,6 +122,9 @@ type Live struct {
 	Unread bool
 	// Off is set while the owner has ym off for the session, its goal or its chief.
 	Off bool
+	// Paused is set while the owner's throttle holds the session stopped; Resumed is when the throttle last let sessions go.
+	Paused  bool
+	Resumed time.Time
 }
 
 // Location names where the session runs, for display.

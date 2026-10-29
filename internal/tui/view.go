@@ -233,6 +233,9 @@ func goalCount(ns []core.Node) int {
 func machineAlerts(mc core.Machine, width int) string {
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
 	h := ""
+	if line := mc.Slots.Throttle.Line(); line != "" {
+		h += "\n" + pal.red.Bold(true).Render(fit(" "+line))
+	}
 	if line := mc.Slots.Pressure.Line(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}
@@ -1575,6 +1578,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    z            ym off or back on: on a goal or chief, for its manager and every agent under it; on a
                 session or mission, for that session. While off, ym delivers nothing to it and its ym
                 commands refuse, so you talk to it in its own chat; ym on hands it what waited, in one message
+   Z            throttle: pause every ym agent on this host and everything it runs (SIGSTOP), so the machine
+                stops thrashing; Z again resumes them all. A red THROTTLED line heads the board while on;
+                ym throttle and ym unthrottle take a session, goal or chief to pause or resume just those
    C            new chief, the same as c n
    D            detach the goal or chief from its chief, the same as c d
    t            goals by repository with chiefs nesting their reports, or every goal by its own repository

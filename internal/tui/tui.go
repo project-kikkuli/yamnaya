@@ -346,7 +346,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line(len(b.board.Machine.Holders)) == m.board.Machine.Slots.Pressure.Line(len(m.board.Machine.Holders)) && maps.Equal(b.nicks, m.nicks) {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line(len(b.board.Machine.Holders)) == m.board.Machine.Slots.Pressure.Line(len(m.board.Machine.Holders)) && b.board.Machine.Slots.Throttle.Line() == m.board.Machine.Slots.Throttle.Line() && maps.Equal(b.nicks, m.nicks) {
 			m.board = b.board
 			m.themed(b)
 			if b.tick {
@@ -1006,6 +1006,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		m.show("U", m.usageText())
 		return m, nil
+	case "Z":
+		on, board := !m.board.Machine.Slots.Throttle.On(), m.board
+		m.message = "resuming every paused agent"
+		if on {
+			m.message = "pausing every ym agent"
+		}
+		return m, m.do(func() (string, error) { return m.core.Throttle(board, nil, on) })
 	case "E", "H", "Y", "F":
 		r, _ := m.selected()
 		return m.openPanel(panelKeys[k.String()], r)
