@@ -102,6 +102,7 @@ type frame struct {
 	goal, chief               string
 	key                       string
 	scroll                    int
+	paging                    bool
 }
 
 type Model struct {
@@ -113,7 +114,8 @@ type Model struct {
 	// picked are the managers and chiefs space selected; s sends to all of them.
 	picked map[string]bool
 	// folds overrides the initial visibility of containers for this UI session.
-	folds map[string]bool
+	folds       map[string]bool
+	searchFolds map[string]bool
 	// flat lists every goal under its own repository, leaving chiefs out.
 	flat bool
 	// menu is the c menu's choices for the manager or chief menuFor.
@@ -130,24 +132,25 @@ type Model struct {
 	steer     []string
 	subtree   bool
 	// bcast are the sessions the broadcast being typed reaches.
-	bcast   []string
-	openURL func(string) error
-	page    *viewPage
-	core    *core.Core
-	host    string
-	board   core.Board
-	nicks   map[string]string
-	loaded  bool
-	err     error
-	mode    mode
-	back    mode
-	cursor  int
-	stack   []frame
-	repo    string
-	detail  string
-	sess    string
-	agent   string
-	scrollY int
+	bcast       []string
+	openURL     func(string) error
+	page        *viewPage
+	core        *core.Core
+	host        string
+	board       core.Board
+	nicks       map[string]string
+	loaded      bool
+	err         error
+	mode        mode
+	back        mode
+	cursor      int
+	stack       []frame
+	repo        string
+	detail      string
+	sess        string
+	agent       string
+	scrollY     int
+	agentPaging bool
 	// helpQ is the help search; helpTyping while its prompt is open; helpAt the 1-based match n and N last jumped to, 0 for none.
 	helpQ      string
 	helpTyping bool
@@ -907,11 +910,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.filter != "":
 			r, _ := m.selected()
 			m.filter = ""
+			m.searchFolds = nil
 			m.follow(rowKey(r), nil, nil)
 		}
 		return m, nil
 	case "up", "k":
 		if m.mode == modeAgent && len(m.rows()) > 0 {
+			m.agentPaging = false
 			m.scrollY = 0
 		}
 		if m.mode == modeAgent && len(m.rows()) == 0 {
@@ -922,6 +927,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "down", "j":
 		if m.mode == modeAgent && len(m.rows()) > 0 {
+			m.agentPaging = false
 			m.scrollY = 0
 		}
 		if m.mode == modeAgent && len(m.rows()) == 0 {
@@ -935,11 +941,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgup", "b":
 		if m.mode == modeAgent {
+			m.agentPaging = true
 			m.scrollY = max(0, m.scrollY-m.height/2)
 		}
 		return m, nil
 	case "pgdown", "space", "f":
 		if m.mode == modeAgent {
+			m.agentPaging = true
 			m.scrollBy(m.height / 2)
 		}
 		return m, nil
@@ -1056,12 +1064,11 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case r.member != nil:
 			m.push(modeAgent)
 			m.sess, m.agent, m.scrollY = treeSessionKey(*r.session), r.member.ID, 0
-			if r.project != nil {
-				m.detail = r.project.Key
-			}
+			m.detail = m.sessionProject(r)
 		case r.session != nil:
 			m.push(modeSession)
 			m.sess = treeSessionKey(*r.session)
+			m.detail = m.sessionProject(r)
 			m.firstContent()
 		case r.project != nil:
 			m.push(modeDetail)
@@ -1369,8 +1376,8 @@ func lastExited(p *core.Project) (core.Dormant, bool) {
 // push enters a deeper level, remembering where esc returns to.
 func (m *Model) push(to mode) {
 	r, _ := m.selected()
-	m.stack = append(m.stack, frame{key: rowKey(r), mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, goal: m.goal, chief: m.chief, scroll: m.scrollY})
-	m.mode, m.cursor = to, 0
+	m.stack = append(m.stack, frame{key: rowKey(r), mode: m.mode, cursor: m.cursor, detail: m.detail, sess: m.sess, agent: m.agent, repo: m.repo, goal: m.goal, chief: m.chief, scroll: m.scrollY, paging: m.agentPaging})
+	m.mode, m.cursor, m.agentPaging = to, 0, false
 }
 
 func (m *Model) pop() {
@@ -1378,7 +1385,7 @@ func (m *Model) pop() {
 	m.stack = m.stack[:len(m.stack)-1]
 	m.mode, m.cursor = f.mode, f.cursor
 	m.detail, m.sess, m.agent, m.repo, m.goal, m.chief = f.detail, f.sess, f.agent, f.repo, f.goal, f.chief
-	m.scrollY = f.scroll
+	m.scrollY, m.agentPaging = f.scroll, f.paging
 	m.follow(f.key, nil, nil)
 }
 
@@ -1444,6 +1451,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.inKind == inFilter {
 			m.filter = string(m.input)
+			m.searchFolds = nil
 			m.cursor = 0
 		}
 		m.repoCur, m.pickErr = 0, ""
@@ -1610,6 +1618,7 @@ func (m Model) typed(text string) Model {
 	m.input = append(m.input, []rune(text)...)
 	if m.inKind == inFilter {
 		m.filter = string(m.input)
+		m.searchFolds = nil
 		m.cursor = 0
 	}
 	m.repoCur, m.pickErr = 0, ""
@@ -1756,6 +1765,16 @@ func (m Model) moveIn(r row) (tea.Model, tea.Cmd) {
 
 // each runs f on every ref, going on past failures, and joins what it said.
 // sessionOf is the session a row or the open view is about.
+func (m Model) sessionProject(r row) string {
+	if r.project != nil {
+		return r.project.Key
+	}
+	if r.session.Project != "" {
+		return r.session.Project
+	}
+	return m.board.ProjectOf(r.session.Key())
+}
+
 func (m Model) sessionOf(r row) *core.Live {
 	switch {
 	case r.session != nil && r.member == nil:

@@ -93,7 +93,7 @@ The footer shows the everyday keys; `?` lists every key.
 
 Select a heading or row with `↑` and `↓`, then use `←` and `→` to fold or unfold it. This works on whole **NEEDS YOU**, **GOALS**, and **SESSIONS YOU STARTED** sections, repository groups, chiefs, goals, missions, sessions, crew and ask groups, and sections inside detail pages. `▸` means folded; `▾` means expanded. `←` on a folded container or a leaf selects its parent. `→` on an expanded container selects its first child. `enter` keeps opening or drilling into rows; on a heading it expands or selects its first child.
 
-Sections, repositories and chiefs start expanded. Goals and missions start folded to keep the overview compact; sessions and detail sections start expanded, while ask bundles and stale items start folded. Fold choices last for the current UI session, including nested choices when a parent is folded and reopened, and survive board refreshes. `/` filtering temporarily reveals matching branches. Clearing the filter restores the saved folds and selects a visible ancestor when needed.
+Sections, repositories and chiefs start expanded. Goals and missions start folded to keep the overview compact; sessions, document-thread groups and detail sections start expanded, while item ask bundles and stale items start folded. Fold choices last for the current UI session, including nested choices when a parent is folded and reopened, and survive board refreshes. `/` filtering temporarily reveals matching branches. Arrow-key folds made during a search are temporary. Clearing the filter restores the saved folds and selects a visible ancestor when needed.
 
 | Key | Does |
 | --- | --- |

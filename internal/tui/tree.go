@@ -2,9 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
@@ -34,7 +35,7 @@ func textSection(key, title, body string) treeNode {
 
 func (m Model) closed(r row) bool {
 	if m.filter != "" {
-		return false
+		return m.searchFolds[rowKey(r)]
 	}
 	if closed, ok := m.folds[rowKey(r)]; ok {
 		return closed
@@ -47,6 +48,10 @@ func (m Model) closed(r row) bool {
 
 func (m *Model) setFold(r row, closed bool) {
 	if m.filter != "" {
+		if m.searchFolds == nil {
+			m.searchFolds = map[string]bool{}
+		}
+		m.searchFolds[rowKey(r)] = closed
 		return
 	}
 	if m.folds == nil {
@@ -100,13 +105,13 @@ func (m *Model) firstContent() {
 func (m *Model) treeMove(key string) { m.treeMoveRows(key, m.rows()) }
 
 func (m *Model) treeMoveRows(key string, rows []row) {
-	m.scrollY = 0
+	m.scrollY, m.agentPaging = 0, false
 	if m.cursor < 0 || m.cursor >= len(rows) {
 		return
 	}
 	r := rows[m.cursor]
 	if key == "left" {
-		if r.container && !r.closed && m.filter == "" {
+		if r.container && !r.closed {
 			m.setFold(r, true)
 			return
 		}
@@ -207,6 +212,7 @@ func (m Model) boardTree() []treeNode {
 			t.children = itemTree(n.Asks, nil)
 		}
 		if n.Doc != nil && len(n.Docs) > 1 {
+			t.row.initialClosed = false
 			for j := range n.Docs {
 				d := &n.Docs[j]
 				child := core.Need{Doc: d, Docs: []core.DocAsk{*d}, Project: n.Project, Manager: n.Manager}
@@ -309,9 +315,7 @@ func (m Model) missionTree(p *core.Project, r *core.Repo) treeNode {
 
 func (m Model) missionChildren(p *core.Project) []treeNode {
 	sessions := m.sessionsTree(p.Sessions, p)
-	for i := range p.Dormant {
-		sessions = append(sessions, treeNode{row: row{dormant: &p.Dormant[i], project: p}})
-	}
+
 	return []treeNode{heading("project/"+p.Key+"/sessions", "SESSIONS AND CREW", sessions), heading("project/"+p.Key+"/items", "ITEMS", itemTree(p.Items, p))}
 }
 
@@ -343,6 +347,17 @@ func (m Model) sessionParentKey(s core.Live) string {
 }
 
 func (m Model) sessionsTree(sessions []core.Live, p *core.Project) []treeNode {
+	sessions = append([]core.Live(nil), sessions...)
+	dormant := map[string]*core.Dormant{}
+	if p != nil {
+		for i := range p.Dormant {
+			d := &p.Dormant[i]
+			host, _ := m.splitHost(d.Key)
+			s := core.Live{Session: core.Session{ID: d.ID(), Harness: d.Harness, Profile: d.Profile, Parent: d.Parent}, Remote: host}
+			dormant[treeSessionKey(s)] = d
+			sessions = append(sessions, s)
+		}
+	}
 	byKey := map[string]*core.Live{}
 	aliases := map[string]*core.Live{}
 	for i := range sessions {
@@ -389,7 +404,11 @@ func (m Model) sessionsTree(sessions []core.Live, p *core.Project) []treeNode {
 			if len(crew) > 0 {
 				nested = append(nested, heading("session/"+treeSessionKey(*s)+"/crew", fmt.Sprintf("CREW (%d)", len(crew)), crew))
 			}
-			out = append(out, treeNode{row: row{session: s, project: p}, children: nested})
+			r := row{session: s, project: p}
+			if d := dormant[treeSessionKey(*s)]; d != nil {
+				r = row{dormant: d, project: p}
+			}
+			out = append(out, treeNode{row: r, children: nested})
 		}
 		return out
 	}
@@ -423,6 +442,9 @@ func (m Model) treeText(r row) string {
 		return r.member.Name + " " + r.member.Brief
 	case r.session != nil:
 		return titleOf(*r.session) + " " + r.session.Task + " " + m.hostText(r.session.Remote)
+	case r.dormant != nil:
+		host, _ := m.splitHost(r.dormant.Key)
+		return r.dormant.Title + " " + r.dormant.Key + " " + m.hostText(host)
 	case r.project != nil:
 		return r.project.Name + " " + m.hostText(m.projectHost(*r.project))
 	case r.repo != nil:
@@ -519,6 +541,9 @@ func (m Model) treeRowText(i int, r row, ids map[string]string) string {
 		return withNote(m.nodeLines(i, *r.node, 0), m.rowNote(r))
 	case r.need != nil:
 		if text, ok := m.queueLines(i, *r.need); ok {
+			if strings.HasPrefix(r.key, "doc-ask:") && i != m.cursor {
+				text += pal.dim.Render("         "+r.need.Doc.URL) + "\n"
+			}
 			return text
 		}
 		return withNote(m.needLines(i, *r.need), m.rowNote(r))

@@ -422,7 +422,7 @@ func TestADocShowsOneRowForItsThreadsOpensThePageAndDismisses(t *testing.T) {
 			m = refresh(t, m)
 			rows := 0
 			for _, r := range m.rows() {
-				if isDoc(r) {
+				if isDoc(r) && r.key == "" {
 					rows++
 				}
 			}
@@ -440,6 +440,21 @@ func TestADocShowsOneRowForItsThreadsOpensThePageAndDismisses(t *testing.T) {
 			for _, a := range asks {
 				if !strings.Contains(v, a.URL) || !strings.Contains(v, a.Asker+": "+a.Text) {
 					t.Fatalf("the open row hides thread %s:\n%s", a.Key, v)
+				}
+			}
+			if tc.threads > 1 {
+				m = press(t, m, "left")
+				folded := m.View().Content
+				for _, a := range asks {
+					if strings.Contains(folded, a.URL) {
+						t.Fatalf("folded bundle still shows thread %s", a.Key)
+					}
+				}
+				m = press(t, m, "right")
+				for _, a := range asks {
+					if !strings.Contains(m.View().Content, a.URL) {
+						t.Fatalf("reopened bundle hides thread %s", a.Key)
+					}
 				}
 			}
 			press(t, m, "enter")
