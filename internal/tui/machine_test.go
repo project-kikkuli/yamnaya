@@ -101,7 +101,7 @@ func TestZTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
 				t.Fatalf("Z said %q, want %q", m.message, c.said)
 			}
 			after, err := pressure.ReadThrottle(dir)
-			if err != nil || after.On() {
+			if err != nil || after.On() == c.before.On() {
 				t.Fatalf("throttle after Z: %+v, %v", after, err)
 			}
 		})
