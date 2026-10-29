@@ -507,21 +507,8 @@ func (m *Model) follow(key string, after, before []string) {
 		return
 	}
 	if id, ok := strings.CutPrefix(key, "node:"); ok {
-		var ancestors func([]core.Node) ([]string, bool)
-		ancestors = func(ns []core.Node) ([]string, bool) {
-			for _, n := range ns {
-				if n.Manager.ID == id {
-					return []string{n.Manager.ID}, true
-				}
-				if path, found := ancestors(n.Children); found {
-					return append(path, n.Manager.ID), true
-				}
-			}
-			return nil, false
-		}
-		path, _ := ancestors(m.board.Tree)
-		for _, id := range path {
-			if i, visible := at["node:"+id]; visible {
+		for _, n := range nodePath(m.board.Tree, id) {
+			if i, visible := at["node:"+n.Manager.ID]; visible {
 				m.cursor = i
 				return
 			}
