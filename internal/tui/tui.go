@@ -1006,7 +1006,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "U":
 		m.show("U", m.usageText())
 		return m, nil
-	case "Z":
+	case "Q":
 		on, board := !m.board.Machine.Slots.Throttle.On(), m.board
 		m.message = "resuming every paused agent"
 		if on {

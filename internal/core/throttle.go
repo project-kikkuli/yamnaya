@@ -84,7 +84,7 @@ func (c *Core) Throttle(b Board, t *OffTarget, on bool) (string, error) {
 	if t == nil {
 		held = "; ym serve resumes and relaunches none until then"
 	}
-	return fmt.Sprintf("paused %d agents (%d processes) for %s; Z on the board or ym unthrottle resumes them%s", len(roots), n, scope, held), err
+	return fmt.Sprintf("paused %d agents (%d processes) for %s; Q on the board or ym unthrottle resumes them%s", len(roots), n, scope, held), err
 }
 
 // markThrottled reads the owner's throttle into b and flags each session it holds stopped.

@@ -67,7 +67,7 @@ func (t Throttle) Line() string {
 	if t.Blanket {
 		who = fmt.Sprintf("every ym agent paused (%d running), none resumed or relaunched", len(t.Sessions()))
 	}
-	return fmt.Sprintf("THROTTLED: %s, %d processes stopped since %s; Z or ym unthrottle resumes them",
+	return fmt.Sprintf("THROTTLED: %s, %d processes stopped since %s; Q or ym unthrottle resumes them",
 		who, len(t.Paused), t.Since.Local().Format(time.Kitchen))
 }
 

@@ -1578,8 +1578,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    z            ym off or back on: on a goal or chief, for its manager and every agent under it; on a
                 session or mission, for that session. While off, ym delivers nothing to it and its ym
                 commands refuse, so you talk to it in its own chat; ym on hands it what waited, in one message
-   Z            throttle: pause every ym agent on this host and everything it runs (SIGSTOP), so the machine
-                stops thrashing, and ym serve resumes or relaunches none, even after a reboot; Z again
+   Q            throttle: pause every ym agent on this host and everything it runs (SIGSTOP), so the machine
+                stops thrashing, and ym serve resumes or relaunches none, even after a reboot; Q again
                 resumes them all. A red THROTTLED line heads the board while on;
                 ym throttle and ym unthrottle take a session, goal or chief to pause or resume just those
    C            new chief, the same as c n

@@ -70,7 +70,7 @@ func TestThrottleTransitionsRefreshTheHeaderEvenWhenSessionsAreUnchanged(t *test
 	}
 }
 
-func TestZTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
+func TestQTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
 	paused := pressure.Throttle{Since: time.Now(), Paused: []pressure.Paused{{PID: 4242, Started: 1, Command: "claude", Session: "s1"}}}
 	for _, c := range []struct {
 		name   string
@@ -93,16 +93,16 @@ func TestZTogglesTheBlanketThrottleAndTheBoardSaysSoWhileItIsOn(t *testing.T) {
 			if banner := ansi.Strip(machineAlerts(m.board.Machine, 200)); strings.Contains(banner, "THROTTLED") != c.before.On() {
 				t.Fatalf("header %q while throttle on=%v", banner, c.before.On())
 			}
-			next, cmd := m.Update(keyOf("Z"))
+			next, cmd := m.Update(keyOf("Q"))
 			m = next.(Model)
 			next, _ = m.Update(done(t, cmd))
 			m = next.(Model)
 			if !strings.Contains(m.message, c.said) {
-				t.Fatalf("Z said %q, want %q", m.message, c.said)
+				t.Fatalf("Q said %q, want %q", m.message, c.said)
 			}
 			after, err := pressure.ReadThrottle(dir)
 			if err != nil || after.On() == c.before.On() {
-				t.Fatalf("throttle after Z: %+v, %v", after, err)
+				t.Fatalf("throttle after Q: %+v, %v", after, err)
 			}
 		})
 	}
