@@ -16,7 +16,7 @@ import (
 // RepoDepth is how many directories below a root ScanRepos looks for a repository.
 const RepoDepth = 2
 
-// RepoRoots are the directories wt-reap names in ~/.config/wt-reap/roots, one per line, or ~/dev without that file.
+// RepoRoots are the directories wt-reap names in ~/.config/wt-reap/roots, one per line, or ~/dev and ~/src without any.
 func RepoRoots() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -33,7 +33,7 @@ func RepoRoots() []string {
 		}
 	}
 	if len(roots) == 0 {
-		roots = []string{filepath.Join(home, "dev")}
+		roots = []string{filepath.Join(home, "dev"), filepath.Join(home, "src")}
 	}
 	return roots
 }
