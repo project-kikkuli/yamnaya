@@ -40,7 +40,8 @@ type mountains struct {
 }
 
 type onScreen struct {
-	c *scene.Canvas
+	c       *scene.Canvas
+	pending bool
 	// left is how many cells still differ from the scene; ver counts changes to c.
 	left, ver int
 }
@@ -63,7 +64,15 @@ func (m *Model) settle(step bool) {
 		return
 	}
 	if !m.shown() {
-		sc.c, sc.left = nil, 0
+		sc.c, sc.left, sc.pending = nil, 0, false
+		return
+	}
+	if !sc.c.Fits(m.width, m.height) {
+		sc.c = scene.Blank(m.width, m.height)
+		sc.ver++
+	}
+	if !step && !scene.ReducedMotion {
+		sc.pending = true
 		return
 	}
 	page := m.page
@@ -72,10 +81,7 @@ func (m *Model) settle(step bool) {
 		page = &prepared
 	}
 	goal := scene.Paint(m.sceneOf(), m.width, m.height, m.peaks.frame, tableText(*page))
-	if !sc.c.Fits(m.width, m.height) {
-		sc.c = scene.Blank(m.width, m.height)
-		sc.ver++
-	}
+	sc.pending = false
 	n := 0
 	switch {
 	case scene.ReducedMotion:
@@ -95,7 +101,7 @@ func (m *Model) animate() tea.Cmd {
 	if m.peaks.ticking || m.peaks.blurred || !m.shown() {
 		return nil
 	}
-	if sc := m.peaks.screen; sc != nil && sc.left > 0 {
+	if sc := m.peaks.screen; sc != nil && (sc.pending || sc.left > 0) {
 		m.peaks.ticking = true
 		return tea.Tick(frameTime, func(time.Time) tea.Msg { return mountainFrame{} })
 	}
