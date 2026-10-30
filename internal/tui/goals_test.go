@@ -78,7 +78,7 @@ func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *tes
 			lines[r.node.Manager.ID] = ansi.Strip(m.nodeLines(-1, *r.node, r.depth))
 		}
 	}
-	want := map[string]int{lead.ID: 0, platform.ID: 1, ms[0].ID: 2, ms[1].ID: 2, ms[2].ID: 1}
+	want := map[string]int{lead.ID: 2, platform.ID: 3, ms[0].ID: 4, ms[1].ID: 4, ms[2].ID: 3}
 	if !maps.Equal(depth, want) {
 		t.Fatalf("tree depths %v, want %v", depth, want)
 	}
@@ -88,7 +88,7 @@ func TestTheTreeNestsEveryReportUnderItsChiefWithItsBriefAndEnterDrillsIn(t *tes
 		}
 	}
 	m = press(t, to(t, m, isNode(platform.ID)), "enter")
-	if m.mode != modeChief || len(m.rows()) != 2 || !strings.Contains(m.View().Content, "REPORTS (2)") {
+	if m.mode != modeChief || len(m.rows()) != 3 || !strings.Contains(m.View().Content, "REPORTS (2)") {
 		t.Fatalf("enter on the chief should list its two goals, mode %v:\n%s", m.mode, m.View().Content)
 	}
 	m = press(t, to(t, m, isNode(ms[1].ID)), "enter")
@@ -422,7 +422,7 @@ func TestADocShowsOneRowForItsThreadsOpensThePageAndDismisses(t *testing.T) {
 			m = refresh(t, m)
 			rows := 0
 			for _, r := range m.rows() {
-				if isDoc(r) {
+				if isDoc(r) && r.key == "" {
 					rows++
 				}
 			}
@@ -440,6 +440,21 @@ func TestADocShowsOneRowForItsThreadsOpensThePageAndDismisses(t *testing.T) {
 			for _, a := range asks {
 				if !strings.Contains(v, a.URL) || !strings.Contains(v, a.Asker+": "+a.Text) {
 					t.Fatalf("the open row hides thread %s:\n%s", a.Key, v)
+				}
+			}
+			if tc.threads > 1 {
+				m = press(t, m, "left")
+				folded := m.View().Content
+				for _, a := range asks {
+					if strings.Contains(folded, a.URL) {
+						t.Fatalf("folded bundle still shows thread %s", a.Key)
+					}
+				}
+				m = press(t, m, "right")
+				for _, a := range asks {
+					if !strings.Contains(m.View().Content, a.URL) {
+						t.Fatalf("reopened bundle hides thread %s", a.Key)
+					}
 				}
 			}
 			press(t, m, "enter")
@@ -669,7 +684,7 @@ func TestAChiefRowLeadsWithItsNameAndShowsItsOwnSpendPlusItsReports(t *testing.T
 						break
 					}
 				}
-				if fields := strings.Fields(row); len(fields) == 0 || fields[0] != "harnesser" {
+				if fields := strings.Fields(strings.TrimLeft(row, " >▾▸")); len(fields) == 0 || fields[0] != "harnesser" {
 					t.Fatalf("chief row %q does not lead with its name", row)
 				}
 				if !strings.Contains(row, "Kyoto") || ansi.StringWidth(row) > width {

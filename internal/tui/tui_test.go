@@ -241,7 +241,7 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 				t.Fatal(err)
 			}
 			m = refresh(t, m)
-			m.cursor = 0
+			m = to(t, press(t, m, "home"), func(r row) bool { return r.item != nil && r.item.ID == "G3" })
 			if v := m.View().Content; !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
 				t.Fatalf("view:\n%s", v)
 			}
@@ -314,7 +314,7 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 
 func TestMissionDetailRenameAndDuplicatePick(t *testing.T) {
 	m, c, h := setup(t)
-	m = press(t, m, "down", "down", "down")
+	m = to(t, m, mission("lead"))
 	r, _ := m.selected()
 	if r.project == nil || r.need != nil {
 		t.Fatalf("cursor on %+v, want the first mission", r)
@@ -360,7 +360,7 @@ func TestEnterDrillsFromRepoToAgentAndEscClimbsBack(t *testing.T) {
 		{modeSession, "CREW (1)"},
 		{modeAgent, "Run every test and report failures."},
 	}
-	m = press(t, m, "down", "down")
+	m = to(t, m, func(r row) bool { return r.repo != nil && r.project == nil })
 	for _, st := range steps {
 		m = press(t, m, "enter")
 		if m.mode != st.mode || !strings.Contains(m.View().Content, st.want) {
@@ -459,7 +459,7 @@ func TestExitedLaunchesShowInTheirMissionAndEnterRevives(t *testing.T) {
 	if v := m.View().Content; !strings.Contains(v, "Docs pass") || !strings.Contains(v, "2 exited") {
 		t.Fatalf("a mission with only an exited launch is missing from the board:\n%s", v)
 	}
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	if !strings.Contains(m.View().Content, "exited 1") {
 		t.Fatalf("lead mission lacks its exited launch:\n%s", m.View().Content)
 	}
@@ -585,10 +585,11 @@ func TestSpendShowsAtEveryLevel(t *testing.T) {
 		keys []string
 		want string
 	}{
-		{[]string{"down", "down", "enter", "enter"}, "$1.25"},
+		{[]string{"enter", "enter"}, "$1.25"},
 		{[]string{"enter"}, "$3.00"},
 		{[]string{"enter"}, "$1.25"},
 	}
+	m = to(t, m, func(r row) bool { return r.repo != nil && r.project == nil })
 	for _, l := range levels {
 		m = press(t, m, l.keys...)
 		if !strings.Contains(m.View().Content, l.want) {
@@ -619,7 +620,8 @@ func TestALongCrewKeepsTheHeaderAndSessionTitleOnScreen(t *testing.T) {
 	c.Harnesses[0].(harness).sessions[1] = lead
 	m.height = 30
 	m = refresh(t, m)
-	m = press(t, m, "down", "down", "enter", "enter", "enter")
+	m = to(t, m, func(r row) bool { return r.repo != nil && r.project == nil })
+	m = press(t, m, "enter", "enter", "enter")
 	v := m.View().Content
 	if m.mode != modeSession || !strings.Contains(v, " ym ") || !strings.Contains(v, "Lead work") || !strings.Contains(v, "worker 0") {
 		t.Fatalf("session view with 61 crew lost its header, title or first worker:\n%s", v)
@@ -635,7 +637,8 @@ func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
 		t.Fatal(err)
 	}
-	m = press(t, refresh(t, m), "down", "down", "enter", "enter")
+	m = refresh(t, m)
+	m = press(t, to(t, m, mission("lead")), "enter")
 	v := m.View().Content
 	if m.mode != modeDetail || !strings.Contains(v, "other:D1") || strings.Count(v, " D1 ") != 1 {
 		t.Fatalf("mission items from two projects should name the project where IDs repeat:\n%s", v)
@@ -652,7 +655,7 @@ func TestHeaderSaysSpendIsStillLoading(t *testing.T) {
 
 func TestOGoesToASessionWithNoCrewOrItems(t *testing.T) {
 	m, _, _ := setup(t)
-	m = press(t, m, "down", "down", "down", "down", "enter", "enter")
+	m = press(t, to(t, m, mission("twin")), "enter", "enter")
 	if m.mode != modeSession || !strings.Contains(m.View().Content, "Twin work") {
 		t.Fatalf("want the twin session view, mode %v:\n%s", m.mode, m.View().Content)
 	}
@@ -670,7 +673,7 @@ func TestOBringsAnotherTerminalForwardAndMMovesItIntoYmOnceConfirmed(t *testing.
 	c.Front = func(tty string) error { fronted = append(fronted, tty); return nil }
 	h.away = map[string]bool{"/dev/a": true}
 	m = refresh(t, m)
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" || !strings.Contains(m.View().Content, "M move in") {
 		t.Fatalf("lead session row should offer M:\n%s", m.View().Content)
 	}
@@ -707,7 +710,7 @@ func TestMLeavesABusySessionWhereItRuns(t *testing.T) {
 	h.away = map[string]bool{"/dev/a": true}
 	c.Harnesses = []core.Harness{harness{map[int]core.Session{1: {ID: "lead", Title: "Lead work", Status: core.Busy}}}}
 	m = refresh(t, m)
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	if r, _ := m.selected(); r.session == nil || r.session.Key() != "lead" {
 		t.Fatalf("selected %+v, want the lead session", r)
 	}
@@ -727,7 +730,7 @@ func TestOWhileYmCannotReadItsTmuxSaysSoAndMovesNothing(t *testing.T) {
 			c.Front = func(tty string) error { fronted = append(fronted, tty); return nil }
 			h.readErr = errors.New(readErr)
 			m = refresh(t, m)
-			m = press(t, m, "down", "down", "down", "enter")
+			m = press(t, to(t, m, mission("lead")), "enter")
 			m = press(t, m, "o")
 			if !strings.Contains(m.message, "can't read your tmux: "+readErr) || !strings.Contains(m.message, "repair") || strings.Contains(m.message, "--resume") {
 				t.Fatalf("o said %q", m.message)
@@ -744,7 +747,7 @@ func TestSendComposesAFollowUpForTheSelectedSession(t *testing.T) {
 	m, c, _ := setup(t)
 	l := &launches{}
 	c.Launches = l
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	m = press(t, m, "s", "also", " ", "rebase", "enter")
 	if len(l.sent) != 1 || l.sent[0] != "lead also rebase" || m.message != "sent to lead" {
 		t.Fatalf("sent %v, message %q", l.sent, m.message)
@@ -775,7 +778,7 @@ func TestMissionShowsItsVibeAndDrillInShowsWhoSaidIt(t *testing.T) {
 	if !strings.Contains(row, "Wisconsin") || strings.Contains(row, "North Dakota") {
 		t.Fatalf("mission row = %q", row)
 	}
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	view := m.View().Content
 	for _, want := range []string{"says: Wisconsin", "tests green", "claude lead", "North Dakota"} {
 		if !strings.Contains(view, want) {
@@ -799,7 +802,7 @@ func TestLongVibePlaceNeverWidensRows(t *testing.T) {
 		}
 	}
 	check(m.View().Content)
-	m = press(t, m, "down", "down", "down", "enter")
+	m = press(t, to(t, m, mission("lead")), "enter")
 	check(m.View().Content)
 }
 
@@ -814,13 +817,16 @@ func TestCapitalOOpensTheSessionBesideTheBoard(t *testing.T) {
 	}{
 		{"o still switches", []string{"o"}, false, nil, []string{"/dev/a"}, "opened"},
 		{"an item's session", []string{"O"}, false, []string{"/dev/a"}, nil, "beside"},
-		{"the picked copy", []string{"down", "down", "down", "down", "O", "down", "enter"}, false, []string{"/dev/c"}, nil, "beside"},
+		{"the picked copy", []string{"O", "down", "enter"}, false, []string{"/dev/c"}, nil, "beside"},
 		{"from an expanded item", []string{"enter", "O"}, false, []string{"/dev/a"}, nil, "beside"},
 		{"outside tmux", []string{"O"}, true, nil, nil, "only when ym runs inside tmux"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _, h := setup(t)
 			h.outside = tc.outside
+			if tc.name == "the picked copy" {
+				m = to(t, m, mission("twin"))
+			}
 			m = press(t, m, tc.keys...)
 			if fmt.Sprint(h.split) != fmt.Sprint(tc.split) || fmt.Sprint(h.focused) != fmt.Sprint(tc.focused) {
 				t.Fatalf("split %v focused %v, want split %v focused %v", h.split, h.focused, tc.split, tc.focused)

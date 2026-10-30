@@ -40,6 +40,8 @@ func navBoard(t *testing.T) Model {
 // rowName names a row of navBoard by its item, manager or mission, or its repository's name.
 func rowName(r row) string {
 	switch {
+	case r.header != "":
+		return r.header
 	case r.item != nil:
 		return r.item.ID
 	case r.node != nil:
@@ -66,7 +68,9 @@ func TestGoalsGroupByRepositoryWithChiefsNestingTheirReports(t *testing.T) {
 			m.flat = tc.flat
 			var got []string
 			for _, r := range m.rows() {
-				got = append(got, rowName(r))
+				if r.header == "" {
+					got = append(got, rowName(r))
+				}
 			}
 			if !slices.Equal(got, tc.rows) {
 				t.Fatalf("rows %v, want %v", got, tc.rows)
@@ -74,11 +78,12 @@ func TestGoalsGroupByRepositoryWithChiefsNestingTheirReports(t *testing.T) {
 			view := ansi.Strip(m.listView().String())
 			goals := view[strings.Index(view, "GOALS"):strings.Index(view, "SESSIONS YOU STARTED")]
 			var headings []string
-			for _, line := range strings.Split(goals, "\n") {
-				if strings.HasPrefix(line, "   ") && !strings.HasPrefix(line, "    ") && !strings.Contains(line, "ask ") && !strings.Contains(line, "lead") {
-					headings = append(headings, strings.TrimSpace(line))
+			for _, r := range m.rows() {
+				if strings.HasPrefix(r.key, "heading:goals/") {
+					headings = append(headings, r.header)
 				}
 			}
+
 			if !slices.Equal(headings, tc.headings) {
 				t.Fatalf("goal headings %v, want %v:\n%s", headings, tc.headings, goals)
 			}
@@ -92,24 +97,24 @@ func TestNavigationKeysJumpBetweenSectionsRepositoryGroupsAndEnds(t *testing.T) 
 		keys []string
 		want string
 	}{
-		{"D1", []string{"tab"}, "c1"},
-		{"mg1", []string{"tab"}, "repo a"},
-		{"p1", []string{"tab"}, "D1"},
-		{"D1", []string{"shift+tab"}, "repo a"},
-		{"mg2", []string{"shift+tab"}, "D1"},
-		{"D1", []string{"]"}, "c1"},
-		{"c1", []string{"]"}, "mg2"},
-		{"mg2", []string{"]"}, "mg3"},
+		{"D1", []string{"tab"}, "GOALS"},
+		{"mg1", []string{"tab"}, "SESSIONS YOU STARTED"},
+		{"p1", []string{"tab"}, "NEEDS YOU (2)"},
+		{"D1", []string{"shift+tab"}, "SESSIONS YOU STARTED"},
+		{"mg2", []string{"shift+tab"}, "NEEDS YOU (2)"},
+		{"D1", []string{"]"}, "chiefs"},
+		{"c1", []string{"]"}, "a"},
+		{"mg2", []string{"]"}, "b"},
 		{"mg3", []string{"]"}, "repo a"},
 		{"p1", []string{"]"}, "repo b"},
 		{"p3", []string{"]"}, "p3"},
 		{"p3", []string{"["}, "repo a"},
-		{"mg2", []string{"["}, "c1"},
-		{"c1", []string{"["}, "D1"},
-		{"D2", []string{"["}, "D1"},
-		{"p1", []string{"<"}, "D1"},
+		{"mg2", []string{"["}, "chiefs"},
+		{"c1", []string{"["}, "NEEDS YOU (2)"},
+		{"D2", []string{"["}, "NEEDS YOU (2)"},
+		{"p1", []string{"<"}, "NEEDS YOU (2)"},
 		{"D1", []string{">"}, "p3"},
-		{"p2", []string{"home"}, "D1"},
+		{"p2", []string{"home"}, "NEEDS YOU (2)"},
 		{"D2", []string{"end"}, "p3"},
 		{"D1", []string{"]", "]", "]", "]", "]"}, "repo b"},
 	} {

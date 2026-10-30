@@ -7,26 +7,7 @@ import (
 )
 
 // section is the part of the board a list row sits in: 0 needs you, 1 goals, 2 sessions.
-func section(r row) int {
-	switch {
-	case r.node != nil:
-		return 1
-	case r.repo != nil:
-		return 2
-	}
-	return 0
-}
-
-// repoGroup is the group [ and ] step between: the whole queue, one repository's goals or the chiefs, or one repository's sessions.
-func repoGroup(r row) string {
-	switch section(r) {
-	case 1:
-		return "goals " + r.group
-	case 2:
-		return "sessions " + r.repo.Key
-	}
-	return "needs"
-}
+func section(r row) int { return max(0, r.sectionID-1) }
 
 // starts are the indexes of the rows that begin a new part, and the part the row at index at belongs to.
 func starts(rows []row, at int, part func(row) string) ([]int, int) {
@@ -48,8 +29,9 @@ func (m *Model) move(key string) {
 	if m.mode == modeAgent {
 		switch key {
 		case "<", "home":
-			m.scrollY = 0
+			m.scrollY, m.cursor, m.agentPaging = 0, 0, true
 		case ">", "end":
+			m.agentPaging = true
 			m.scrollBy(1 << 30)
 		}
 		return
@@ -69,11 +51,27 @@ func (m *Model) move(key string) {
 	if m.mode != modeList {
 		return
 	}
-	part := repoGroup
+	var at []int
+	cur := 0
 	if key == "tab" || key == "shift+tab" {
-		part = func(r row) string { return string(rune('0' + section(r))) }
+		at, cur = starts(rows, m.cursor, func(r row) string { return string(rune('0' + section(r))) })
+	} else {
+		for i, r := range rows {
+			sectionHeader := r.key == "heading:needs" || (r.key == "heading:goals" || r.key == "heading:sessions") && (r.closed || i+1 == len(rows) || rows[i+1].parent != r.key)
+			if sectionHeader || r.header != "" && r.group != "" && r.parent == "heading:goals" || r.repo != nil && r.project == nil {
+				at = append(at, i)
+			}
+		}
+		for i, index := range at {
+			if index <= m.cursor {
+				cur = i
+			}
+		}
 	}
-	at, cur := starts(rows, m.cursor, part)
+	if len(at) == 0 {
+		return
+	}
+
 	switch key {
 	case "tab":
 		m.cursor = at[(cur+1)%len(at)]

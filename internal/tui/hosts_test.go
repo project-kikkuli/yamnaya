@@ -254,7 +254,7 @@ func TestFilterMatchesTheHostOfMissionsAndKeepsTheirRepoHeader(t *testing.T) {
 			var missions, repos []string
 			for _, r := range f.rows() {
 				switch {
-				case r.project != nil:
+				case r.project != nil && r.session == nil && r.item == nil && r.dormant == nil:
 					missions = append(missions, r.project.Name)
 				case r.repo != nil:
 					repos = append(repos, r.repo.Name)

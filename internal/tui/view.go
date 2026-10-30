@@ -137,7 +137,7 @@ func (m Model) prepareView() viewPage {
 		height = max(12, m.height-m.height/4)
 	}
 	room := max(1, height-len(foot))
-	if (m.mode == modeHelp || m.mode == modeScreen || m.mode == modeAgent) && len(lines) > room && room > top {
+	if (m.mode == modeHelp || m.mode == modeScreen || m.mode == modeAgent && (len(m.rows()) == 0 || m.agentPaging)) && len(lines) > room && room > top {
 		start := min(m.scrollY, len(lines)-room)
 		lines = append(lines[:top:top], lines[top+start:min(len(lines), start+room)]...)
 	} else if len(lines) > room {
@@ -396,18 +396,18 @@ func joinHints(parts ...string) string {
 }
 
 // boardHints are the board's footer keys; ? lists the rest.
-const boardHints = "↑↓ move · ← collapse · → expand · tab section · [ ] repo · < > top/bottom · enter open · r reply · g go · K kill · c chief · b brief · n new · / filter · ? more"
+const boardHints = "↑↓ move · ← collapse/parent · → expand/child · tab section · [ ] repo · < > top/bottom · enter open · r reply · g go · K kill · c chief · b brief · n new · / filter · ? more"
 
 func (m Model) hints() string {
 	if r, ok := m.selected(); ok && r.item != nil && r.item.Action == "chat" && (m.mode == modeList || m.mode == modeDetail || m.mode == modeSession || m.mode == modeItems) {
-		return "o open chat · O beside · enter context · l later · x dismiss · ? more"
+		return "← collapse/parent · → expand/child · o open chat · O beside · enter context · l later · x dismiss · ? more"
 	}
 	if m.mode == modeList {
 		return boardHints
 	}
 	controls := m.sessionHints()
 	if m.width < 80 && (m.mode == modeRepo || m.mode == modeDetail || m.mode == modeSession) {
-		return joinHints(controls, "↑↓ move · enter open · ? more")
+		return joinHints(controls, "↑↓ move · ← collapse/parent · → expand/child · enter open · ? more")
 	}
 	switch m.mode {
 	case modePanel:
@@ -420,23 +420,23 @@ func (m Model) hints() string {
 	case modeItems:
 		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
+		return "↑↓ section · ← collapse/parent · → expand/child · enter back · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
 		return "↑↓ choose mission · enter merge into it · esc cancel"
 	case modeRepo:
-		return joinHints(controls, "↑↓ move · < > top/bottom · enter open mission · o go to session · r reply · n new · e rename · m merge · esc back · ? more")
+		return joinHints(controls, "↑↓ move · ← collapse/parent · → expand/child · < > top/bottom · enter open mission · o go to session · r reply · n new · e rename · m merge · esc back · ? more")
 	case modeDetail:
-		return joinHints(controls, "↑↓ move · < > top/bottom · enter open · o go to session · r reply · g go · x dismiss · esc back · ? more")
+		return joinHints(controls, "↑↓ move · ← collapse/parent · → expand/child · < > top/bottom · enter open · o go to session · r reply · g go · x dismiss · esc back · ? more")
 	case modeSession:
-		return joinHints(controls, "↑↓ move · < > top/bottom · enter open agent or item · o go to session · r reply · esc back · ? more")
+		return joinHints(controls, "↑↓ move · ← collapse/parent · → expand/child · < > top/bottom · enter open agent or item · o go to session · r reply · esc back · ? more")
 	case modeAgent:
-		return joinHints(controls, "↑↓ scroll · space/b page · < > top/bottom · o go to its session · O beside · esc back")
+		return joinHints(controls, "↑↓ section · ← collapse/parent · → expand/child · space/b page · < > top/bottom · o go to its session · O beside · esc back")
 	case modeGoal:
-		return joinHints(controls, "↑↓ move · enter open session · o go to session · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more")
+		return joinHints(controls, "↑↓ move · ← collapse/parent · → expand/child · enter open session · o go to session · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more")
 	case modeChief:
-		return "↑↓ move · ← collapse · → expand · < > top/bottom · enter open · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more"
+		return "↑↓ move · ← collapse/parent · → expand/child · < > top/bottom · enter open · r reply · b brief · c chief · S steer plan · R relaunch · esc back · ? more"
 	}
 	return boardHints
 }
@@ -457,84 +457,7 @@ func (m Model) listView() viewPage {
 	if !m.loaded {
 		return viewPage{}
 	}
-	b := viewPage{}
-	rows := m.rows()
-	needs := 0
-	for _, r := range rows {
-		if r.need != nil && !m.isStale(r.need) {
-			needs++
-		}
-	}
-	b.WriteString(pal.bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
-	if needs == 0 {
-		b.WriteString(pal.dim.Render("   nothing") + "\n")
-	}
-	goals, repos := false, false
-	group := ""
-	cols := m.missionCols(2)
-	for i, r := range rows {
-		if r.node != nil && !goals {
-			goals = true
-			title := pal.bold.Render(" GOALS") + pal.dim.Render("  by repository, chiefs with their reports; t lists every goal by its own")
-			if m.flat {
-				title = pal.bold.Render(" GOALS") + pal.dim.Render("  every goal by its own repository; t nests reports under their chiefs")
-			}
-			b.WriteString("\n" + title + "\n")
-		}
-		if r.node != nil && r.group != group {
-			group = r.group
-			b.WriteString(pal.bold.Render("   "+groupLabel(group)) + "\n")
-		}
-		if (r.repo != nil || r.project != nil) && !repos {
-			repos = true
-			if !goals {
-				goals = true
-				b.WriteString("\n" + pal.bold.Render(" GOALS") + "\n" + pal.dim.Render("   none; n hands a goal to a new manager") + "\n")
-			}
-			b.WriteString("\n" + pal.bold.Render(" SESSIONS YOU STARTED") + "\n")
-			if cols.bar > 0 {
-				b.WriteString(pal.dim.Render("   "+progressLegend) + "\n")
-			}
-		}
-		switch {
-		case r.stale:
-			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
-			if i == m.cursor {
-				line += pal.dim.Render("   enter expand · x dismiss all")
-			}
-			b.WriteString(line + "\n")
-		case r.node != nil:
-			b.WriteString(withNote(m.nodeLines(i, *r.node, r.depth), m.rowNote(r)))
-		case r.need != nil:
-			if text, ok := m.queueLines(i, *r.need); ok {
-				b.WriteString(text)
-			} else {
-				b.WriteString(withNote(m.needLines(i, *r.need), m.rowNote(r)))
-			}
-		case r.item != nil:
-			b.WriteString(m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)}))
-		case r.project == nil:
-			b.WriteString(m.repoLine(i, *r.repo, cols))
-		default:
-			b.WriteString(withNote(m.missionLine(i, *r.project, cols), m.rowNote(r)))
-		}
-	}
-	if !goals {
-		b.WriteString("\n" + pal.bold.Render(" GOALS") + "\n" + pal.dim.Render("   none; n hands a goal to a new manager") + "\n")
-	}
-	if !repos {
-		b.WriteString("\n" + pal.bold.Render(" SESSIONS YOU STARTED") + "\n" + pal.dim.Render("   none") + "\n")
-	}
-	return b
-}
-
-func (m Model) isStale(n *core.Need) bool {
-	for i := range m.board.Stale {
-		if n == &m.board.Stale[i] {
-			return true
-		}
-	}
-	return false
+	return m.treePage()
 }
 
 func (m Model) needsIn(r core.Repo) int {
@@ -880,24 +803,7 @@ func (m Model) repoView() viewPage {
 	}
 	b.WriteString(pal.bold.Render(" "+r.Name) + pal.dim.Render("  "+key) + "\n")
 	b.WriteString(" " + m.repoCounts(r) + "\n")
-	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
-	cols := m.missionCols(0)
-	for i, p := range r.Missions {
-		b.place = "m:" + p.Key
-		b.WriteString(m.missionLine(i, p, cols))
-		if len(p.Sessions) > 0 {
-			lead := p.Sessions[0]
-			var meta []string
-			if lead.Ask != "" {
-				meta = append(meta, "ask: "+lead.Ask)
-			}
-			meta = append(meta, lead.Location())
-			if lead.Branch != "" {
-				meta = append(meta, lead.Branch)
-			}
-			b.WriteString(pal.dim.Render("     "+strings.Join(meta, " | ")) + "\n")
-		}
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -937,67 +843,7 @@ func (m Model) detailView() viewPage {
 		b.WriteString(units(pg.Units))
 	}
 	b.WriteString(m.vibeLines(p))
-	b.WriteString("\n" + pal.bold.Render(" SESSIONS AND CREW") + "\n")
-	i, wide := 0, m.whereWidth(p.Sessions)
-	for _, s := range p.Sessions {
-		title := s.Title
-		if title == "" {
-			title = core.Short(s.Key())
-		}
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(profileDisplay(s.Harness, s.Profile), 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + pad(m.where(s), wide)
-		if s.Branch != "" {
-			line += " " + s.Branch
-		}
-		if sp := m.spend(s); sp != "" {
-			line += "  " + sp
-		}
-		if s.Prompt != nil {
-			line += "  " + pal.yellow.Render(s.Prompt.String())
-		}
-		if len(s.Copies) > 1 {
-			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
-		}
-		if i == m.cursor && s.Adoptable() {
-			line += pal.dim.Render("   M move in")
-		}
-		b.place = "s:" + s.Key()
-		b.WriteString(withNote(line+"\n", m.note(sessionKey(s))))
-		if d := doingText(m.board.At, s.Session); d != "" {
-			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
-		}
-		i++
-		for _, c := range s.Crew {
-			b.place = "a:" + s.Key() + "/" + c.ID
-			b.WriteString(m.crewLine(i, s, c))
-			i++
-		}
-	}
-	b.place = "m:" + p.Key
-	for _, d := range p.Dormant {
-		title := d.Title
-		if title == "" {
-			title = d.Key
-		}
-		host, key := m.splitHost(d.Key)
-		line := m.mark(i) + pad(title, m.nameWidth()) + " " + pad(d.Harness, 7) + pal.dim.Render(pad(d.State, 9)) + pad(m.tagged(host, key), wide) + " " + d.Branch
-		if i == m.cursor {
-			line += pal.dim.Render("   enter revive")
-			if ansi.StringWidth(d.State) > 9 {
-				line += "   " + pal.red.Render(d.State)
-			}
-		}
-		b.WriteString(withNote(line+"\n", m.note(d.Key)))
-		i++
-	}
-	b.WriteString("\n" + pal.bold.Render(" ITEMS") + "\n")
-	if len(p.Items) == 0 {
-		b.WriteString(pal.dim.Render("   none") + "\n")
-	}
-	ids := itemIDs(p.Items)
-	for _, it := range p.Items {
-		b.WriteString(m.itemLines(i, it, ids))
-		i++
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -1183,60 +1029,7 @@ func (m Model) sessionView() viewPage {
 		m.field(&b, "doing now", s.Doing.String()+"  "+age(m.board.At, s.Doing.At))
 	}
 	m.field(&b, "last reply", clip(s.Result, 6))
-	if prs := s.AllPRs(); len(prs) > 0 {
-		b.WriteString("\n" + pal.bold.Render(" PULL REQUESTS") + "\n")
-		for _, pr := range prsOf([]core.Live{*s}) {
-			b.WriteString("   " + pad(fmt.Sprintf("%s#%d", pr.Repo, pr.Number), 34) + " " + prStatus(pr) + "\n")
-		}
-	}
-	if us := progress.Units([]core.Live{*s}); len(us) > 0 {
-		b.WriteString("\n" + pal.bold.Render(" PIPELINE") + "\n" + units(us))
-	}
-	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
-	i := 0
-	for _, c := range s.Crew {
-		b.place = "a:" + s.Key() + "/" + c.ID
-		b.WriteString(m.crewLine(i, *s, c))
-		i++
-	}
-	b.place = "s:" + s.Key()
-	if len(s.Crew) == 0 {
-		b.WriteString(pal.dim.Render("   none") + "\n")
-	}
-	if len(s.Messages) > 0 {
-		b.WriteString("\n" + pal.bold.Render(" MESSAGES") + "\n")
-		for _, msg := range s.Messages {
-			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgUncertain: "submission uncertain (not replayed)", core.MsgInbox: "via inbox", core.MsgSent: "sent"}[msg.State]
-			when := age(m.board.At, msg.CreatedAt)
-			if !msg.Delivered.IsZero() {
-				when = "delivered " + age(m.board.At, msg.Delivered)
-				if msg.State == core.MsgUncertain {
-					when = "attempted " + age(m.board.At, msg.Delivered)
-				}
-			}
-			line := "   " + pad(state, 10) + " " + msg.Text + pal.dim.Render("  "+when)
-			if msg.State != core.MsgPending {
-				line = pal.dim.Render(line)
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	if p, ok := m.board.Project(m.detail); ok {
-		var items []core.Item
-		for _, it := range p.Items {
-			if it.Session == s.Key() {
-				items = append(items, it)
-			}
-		}
-		if len(items) > 0 {
-			b.WriteString("\n" + pal.bold.Render(" ITEMS") + "\n")
-			ids := itemIDs(items)
-			for _, it := range items {
-				b.WriteString(m.itemLines(i, it, ids))
-				i++
-			}
-		}
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -1313,27 +1106,7 @@ func (m Model) agentView() viewPage {
 		}
 		m.field(&b, "files", strings.Join(files, "\n"))
 	}
-	section := func(name, text string) {
-		if strings.TrimSpace(text) == "" {
-			return
-		}
-		b.WriteString("\n" + pal.bold.Render(" "+name) + "\n")
-		for _, l := range strings.Split(ansi.Wrap(strings.TrimSpace(text), max(20, m.width-4), " "), "\n") {
-			b.WriteString("   " + l + "\n")
-		}
-	}
-	section("BRIEF", c.Brief)
-	section("RESULT", c.Result)
-	if len(c.Trail) > 0 {
-		b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" TRAIL (last %d actions)", len(c.Trail))) + "\n")
-		for _, a := range c.Trail {
-			at := ""
-			if !a.At.IsZero() {
-				at = a.At.Local().Format("15:04:05")
-			}
-			b.WriteString(pal.dim.Render("   "+pad(at, 9)) + a.String() + "\n")
-		}
-	}
+	b.WriteString(m.treePage().String())
 	return b
 }
 
@@ -1452,28 +1225,11 @@ func (m Model) whyView() string {
 	field("filed", it.CreatedAt.Local().Format("2006-01-02 15:04"))
 	field("answer", it.Answer)
 	field("dismissed", it.Reason)
-	if !it.Dossier.Empty() {
-		b.WriteString("\n" + pal.bold.Render(" CONTEXT") + pal.dim.Render("  attached by ym "+age(m.board.At, it.Dossier.At)) + "\n")
-		last := ""
-		for _, l := range core.DossierLines(it.Dossier) {
-			k := l[0]
-			if k == last {
-				k = ""
-			}
-			last = l[0]
-			b.WriteString(" " + pal.bold.Render(pad(k, 22)) + " " + l[1] + "\n")
-		}
-	}
-	if len(it.History) > 1 {
-		b.WriteString("\n" + pal.bold.Render(" history") + "\n")
-		for _, e := range it.History[1:] {
-			line := "   " + e.At.Local().Format("01-02 15:04") + "  " + e.From + " -> " + e.To
-			if e.Text != "" {
-				line += ": " + e.Text
-			}
-			b.WriteString(line + "\n")
-		}
-	}
+	context := m
+	context.cursor = m.whyAt
+	context.filter = ""
+	b.WriteString(context.renderTree(context.projectNodes(context.whySections(), false)).String())
+
 	return b.String()
 }
 
@@ -1512,8 +1268,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
 
    Move
    ↑↓ or k j    move
-   ← →          collapse or expand the selected chief (▸ folded, ▾ expanded), at any depth;
-                filtering reveals reports without changing folds; t lists every goal by repository
+   ← →          collapse/parent or expand/first child on any section, repository, chief, goal,
+                mission, session, crew or ask group (▸ folded, ▾ expanded), at any depth;
+                filtering reveals matches without changing folds; Enter opens or drills in
    tab          next section: needs you, goals, sessions (shift-tab: previous)
    [ ]          previous or next repository group, across goals and sessions
    < > or home end
@@ -1652,4 +1409,105 @@ func age(now, t time.Time) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+func (m Model) sessionSections(s core.Live) []treeNode {
+	var out []treeNode
+	var b viewPage
+	if prs := s.AllPRs(); len(prs) > 0 {
+		b = viewPage{}
+		for _, pr := range prsOf([]core.Live{s}) {
+			b.WriteString("   " + pad(fmt.Sprintf("%s#%d", pr.Repo, pr.Number), 34) + " " + prStatus(pr) + "\n")
+		}
+		out = append(out, textSection("session/"+treeSessionKey(s)+"/prs", "PULL REQUESTS", b.String()))
+	}
+	if us := progress.Units([]core.Live{s}); len(us) > 0 {
+		b = textPage(units(us), "")
+		out = append(out, textSection("session/"+treeSessionKey(s)+"/pipeline", "PIPELINE", b.String()))
+	}
+	if len(s.Messages) > 0 {
+		b = viewPage{}
+		for _, msg := range s.Messages {
+			state := map[string]string{core.MsgPending: "pending", core.MsgTyped: "typed", core.MsgUncertain: "submission uncertain (not replayed)", core.MsgInbox: "via inbox", core.MsgSent: "sent"}[msg.State]
+			when := age(m.board.At, msg.CreatedAt)
+			if !msg.Delivered.IsZero() {
+				when = "delivered " + age(m.board.At, msg.Delivered)
+				if msg.State == core.MsgUncertain {
+					when = "attempted " + age(m.board.At, msg.Delivered)
+				}
+			}
+			line := "   " + pad(state, 10) + " " + msg.Text + pal.dim.Render("  "+when)
+			if msg.State != core.MsgPending {
+				line = pal.dim.Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
+		out = append(out, textSection("session/"+treeSessionKey(s)+"/messages", "MESSAGES", b.String()))
+	}
+
+	return out
+}
+
+func (m Model) agentSections() []treeNode {
+	s, c, ok := m.member()
+	if !ok {
+		return nil
+	}
+	var out []treeNode
+	for _, v := range []struct{ name, text string }{{"BRIEF", c.Brief}, {"RESULT", c.Result}} {
+		if strings.TrimSpace(v.text) == "" {
+			continue
+		}
+		b := viewPage{}
+		for _, line := range strings.Split(ansi.Wrap(strings.TrimSpace(v.text), max(20, m.width-4), " "), "\n") {
+			b.WriteString("   " + line + "\n")
+		}
+		out = append(out, textSection("member/"+treeSessionKey(*s)+"/"+c.ID+"/"+v.name, v.name, b.String()))
+	}
+	if len(c.Trail) > 0 {
+		b := viewPage{}
+		for _, a := range c.Trail {
+			at := ""
+			if !a.At.IsZero() {
+				at = a.At.Local().Format("15:04:05")
+			}
+			b.WriteString(pal.dim.Render("   "+pad(at, 9)) + a.String() + "\n")
+		}
+		out = append(out, textSection("member/"+treeSessionKey(*s)+"/"+c.ID+"/trail", fmt.Sprintf("TRAIL (last %d actions)", len(c.Trail)), b.String()))
+	}
+	return out
+}
+
+func (m Model) whySections() []treeNode {
+	it := m.why
+	if it == nil {
+		return nil
+	}
+	var b strings.Builder
+	var out []treeNode
+	if !it.Dossier.Empty() {
+		b = strings.Builder{}
+		last := ""
+		for _, l := range core.DossierLines(it.Dossier) {
+			k := l[0]
+			if k == last {
+				k = ""
+			}
+			last = l[0]
+			b.WriteString(" " + pal.bold.Render(pad(k, 22)) + " " + l[1] + "\n")
+		}
+		out = append(out, textSection("item/"+it.Key()+"/context", "CONTEXT", b.String()))
+	}
+	if len(it.History) > 1 {
+		b = strings.Builder{}
+		for _, e := range it.History[1:] {
+			line := "   " + e.At.Local().Format("01-02 15:04") + "  " + e.From + " -> " + e.To
+			if e.Text != "" {
+				line += ": " + e.Text
+			}
+			b.WriteString(line + "\n")
+		}
+		out = append(out, textSection("item/"+it.Key()+"/history", "history", b.String()))
+	}
+	return out
 }

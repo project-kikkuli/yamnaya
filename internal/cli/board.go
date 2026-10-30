@@ -235,7 +235,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Profiles[i].Host = host
 	}
 	for _, s := range j.Sessions {
-		l := core.Live{Session: core.Session{ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
+		l := core.Live{Session: core.Session{Parent: s.Parent, ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: qualify(s.RepoKey), RepoID: repoID(s.RepoID, s.RepoKey),
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
 		l.Result, l.ResultAt = s.Last, parseTS(s.LastAt)
