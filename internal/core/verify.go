@@ -37,6 +37,7 @@ type Landing struct {
 	Author, Viewer string
 	State          string
 	MergeCommit    string
+	Head           string
 	Passed         int
 	Failed         int
 	Pending        int
@@ -62,29 +63,18 @@ func (c *Core) FinishGoal(session, summary string, evidence []string) (Goal, Ver
 	if g.Ended() {
 		return g, Verification{}, fmt.Errorf("%s is %s already", g.ID, g.State)
 	}
-	if open, err := c.Store.OpenVerification(g.ID); err == nil {
-		open.Verdict, open.DecidedAt = VerdictSuperseded, c.now()
-		if err := c.Store.SaveVerification(open); err != nil {
-			return g, open, err
-		}
-	} else if !errors.Is(err, ErrNotFound) {
-		return g, open, err
-	}
 	var lines []string
 	for _, e := range evidence {
 		if e = strings.TrimSpace(e); e != "" {
 			lines = append(lines, e)
 		}
 	}
-	v, err := c.Store.AddVerification(Verification{Goal: g.ID, Summary: strings.TrimSpace(summary), Evidence: lines, CreatedAt: c.now()})
+	b, err := c.Board()
 	if err != nil {
-		return g, v, err
+		return g, Verification{}, err
 	}
-	g.State, g.Summary, g.Evidence, g.AckedAt = GoalVerifying, v.Summary, "", timeZero
-	if err := c.Store.SaveGoal(g); err != nil {
-		return g, v, err
-	}
-	return g, v, c.goalEvent(g, EventVerifying, fmt.Sprintf("attempt %d: %s", v.Attempt, v.Summary), true)
+	lines = c.withAgentPRs(b, o, o.Managers[g.ManagerID], lines)
+	return c.Store.openCompletion(Verification{Goal: g.ID, WorkRevision: g.WorkRevision, Summary: strings.TrimSpace(summary), Evidence: lines, CreatedAt: c.now()})
 }
 
 // verify moves every verifying goal on: facts first, then a verifier session, supervised until it records a verdict.
@@ -97,7 +87,11 @@ func (c *Core) verify(b Board, o Org) error {
 		}
 		v, err := c.Store.OpenVerification(g.ID)
 		if errors.Is(err, ErrNotFound) {
-			v, err = c.Store.AddVerification(Verification{Goal: g.ID, Summary: g.Summary, CreatedAt: c.now()})
+			_, v, err = c.Store.openCompletion(Verification{Goal: g.ID, Summary: g.Summary, WorkRevision: g.WorkRevision, CreatedAt: c.now(), recovery: true, expectedGoalVersion: g.Version})
+		}
+
+		if err == nil {
+			v, err = c.Store.adoptCompletion(v)
 		}
 		if err == nil {
 			err = c.verifyOne(b, o, m, g, v)
@@ -115,7 +109,6 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 		if !v.FactsAt.IsZero() && now.Sub(v.FactsAt) < factsEvery {
 			return nil
 		}
-		v.Evidence = c.withAgentPRs(b, o, m, v.Evidence)
 		dropped, err := c.Store.DroppedPRs()
 		if err != nil {
 			return err
@@ -177,18 +170,30 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 // launchVerifier starts a fresh verifier session on v, in a new worktree of the goal's repository.
 func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 	v.LaunchedAt, v.NudgedAt = c.now(), timeZero
+	v.Session = uuid.NewString()
+	v.LastError = ""
 	if c.Launches == nil {
 		v.Session, v.LastError = "", "ym's launcher is unavailable"
 		return c.Store.SaveVerification(v)
 	}
+	if err := c.Store.SaveVerification(v); err != nil {
+		return err
+	}
+	v.Version++
 	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
-		Slug: fmt.Sprintf("verify-%s-%d", g.ID, v.Attempt), Session: uuid.NewString(), Await: true})
+		Slug: fmt.Sprintf("verify-%s-%d", g.ID, v.Attempt), Session: v.Session, Await: true})
 	if err != nil {
 		v.Session, v.LastError = "", err.Error()
-		return c.Store.SaveVerification(v)
+	} else {
+		v.Session = st.Session
 	}
-	v.Session, v.LastError = st.Session, ""
-	return c.Store.SaveVerification(v)
+	if saveErr := c.Store.SaveVerification(v); saveErr != nil {
+		if err == nil {
+			_, _ = c.Launches.End(st.Session, "")
+		}
+		return saveErr
+	}
+	return nil
 }
 
 // RecordVerdict takes the verdict of goal's verifier, which only the verifier session itself may give.
@@ -198,6 +203,10 @@ func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (
 		return Verification{}, err
 	}
 	v, err := c.Store.OpenVerification(g.ID)
+	if err != nil {
+		return v, err
+	}
+	v, err = c.Store.adoptCompletion(v)
 	if err != nil {
 		return v, err
 	}
@@ -234,39 +243,45 @@ func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (
 // decide records v's verdict and moves the goal: a pass makes it done for the owner, a fail hands the findings back to the manager,
 // an error shows it stuck.
 func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, findings []string) error {
-	now := c.now()
-	v.Verdict, v.Findings, v.DecidedAt = verdict, findings, now
-	if err := c.Store.SaveVerification(v); err != nil {
-		return err
-	}
-	list := "\n  - " + strings.Join(findings, "\n  - ")
-	switch verdict {
-	case VerdictPass:
-		g.State, g.DoneAt, g.Evidence, g.AckedAt = GoalDone, now, "", timeZero
-	case VerdictFail:
-		g.State, g.Evidence, g.LastMovedAt = GoalActive, "", now
-	default:
-		g.State, g.Evidence, g.AckedAt = GoalStuck, verifyEvidence+strings.Join(findings, "; "), timeZero
-	}
-	if err := c.Store.SaveGoal(g); err != nil {
-		return err
-	}
-	switch verdict {
-	case VerdictPass:
-		if err := c.goalEvent(g, EventVerified, fmt.Sprintf("attempt %d passed:%s", v.Attempt, list), true); err != nil {
+	if verdict == VerdictPass {
+		currentEvidence := c.withAgentPRs(b, o, o.Managers[g.ManagerID], nil)
+		dropped, err := c.Store.DroppedPRs()
+		if err != nil {
 			return err
 		}
-		if err := c.goalEvent(g, EventDone, g.Summary, true); err != nil {
+		statuses, err := c.Store.PRStatuses()
+		if err != nil {
 			return err
 		}
-		if m, ok := o.Managers[g.ManagerID]; ok && m.Session != "" {
+		claimed := prsOf(v)
+		for _, url := range prsOf(Verification{Evidence: currentEvidence}) {
+			if !dropped[g.ID][url] && !statuses[url].Foreign() && !slices.Contains(claimed, url) {
+				return c.Store.withdrawCompletion(g, v, "owned pull requests changed; run ym goal done again", c.now())
+			}
+		}
+
+		prs := slices.DeleteFunc(prsOf(v), func(url string) bool { return dropped[g.ID][url] })
+		facts := c.checkFacts(prs, c.now())
+		for _, f := range facts {
+			if !f.OK || f.Pending {
+				return c.Store.withdrawCompletion(g, v, "current PR facts prevent completion: "+f.String()+"; run ym goal done again", c.now())
+			}
+		}
+		if !slices.Equal(facts, v.Facts) {
+			return c.Store.withdrawCompletion(g, v, "current PR facts changed since verification began; run ym goal done again", c.now())
+		}
+		v.Facts, v.FactsAt = facts, c.now()
+	}
+	current, err := c.Store.commitVerdict(g, v, verdict, findings, c.now())
+	if err != nil {
+		return err
+	}
+	if verdict == VerdictPass {
+		if m, ok := o.Managers[current.ManagerID]; ok && m.Session != "" {
 			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.ID, v.Attempt), false)
 		}
-		return nil
-	case VerdictFail:
-		return c.goalEvent(g, EventFailedVerify, fmt.Sprintf("attempt %d failed, so the goal is active again. Fix each finding, then run ym goal done again:%s", v.Attempt, list), false)
 	}
-	return c.goalEvent(g, EventStuck, fmt.Sprintf("verification attempt %d could not finish, so the goal shows stuck to the owner. Once the cause is fixed, run ym goal done again:%s", v.Attempt, list), false)
+	return nil
 }
 
 // endVerifiers ends the session of every decided verification whose verifier still runs.
@@ -336,7 +351,13 @@ func (c *Core) withAgentPRs(b Board, o Org, m Manager, evidence []string) []stri
 // prsOf lists the pull requests v's summary and evidence name, once each.
 func prsOf(v Verification) []string {
 	var out []string
-	for _, pr := range PRsIn(v.Summary + "\n" + strings.Join(v.Evidence, "\n")) {
+	lines := []string{v.Summary}
+	for _, e := range v.Evidence {
+		if !strings.Contains(e, "so context only:") {
+			lines = append(lines, e)
+		}
+	}
+	for _, pr := range PRsIn(strings.Join(lines, "\n")) {
 		if !slices.Contains(out, pr.URL) {
 			out = append(out, pr.URL)
 		}
@@ -363,7 +384,7 @@ func (c *Core) checkFacts(prs []string, now time.Time) []Fact {
 		}
 		switch l.State {
 		case "MERGED":
-			out = append(out, Fact{Check: "merged", Subject: url, OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)})
+			out = append(out, Fact{Check: "merged", Subject: url, Revision: l.Head + ":" + l.MergeCommit, OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)})
 			ci := Fact{Check: "ci on merge commit", Subject: url, OK: true}
 			switch {
 			case l.Failed > 0:

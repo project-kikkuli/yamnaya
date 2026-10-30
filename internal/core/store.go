@@ -208,9 +208,24 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema + workSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	if err := addColumns(db,
+		`ym_goals version INTEGER NOT NULL DEFAULT 0`,
+		`ym_goals work_revision INTEGER NOT NULL DEFAULT 0`,
+		`ym_goals active_verification INTEGER NOT NULL DEFAULT 0`,
+		`ym_goal_verifications version INTEGER NOT NULL DEFAULT 0`,
+		`ym_goal_verifications work_revision INTEGER NOT NULL DEFAULT 0`,
+		`ym_goal_verifications scope TEXT NOT NULL DEFAULT ''`,
+		`ym_goal_verifications pr_snapshot TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`UPDATE ym_goals SET active_verification=coalesce((SELECT max(num) FROM ym_goal_verifications v WHERE v.goal='goal'||ym_goals.num AND v.verdict=''),0) WHERE state='verifying' AND active_verification=0`); err != nil {
+		db.Close()
+		return nil, err
 	}
 	for _, column := range []string{"profile", "config_root"} {
 		var count int

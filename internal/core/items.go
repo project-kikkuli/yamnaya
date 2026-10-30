@@ -385,6 +385,7 @@ var transitions = map[string]map[string]bool{
 
 // Transition moves the item ref names to state to; text is the answer or the dismissal reason.
 func (s *Store) Transition(ref, to, text string) (Item, error) {
+	defer s.invalidate()
 	it, err := s.Item(ref)
 	if err != nil {
 		return it, err
@@ -412,6 +413,20 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return it, fmt.Errorf("item %s changed concurrently; retry", it.ID)
+	}
+	if to == ItemAnswered && it.Kind == KindGo && strings.TrimSpace(text) == GoAhead {
+		goal, err := historicalGoalIn(tx, it.Session)
+		if err != nil {
+			return it, err
+		}
+		if goal == "" {
+			goal = it.Dossier.Goal
+		}
+		if goal != "" {
+			if _, err = workIn(tx, goal, fmt.Sprintf("go:%d", it.Seq), "authorized "+it.ID, time.Now().UTC()); err != nil {
+				return it, err
+			}
+		}
 	}
 	if err := addEvent(tx, it.Key(), it.State, to, text); err != nil {
 		return it, err

@@ -378,6 +378,7 @@ func ParseWhen(s string, now time.Time) (time.Time, error) {
 
 // UpdateGoal records the calling manager's one-line news on its goal for its chiefs and the owner.
 func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
+	defer c.Store.invalidate()
 	o, err := c.LoadOrg()
 	if err != nil {
 		return GoalEvent{}, err
@@ -395,8 +396,8 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 	if err != nil {
 		return e, err
 	}
-	g.LastMovedAt = now
-	return e, c.Store.SaveGoal(g)
+	_, err = c.Store.db.Exec(`UPDATE ym_goals SET last_moved_at=?,version=version+1 WHERE num=?`, stamp(now), strings.TrimPrefix(g.ID, "goal"))
+	return e, err
 }
 
 // nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI, no wake

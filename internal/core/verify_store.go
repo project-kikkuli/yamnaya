@@ -35,9 +35,15 @@ CREATE INDEX IF NOT EXISTS ym_goal_verifications_goal ON ym_goal_verifications (
 // Verification is one attempt at proving a goal done: the manager's claim, the deterministic facts ym checked, and the verdict of
 // a fresh session, on the manager's harness, that is neither the manager nor one of its agents.
 type Verification struct {
-	ID      int64
-	Goal    string
-	Attempt int
+	recovery            bool
+	expectedGoalVersion int64
+	Version             int64
+	WorkRevision        int64
+	Scope               string
+	PRSnapshot          string
+	ID                  int64
+	Goal                string
+	Attempt             int
 	// Session is the verifier's current session; a relaunch replaces it with a fresh one.
 	Session string
 	Summary string
@@ -61,11 +67,12 @@ type Verification struct {
 
 // Fact is one deterministic check on a pull request the goal claims: merged, CI green on the merge commit, no open threads.
 type Fact struct {
-	Check   string `json:"check"`
-	Subject string `json:"subject"`
-	OK      bool   `json:"ok"`
-	Pending bool   `json:"pending,omitempty"`
-	Detail  string `json:"detail"`
+	Revision string `json:"revision,omitempty"`
+	Check    string `json:"check"`
+	Subject  string `json:"subject"`
+	OK       bool   `json:"ok"`
+	Pending  bool   `json:"pending,omitempty"`
+	Detail   string `json:"detail"`
 }
 
 func (f Fact) String() string {
@@ -80,14 +87,14 @@ func (f Fact) String() string {
 }
 
 const verificationCols = `num, goal, attempt, verifier_session, summary, evidence, fact_checks, facts_at, verdict, findings, launched_at, failures,
-	next_attempt, nudged_at, last_error, ended, created_at, decided_at`
+	next_attempt, nudged_at, last_error, ended, created_at, decided_at, version, work_revision, scope, pr_snapshot`
 
 func scanVerification(row interface{ Scan(...any) error }) (Verification, error) {
 	var v Verification
 	var evidence, facts, findings string
 	var factsAt, launched, next, nudged, created, decided sql.NullString
 	err := row.Scan(&v.ID, &v.Goal, &v.Attempt, &v.Session, &v.Summary, &evidence, &facts, &factsAt, &v.Verdict, &findings, &launched,
-		&v.Failures, &next, &nudged, &v.LastError, &v.Ended, &created, &decided)
+		&v.Failures, &next, &nudged, &v.LastError, &v.Ended, &created, &decided, &v.Version, &v.WorkRevision, &v.Scope, &v.PRSnapshot)
 	if err != nil {
 		return v, err
 	}
@@ -110,18 +117,29 @@ func (s *Store) AddVerification(v Verification) (Verification, error) {
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now().UTC()
 	}
-	err := s.db.QueryRow(`INSERT INTO ym_goal_verifications (goal, attempt, summary, evidence, created_at)
-		VALUES (?, (SELECT coalesce(max(attempt), 0) + 1 FROM ym_goal_verifications WHERE goal = ?), ?, ?, ?) RETURNING num, attempt`,
-		v.Goal, v.Goal, v.Summary, jsonOf(v.Evidence), stamp(v.CreatedAt)).Scan(&v.ID, &v.Attempt)
+	g, err := s.Goal(v.Goal)
+	if err != nil {
+		return v, err
+	}
+	v.WorkRevision = g.WorkRevision
+	_, v, err = s.openCompletion(v)
 	return v, err
 }
 
 func (s *Store) SaveVerification(v Verification) error {
-	_, err := s.db.Exec(`UPDATE ym_goal_verifications SET verifier_session=?, summary=?, evidence=?, fact_checks=?, facts_at=?, verdict=?, findings=?,
-		launched_at=?, failures=?, next_attempt=?, nudged_at=?, last_error=?, ended=?, decided_at=? WHERE num=?`,
-		v.Session, v.Summary, jsonOf(v.Evidence), jsonOf(v.Facts), stamp(v.FactsAt), v.Verdict, jsonOf(v.Findings),
-		stamp(v.LaunchedAt), v.Failures, stamp(v.NextAttempt), stamp(v.NudgedAt), v.LastError, v.Ended, stamp(v.DecidedAt), v.ID)
-	return err
+	defer s.invalidate()
+	if v.Verdict != "" {
+		res, err := s.db.Exec(`UPDATE ym_goal_verifications SET ended=?,version=version+1 WHERE num=? AND version=? AND verdict=?`, v.Ended, v.ID, v.Version, v.Verdict)
+		return changed(res, err)
+	}
+
+	res, err := s.db.Exec(`UPDATE ym_goal_verifications SET version=version+1, verifier_session=?, fact_checks=?, facts_at=?,
+        launched_at=?, failures=?, next_attempt=?, nudged_at=?, last_error=?, ended=?
+        WHERE num=? AND version=? AND verdict=? AND (verdict!='' OR EXISTS
+        (SELECT 1 FROM ym_goals g WHERE 'goal'||g.num=goal AND g.state='verifying' AND g.active_verification=ym_goal_verifications.num AND g.work_revision=ym_goal_verifications.work_revision))`,
+		v.Session, jsonOf(v.Facts), stamp(v.FactsAt), stamp(v.LaunchedAt), v.Failures, stamp(v.NextAttempt), stamp(v.NudgedAt), v.LastError, v.Ended,
+		v.ID, v.Version, v.Verdict)
+	return changed(res, err)
 }
 
 // Verifications lists goal's attempts, oldest first; an empty goal lists every goal's.

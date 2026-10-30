@@ -59,7 +59,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
-		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))
+		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))
 	return cmd
 }
 
@@ -361,6 +361,13 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 						if err := printVerifications(cmd.OutOrStdout(), e.core, r.Goal); err != nil {
 							return err
 						}
+						assignments, err := e.core.Store.Assignments(r.Goal)
+						if err != nil {
+							return err
+						}
+						for _, a := range assignments {
+							fmt.Fprintf(cmd.OutOrStdout(), "  assignment %s generation %d: %s, worker %s, terminal report #%d\n", a.ID, a.Generation, a.State, a.Session, a.Report)
+						}
 					}
 					if r.Revision > 0 {
 						fmt.Fprintf(cmd.OutOrStdout(), "  plan revision %d, %s; ym goal context %s prints it\n", r.Revision, map[bool]string{true: "adopted", false: "not adopted"}[r.Adopted], r.ID)
@@ -394,7 +401,7 @@ func printVerifications(w io.Writer, c *core.Core, goal string) error {
 				verdict = "verifier " + core.Short(v.Session) + " checking"
 			}
 		}
-		fmt.Fprintf(w, "  verification %d: %s\n", v.Attempt, verdict)
+		fmt.Fprintf(w, "  verification %d: %s (work revision %d)\n", v.Attempt, verdict, v.WorkRevision)
 		for _, f := range v.Facts {
 			fmt.Fprintln(w, "    fact "+f.String())
 		}

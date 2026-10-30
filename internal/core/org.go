@@ -28,18 +28,21 @@ const (
 
 // Goal is one line the owner typed and the manager that owns it until it is done.
 type Goal struct {
-	ID          string
-	Ask         string
-	Repo        string
-	ManagerID   string
-	State       string
-	Evidence    string
-	Summary     string
-	BriefPath   string
-	ArtifactURL string
-	LastMovedAt time.Time
-	CreatedAt   time.Time
-	DoneAt      time.Time
+	Version            int64
+	WorkRevision       int64
+	ActiveVerification int64
+	ID                 string
+	Ask                string
+	Repo               string
+	ManagerID          string
+	State              string
+	Evidence           string
+	Summary            string
+	BriefPath          string
+	ArtifactURL        string
+	LastMovedAt        time.Time
+	CreatedAt          time.Time
+	DoneAt             time.Time
 	// AckedAt is when the owner cleared the goal: a stuck one from the queue, a done one from the goal tree.
 	AckedAt time.Time
 	// Host is the host the goal runs on when that is not this one.
@@ -189,22 +192,39 @@ func (s *Store) AddGoal(g Goal) (Goal, error) {
 }
 
 func (s *Store) SaveGoal(g Goal) error {
+	defer s.invalidate()
 	num, err := numOf(g.ID, "goal")
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`UPDATE ym_goals SET ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=?`,
-		g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE ym_goals SET version=version+1, ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=? AND version=?`,
+		g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num, g.Version)
+	if err = changed(res, err); err != nil {
+		return err
+	}
+	if g.State == GoalKilled || g.State == GoalDropped {
+		if _, err = tx.Exec(`UPDATE ym_goal_verifications SET verdict='superseded',decided_at=?,version=version+1 WHERE goal=? AND verdict=''`, stamp(g.DoneAt), g.ID); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE ym_goals SET active_verification=0 WHERE num=?`, num); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-const goalCols = `num, ask, repo, manager_id, state, evidence, summary, brief_path, artifact_url, last_moved_at, created_at, done_at, acked_at`
+const goalCols = `num, ask, repo, manager_id, state, evidence, summary, brief_path, artifact_url, last_moved_at, created_at, done_at, acked_at, version, work_revision, active_verification`
 
 func scanGoal(row interface{ Scan(...any) error }) (Goal, error) {
 	var g Goal
 	var num int64
 	var moved, created, done, acked sql.NullString
-	err := row.Scan(&num, &g.Ask, &g.Repo, &g.ManagerID, &g.State, &g.Evidence, &g.Summary, &g.BriefPath, &g.ArtifactURL, &moved, &created, &done, &acked)
+	err := row.Scan(&num, &g.Ask, &g.Repo, &g.ManagerID, &g.State, &g.Evidence, &g.Summary, &g.BriefPath, &g.ArtifactURL, &moved, &created, &done, &acked, &g.Version, &g.WorkRevision, &g.ActiveVerification)
 	g.ID = goalID(num)
 	g.LastMovedAt, g.CreatedAt, g.DoneAt, g.AckedAt = parseTime(moved), parseTime(created), parseTime(done), parseTime(acked)
 	return g, err
