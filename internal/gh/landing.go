@@ -11,7 +11,7 @@ import (
 )
 
 const landingQuery = `query($url: URI!) { viewer { login } resource(url: $url) { ... on PullRequest {
-  state author { login }
+  state headRefOid author { login }
   mergeCommit { oid statusCheckRollup { contexts {
     checkRunCountsByState { state count } statusContextCountsByState { state count } } }
     parents(first: 1) { nodes { statusCheckRollup { state } } } }
@@ -44,6 +44,7 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 			} `json:"viewer"`
 			Resource *struct {
 				State  string `json:"state"`
+				Head   string `json:"headRefOid"`
 				Author struct {
 					Login string `json:"login"`
 				} `json:"author"`
@@ -79,7 +80,7 @@ func (s *Source) Landing(url string) (core.Landing, error) {
 	if pr == nil {
 		return core.Landing{State: core.PRGone}, nil
 	}
-	l := core.Landing{State: pr.State, Author: pr.Author.Login, Viewer: v.Data.Viewer.Login}
+	l := core.Landing{State: pr.State, Head: pr.Head, Author: pr.Author.Login, Viewer: v.Data.Viewer.Login}
 	for _, t := range pr.ReviewThreads.Nodes {
 		if !t.IsResolved {
 			l.Unresolved++

@@ -10,9 +10,10 @@ import (
 
 // Goal event kinds, recorded by ym serve without a model, by a manager's ym goal update, and by verification.
 const (
-	EventFinished = "agent-finished"
-	EventAsked    = "asked"
-	EventPROpened = "pr-opened"
+	EventFinished    = "agent-finished"
+	EventWorkResumed = "work-resumed"
+	EventAsked       = "asked"
+	EventPROpened    = "pr-opened"
 	// EventPRTouched is a goal's agent working on someone else's pull request: context in the feed, never the goal's to land.
 	EventPRTouched = "pr-touched"
 	// EventPRDropped unties a pull request from the goal for good.
@@ -47,7 +48,7 @@ const (
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
 var ownerKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventMerged: true, EventClosed: true, EventStuck: true, EventDone: true,
-	EventFailedVerify: true, EventUpdate: true, EventResumeFailed: true,
+	EventFailedVerify: true, EventUpdate: true, EventResumeFailed: true, EventWorkResumed: true,
 }
 
 // chiefKinds are the state changes a chief hears from every goal below it.
@@ -55,7 +56,7 @@ var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventResumed: true, EventResumeFailed: true,
-	EventSteered: true, EventAdopted: true,
+	EventSteered: true, EventAdopted: true, EventWorkResumed: true,
 }
 
 // notifyKinds are the only events that also raise a desktop notification.

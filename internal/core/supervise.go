@@ -167,6 +167,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		if err := c.Store.SaveGoal(g); err != nil {
 			return err
 		}
+		g.Version++
 	}
 	if !alive || hung || g.State == GoalVerifying {
 		return nil

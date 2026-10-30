@@ -156,7 +156,7 @@ func linkCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if err != nil {
 				return err
 			}
-			if err := e.core.Store.Link(child.Session, from.Session); err != nil {
+			if err := e.core.RegisterSpawn(child.Session, from.Session); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s spawned by %s\n", child.Session, from.Session)
