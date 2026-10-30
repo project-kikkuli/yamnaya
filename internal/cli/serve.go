@@ -109,6 +109,8 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
 		}
 		last := time.Now()
+		// stale is the last warning logged that a newer ym is first on PATH, so each is logged once.
+		stale := ""
 		site := &briefSite{core: e.core}
 		if briefs != "" && !once {
 			go func() {
@@ -154,6 +156,11 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), err)
+			}
+			if warning := tui.StaleWarning(self, started); warning != stale {
+				if stale = warning; stale != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "ym serve:", stale)
+				}
 			}
 			timer := time.NewTimer(interval)
 			select {

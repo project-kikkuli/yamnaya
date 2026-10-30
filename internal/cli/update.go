@@ -82,36 +82,166 @@ func updateSource(ref string) (string, string, error) {
 	return src, sha, nil
 }
 
-func updateCmd(run goRunner) *cobra.Command {
+// restarter runs the ym at bin to bring the board's skill and statusline up to date and ym serve back up on it.
+type restarter func(out io.Writer, bin string) error
+
+// restartInto does on this host what ym remote install does on its host once the new ym is in place: ym install --statusline,
+// then ym service keep, or ym service ensure where keep fails. A running ym serve and board notice their executable changed and
+// exec the new one by themselves.
+func restartInto(out io.Writer, bin string) error {
+	ym := func(args ...string) error {
+		c := exec.Command(bin, args...)
+		c.Stdout, c.Stderr = out, out
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("%s %s: %w", bin, strings.Join(args, " "), err)
+		}
+		return nil
+	}
+	if err := ym("install", "--statusline"); err != nil {
+		return err
+	}
+	if err := ym("service", "keep"); err != nil {
+		fmt.Fprintln(out, err)
+		return ym("service", "ensure")
+	}
+	return nil
+}
+
+func updateCmd(run goRunner, self func() (string, error), restart restarter) *cobra.Command {
 	return &cobra.Command{
 		Use:   "update [branch-or-commit]",
-		Short: "Build and install ym from its repository's default branch, or the given branch or commit; a running board restarts into it",
-		Args:  cobra.MaximumNArgs(1),
+		Short: "Build ym from its repository's default branch, or the given branch or commit, and replace the running ym with it; a running board and ym serve restart into it",
+		Long: `Build ym from its repository's default branch, or the given branch or commit, and replace the ym that runs this command with it.
+
+The new ym replaces the running executable, symlinks resolved, in place: it is written to <path>.new beside it and renamed over
+it, and the ym it replaces stays as <path>.bak, one update deep; mv <path>.bak <path> goes back. When go install would put ym
+elsewhere (GOBIN, or GOPATH/bin), that copy is replaced too, without a backup, so no older ym is left behind there. ym update
+fails, changing nothing, when it cannot write the running executable's directory.
+
+Then the new ym runs ym install --statusline and ym service keep (ym service ensure where keep fails), as ym remote install
+does on a host; a running board and ym serve notice their executable changed and restart into the new one.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			ref := ""
 			if len(args) == 1 {
 				ref = args[0]
 			}
+			exe, err := self()
+			if err != nil {
+				return fmt.Errorf("ym update cannot find the running ym to replace: %w", err)
+			}
+			target, err := filepath.EvalSymlinks(exe)
+			if err != nil {
+				return fmt.Errorf("ym update cannot resolve the running ym %s: %w", exe, err)
+			}
+			if err := writable(target); err != nil {
+				return err
+			}
 			src, sha, err := updateSource(ref)
 			if err != nil {
 				return err
 			}
-			if err := run(out, "-C", src, "install", "./cmd/ym"); err != nil {
-				return fmt.Errorf("go install ./cmd/ym at %s: %w", sha, err)
-			}
-			var env bytes.Buffer
-			if err := run(&env, "env", "GOBIN", "GOPATH"); err != nil {
+			build, err := os.MkdirTemp("", "ym-update-")
+			if err != nil {
 				return err
 			}
-			path := installedPath(env.String())
-			fmt.Fprintf(out, "installed ym %s at %s\n", sha[:min(12, len(sha))], path)
-			if self, err := os.Executable(); err == nil && !samePath(self, path) {
-				fmt.Fprintf(out, "this ym runs from %s, which the update did not change\n", self)
+			defer os.RemoveAll(build)
+			bin := filepath.Join(build, "ym")
+			if err := run(out, "-C", src, "build", "-o", bin, "./cmd/ym"); err != nil {
+				return fmt.Errorf("go build ./cmd/ym at %s: %w", sha, err)
+			}
+			short := sha[:min(12, len(sha))]
+			if err := replaceBinary(bin, target, true); err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "installed ym %s at %s (the ym it replaced is %s.bak)\n", short, target, target)
+			var env bytes.Buffer
+			if err := run(&env, "env", "GOBIN", "GOPATH"); err == nil {
+				if gobin := installedPath(env.String()); !samePath(gobin, target) {
+					if err := replaceBinary(bin, gobin, false); err != nil {
+						fmt.Fprintf(out, "warning: %s still holds an older ym: %v\n", gobin, err)
+					} else {
+						fmt.Fprintf(out, "installed ym %s at %s\n", short, gobin)
+					}
+				}
+			}
+			if err := restart(out, target); err != nil {
+				return fmt.Errorf("ym %s is installed at %s, but restarting into it failed: %w", short, target, err)
 			}
 			return nil
 		},
 	}
+}
+
+// writable fails, naming the path, unless ym update can put a new file beside target and rename it over target.
+func writable(target string) error {
+	probe := target + ".new"
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("ym update cannot replace the running ym %s: its directory %s is not writable: %w", target, filepath.Dir(target), err)
+	}
+	f.Close()
+	return os.Remove(probe)
+}
+
+// replaceBinary copies bin to path.new beside path and renames it over path, so path is always a whole ym; with backup, the ym
+// at path is first linked, or else copied, to path.bak. A missing path is simply created.
+func replaceBinary(bin, path string, backup bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	next := path + ".new"
+	if err := copyFile(bin, next); err != nil {
+		os.Remove(next)
+		return fmt.Errorf("cannot write %s: %w", next, err)
+	}
+	if backup {
+		bak := path + ".bak"
+		if err := os.Remove(bak); err != nil && !os.IsNotExist(err) {
+			os.Remove(next)
+			return fmt.Errorf("cannot replace the backup %s: %w", bak, err)
+		}
+		if _, err := os.Stat(path); err == nil {
+			if err := os.Link(path, bak); err != nil {
+				if err := copyFile(path, bak); err != nil {
+					os.Remove(next)
+					return fmt.Errorf("cannot back up %s to %s: %w", path, bak, err)
+				}
+			}
+		}
+	}
+	if err := os.Rename(next, path); err != nil {
+		os.Remove(next)
+		return fmt.Errorf("cannot replace %s: %w", path, err)
+	}
+	return nil
+}
+
+// copyFile writes src's bytes to dst, mode 755, synced to disk.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, in); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o755); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // installedPath is where go install puts ym, given go env GOBIN GOPATH.

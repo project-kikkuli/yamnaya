@@ -218,6 +218,11 @@ func New(c *core.Core) Model {
 		os.Unsetenv(RestartedEnv)
 		m.message = "restarted into new ym " + revision()
 	}
+	if m.self != nil {
+		if stale := StaleWarning(m.self.path, m.self.start); stale != "" {
+			m.message = pal.red.Render(stale)
+		}
+	}
 	if c.Warning != "" {
 		m.message = pal.red.Render(c.Warning)
 	}

@@ -192,7 +192,7 @@ func NewRoot() *cobra.Command {
 		sendHoldCmd(with),
 		resumeWatchCmd(),
 		installCmd(),
-		updateCmd(runGo),
+		updateCmd(runGo, os.Executable, restartInto),
 		usageCmd(),
 		healthCmd(),
 		limitsCmd(),
