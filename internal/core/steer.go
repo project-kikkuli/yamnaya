@@ -65,11 +65,29 @@ func (s Steer) By() string {
 }
 
 func (s *Store) addSteer(manager, text, author string, at time.Time) (Steer, error) {
+	defer s.invalidate()
 	st := Steer{Manager: manager, Text: text, Author: author, CreatedAt: at}
-	err := s.db.QueryRow(`INSERT INTO ym_steers (manager, revision, text, author, created_at)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return st, err
+	}
+	defer tx.Rollback()
+	err = tx.QueryRow(`INSERT INTO ym_steers (manager, revision, text, author, created_at)
 		VALUES (?, (SELECT coalesce(max(revision), 0) + 1 FROM ym_steers WHERE manager = ?), ?, ?, ?) RETURNING revision`,
 		manager, manager, text, author, stamp(at)).Scan(&st.Revision)
-	return st, err
+	if err != nil {
+		return st, err
+	}
+	var goal string
+	if err = tx.QueryRow(`SELECT goal_id FROM ym_managers WHERE 'mgr'||num=?`, manager).Scan(&goal); err != nil {
+		return st, err
+	}
+	if goal != "" {
+		if _, err = workIn(tx, goal, fmt.Sprintf("steer:%s:%d", manager, st.Revision), "scope steered", at); err != nil {
+			return st, err
+		}
+	}
+	return st, tx.Commit()
 }
 
 func (s *Store) saveSteer(st Steer) error {
@@ -190,7 +208,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 	if err != nil {
 		return Steer{}, err
 	}
-	if !o.Active(m) {
+	if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
 		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID))
 	}
 	if author != Owner {
@@ -218,11 +236,6 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer
 	if err != nil {
 		return st, err
 	}
-	if g, ok := o.Goals[m.GoalID]; ok && g.State == GoalVerifying {
-		if err := c.reopen(g); err != nil {
-			return st, err
-		}
-	}
 	text = steerText(o, m, st)
 	if g, ok := o.Goals[m.GoalID]; ok {
 		_, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventSteered, Payload: text, Key: fmt.Sprintf("%s:steer:%d", g.ID, st.Revision), Created: st.CreatedAt})
@@ -234,20 +247,6 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer
 		}
 	}
 	return st, nil
-}
-
-// reopen withdraws a verifying goal's claim to be done, made against a plan that has since changed.
-func (c *Core) reopen(g Goal) error {
-	if v, err := c.Store.OpenVerification(g.ID); err == nil {
-		v.Verdict, v.DecidedAt = VerdictSuperseded, c.now()
-		if err := c.Store.SaveVerification(v); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	g.State, g.LastMovedAt = GoalActive, c.now()
-	return c.Store.SaveGoal(g)
 }
 
 // raisedTo is who hears that st went unadopted: the chief that steered, or the first working one above it, else the owner.
@@ -288,7 +287,7 @@ func subject(o Org, m Manager) string {
 
 func steerText(o Org, m Manager, st Steer) string {
 	reopened := ""
-	if g, ok := o.Goals[m.GoalID]; ok && g.State == GoalVerifying {
+	if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalVerifying || g.State == GoalDone) {
 		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."
 	}
 	return fmt.Sprintf("%s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",

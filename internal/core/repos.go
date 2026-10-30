@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
@@ -235,6 +237,26 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 
 // StartNew launches n and remembers its repository so pickers offer it first.
 func (c *Core) StartNew(n NewLaunch) (string, error) {
+	planned := n.Session
+	if planned == "" {
+		planned = uuid.NewString()
+	}
+	source := n.Source
+	if source == "" {
+		source = "launch:" + planned
+	}
+	assignment, created, err := c.Store.assign(c.Resolve(n.Parent), planned, source, n.Prompt, c.now())
+	if err != nil {
+		return "", err
+	}
+	suffix := ""
+	if assignment.ID != "" {
+		n.Session, n.Source = planned, source
+		suffix = fmt.Sprintf("\nassignment: %s (generation %d); terminal report: ym goal report %s --summary \"<result>\"", assignment.ID, assignment.Generation, assignment.ID)
+	}
+	if assignment.ID != "" && !created {
+		return "assignment already registered; inspect ym goal assignments" + suffix, nil
+	}
 	if host, ok := c.RepoHost(n.Repo); ok {
 		args := []string{"new", "--repo", MainCheckout(n.Repo)}
 		if n.Harness == "codex" {
@@ -247,16 +269,32 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 			args = append(args, "--profile", n.Profile)
 		}
 		out, err := c.RunOrRelay(host, append(args, "--", n.Prompt)...)
-		return "on " + host + ": " + strings.TrimSpace(out), err
+		return "on " + host + ": " + strings.TrimSpace(out) + suffix, err
 	}
 	if c.Launches == nil {
-		return "", errors.New("ym's launcher is unavailable")
+		return suffix, errors.New("ym's launcher is unavailable; registered assignment remains outstanding")
+	}
+	if assignment.ID != "" {
+		n.Prompt += fmt.Sprintf("\n\nThis work is assignment %s generation %d. Before ending, submit a terminal report with ym goal report %s --summary \"<result with evidence or failure>\". Idle or exit does not complete the assignment; its manager must accept the report.", assignment.ID, assignment.Generation, assignment.ID)
 	}
 	st, err := c.Launches.Start(n)
 	if err != nil {
+		if assignment.ID != "" {
+			return st.Message + suffix, fmt.Errorf("launch failed; assignment %s remains outstanding: %w", assignment.ID, err)
+		}
 		return st.Message, err
 	}
-	return st.Message, c.Store.PickRepo(MainCheckout(n.Repo), time.Now())
+	if assignment.ID != "" && st.Session != "" {
+		if err := c.BindAssignment(n.Parent, assignment.ID, st.Session); err != nil {
+			return st.Message + suffix, err
+		}
+	}
+	if st.Session != "" && n.Parent != "" {
+		if err := c.Store.Link(st.Session, n.Parent); err != nil {
+			return st.Message + suffix, err
+		}
+	}
+	return st.Message + suffix, c.Store.PickRepo(MainCheckout(n.Repo), time.Now())
 }
 
 // PickRepo records that repo was just picked for a new session.

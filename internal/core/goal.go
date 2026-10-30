@@ -52,6 +52,7 @@ func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string
 	if err := c.Store.SaveGoal(g); err != nil {
 		return g, m, err
 	}
+	g.Version++
 	if err := c.Store.PickRepo(repo, c.now()); err != nil {
 		return g, m, err
 	}
@@ -332,6 +333,7 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 
 // SetArtifact registers the URL of the richer brief the calling manager publishes.
 func (c *Core) SetArtifact(session, url string) error {
+	defer c.Store.invalidate()
 	o, err := c.LoadOrg()
 	if err != nil {
 		return err
@@ -341,8 +343,8 @@ func (c *Core) SetArtifact(session, url string) error {
 		return fmt.Errorf("session %s is not a manager or chief", Short(session))
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
-		g.ArtifactURL = url
-		return c.Store.SaveGoal(g)
+		_, err := c.Store.db.Exec(`UPDATE ym_goals SET artifact_url=?,version=version+1 WHERE num=?`, url, strings.TrimPrefix(g.ID, "goal"))
+		return err
 	}
 	m.ArtifactURL = url
 	return c.Store.SaveManager(m)

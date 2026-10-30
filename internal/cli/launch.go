@@ -454,7 +454,7 @@ func (l launcher) await(rec launch.Record) (launch.Record, error) {
 
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var useCodex bool
-	var repo, slug, selected string
+	var repo, slug, selected, source string
 	cmd := &cobra.Command{
 		Use:   "new [--codex] [--repo NAME|PATH] [--slug S] <prompt>",
 		Short: "Start claude (or codex) on a prompt in a new worktree, in ym's own tmux server",
@@ -466,7 +466,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 			if err := ensureWorkService(); err != nil {
 				return err
 			}
-			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug, Profile: selected}
+			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug, Profile: selected, Source: source}
 			if useCodex {
 				n.Harness = codex.Name
 			}
@@ -495,6 +495,7 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile id on this host")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "start codex instead of claude")
 	cmd.Flags().StringVar(&repo, "repo", "", "repository to branch from, by path or by any part of its name (default: the current directory's)")
+	cmd.Flags().StringVar(&source, "source", "", "stable work identity for idempotent launch replay")
 	cmd.Flags().StringVar(&slug, "slug", "", "worktree and branch name (default: from the prompt)")
 	return cmd
 }
