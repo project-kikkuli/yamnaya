@@ -48,7 +48,13 @@ func TestStartRunsACommandLongerThanTmuxCarries(t *testing.T) {
 			dir := t.TempDir()
 			out := filepath.Join(dir, "out")
 			arg := strings.Repeat("it's \"long\" $HOME `x` ", size/20+1)[:size]
-			if _, err := h.Start(conf, "repo-wt-long", dir, []string{"sh", "-c", `printf %s "$1" > "$2"; sleep 30`, "sh", arg, out}); err != nil {
+			argv := []string{"sh", "-c", `out=$1; shift; printf %s "$@" > "$out"; sleep 30`, "sh", out}
+			for rest := arg; rest != ""; {
+				n := min(len(rest), 64<<10)
+				argv = append(argv, rest[:n])
+				rest = rest[n:]
+			}
+			if _, err := h.Start(conf, "repo-wt-long", dir, argv); err != nil {
 				t.Fatal(err)
 			}
 			deadline := time.Now().Add(10 * time.Second)
@@ -57,7 +63,7 @@ func TestStartRunsACommandLongerThanTmuxCarries(t *testing.T) {
 					break
 				}
 				if time.Now().After(deadline) {
-					t.Fatalf("the started command never received its %d-byte argument intact", size)
+					t.Fatalf("the started command never received its %d-byte payload intact", size)
 				}
 				time.Sleep(50 * time.Millisecond)
 			}
