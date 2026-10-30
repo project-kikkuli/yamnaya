@@ -316,12 +316,11 @@ func (m Model) footer() []string {
 			}
 		}
 		if m.launching() {
-			label += pal.dim.Render(" [tab: " + core.Other(m.newL.Harness) + "] [shift-tab profile: " + func() string {
-				if m.newL.Profile == "" {
-					return "auto"
-				}
-				return m.newL.Profile
-			}() + "]")
+			account := m.newL.Profile
+			if account == "" {
+				account = "auto"
+			}
+			label += pal.dim.Render(" [tab: "+core.Other(m.newL.Harness)+"]") + " account: " + pal.bold.Render(account) + pal.dim.Render(" ⇧⇥")
 		}
 		if m.launchOn != "" && m.launching() {
 			label += " on " + m.hostTag(m.launchOn)
@@ -1560,7 +1559,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    N            new goal in the selected row's repository
    +            new session in the selected row's repository, run by you, no manager: type the prompt;
                 the worktree is named from it
-   n N + c n    tab switches claude and codex, shift-tab the login profile, and each starts
+   n N + c n    tab switches claude and codex, shift-tab steps through every account, and each starts
                 on the harness and host the last one used; ctrl+t picks this one or a remembered host
    space        select a goal or chief row; r, s and c then act on every selected one
    s            send: like r on a goal, chief or session; tab widens a chief's message to its whole subtree

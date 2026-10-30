@@ -1507,8 +1507,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "tab":
 		if m.launching() {
-			m.newL.Harness = core.Other(m.newL.Harness)
-			m.newL.Profile = ""
+			m.flipLaunchHarness()
 		}
 		if m.inKind == inSteer && m.steerHasChief() {
 			m.subtree = !m.subtree
@@ -1851,27 +1850,37 @@ func revision() string {
 	return rev
 }
 
+// launchProfiles are the accounts on the launch target, both harnesses, in board order.
+func (m Model) launchProfiles() []core.LoginProfile {
+	if m.launchOn == "" {
+		return m.board.Profiles
+	}
+	for _, r := range m.board.Remotes {
+		if r.Host == m.launchOn {
+			return r.Profiles
+		}
+	}
+	return nil
+}
+
+// nextLaunchProfile steps from auto through every account on the target, switching to the harness the account runs.
 func (m *Model) nextLaunchProfile() {
-	ps := m.board.Profiles
-	if m.launchOn != "" {
-		ps = nil
-		for _, r := range m.board.Remotes {
-			if r.Host == m.launchOn {
-				ps = r.Profiles
-			}
-		}
+	ps := m.launchProfiles()
+	at := -1
+	if m.newL.Profile != "" {
+		at = slices.IndexFunc(ps, func(p core.LoginProfile) bool { return p.Harness == m.newL.Harness && p.ID == m.newL.Profile })
 	}
-	ids := []string{""}
-	for _, p := range ps {
-		if p.Harness == m.newL.Harness {
-			ids = append(ids, p.ID)
-		}
+	if at+1 >= len(ps) {
+		m.newL.Profile = ""
+		return
 	}
-	for i, id := range ids {
-		if id == m.newL.Profile {
-			m.newL.Profile = ids[(i+1)%len(ids)]
-			return
-		}
+	m.newL.Harness, m.newL.Profile = ps[at+1].Harness, ps[at+1].ID
+}
+
+// flipLaunchHarness switches harness and keeps the chosen account when the other harness has one by that name.
+func (m *Model) flipLaunchHarness() {
+	m.newL.Harness = core.Other(m.newL.Harness)
+	if !slices.ContainsFunc(m.launchProfiles(), func(p core.LoginProfile) bool { return p.Harness == m.newL.Harness && p.ID == m.newL.Profile }) {
+		m.newL.Profile = ""
 	}
-	m.newL.Profile = ""
 }
