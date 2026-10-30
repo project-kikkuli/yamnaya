@@ -151,6 +151,44 @@ func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
 	}
 }
 
+func TestRepoRootsResolveHostCheckouts(t *testing.T) {
+	for _, c := range []struct {
+		name, config, ref, want string
+		tree                    []string
+	}{
+		{"dev fallback", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/"}},
+		{"src fallback without dev", "", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
+		{"both roots find dev", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
+		{"both roots find src", "", "crassus", "src/acme/crassus", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
+		{"empty config falls back", "\n# local roots\n", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
+		{"explicit roots win", "# local roots\n~/checkouts\n", "crassus", "checkouts/acme/crassus", []string{"dev/acme/crassus/", "src/acme/crassus/", "checkouts/acme/crassus/"}},
+		{"explicit roots exclude dev", "~/checkouts\n", "atlas", "", []string{"dev/acme/atlas/", "checkouts/acme/crassus/"}},
+		{"explicit roots exclude src", "~/checkouts\n", "crassus", "", []string{"src/acme/crassus/", "checkouts/acme/atlas/"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := repoTree(t, c.tree...)
+			t.Setenv("HOME", home)
+			if c.config != "" {
+				dir := filepath.Join(home, ".config", "wt-reap")
+				must(t, os.MkdirAll(dir, 0o755))
+				must(t, os.WriteFile(filepath.Join(dir, "roots"), []byte(c.config), 0o644))
+			}
+			k := repoCore(t, home)
+			k.Roots = RepoRoots
+			got, err := k.ResolveRepo(c.ref)
+			if c.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "no repository matches") {
+					t.Fatalf("ResolveRepo(%q) = %q, %v; want no repository matches", c.ref, got, err)
+				}
+				return
+			}
+			if want := filepath.Join(home, c.want); err != nil || got != want {
+				t.Fatalf("ResolveRepo(%q) = %q, %v; want %q", c.ref, got, err, want)
+			}
+		})
+	}
+}
+
 type startOnly struct {
 	Launches
 	started []NewLaunch
