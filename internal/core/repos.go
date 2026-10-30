@@ -237,18 +237,21 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 
 // StartNew launches n and remembers its repository so pickers offer it first.
 func (c *Core) StartNew(n NewLaunch) (string, error) {
-	if n.Session == "" {
-		n.Session = uuid.NewString()
+	planned := n.Session
+	if planned == "" {
+		planned = uuid.NewString()
 	}
-	if n.Source == "" {
-		n.Source = "launch:" + n.Session
+	source := n.Source
+	if source == "" {
+		source = "launch:" + planned
 	}
-	assignment, created, err := c.Store.assign(c.Resolve(n.Parent), n.Session, n.Source, n.Prompt, c.now())
+	assignment, created, err := c.Store.assign(c.Resolve(n.Parent), planned, source, n.Prompt, c.now())
 	if err != nil {
 		return "", err
 	}
 	suffix := ""
 	if assignment.ID != "" {
+		n.Session, n.Source = planned, source
 		suffix = fmt.Sprintf("\nassignment: %s (generation %d); terminal report: ym goal report %s --summary \"<result>\"", assignment.ID, assignment.Generation, assignment.ID)
 	}
 	if assignment.ID != "" && !created {
