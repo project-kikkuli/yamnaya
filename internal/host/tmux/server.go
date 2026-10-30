@@ -123,8 +123,12 @@ const paneFormat = "#{pane_id}\t#{pane_tty}\t#{pane_dead}\t#{pane_dead_status}\t
 
 // Start runs argv in a new detached session named name with cwd, starting the server from conf when it is down.
 func (h *Host) Start(conf, name, cwd string, argv []string) (Pane, error) {
+	script, err := scripted(argv)
+	if err != nil {
+		return Pane{}, err
+	}
 	args := []string{"-f", conf, "new-session", "-d", "-P", "-F", paneFormat, "-s", name, "-c", cwd, "-x", "200", "-y", "50"}
-	cmd := h.command(append(args, argv...)...)
+	cmd := h.command(append(args, script...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return Pane{}, fmt.Errorf("tmux -L %s new-session %s: %w: %s", h.socketName(), name, err, strings.TrimSpace(string(out)))
@@ -144,11 +148,35 @@ func (h *Host) Respawn(name, cwd string, argv []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.command(append([]string{"respawn-pane", "-k", "-t", p.ID, "-c", cwd}, argv...)...).CombinedOutput()
+	script, err := scripted(argv)
+	if err != nil {
+		return err
+	}
+	out, err := h.command(append([]string{"respawn-pane", "-k", "-t", p.ID, "-c", cwd}, script...)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tmux respawn-pane %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// scripted runs argv from a script that deletes itself and execs it: tmux carries a command to its server in one message of at
+// most 16KiB, which an agent's long prompt overflows.
+func scripted(argv []string) ([]string, error) {
+	f, err := os.CreateTemp("", "ym-start-*.sh")
+	if err != nil {
+		return nil, err
+	}
+	var sb strings.Builder
+	sb.WriteString("rm -f \"$0\"\nexec")
+	for _, a := range argv {
+		sb.WriteString(" '" + strings.ReplaceAll(a, "'", `'\''`) + "'")
+	}
+	sb.WriteString("\n")
+	if _, err := f.WriteString(sb.String()); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return []string{"/bin/sh", f.Name()}, f.Close()
 }
 
 // Capture is the visible text of session name's pane.

@@ -4,7 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStartReadsThePaneWhenTmuxCutsItsOwnReport(t *testing.T) {
@@ -33,6 +36,37 @@ func TestStartReadsThePaneWhenTmuxCutsItsOwnReport(t *testing.T) {
 			}
 			if p.ID == "" || p.TTY == "" || p.PID == 0 || p.Dead {
 				t.Fatalf("Start = %+v, want the live pane with its tty and pid", p)
+			}
+		})
+	}
+}
+
+func TestStartRunsACommandLongerThanTmuxCarries(t *testing.T) {
+	for _, size := range []int{10, 64 << 10, 512 << 10} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			h, conf := ymServer(t)
+			dir := t.TempDir()
+			out := filepath.Join(dir, "out")
+			arg := strings.Repeat("it's \"long\" $HOME `x` ", size/20+1)[:size]
+			if _, err := h.Start(conf, "repo-wt-long", dir, []string{"sh", "-c", `printf %s "$1" > "$2"; sleep 30`, "sh", arg, out}); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if got, _ := os.ReadFile(out); string(got) == arg {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("the started command never received its %d-byte argument intact", size)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+			if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "ym-start-*.sh")); len(left) > 0 {
+				for _, f := range left {
+					if body, _ := os.ReadFile(f); strings.Contains(string(body), out) {
+						t.Fatalf("start script %s left behind", f)
+					}
+				}
 			}
 		})
 	}

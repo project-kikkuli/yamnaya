@@ -329,6 +329,7 @@ func TestOnlyTheInstalledYmClaimsTheDefaultServeAgent(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("YAMNAYA_STATE_DIR", "")
+			t.Setenv("YAMNAYA_NO_SERVE", "")
 			os.MkdirAll(filepath.Join(home, ".local", "state", "yamnaya"), 0o755)
 			bins := t.TempDir()
 			if c.onPath != "" {

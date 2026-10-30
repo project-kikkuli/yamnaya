@@ -18,10 +18,10 @@ import (
 )
 
 func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo, selected string
+	var repo, selected, under string
 	var useCodex bool
 	cmd := &cobra.Command{
-		Use:   "goal [--codex] [--repo NAME|PATH] <ask>",
+		Use:   "goal [--codex] [--repo NAME|PATH] [--under CHIEF] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -29,7 +29,12 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			g, m, err := e.core.NewGoal(args[0], dir, harnessFlag(useCodex), selected)
+			if under == "" {
+				if cl, err := e.caller(); err == nil {
+					under = e.core.ChiefOf(cl.Session)
+				}
+			}
+			g, m, err := e.core.NewGoalUnder(args[0], dir, harnessFlag(useCodex), under, selected)
 			if err != nil {
 				return err
 			}
@@ -51,6 +56,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&repo, "repo", "", "repository the goal is in, by path or by any part of its name (default: the current directory's)")
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
+	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))

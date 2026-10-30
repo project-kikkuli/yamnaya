@@ -12,8 +12,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// NewGoal records the owner's ask for repo and starts the manager that owns it.
+// NewGoal records the owner's ask for repo and starts the manager that owns it, reporting to the owner.
 func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Manager, error) {
+	return c.NewGoalUnder(ask, repo, harness, "", selected...)
+}
+
+// NewGoalUnder is NewGoal with the manager reporting to under, a chief here or host/id on another host; empty reports to the owner.
+func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string) (Goal, Manager, error) {
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, Manager{}, errors.New("a goal needs the ask in your words")
@@ -23,8 +28,12 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 		return Goal{}, Manager{}, err
 	}
 	repo = MainCheckout(repo)
+	parent, err := c.goalChief(under)
+	if err != nil {
+		return Goal{}, Manager{}, err
+	}
 	if host, ok := c.RepoHost(repo); ok {
-		out, err := c.RunOrRelay(host, goalArgs(ask, repo, harness, firstProfile(selected))...)
+		out, err := c.RunOrRelay(host, goalArgs(ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
 		return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
 	}
 	g, err := c.Store.AddGoal(Goal{Ask: ask, Repo: repo, CreatedAt: c.now()})
@@ -35,7 +44,7 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 	if err := writeBrief(g.BriefPath, "# "+g.ID+": "+shortName(ask)+"\n\nNot started yet: the manager writes this brief.\n"+askSection(ask)); err != nil {
 		return g, Manager{}, err
 	}
-	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, ParentID: parent, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
 	if err != nil {
 		return g, m, err
 	}
@@ -53,6 +62,55 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 	}
 	m = c.launch(b, o, m)
 	return g, m, nil
+}
+
+// goalChief resolves under, a chief here or host/id on another host, to the id a new manager records as its parent.
+func (c *Core) goalChief(under string) (string, error) {
+	if under == "" {
+		return "", nil
+	}
+	if _, _, remote := SplitRemote(under); remote {
+		return c.checkRemoteChief(Manager{}, under)
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return "", err
+	}
+	boss, err := o.lookup(under)
+	if err != nil {
+		return "", err
+	}
+	if boss.Role != RoleChief {
+		return "", fmt.Errorf("%s is a manager; only a chief has reports", boss.ID)
+	}
+	return boss.ID, nil
+}
+
+// parentOn is how host names parent, a chief id here or host/id: qualified by this host, or bare when parent is on host itself.
+func (c *Core) parentOn(host, parent string) string {
+	if parent == "" {
+		return ""
+	}
+	h, r, remote := SplitRemote(parent)
+	switch {
+	case !remote:
+		return RemoteKey(c.SelfName(), parent)
+	case h == host:
+		return r
+	}
+	return parent
+}
+
+// ChiefOf is the id of the chief session runs as, empty when it is not a chief's.
+func (c *Core) ChiefOf(session string) string {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return ""
+	}
+	if m, ok := o.ManagerOf(c.Resolve(session)); ok && m.Role == RoleChief {
+		return m.ID
+	}
+	return ""
 }
 
 // managerHarness is the harness a manager or chief runs on, claude when unnamed.

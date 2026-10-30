@@ -71,6 +71,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	}
 	c.planNow(sb, m)
 	sb.WriteString("How you work:\n")
+	sb.WriteString("- ym goal --repo <repo> \"<ask>\" starts a goal that reports to you.\n")
 	sb.WriteString("- Read your reports' briefs often. Message one with ym goal send <id> <text>; a stuck or dead one you can relaunch with ym goal relaunch <id>.\n")
 	sb.WriteString("- Escalations from your reports arrive here as one line naming the item; ym item show '<#key>' prints it whole. Answer each with ym item answer '<#key>' <answer>, or use ym item escalate '<#key>' when only the owner can answer. Keep its original id and source; do not close it and create a copy.\n")
 	sb.WriteString(escalate)
