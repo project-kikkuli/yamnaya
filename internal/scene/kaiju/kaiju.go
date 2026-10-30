@@ -101,8 +101,14 @@ func still(s scene.Scene, width, height int) *backdrop {
 	backdrops.Lock()
 	defer backdrops.Unlock()
 	if backdrops.b == nil || backdrops.key != key {
+		var clouds map[cloudShape][]cloudPixel
+		if old := backdrops.b; old != nil && old.w == width && old.p == 2*height {
+			clouds = old.clouds
+		}
 		backdrops.key, backdrops.b = key, build(paletteAt(now, s.Dark), l, width, height)
+		backdrops.b.clouds = clouds
 	}
+	backdrops.b.clouds = backdrops.b.cloudsFor(l)
 	b := *backdrops.b
 	b.l = l
 	return &b

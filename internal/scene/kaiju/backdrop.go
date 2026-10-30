@@ -23,6 +23,7 @@ type backdrop struct {
 	// glint is the water under the moon that sparkles.
 	glint        []int32
 	moonX, moonY float64
+	clouds       map[cloudShape][]cloudPixel
 }
 
 const noSwell = 255

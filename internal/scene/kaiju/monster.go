@@ -280,35 +280,27 @@ func (p *painter) weather(i int) {
 
 func (p *painter) smoke(m *monster, cx, cy, r, a float64) {
 	drift := p.t * .3
-	for y := int(cy - r*.7); y <= int(cy+r*.7); y++ {
-		for x := int(cx - r); x <= int(cx+r); x++ {
-			fx, fy := float64(x)+.5, float64(y)+.5
-			env := smooth(1, .45, math.Hypot((fx-cx)/r, (fy-cy)/(r*.7)))
-			if env <= 0 {
-				continue
-			}
-			s := smooth(.4, .68, scene.Noise2(m.seed+31, (fx-drift)*.12, fy*.2))
-			p.toward(x, y, p.pal.smoke, s*env*a)
+	for _, px := range p.clouds[cloudShape{cx, cy, r, false}] {
+		s := smooth(.4, .68, scene.Noise2(m.seed+31, (px.x-drift)*.12, px.y*.2))
+		if alpha := s * px.envelope * a; alpha > 0 {
+			p.lum[px.k] += float32(alpha) * (float32(p.pal.smoke) - p.lum[px.k])
 		}
 	}
 }
 
 func (p *painter) storm(m *monster) {
-	cx, cy := m.x, math.Max(p.l.top+2, m.top()-m.h*.15)
-	r := m.span()*1.2 + 4
-	for y := int(cy - r*.45); y <= int(cy+r*.3); y++ {
-		for x := int(cx - r); x <= int(cx+r); x++ {
-			fx, fy := float64(x)+.5, float64(y)+.5
-			env := smooth(1, .4, math.Hypot((fx-cx)/r, (fy-cy)/(r*.45)))
-			s := smooth(.34, .62, scene.Noise2(m.seed+41, (fx-p.t*.15)*.15, fy*.25))
-			p.toward(x, y, .02, s*env*.85)
+	c := stormShape(m, p.l.top)
+	for _, px := range p.clouds[c] {
+		s := smooth(.34, .62, scene.Noise2(m.seed+41, (px.x-p.t*.15)*.15, px.y*.25))
+		if alpha := s * px.envelope * .85; alpha > 0 {
+			p.lum[px.k] += float32(alpha) * (float32(.02) - p.lum[px.k])
 		}
 	}
 	if !p.flash(m) {
 		return
 	}
-	x := cx + (unit(m.seed, p.frame/16)-.5)*m.span()
-	for y := int(cy); y < int(m.top()+m.h*.3); y++ {
+	x := c.cx + (unit(m.seed, p.frame/16)-.5)*m.span()
+	for y := int(c.cy); y < int(m.top()+m.h*.3); y++ {
 		x += (unit(m.seed+3, y+p.frame) - .5) * 2.4
 		p.put(int(x), y, 1)
 		p.add(int(x)+1, y, .3)
