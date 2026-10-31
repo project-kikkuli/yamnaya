@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-const boxRepo = "/home/exedev/august"
+// boxRepo is a repository only the host box holds: no machine running the tests has it.
+const boxRepo = "/nonexistent/box/august"
 
 func hostWorld(t *testing.T) (*orgWorld, *fakeRemotes) {
 	w := newOrgWorld(t)

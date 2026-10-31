@@ -64,6 +64,11 @@ func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 
 func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	fmt.Fprintf(sb, "You are %s, a chief in yamnaya (ym) named %q. You oversee managers and other chiefs and keep them moving.\n\n", m.ID, m.Name)
+	if m.Remit != "" {
+		fmt.Fprintf(sb, "Your mission, in the owner's own words:\n%s\n\n", m.Remit)
+		sb.WriteString("Act on it right away; do not wait for instructions. Plan how to carry it out, start a goal for each piece of work with ym goal --repo <repo> \"<ask>\", " +
+			"and write your first brief with ym goal brief. If goals already report to you, build on them rather than starting them again.\n\n")
+	}
 	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.ID)
 	fmt.Fprintf(sb, "Coordination workspace: %s. This directory is not a repository. Your reports retain their own repositories; use an explicit --repo when starting implementation agents.\n\n", m.Directory)
 	if m.Repo != "" {

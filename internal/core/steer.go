@@ -164,7 +164,15 @@ func (c *Core) Context(ref string) (Manager, string, int, error) {
 	if st, ok := latest[m.ID]; ok {
 		return m, st.Text, st.Revision, nil
 	}
-	return m, o.Goals[m.GoalID].Ask, 0, nil
+	return m, o.Ask(m), 0, nil
+}
+
+// Ask is what m started out to do: its goal's ask, or the remit a chief was started with.
+func (o Org) Ask(m Manager) string {
+	if m.Role == RoleChief {
+		return m.Remit
+	}
+	return o.Goals[m.GoalID].Ask
 }
 
 // SteerContext records text as the next revision of what the goal or chief ref names is about, and tells its manager to adopt it.

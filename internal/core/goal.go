@@ -126,7 +126,7 @@ func managerHarness(harness string) (string, error) {
 
 // NewChief records a chief over children, managers or chiefs by id, and starts its session in repo on harness.
 func (c *Core) NewChief(name, remit, repo, harness string, children []string, selected ...string) (Manager, error) {
-	name = strings.TrimSpace(name)
+	name, remit = strings.TrimSpace(name), strings.TrimSpace(remit)
 	if name == "" {
 		return Manager{}, errors.New("a chief needs a name")
 	}
@@ -139,9 +139,9 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 	}
 	if host, ok := c.RepoHost(repo); ok {
 		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
-		return Manager{Role: RoleChief, Name: name, Repo: repo, Host: host}, err
+		return Manager{Role: RoleChief, Name: name, Remit: remit, Repo: repo, Host: host}, err
 	}
-	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Remit: remit, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}

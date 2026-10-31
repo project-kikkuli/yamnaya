@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -58,6 +59,8 @@ type Manager struct {
 	ID         string
 	Role       string
 	Name       string
+	// Remit is what a chief was started to oversee, in the words it was given.
+	Remit string
 	// ParentID is the chief the manager reports to; empty reports to the owner.
 	ParentID    string
 	GoalID      string
@@ -156,6 +159,43 @@ func itemRecipients(db *sql.DB) error {
 	return err
 }
 
+// chiefRemits keeps the remit each chief was started with. A chief recorded before that lost it to its brief page alone, which
+// NewChief seeded "# <name>\n\n<remit>\n"; while no brief version has rewritten that page, the remit is read back from it.
+func chiefRemits(db *sql.DB) error {
+	if err := addColumns(db, `ym_managers remit TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	rows, err := db.Query(`SELECT num, name, brief_path FROM ym_managers WHERE role = ? AND remit = '' AND brief_path != ''
+		AND NOT EXISTS (SELECT 1 FROM ym_briefs WHERE manager = 'mgr' || ym_managers.num)`, RoleChief)
+	if err != nil {
+		return err
+	}
+	remits := map[int64]string{}
+	for rows.Next() {
+		var num int64
+		var name, path string
+		if err := rows.Scan(&num, &name, &path); err != nil {
+			rows.Close()
+			return err
+		}
+		if body, err := os.ReadFile(path); err == nil {
+			if rest, ok := strings.CutPrefix(string(body), "# "+name+"\n\n"); ok && strings.TrimSpace(rest) != "" {
+				remits[num] = strings.TrimSpace(rest)
+			}
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for num, remit := range remits {
+		if _, err := db.Exec(`UPDATE ym_managers SET remit = ? WHERE num = ? AND remit = ''`, remit, num); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func goalID(num int64) string    { return "goal" + strconv.FormatInt(num, 10) }
 func managerID(num int64) string { return "mgr" + strconv.FormatInt(num, 10) }
 
@@ -249,8 +289,8 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 		m.Harness = "claude"
 	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, parent_id, goal_id, harness, repo, brief_path, launched_at, profile, config_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
-		m.Role, m.Name, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt), m.Profile, m.ConfigRoot).Scan(&num)
+	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, remit, parent_id, goal_id, harness, repo, brief_path, launched_at, profile, config_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		m.Role, m.Name, m.Remit, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt), m.Profile, m.ConfigRoot).Scan(&num)
 	m.ID = managerID(num)
 	return m, err
 }
@@ -266,9 +306,9 @@ func (s *Store) SaveManager(m Manager) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, name=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
+	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, name=?, remit=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
 		retired=?, launched_at=?, failures=?, next_attempt=?, last_error=?, nudges=?, nudged_at=?, profile=?, config_root=? WHERE num=?`,
-		m.Role, m.Name, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,
+		m.Role, m.Name, m.Remit, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,
 		m.Retired, stamp(m.LaunchedAt), m.Failures, stamp(m.NextAttempt), m.LastError, m.Nudges, stamp(m.NudgedAt), m.Profile, m.ConfigRoot, num); err != nil {
 		return err
 	}
@@ -284,13 +324,13 @@ func (s *Store) SaveManager(m Manager) error {
 	return tx.Commit()
 }
 
-const managerCols = `num, role, name, parent_id, goal_id, session, harness, repo, directory, brief_path, artifact_url, retired, launched_at, failures, next_attempt, last_error, nudges, nudged_at, profile, config_root`
+const managerCols = `num, role, name, remit, parent_id, goal_id, session, harness, repo, directory, brief_path, artifact_url, retired, launched_at, failures, next_attempt, last_error, nudges, nudged_at, profile, config_root`
 
 func scanManager(row interface{ Scan(...any) error }) (Manager, error) {
 	var m Manager
 	var num int64
 	var launched, next, nudged sql.NullString
-	err := row.Scan(&num, &m.Role, &m.Name, &m.ParentID, &m.GoalID, &m.Session, &m.Harness, &m.Repo, &m.Directory, &m.BriefPath, &m.ArtifactURL,
+	err := row.Scan(&num, &m.Role, &m.Name, &m.Remit, &m.ParentID, &m.GoalID, &m.Session, &m.Harness, &m.Repo, &m.Directory, &m.BriefPath, &m.ArtifactURL,
 		&m.Retired, &launched, &m.Failures, &next, &m.LastError, &m.Nudges, &nudged, &m.Profile, &m.ConfigRoot)
 	m.ID = managerID(num)
 	m.LaunchedAt, m.NextAttempt, m.NudgedAt = parseTime(launched), parseTime(next), parseTime(nudged)

@@ -225,6 +225,10 @@ func OpenStore(path string) (*Store, error) {
 			}
 		}
 	}
+	if err := chiefRemits(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate chief remits: %w", err)
+	}
 	if err := scopeItems(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate items: %w", err)

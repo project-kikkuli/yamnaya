@@ -250,7 +250,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if n.Ask = o.Goals[m.GoalID].Ask; len(n.Context) > 0 || n.Ask != "" {
+	if n.Ask = o.Ask(m); len(n.Context) > 0 || n.Ask != "" {
 		var sb strings.Builder
 		writeContext(&sb, m.ID, n.Ask, n.Context)
 		n.ContextText = clipboard.Clean(sb.String())

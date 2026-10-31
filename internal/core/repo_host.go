@@ -122,8 +122,8 @@ func (c *Core) handOff(o Org, m Manager, host string) Manager {
 	if hasGoal {
 		args = goalArgs(g.Ask, m.Repo, m.Harness, "", c.parentOn(host, m.ParentID))
 	} else {
-		remit := ""
-		if body, err := os.ReadFile(m.BriefPath); err == nil {
+		remit := m.Remit
+		if body, err := os.ReadFile(m.BriefPath); err == nil && remit == "" {
 			remit = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(body)), "# "+m.Name))
 		}
 		var children []string

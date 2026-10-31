@@ -375,7 +375,7 @@ func TestLaunchesInAnotherHostsRepositoryStartOnThatHost(t *testing.T) {
 			k.Launches = l
 			m = place(t, m, k)
 			m, r := withBox(t, m, k)
-			r.boards[0].Sessions[0].RepoKey = "/home/exedev/august/.git"
+			r.boards[0].Sessions[0].RepoKey = "/nonexistent/box/august/.git"
 			m = to(t, refresh(t, m), mission("far-lead-0001"))
 			for _, key := range c.keys {
 				if len(key) > 1 && key != "enter" {
