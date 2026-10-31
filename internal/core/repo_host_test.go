@@ -1,20 +1,21 @@
 package core
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
-// boxRepo is a repository only the host box holds: no machine running the tests has it.
-const boxRepo = "/nonexistent/box/august"
-
-func hostWorld(t *testing.T) (*orgWorld, *fakeRemotes) {
+// hostWorld reaches the host box, which alone holds the repository boxRepo names: a path under the test's own directory that no
+// one creates.
+func hostWorld(t *testing.T) (*orgWorld, *fakeRemotes, string) {
 	w := newOrgWorld(t)
+	boxRepo := filepath.Join(t.TempDir(), "box", "august")
 	r := &fakeRemotes{out: "goal9: manager mgr9 runs it as 1234abcd", boards: []RemoteBoard{{Host: "box", At: w.clock,
 		Goals: []Goal{{ID: "goal7", Repo: boxRepo, ManagerID: "mgr7", State: GoalActive}}}}}
 	w.core.Remotes = r
-	return w, r
+	return w, r, boxRepo
 }
 
 // stray records a goal here whose repository is repo, as an older ym did for a row of another host.
@@ -67,7 +68,7 @@ func TestManagersStartOnTheHostHoldingTheirRepository(t *testing.T) {
 		for _, remote := range []bool{false, true} {
 			where := map[bool]string{false: "local", true: "remote"}[remote]
 			t.Run(name+"/"+where, func(t *testing.T) {
-				w, r := hostWorld(t)
+				w, r, boxRepo := hostWorld(t)
 				repo := t.TempDir()
 				if remote {
 					repo = boxRepo
@@ -117,7 +118,7 @@ func TestNewWorkInAnotherHostsRepositoryStartsThere(t *testing.T) {
 	for name, s := range starts {
 		for _, remote := range []bool{false, true} {
 			t.Run(name+"/"+map[bool]string{false: "local", true: "remote"}[remote], func(t *testing.T) {
-				w, r := hostWorld(t)
+				w, r, boxRepo := hostWorld(t)
 				repo := t.TempDir()
 				if remote {
 					repo = boxRepo

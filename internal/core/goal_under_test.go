@@ -27,7 +27,7 @@ func TestAGoalReportsToTheChiefThatStartsItOrTheOneNamed(t *testing.T) {
 		{name: "under nobody known", caller: "", under: func(Manager, Manager, Manager) string { return "chief99" }, wantError: "no manager, chief or goal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w, _ := hostWorld(t)
+			w, _, _ := hostWorld(t)
 			_, mgr := w.goal(t, "ship the importer", "/repo/august")
 			chief := w.chief(t, "platform")
 			other := w.chief(t, "infra")
@@ -73,7 +73,7 @@ func TestAGoalStartedOnAnotherHostCarriesItsChief(t *testing.T) {
 		{"no chief", func(Manager) string { return "" }, func(*Core, Manager) string { return "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w, r := hostWorld(t)
+			w, r, boxRepo := hostWorld(t)
 			chief := w.chief(t, "platform")
 			if _, _, err := w.core.NewGoalUnder("explore the github org", boxRepo, "", tc.under(chief)); err != nil {
 				t.Fatal(err)

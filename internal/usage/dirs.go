@@ -9,9 +9,13 @@ import (
 )
 
 type listing struct {
-	modified time.Time
-	entries  []fs.DirEntry
+	modified, at time.Time
+	entries      []fs.DirEntry
 }
+
+// racy is longer than any filesystem's timestamp tick, so a listing taken this long after its directory last changed holds every
+// entry made in that tick.
+const racy = 2 * time.Second
 
 var (
 	listMu   sync.Mutex
@@ -66,11 +70,12 @@ func readDir(dir string) []fs.DirEntry {
 		delete(listings, dir)
 		return nil
 	}
-	if l, ok := listings[dir]; ok && l.modified.Equal(info.ModTime()) {
+	if l, ok := listings[dir]; ok && l.modified.Equal(info.ModTime()) && l.at.Sub(l.modified) >= racy {
 		return l.entries
 	}
+	at := clock()
 	entries, _ := os.ReadDir(dir)
-	listings[dir] = listing{modified: info.ModTime(), entries: entries}
+	listings[dir] = listing{modified: info.ModTime(), at: at, entries: entries}
 	return entries
 }
 
