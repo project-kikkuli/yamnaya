@@ -66,7 +66,7 @@ func scanProfiles(t *testing.T, m *usage.Meter, now time.Time) core.Fleet {
 	return m.Fleet(now)
 }
 func TestProfileTransfersPreservePayersThroughRoundTripsAndColdRebuild(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.Local)
 	stamp := func(n int) string { return now.Add(time.Duration(n) * time.Second).UTC().Format(time.RFC3339Nano) }
 	for _, h := range []string{"claude", "codex"} {
 		t.Run(h, func(t *testing.T) {
@@ -169,7 +169,7 @@ func TestRevertedRolloutHasStableConversationAndSeedsInheritedTotals(t *testing.
 	state := t.TempDir()
 	a := profile.Profile{Harness: "codex", ID: "a", Root: t.TempDir(), Account: "codex/user/a"}
 	b := profile.Profile{Harness: "codex", ID: "b", Root: t.TempDir(), Account: "codex/user/b"}
-	now := time.Now()
+	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.Local)
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	rel := filepath.Join("sessions", "2026", "10", "23", "rollout-2026-10-23T10-00-00-"+profileConversation+".jsonl")
 	first := profileMeta(profileConversation, "", 0) + profileResponse("codex", stamp, "first", 100, 20)
