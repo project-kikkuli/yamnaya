@@ -680,3 +680,57 @@ func TestBoardShowsCommittedCompletionState(t *testing.T) {
 		})
 	}
 }
+
+func TestReassignedWorkersKeepAuthorizationOwnershipAndMoveNestedWork(t *testing.T) {
+	w := newVerifyWorld(t)
+	second, m2 := w.orgWorld.goal(t, "different work", "/repo/august")
+	w.spawn("worker", w.manager.Session)
+	first, err := w.core.AssignWork(w.manager.Session, "worker", "first:task", "research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, err := w.core.Store.addItem(Item{Kind: KindGo, Session: "worker", Question: "implement the research"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.GoalOwner != w.goal.ID {
+		t.Fatalf("authorization ownership not captured: %+v", it)
+	}
+	next, err := w.core.AssignWork(m2.Session, "worker", "second:task", "different implementation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Goal != second.ID || next.Generation != first.Generation+1 {
+		t.Fatalf("reassignment: %+v after %+v", next, first)
+	}
+	nested, err := w.core.AssignWork("worker", "nested", "nested:task", "nested implementation")
+	if err != nil || nested.Goal != second.ID {
+		t.Fatalf("nested ownership: %+v %v", nested, err)
+	}
+	// Replaying old work cannot reclaim a worker or advance either goal's revision.
+	if _, err = w.core.AssignWork(w.manager.Session, "worker", "first:task", "research"); err != nil {
+		t.Fatal(err)
+	}
+	another, err := w.core.AssignWork("worker", "another", "another:task", "more nested work")
+	if err != nil || another.Goal != second.ID {
+		t.Fatalf("replay changed ownership: %+v %v", another, err)
+	}
+	before, err := w.core.Store.Goal(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.core.Store.Transition(it.Key(), ItemAnswered, GoAhead); err != nil {
+		t.Fatal(err)
+	}
+	original, err := w.core.Store.Goal(w.goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := w.core.Store.Goal(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original.WorkRevision != 2 || after.WorkRevision != before.WorkRevision {
+		t.Fatalf("authorization followed the worker instead of its filing goal: %+v %+v", original, after)
+	}
+}

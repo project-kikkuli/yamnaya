@@ -678,7 +678,7 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		if err != nil {
 			return fmt.Errorf("%w: %w", errUnusable, err)
 		}
-		if !o.Active(m) {
+		if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
 			return c.tellManager(b, o, v.Author, fmt.Sprintf("ym: your steer of %s did not land: it has ended.", v.Target))
 		}
 		_, err = c.applySteer(b, o, m, v.Text, v.Author)

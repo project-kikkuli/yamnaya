@@ -44,6 +44,7 @@ type Option struct {
 
 // Item is a question an agent filed for the owner. IDs are numbered per scope, one sequence across kinds, and never reused.
 type Item struct {
+	GoalOwner string
 	// Seq is the item's number across every scope; Key() names the item uniquely with it.
 	Seq int64
 	// Scope is the repository identity of the filing session: its git common dir, else its directory.
@@ -291,6 +292,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := itemDossiers(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate item dossiers: %w", err)
+	}
+	if err := itemGoalOwners(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if err := docPageWatch(db); err != nil {
 		db.Close()

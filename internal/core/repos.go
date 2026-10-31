@@ -260,7 +260,7 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 	}
 	suffix := ""
 	if assignment.ID != "" {
-		n.Session, n.Source = planned, source
+		n.Session, n.Source, n.Assignment = planned, source, assignment.ID
 		suffix = fmt.Sprintf("\nassignment: %s (generation %d); terminal report: ym goal report %s --summary \"<result>\"", assignment.ID, assignment.Generation, assignment.ID)
 	}
 	if assignment.ID != "" && !created {
@@ -294,7 +294,7 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 		return st.Message, err
 	}
 	if assignment.ID != "" && st.Session != "" {
-		if err := c.BindAssignment(n.Parent, assignment.ID, st.Session); err != nil {
+		if err := c.SettleAssignment(assignment.ID, st.Session, n.Parent); err != nil {
 			return st.Message + suffix, err
 		}
 	}

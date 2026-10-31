@@ -66,13 +66,19 @@ func (s *Store) assign(parent, worker, source, reason string, at time.Time) (Ass
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return a, false, err
 	}
+	if parent == worker {
+		return Assignment{}, false, errors.New("a session cannot assign itself as a worker")
+	}
 	if _, err = workIn(tx, goal, "assignment:"+source, reason, at); err != nil {
 		return Assignment{}, false, err
 	}
 	a := Assignment{ID: uuid.NewString(), Goal: goal, Session: worker, Source: source, Reason: reason, State: "outstanding"}
 	err = tx.QueryRow(`INSERT INTO ym_assignments (id,goal,session,generation,source,reason,created_at)
- VALUES (?,?,?,(SELECT coalesce(max(generation),0)+1 FROM ym_assignments WHERE session=?),?,?,?) RETURNING generation`, a.ID, goal, worker, worker, source, reason, stamp(at)).Scan(&a.Generation)
+ VALUES (?,?,?,(SELECT coalesce(max(generation),0)+1 FROM ym_assignments ),?,?,?) RETURNING generation`, a.ID, goal, worker, source, reason, stamp(at)).Scan(&a.Generation)
 	if err != nil {
+		return a, false, err
+	}
+	if _, err = tx.Exec(`INSERT INTO ym_links (child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, parent); err != nil {
 		return a, false, err
 	}
 	return a, true, tx.Commit()
@@ -120,7 +126,7 @@ func (c *Core) ReportAssignment(session, id, summary string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if caller != a.Session && (goal != a.Goal || manager != g.ManagerID) {
+	if caller != c.Resolve(a.Session) && (goal != a.Goal || manager != g.ManagerID) {
 		return 0, errors.New("only the assigned worker or its goal's manager may report terminal work")
 	}
 	if a.Report != 0 {
@@ -213,12 +219,47 @@ func (c *Core) BindAssignment(session, id, worker string) error {
 		return errors.New("bind needs a worker session")
 	}
 	if a.Session != worker {
-		if _, err = tx.Exec(`UPDATE ym_assignments SET session=?,generation=(SELECT coalesce(max(generation),0)+1 FROM ym_assignments WHERE session=?) WHERE id=?`, worker, worker, id); err != nil {
+		if _, err = tx.Exec(`UPDATE ym_assignments SET session=? WHERE id=?`, worker, id); err != nil {
 			return err
 		}
 	}
 	if _, err = tx.Exec(`INSERT INTO ym_links (child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, c.Resolve(session)); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (c *Core) SettleAssignment(id, worker, parent string) error {
+	if id == "" {
+		return nil
+	}
+	defer c.Store.invalidate()
+	tx, err := c.Store.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
+	if err != nil {
+		return err
+	}
+	if a.Session == worker {
+		return nil
+	}
+	if a.State != "outstanding" || a.Report != 0 {
+		return errors.New("assignment already has a terminal report")
+	}
+	if _, err = tx.Exec(`UPDATE ym_assignments SET session=? WHERE id=?`, worker, id); err != nil {
+		return err
+	}
+	var newer int
+	if err = tx.QueryRow(`SELECT count(*) FROM ym_assignments WHERE session=? AND generation>?`, worker, a.Generation).Scan(&newer); err != nil {
+		return err
+	}
+	if newer == 0 {
+		if _, err = tx.Exec(`INSERT INTO ym_links(child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, parent); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

@@ -152,14 +152,14 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier, preparer`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier, preparer, goal_owner`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
 	var opts, evidence, dossier string
 	var created, answered, delivered, held sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier, &it.Preparer); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier, &it.Preparer, &it.GoalOwner); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
@@ -222,15 +222,22 @@ func (s *Store) addItem(it Item) (Item, error) {
 		return it, err
 	}
 	defer tx.Rollback()
+	it.GoalOwner, err = historicalGoalIn(tx, it.Session)
+	if err != nil {
+		return it, err
+	}
+	if it.GoalOwner == "" {
+		it.GoalOwner = it.Dossier.Goal
+	}
 	num, err := nextNum(tx, it.Scope)
 	if err != nil {
 		return it, err
 	}
 	it.ID, it.State, it.CreatedAt = idFor(it.Kind, num), ItemOpen, time.Now().UTC()
-	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient, evidence, tried, dossier)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient, evidence, tried, dossier, goal_owner)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
 		it.Scope, num, it.ID, it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.Blocks, it.Session, it.Harness,
-		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient, string(evidence), it.Tried, dossier).Scan(&it.Seq)
+		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient, string(evidence), it.Tried, dossier, it.GoalOwner).Scan(&it.Seq)
 	if err != nil {
 		return it, err
 	}
@@ -415,9 +422,12 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, fmt.Errorf("item %s changed concurrently; retry", it.ID)
 	}
 	if to == ItemAnswered && it.Kind == KindGo && strings.TrimSpace(text) == GoAhead {
-		goal, err := historicalGoalIn(tx, it.Session)
-		if err != nil {
-			return it, err
+		goal := it.GoalOwner
+		if goal == "" {
+			goal, err = historicalGoalIn(tx, it.Session)
+			if err != nil {
+				return it, err
+			}
 		}
 		if goal == "" {
 			goal = it.Dossier.Goal
@@ -589,4 +599,23 @@ func itemActions(db *sql.DB) error {
 	}
 	_, err := db.Exec(`ALTER TABLE ym_items ADD COLUMN action TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+func itemGoalOwners(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_items') WHERE name='goal_owner'`).Scan(&has); err != nil || has > 0 {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`ALTER TABLE ym_items ADD COLUMN goal_owner TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE ym_items SET goal_owner=CASE WHEN json_valid(dossier) THEN coalesce(json_extract(dossier,'$.goal'),'') ELSE '' END`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
