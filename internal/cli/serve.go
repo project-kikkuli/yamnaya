@@ -111,7 +111,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		last := time.Now()
 		// stale is the last warning logged that a newer ym is first on PATH, so each is logged once.
 		stale := ""
-		site := &briefSite{core: e.core}
+		site := &briefSite{core: e.core, public: core.BriefsURL()}
 		if briefs != "" && !once {
 			go func() {
 				if err := site.listen(ctx, briefs); err != nil {

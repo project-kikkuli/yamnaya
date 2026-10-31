@@ -230,7 +230,7 @@ func keepWorkService() (string, string, error) {
 		return "", "", err
 	}
 	env := "Environment=" + strconv.Quote("PATH="+filepath.Dir(self)+":"+os.Getenv("PATH")) + "\n"
-	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_TMUX_SOCKET", "YAMNAYA_BRIEFS_ADDR"} {
+	for _, k := range []string{"YAMNAYA_STATE_DIR", "YAMNAYA_YM_SOCKET", "YAMNAYA_TMUX_SOCKET", "YAMNAYA_BRIEFS_ADDR", "YAMNAYA_BRIEFS_URL"} {
 		if v := os.Getenv(k); v != "" {
 			env += "Environment=" + strconv.Quote(k+"="+v) + "\n"
 		}

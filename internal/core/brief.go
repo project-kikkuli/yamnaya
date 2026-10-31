@@ -439,8 +439,17 @@ func BriefsAddr() string {
 	return fmt.Sprintf("127.0.0.1:%d", 7478+binary.BigEndian.Uint32(sum[:4])%1000)
 }
 
-// BriefURL is the stable local page of the goal's or chief's brief that id names.
-func BriefURL(id string) string { return "http://" + BriefsAddr() + "/b/" + id }
+// BriefsURL is where the board opens: $YAMNAYA_BRIEFS_URL when a proxy publishes ym serve, say https://host/ym/, else ym serve's
+// own address.
+func BriefsURL() string {
+	if u := os.Getenv("YAMNAYA_BRIEFS_URL"); u != "" {
+		return strings.TrimRight(u, "/") + "/"
+	}
+	return "http://" + BriefsAddr() + "/"
+}
+
+// BriefURL is the stable page of the goal's or chief's brief that id names.
+func BriefURL(id string) string { return BriefsURL() + "b/" + id }
 
 // BriefURL is the page of the brief id names here. On a host another host carries relays for, it names this host too, so the
 // same link opens on that host, whose ym serve shows this host's briefs at /b/<host>/<id>, and here.

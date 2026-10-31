@@ -40,3 +40,20 @@ func TestBriefsAddrGivesEachStateDirectoryItsOwnPort(t *testing.T) {
 		t.Errorf("YAMNAYA_BRIEFS_ADDR set: %s, want it", got)
 	}
 }
+
+func TestBriefURLNamesThePublicURLWhenOneIsSet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("YAMNAYA_STATE_DIR", "")
+	t.Setenv("YAMNAYA_BRIEFS_ADDR", "")
+	for _, tc := range []struct{ public, want string }{
+		{"", "http://127.0.0.1:7477/b/goal1"},
+		{"https://box.example/ym/", "https://box.example/ym/b/goal1"},
+		{"https://box.example/ym", "https://box.example/ym/b/goal1"},
+		{"https://box.example", "https://box.example/b/goal1"},
+	} {
+		t.Setenv("YAMNAYA_BRIEFS_URL", tc.public)
+		if got := BriefURL("goal1"); got != tc.want {
+			t.Errorf("YAMNAYA_BRIEFS_URL=%q: %s, want %s", tc.public, got, tc.want)
+		}
+	}
+}

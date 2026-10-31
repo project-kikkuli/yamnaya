@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +24,9 @@ type briefSite struct {
 	mu   sync.Mutex
 	// standing maps manager ids to how they stood on the latest board.
 	standing map[string]string
+	// public is the URL a proxy publishes the site at, as core.BriefsURL gives it; its path prefixes every link, and its host is
+	// answered along with addresses.
+	public string
 }
 
 func (s *briefSite) observe(b core.Board) {
@@ -142,8 +146,14 @@ func (n briefNode) Age(t time.Time) string {
 }
 
 func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !directHost(r.Host) {
-		http.Error(w, "briefs answer only a request to an address, not a name", http.StatusForbidden)
+	if !directHost(r.Host) && !s.publicHost(r.Host) {
+		http.Error(w, "briefs answer only a request to an address, or to the host YAMNAYA_BRIEFS_URL names", http.StatusForbidden)
+		return
+	}
+	path := s.route(r.URL.Path)
+	if path == "/site.js" {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		fmt.Fprint(w, siteScript)
 		return
 	}
 	o, err := s.core.LoadOrg()
@@ -188,15 +198,15 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return n
 	}
-	ref := strings.TrimPrefix(r.URL.Path, "/b/")
-	if host, rest, ok := core.SplitRemote(ref); ok && ref != r.URL.Path {
+	ref := strings.TrimPrefix(path, "/b/")
+	if host, rest, ok := core.SplitRemote(ref); ok && ref != path {
 		if host != s.core.SelfName() {
 			s.serveRemote(w, r, host, rest)
 			return
 		}
 		ref = rest
 	}
-	if r.URL.Path == "/" {
+	if path == "/" {
 		var d indexData
 		seen := map[string]bool{}
 		for _, m := range o.Ordered() {
@@ -208,19 +218,19 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, indexPage, d)
+		s.render(w, indexPage, d)
 		return
 	}
-	if seq, ok := strings.CutPrefix(r.URL.Path, "/i/"); ok {
+	if seq, ok := strings.CutPrefix(path, "/i/"); ok {
 		it, err := s.core.Store.Item("#" + seq)
 		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		render(w, itemPage, s.itemView(it))
+		s.render(w, itemPage, s.itemView(it))
 		return
 	}
-	if ref == r.URL.Path || ref == "" {
+	if ref == path || ref == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -262,7 +272,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	render(w, briefPage, n)
+	s.render(w, briefPage, n)
 }
 
 // remoteRead bounds how long a brief page waits on another host before showing what ym last read from it.
@@ -325,7 +335,39 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 		http.Error(w, fmt.Sprintf("only the latest brief of %s is read from %s", n.ID, host), http.StatusNotFound)
 		return
 	}
-	render(w, briefPage, n)
+	s.render(w, briefPage, n)
+}
+
+// prefix is the path the proxy in front publishes the site under, "" at the root.
+func (s *briefSite) prefix() string {
+	u, err := url.Parse(s.public)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimRight(u.Path, "/")
+}
+
+// publicHost reports whether host is the one the site's public URL names.
+func (s *briefSite) publicHost(host string) bool {
+	u, err := url.Parse(s.public)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(host, u.Hostname())
+}
+
+// route is path below the site's prefix, whether the proxy in front kept the prefix or stripped it.
+func (s *briefSite) route(path string) string {
+	if rest, ok := strings.CutPrefix(path, s.prefix()); ok && (rest == "" || rest[0] == '/') {
+		path = rest
+	}
+	if path == "" {
+		return "/"
+	}
+	return path
 }
 
 // directHost reports whether host names the machine by address or as localhost, which no other site's DNS can point here.
@@ -349,15 +391,19 @@ func findManager(o core.Org, ref string) (core.Manager, bool) {
 	return core.Manager{}, false
 }
 
-func render(w http.ResponseWriter, t *template.Template, data any) {
+func (s *briefSite) render(w http.ResponseWriter, t *template.Template, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := t.Execute(w, data); err != nil {
+	t, err := t.Clone()
+	if err == nil {
+		pre := s.prefix()
+		err = t.Funcs(template.FuncMap{"at": func(path string) string { return pre + path }}).Execute(w, data)
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// siteStyle carries the look and the copy buttons. The page reloads every 30 seconds only while no text is selected, so a
-// reload never drops a selection the owner is copying.
+// siteStyle carries the look and loads siteScript.
 const siteStyle = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root{--bg:#fbfaf7;--fg:#1f2328;--dim:#6a737d;--line:#e3e1db;--warn:#9a6700;--bad:#cf222e;--ok:#1a7f37;--card:#fff}
@@ -372,8 +418,11 @@ a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacin
 .copy:hover{color:var(--fg)}
 ul{padding-left:18px}li{margin:6px 0}
 </style>
-<script>
-document.addEventListener("click", e => {
+<script src="{{at "/site.js"}}"></script>`
+
+// siteScript carries the copy buttons, and reloads the page every 30 seconds only while no text is selected, so a reload never
+// drops a selection the owner is copying. It is a file of its own, which a proxy's same-origin script policy lets run.
+const siteScript = `document.addEventListener("click", e => {
 	const b = e.target.closest("[data-copy]");
 	if (!b) return;
 	const t = b.dataset.copy, done = () => { b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500) };
@@ -388,32 +437,32 @@ document.addEventListener("click", e => {
 	});
 });
 setInterval(() => { if (getSelection().isCollapsed) location.reload() }, 30000);
-</script>`
+`
 
 type copyButton struct{ Label, Text string }
 
-var siteFuncs = template.FuncMap{"copy": func(label, text string) copyButton { return copyButton{label, text} }}
+var siteFuncs = template.FuncMap{"copy": func(label, text string) copyButton { return copyButton{label, text} }, "at": func(path string) string { return path }}
 
 const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.Text}}" aria-label="Copy {{.Label}}">copy</button>{{end}}` +
 	`{{define "tags"}}<span class="tag {{.Standing}}">{{.Standing}}</span>{{if .Fresh.Brief}}{{if .Fresh.Stale}}<span class="tag stale">brief v{{.Fresh.Brief.Version}} stale</span>{{else}}<span class="tag fresh">brief v{{.Fresh.Brief.Version}}, {{.Age .Fresh.Brief.CreatedAt}}</span>{{end}}{{else}}<span class="tag stale">no brief</span>{{end}}{{if .Plan}}{{if .Plan.Adopted}}<span class="tag">plan r{{.Plan.Revision}}</span>{{else}}<span class="tag unadopted">steer r{{.Plan.Revision}} not adopted</span>{{end}}{{end}}{{end}}` +
-	`{{define "items"}}{{range .}}<div class="card"><a href="/i/{{.Seq}}"><b>{{.ID}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p></div>{{end}}{{end}}`
+	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.ID}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p></div>{{end}}{{end}}`
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
 <h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected.</p>
-{{define "tree"}}<ul>{{range .}}<li><a href="/b/{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}{{end}}</b></a> {{if ne .Kind "chief"}}{{.Title}}{{end}}<br>{{template "tags" .}}{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}<div class="meta">{{.Fresh.Brief.Assessment}}</div>{{end}}{{if .Reports}}{{template "tree" .Reports}}{{end}}</li>{{end}}</ul>{{end}}
+{{define "tree"}}<ul>{{range .}}<li><a href="{{at "/b/"}}{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}{{end}}</b></a> {{if ne .Kind "chief"}}{{.Title}}{{end}}<br>{{template "tags" .}}{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}<div class="meta">{{.Fresh.Brief.Assessment}}</div>{{end}}{{if .Reports}}{{template "tree" .Reports}}{{end}}</li>{{end}}</ul>{{end}}
 {{if .Roots}}{{template "tree" .Roots}}{{else}}<p>No goals. Start one with <code>ym goal "&lt;ask&gt;"</code>.</p>{{end}}
 {{if .Items}}<h2>Open items for you</h2>{{template "items" .Items}}{{end}}
 </body></html>`))
 
 var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>item {{.ID}}</title>` + siteStyle + `</head><body>
-<p class="meta"><a href="/">all briefs</a></p>
+<p class="meta"><a href="{{at "/"}}">all briefs</a></p>
 <h1>Item {{.ID}}{{template "copy" (copy (print "item " .ID) .Text)}}</h1>
 <p class="meta">{{.Key}} · {{.Kind}} · {{.State}}</p>
 <div class="card"><p class="sec">{{.Text}}</p></div>
 </body></html>`))
 
 var briefPage = template.Must(template.New("brief").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}{{end}} brief</title>` + siteStyle + `</head><body>
-<p class="meta"><a href="/">all briefs</a></p>
+<p class="meta"><a href="{{at "/"}}">all briefs</a></p>
 <h1>{{if eq .Kind "chief"}}Chief {{.Title}}{{else}}{{.Kind}}: {{.Title}}{{end}}</h1>
 <p class="meta">{{.ID}}{{if .Repo}} · {{.Repo}}{{end}}{{if .Artifact}} · <a href="{{.Artifact}}">artifact</a>{{end}}</p>
 <p>{{template "tags" .}}</p>
@@ -425,7 +474,7 @@ var briefPage = template.Must(template.New("brief").Funcs(siteFuncs).Parse(tags 
 {{range .Context}}<div class="card"><p class="meta">Revision {{.Revision}} by {{.By}}, {{$.Age .CreatedAt}}, {{if .Adopted}}adopted{{else}}not adopted yet{{end}}{{template "copy" (copy (print "revision " .Revision) .Text)}}</p><div class="plan">{{.Text}}</div></div>
 {{else}}<div class="card"><p class="meta">Revision 0, the ask it started with{{template "copy" (copy "revision 0" $.Ask)}}</p><div class="plan">{{$.Ask}}</div></div>{{end}}{{end}}
 {{if .Items}}<h2>Open items</h2>{{template "items" .Items}}{{end}}
-{{define "report"}}<div class="card"><a href="/b/{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}: {{.Title}}{{end}}</b></a>{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}{{end}}<br>{{template "tags" .}}
+{{define "report"}}<div class="card"><a href="{{at "/b/"}}{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}: {{.Title}}{{end}}</b></a>{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}{{end}}<br>{{template "tags" .}}
 {{with .Fresh.Brief}}<h2>Assessment</h2><p class="sec">{{.Assessment}}</p><h2>Next</h2><p class="sec">{{.Next}}</p><h2>Waiting on</h2><p class="sec">{{.WaitingOn}}</p>{{end}}
 {{range .Reports}}{{template "report" .}}{{end}}</div>{{end}}
 {{if .Reports}}<h2>Reports</h2>{{range .Reports}}{{template "report" .}}{{end}}{{end}}
