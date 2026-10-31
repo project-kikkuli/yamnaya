@@ -321,7 +321,7 @@ func (c *Core) remoteItem(id string, args ...string) (Item, Delivery, bool, erro
 	var it Item
 	for _, r := range c.remoteBoards() {
 		for _, x := range r.Items {
-			if x.Key() == id {
+			if x.Key() == id || r.Host == host && (rest == x.ID || rest == x.Qualified()) {
 				it = x
 			}
 		}

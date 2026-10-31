@@ -28,6 +28,12 @@ func (r *itemRemote) Run(host string, args ...string) (string, error) {
 }
 func (r *itemRemote) Attach(string, ...string) *exec.Cmd { return nil }
 
+func boxBoard(k *core.Core) *itemRemote {
+	r := &itemRemote{board: core.RemoteBoard{Host: "box", Items: []core.Item{{Seq: 788, ID: "D2", Host: "box", Kind: core.KindDecision, State: core.ItemOpen, Question: "merge?"}}}}
+	k.Remotes = r
+	return r
+}
+
 func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 	commands := []struct {
 		name string
@@ -53,11 +59,8 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 			}
 			return nil
 		}, relay: true},
-		{name: "remote board", ref: "box/#788", wire: func(k *core.Core) *itemRemote {
-			r := &itemRemote{board: core.RemoteBoard{Host: "box", Items: []core.Item{{Seq: 788, ID: "D2", Host: "box", Kind: core.KindDecision, State: core.ItemOpen, Question: "merge?"}}}}
-			k.Remotes = r
-			return r
-		}},
+		{name: "remote board", ref: "box/#788", wire: boxBoard},
+		{name: "remote board by id", ref: "box/D2", wire: boxBoard},
 	}
 	for _, s := range setups {
 		for _, c := range commands {
@@ -91,7 +94,7 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 						t.Fatalf("refused ref queued relays: %+v", pending)
 					}
 				case s.relay && c.name == "show":
-					if err == nil || !strings.Contains(err.Error(), "host box is not a configured remote") {
+					if err == nil || !strings.Contains(err.Error(), "box is reached only through relays; ym item show needs it as a direct ssh remote") {
 						t.Fatalf("show through relays only: %v", err)
 					}
 				case s.relay:
@@ -106,8 +109,19 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 					if err != nil {
 						t.Fatalf("%s: %v, output %s", c.name, err, out.String())
 					}
-					if want := [][]string{append([]string{"box"}, c.want...)}; !reflect.DeepEqual(r.ran, want) {
-						t.Fatalf("ran %q, want %q", r.ran, want)
+					_, rest, _ := core.SplitRemote(s.ref)
+					want := []string{"box"}
+					for _, a := range c.want {
+						if a == "#788" {
+							a = rest
+						}
+						want = append(want, a)
+					}
+					if !reflect.DeepEqual(r.ran, [][]string{want}) {
+						t.Fatalf("ran %q, want %q", r.ran, [][]string{want})
+					}
+					if c.name != "show" && !strings.HasPrefix(out.String(), "D2 ") {
+						t.Fatalf("%s printed %q, want the original item's id D2", c.name, out.String())
 					}
 				}
 				if items, err := st.Items(core.ItemFilter{}); err != nil || len(items) != 0 {

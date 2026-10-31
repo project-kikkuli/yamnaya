@@ -378,7 +378,7 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return err
 			} else if ok {
 				if !e.reaches(host) {
-					return notRemote(args[0], host)
+					return fmt.Errorf("item %s: %s is reached only through relays; ym item show needs it as a direct ssh remote (ym remote %s)", args[0], host, host)
 				}
 				remote := []string{"item", "show", rest}
 				if asJSON {
