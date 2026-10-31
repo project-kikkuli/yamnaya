@@ -397,8 +397,27 @@ type Prepared struct {
 	Evidence               []string
 }
 
+func (p Prepared) flags() []string {
+	var out []string
+	for _, f := range [][2]string{{"--rec", p.Rec}, {"--tried", p.Tried}, {"--assumption", p.Assumption}} {
+		if f[1] != "" {
+			out = append(out, f[0], f[1])
+		}
+	}
+	for _, o := range p.Options {
+		out = append(out, "--option", o.Label+"="+o.Effect)
+	}
+	for _, e := range p.Evidence {
+		out = append(out, "--evidence", e)
+	}
+	return out
+}
+
 // Prepare adds p to the open ask ref names and refreshes its dossier.
 func (c *Core) Prepare(b Board, ref string, p Prepared) (Item, error) {
+	if it, _, remote, err := c.remoteItem(ref, append([]string{"prepare"}, p.flags()...)...); remote {
+		return it, err
+	}
 	it, err := c.Store.Item(ref)
 	if err != nil {
 		return it, err

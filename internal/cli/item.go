@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemConsolidateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(with), itemInboxCmd(with), itemPrepareCmd(with))
+	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemConsolidateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(withHosts), itemInboxCmd(with), itemPrepareCmd(withHosts))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
@@ -26,11 +27,11 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
-			it, d, err := e.core.Answer(b, found.Key(), strings.Join(args[1:], " "))
+			it, d, err := e.core.Answer(b, key, strings.Join(args[1:], " "))
 			if err != nil {
 				return err
 			}
@@ -46,11 +47,11 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
-			it, d, err := e.core.Go(b, found.Key())
+			it, d, err := e.core.Go(b, key)
 			if err != nil {
 				return err
 			}
@@ -66,11 +67,11 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
-			it, d, err := e.core.Dismiss(b, found.Key(), strings.Join(args[1:], " "))
+			it, d, err := e.core.Dismiss(b, key, strings.Join(args[1:], " "))
 			if err != nil {
 				return err
 			}
@@ -86,11 +87,11 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
-			it, err := e.core.Snooze(found.Key())
+			it, err := e.core.Snooze(key)
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
 			}
@@ -105,11 +106,11 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
-			it, err := e.core.Reopen(found.Key())
+			it, err := e.core.Reopen(key)
 			if err == nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
 			}
@@ -200,11 +201,11 @@ func itemEscalateCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 		if err != nil {
 			return err
 		}
-		found, err := e.item(b, args[0])
+		key, err := e.itemKey(b, args[0])
 		if err != nil {
 			return err
 		}
-		it, err := e.core.Escalate(found.Key())
+		it, err := e.core.Escalate(key)
 		if err != nil {
 			return err
 		}
@@ -225,7 +226,7 @@ func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			found, err := e.item(b, args[0])
+			key, err := e.itemKey(b, args[0])
 			if err != nil {
 				return err
 			}
@@ -233,7 +234,7 @@ func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 				label, effect, _ := strings.Cut(o, "=")
 				p.Options = append(p.Options, core.Option{Label: strings.TrimSpace(label), Effect: strings.TrimSpace(effect)})
 			}
-			it, err := e.core.Prepare(b, found.Key(), p)
+			it, err := e.core.Prepare(b, key, p)
 			if err != nil {
 				return err
 			}
@@ -373,6 +374,23 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
+			if host, rest, ok, err := e.remoteItemRef(args[0]); err != nil {
+				return err
+			} else if ok {
+				if !e.reaches(host) {
+					return notRemote(args[0], host)
+				}
+				remote := []string{"item", "show", rest}
+				if asJSON {
+					remote = append(remote, "--json")
+				}
+				out, err := e.core.RunRemote(host, remote...)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), out)
+				return nil
+			}
 			it, err := e.item(b, args[0])
 			if err != nil {
 				return err
@@ -480,7 +498,14 @@ func writeJSON(w io.Writer, v any) error {
 
 // item resolves an item ID within the scope of -p, else of the calling session; from outside any session, within no scope.
 func (e *env) item(b core.Board, ref string) (core.Item, error) {
-	if host, rest, ok := e.core.RemoteRef(ref); ok {
+	host, rest, ok, err := e.remoteItemRef(ref)
+	if err != nil {
+		return core.Item{}, err
+	}
+	if ok {
+		if !e.reaches(host) {
+			return core.Item{}, notRemote(ref, host)
+		}
 		for _, r := range e.core.Remotes.Boards() {
 			for _, it := range r.Items {
 				if r.Host == host && (rest == "#"+strconv.FormatInt(it.Seq, 10) || rest == it.ID || rest == it.Qualified()) {
@@ -491,6 +516,34 @@ func (e *env) item(b core.Board, ref string) (core.Item, error) {
 		return core.Item{}, fmt.Errorf("item %s: not found on %s", rest, host)
 	}
 	return e.core.Store.Find(e.itemScope(b), ref)
+}
+
+// itemKey is the key core acts on: another host's ref as given, which core carries to that host, else the local item's key.
+func (e *env) itemKey(b core.Board, ref string) (string, error) {
+	if _, _, ok, err := e.remoteItemRef(ref); ok || err != nil {
+		return ref, err
+	}
+	it, err := e.core.Store.Find(e.itemScope(b), ref)
+	return it.Key(), err
+}
+
+// remoteItemRef splits a ref naming another host's item; an @nickname no host answers to is an error.
+func (e *env) remoteItemRef(ref string) (host, rest string, ok bool, err error) {
+	if host, rest, ok := e.core.RemoteRef(ref); ok {
+		return host, rest, true, nil
+	}
+	if host, _, ok := core.SplitRemote(ref); ok && strings.HasPrefix(host, "@") {
+		return "", "", false, notRemote(ref, strings.TrimPrefix(host, "@"))
+	}
+	return "", "", false, nil
+}
+
+func (e *env) reaches(host string) bool {
+	return e.core.Remotes != nil && slices.Contains(e.core.Remotes.Hosts(), host)
+}
+
+func notRemote(ref, host string) error {
+	return fmt.Errorf("item %s: host %s is not a configured remote: %w", ref, host, core.ErrNotFound)
 }
 
 func (e *env) itemScope(b core.Board) string {
