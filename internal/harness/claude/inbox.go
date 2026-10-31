@@ -181,19 +181,18 @@ var promptingModes = map[string]bool{"default": true, "acceptEdits": true, "auto
 // admits mirrors Claude Code's inbound gate for ym's sends: the crossSessionInbound setting decides when set,
 // else the session reads it while it prompts for permissions, or bypasses them and ym attests the owner's own words.
 func (a *Adapter) admits(cwd, mode string, owner bool) bool {
-	policy, invalid := "", false
-	read := func(path string) string {
-		v, set := inbound(path)
+	invalid := false
+	check := func(v string, set bool) string {
 		if _, known := inboundRank[v]; set && !known {
 			invalid = true
 			return ""
 		}
 		return v
 	}
-	for _, f := range []string{a.ManagedSettings, filepath.Join(a.Dir, "settings.json")} {
-		if v := read(f); v != "" && policy == "" {
-			policy = v
-		}
+	read := func(path string) string { return check(inbound(path)) }
+	policy := check(a.managedInbound())
+	if v := read(filepath.Join(a.Dir, "settings.json")); policy == "" {
+		policy = v
 	}
 	if cwd != "" {
 		for _, f := range []string{filepath.Join(cwd, ".claude", "settings.local.json"), filepath.Join(cwd, ".claude", "settings.json")} {
@@ -218,6 +217,20 @@ func attested(mode string, owner bool) string {
 		return "bypass"
 	}
 	return ""
+}
+
+// managedInbound is crossSessionInbound as the managed settings file and its drop-ins merge it, the last file setting it winning.
+func (a *Adapter) managedInbound() (value string, set bool) {
+	if a.ManagedSettings == "" {
+		return "", false
+	}
+	drops, _ := filepath.Glob(filepath.Join(filepath.Dir(a.ManagedSettings), "managed-settings.d", "*.json"))
+	for _, f := range append([]string{a.ManagedSettings}, drops...) {
+		if v, ok := inbound(f); ok {
+			value, set = v, true
+		}
+	}
+	return value, set
 }
 
 // inbound reads crossSessionInbound from a settings file; set is true when the key is present, whatever its value.

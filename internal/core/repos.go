@@ -16,13 +16,22 @@ import (
 // RepoDepth is how many directories below a root ScanRepos looks for a repository.
 const RepoDepth = 2
 
-// RepoRoots are the directories wt-reap names in ~/.config/wt-reap/roots, one per line, or ~/dev and ~/src without any.
+// RepoRoots are the directories YAMNAYA_REPO_ROOTS names, colon-separated, else those wt-reap names in
+// ~/.config/wt-reap/roots, one per line, else ~/dev and ~/src.
 func RepoRoots() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
 	var roots []string
+	for _, r := range filepath.SplitList(os.Getenv("YAMNAYA_REPO_ROOTS")) {
+		if r = strings.TrimSpace(r); r != "" {
+			roots = append(roots, ExpandHome(r))
+		}
+	}
+	if len(roots) > 0 {
+		return roots
+	}
 	if f, err := os.Open(filepath.Join(home, ".config", "wt-reap", "roots")); err == nil {
 		defer f.Close()
 		sc := bufio.NewScanner(f)

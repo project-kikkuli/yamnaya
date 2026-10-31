@@ -281,6 +281,40 @@ func TestAdmitsMirrorsClaudeInboundGate(t *testing.T) {
 	}
 }
 
+func TestManagedDropInsMergeOverManagedSettingsInNameOrder(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		base  string
+		drops map[string]string
+		want  bool
+	}{
+		{"no managed files", "", nil, false},
+		{"base alone", `{"crossSessionInbound":"accept"}`, nil, true},
+		{"drop-in without the key keeps the base", `{"crossSessionInbound":"accept"}`, map[string]string{"50-pins.json": `{"env":{"DISABLE_AUTOUPDATER":"1"}}`}, true},
+		{"drop-in overrides the base", `{"crossSessionInbound":"accept"}`, map[string]string{"50-policy.json": `{"crossSessionInbound":"hold"}`}, false},
+		{"drop-in without a base", `{"skipDangerousModePermissionPrompt":true}`, map[string]string{"50-policy.json": `{"crossSessionInbound":"accept"}`}, true},
+		{"later name wins", "", map[string]string{"10-a.json": `{"crossSessionInbound":"hold"}`, "90-b.json": `{"crossSessionInbound":"accept"}`}, true},
+		{"earlier name loses", "", map[string]string{"10-a.json": `{"crossSessionInbound":"accept"}`, "90-b.json": `{"crossSessionInbound":"refuse"}`}, false},
+		{"only json drop-ins count", "", map[string]string{"10-a.json": `{"crossSessionInbound":"accept"}`, "90-b.json.bak": `{"crossSessionInbound":"refuse"}`}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			managed := filepath.Join(dir, "managed-settings.json")
+			if c.base != "" {
+				must(t, os.WriteFile(managed, []byte(c.base), 0o644))
+			}
+			must(t, os.MkdirAll(filepath.Join(dir, "managed-settings.d"), 0o755))
+			for name, body := range c.drops {
+				must(t, os.WriteFile(filepath.Join(dir, "managed-settings.d", name), []byte(body), 0o644))
+			}
+			a := &Adapter{Dir: t.TempDir(), ManagedSettings: managed}
+			if got := a.admits(t.TempDir(), "bypassPermissions", false); got != c.want {
+				t.Errorf("admits = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestModeIsTheLatestOfMetadataAndPrompts(t *testing.T) {
 	for _, c := range []struct {
 		name  string

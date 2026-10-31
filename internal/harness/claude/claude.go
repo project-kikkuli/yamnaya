@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,7 +35,8 @@ type Adapter struct {
 	SendTimeout time.Duration
 	// ReceiptWait is how long a send waits for a session to report it held the message; zero means one second.
 	ReceiptWait time.Duration
-	// ManagedSettings is the organization's settings file, which outranks the owner's own.
+	// ManagedSettings is the organization's settings file, which outranks the owner's own; the *.json drop-ins in
+	// managed-settings.d beside it merge over it in name order.
 	ManagedSettings string
 
 	mu    sync.Mutex
@@ -67,7 +69,15 @@ func New() *Adapter {
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: "/Library/Application Support/ClaudeCode/managed-settings.json"}
+	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: managedSettings(runtime.GOOS)}
+}
+
+// managedSettings is the file Claude Code reads the organization's settings from on goos.
+func managedSettings(goos string) string {
+	if goos == "darwin" {
+		return "/Library/Application Support/ClaudeCode/managed-settings.json"
+	}
+	return "/etc/claude-code/managed-settings.json"
 }
 
 func (a *Adapter) Name() string { return Name }

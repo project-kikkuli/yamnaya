@@ -209,28 +209,35 @@ func TestDiscoverFindsRepositoriesWithLinkedWorktreesOnly(t *testing.T) {
 			run(t, dir, "git", "worktree", "add", "-q", "-b", "f", WorktreePath(dir, "f"))
 		}
 	}
-	repo("org/with", true)
-	repo("org/without", false)
-	repo("deep/a/b/with", true)
-	repo("org/with/nested", true)
-	repo("app/node_modules/dep", true)
+	repo("dev/org/with", true)
+	repo("dev/org/without", false)
+	repo("dev/deep/a/with", true)
+	repo("dev/org/with/nested", true)
+	repo("dev/app/node_modules/dep", true)
 	repo(".hidden/with", true)
+	repo("home", true)
+	repo("src/solo", true)
+	repo("src/owner/name", true)
 
-	got := Discover(base)
-	want := []string{filepath.Join(base, "deep/a/b/with"), filepath.Join(base, "org/with")}
+	roots := []string{base, filepath.Join(base, "dev"), filepath.Join(base, "src")}
+	got := Discover(roots)
+	want := []string{filepath.Join(base, "home"), filepath.Join(base, "src/solo"), filepath.Join(base, "dev/org/with"), filepath.Join(base, "src/owner/name")}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Discover = %v, want %v", got, want)
 	}
 	cache := filepath.Join(t.TempDir(), "repos.json")
 	now := time.Now()
-	if got := Discovered(base, cache, now); !slices.Equal(got, want) {
+	if got := Discovered(roots, cache, now); !slices.Equal(got, want) {
 		t.Fatalf("Discovered = %v", got)
 	}
-	repo("late/with", true)
-	if got := Discovered(base, cache, now.Add(time.Hour)); !slices.Equal(got, want) {
+	repo("dev/late/with", true)
+	if got := Discovered(roots, cache, now.Add(time.Hour)); !slices.Equal(got, want) {
 		t.Fatalf("cached Discovered = %v, want %v", got, want)
 	}
-	if got := Discovered(base, cache, now.Add(Rescan+time.Hour)); len(got) != 3 || !strings.HasSuffix(got[1], "late/with") {
+	if got := Discovered(roots[1:2], cache, now.Add(time.Hour)); len(got) != 2 || !strings.HasSuffix(got[0], "late/with") {
+		t.Fatalf("Discovered under other roots = %v", got)
+	}
+	if got := Discovered(roots, cache, now.Add(Rescan+time.Hour)); len(got) != 5 || !strings.HasSuffix(got[2], "late/with") {
 		t.Fatalf("rescanned Discovered = %v", got)
 	}
 }

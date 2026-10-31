@@ -36,7 +36,7 @@ type launcher struct {
 	// stamp is the file whose age throttles the board's background gc; empty never starts one.
 	stamp  string
 	squash *launch.Squash
-	// repos caches the repositories with linked worktrees found under ~/dev.
+	// repos caches the repositories with linked worktrees found under core.RepoRoots.
 	repos string
 	// landings is the JSON-lines log every landing appends to; empty logs nothing.
 	landings string

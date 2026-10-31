@@ -153,21 +153,27 @@ func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
 
 func TestRepoRootsResolveHostCheckouts(t *testing.T) {
 	for _, c := range []struct {
-		name, config, ref, want string
-		tree                    []string
+		name, env, config, ref, want string
+		tree                         []string
 	}{
-		{"dev fallback", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/"}},
-		{"src fallback without dev", "", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
-		{"both roots find dev", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
-		{"both roots find src", "", "crassus", "src/acme/crassus", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
-		{"empty config falls back", "\n# local roots\n", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
-		{"explicit roots win", "# local roots\n~/checkouts\n", "crassus", "checkouts/acme/crassus", []string{"dev/acme/crassus/", "src/acme/crassus/", "checkouts/acme/crassus/"}},
-		{"explicit roots exclude dev", "~/checkouts\n", "atlas", "", []string{"dev/acme/atlas/", "checkouts/acme/crassus/"}},
-		{"explicit roots exclude src", "~/checkouts\n", "crassus", "", []string{"src/acme/crassus/", "checkouts/acme/atlas/"}},
+		{"dev fallback", "", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/"}},
+		{"src fallback without dev", "", "", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
+		{"both roots find dev", "", "", "atlas", "dev/acme/atlas", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
+		{"both roots find src", "", "", "crassus", "src/acme/crassus", []string{"dev/acme/atlas/", "src/acme/crassus/"}},
+		{"empty config falls back", "", "\n# local roots\n", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
+		{"explicit roots win", "", "# local roots\n~/checkouts\n", "crassus", "checkouts/acme/crassus", []string{"dev/acme/crassus/", "src/acme/crassus/", "checkouts/acme/crassus/"}},
+		{"explicit roots exclude dev", "", "~/checkouts\n", "atlas", "", []string{"dev/acme/atlas/", "checkouts/acme/crassus/"}},
+		{"explicit roots exclude src", "", "~/checkouts\n", "crassus", "", []string{"src/acme/crassus/", "checkouts/acme/atlas/"}},
+		{"env roots win over config", "~/checkouts", "~/elsewhere\n", "crassus", "checkouts/acme/crassus", []string{"elsewhere/acme/crassus/", "checkouts/acme/crassus/"}},
+		{"env roots exclude defaults", "~/checkouts", "", "atlas", "", []string{"dev/acme/atlas/", "src/acme/atlas/"}},
+		{"home root finds top-level checkouts", "~:~/src", "", "harbor", "harbor", []string{"harbor/", "harbor-wt-fix=wt", "dev/acme/atlas/"}},
+		{"home root keeps owner nesting under src", "~:~/src", "", "crassus", "src/acme/crassus", []string{"harbor/", "src/acme/crassus/"}},
+		{"blank env falls back", " : ", "", "crassus", "src/acme/crassus", []string{"src/acme/crassus/"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := repoTree(t, c.tree...)
 			t.Setenv("HOME", home)
+			t.Setenv("YAMNAYA_REPO_ROOTS", c.env)
 			if c.config != "" {
 				dir := filepath.Join(home, ".config", "wt-reap")
 				must(t, os.MkdirAll(dir, 0o755))
