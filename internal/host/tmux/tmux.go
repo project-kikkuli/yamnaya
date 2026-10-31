@@ -107,6 +107,12 @@ func absent(text string) bool {
 		strings.HasPrefix(text, "error connecting to ") && strings.HasSuffix(text, "(No such file or directory)")
 }
 
+// ending reports whether err is tmux losing its server mid-answer, as when the server ends while a client asks it something.
+func ending(err error) bool {
+	var re *runError
+	return errors.As(err, &re) && (re.stderr == "server exited unexpectedly" || re.stderr == "lost server")
+}
+
 // gone reports whether err is tmux saying the session or server does not exist, rather than tmux failing to answer.
 func gone(err error) bool {
 	var re *runError

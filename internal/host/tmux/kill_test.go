@@ -1,9 +1,12 @@
 package tmux
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 func TestKillUsesTheMutationResultAndOnlyAcceptsConfirmedAbsence(t *testing.T) {
@@ -39,5 +42,20 @@ func TestKillUsesTheMutationResultAndOnlyAcceptsConfirmedAbsence(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPaneAsksAgainWhenTheServerEndsMidAnswer(t *testing.T) {
+	dir := t.TempDir()
+	count := filepath.Join(dir, "count")
+	t.Setenv("YM_PANE_FIXTURE_COUNT", count)
+	script := "#!/bin/sh\nif [ -e \"$YM_PANE_FIXTURE_COUNT\" ]; then echo 'no server running on /tmp/fixture' >&2; else : > \"$YM_PANE_FIXTURE_COUNT\"; echo 'server exited unexpectedly' >&2; fi\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	h := Host{Socket: "fixture"}
+	if _, err := h.Pane("work"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("Pane error=%v, expected the session to be gone", err)
 	}
 }

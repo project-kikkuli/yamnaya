@@ -192,6 +192,10 @@ func (h *Host) Capture(name string) (string, error) {
 // says the session or its server is gone, any other error when tmux could not say.
 func (h *Host) Pane(name string) (Pane, error) {
 	out, err := h.run("list-panes", "-s", "-t", "="+name, "-F", paneFormat)
+	if ending(err) {
+		// The server was ending, its last session just gone, as tmux answered; asked again, it says whether it is still there.
+		out, err = h.run("list-panes", "-s", "-t", "="+name, "-F", paneFormat)
+	}
 	if gone(err) {
 		return Pane{}, fmt.Errorf("%s: %w", name, core.ErrNotFound)
 	}
