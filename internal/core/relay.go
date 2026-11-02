@@ -324,9 +324,9 @@ func (c *Core) refusedHere(r Relay) error {
 		return err
 	}
 	it := Item{Kind: KindChore, Session: y.Requester, CreatedAt: c.now(),
-		Question:  fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(ask), lineMax), r.Error),
-		Rec:       fmt.Sprintf("rerun ym goal --host %s with --repo naming a repository %s has, or start it on a host that has it", r.Dest, r.Dest),
-		Evidence:  []string{"ym " + strings.Join(y.Args, " ")}}
+		Question: fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(ask), lineMax), r.Error),
+		Rec:      fmt.Sprintf("rerun ym goal --host %s with --repo naming a repository %s has, or start it on a host that has it", r.Dest, r.Dest),
+		Evidence: []string{"ym " + strings.Join(y.Args, " ")}}
 	if it.Session == "" {
 		it.Session = "ym"
 	}
