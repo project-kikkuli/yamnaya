@@ -72,7 +72,7 @@ func End(pgid int) {
 		return
 	}
 	for deadline := time.Now().Add(Grace); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if syscall.Kill(-pgid, 0) != nil {
+		if errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
 			return
 		}
 	}

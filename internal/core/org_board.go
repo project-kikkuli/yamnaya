@@ -30,10 +30,12 @@ var standRank = map[string]int{StandDone: 0, StandKilled: 0, StandVerifying: 1, 
 
 // Node is a manager or chief on the board: its goal, its live session, the agents it runs, and the reports below a chief.
 type Node struct {
-	Manager Manager
-	Goal    *Goal
-	Live    *Live
-	Agents  []Live
+	Manager          Manager
+	Goal             *Goal
+	Live             *Live
+	Verifiers        []Live
+	DormantVerifiers []Dormant
+	Agents           []Live
 	// Workers are the agents and subagents working for the goal, as they stand now.
 	Workers  []Worker
 	Children []Node
@@ -99,25 +101,60 @@ func (b Board) Node(id string) (Node, bool) {
 // cleared from the owner's queue leaves the tree.
 func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	agents := map[string][]Live{}
+	verifiers := map[string][]Live{}
+	dormantVerifiers := map[string][]Dormant{}
+	seenVerifiers := map[string]bool{}
 	for _, s := range b.Sessions {
-		if m, ok := o.Managed(s.Key(), b.parents); ok && m.Session != s.Key() {
+		if v, ok := b.Verifier(s); ok {
+			if identity := s.Harness + "/" + s.UsageKey(); !seenVerifiers[identity] {
+				seenVerifiers[identity] = true
+				verifiers[v.Goal] = append(verifiers[v.Goal], s)
+			}
+			continue
+		}
+		if m, ok := o.Managed(sessionOn(s.Remote, s.Key()), b.parents); ok && m.Session != s.Key() {
 			agents[m.ID] = append(agents[m.ID], s)
 		}
 	}
 	for i := range b.Projects {
-		if m, ok := o.ManagerOf(b.Projects[i].Key); ok {
+		p := &b.Projects[i]
+		var v VerifierSession
+		var verifier bool
+		for _, s := range p.Sessions {
+			if v, verifier = b.Verifier(s); verifier {
+				break
+			}
+		}
+		if !verifier {
+			for _, d := range p.Dormant {
+				if v, verifier = b.VerifierSessions[sessionOn(d.Remote, d.ID())]; verifier {
+					break
+				}
+			}
+		}
+		for _, d := range p.Dormant {
+			if binding, ok := b.VerifierSessions[sessionOn(d.Remote, d.ID())]; ok {
+				dormantVerifiers[binding.Goal] = append(dormantVerifiers[binding.Goal], d)
+			}
+		}
+		if verifier {
+			p.Verifier = &v
+			p.Manager = o.Goals[v.Goal].ManagerID
+			continue
+		}
+		if m, ok := o.ManagerOf(sessionOn(ProjectHost(*p), p.Key)); ok {
 			b.Projects[i].Manager = m.ID
 			continue
 		}
 		for _, s := range b.Projects[i].Sessions {
-			if m, ok := o.Managed(s.Key(), b.parents); ok {
+			if m, ok := o.Managed(sessionOn(s.Remote, s.Key()), b.parents); ok {
 				b.Projects[i].Manager = m.ID
 				break
 			}
 		}
 		if b.Projects[i].Manager == "" {
 			for _, d := range b.Projects[i].Dormant {
-				if m, ok := o.Managed(d.ID(), b.parents); ok {
+				if m, ok := o.Managed(sessionOn(d.Remote, d.ID()), b.parents); ok {
 					b.Projects[i].Manager = m.ID
 					break
 				}
@@ -132,7 +169,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	if err != nil {
 		return err
 	}
-	fresh, err := c.Freshness(o)
+	fresh, err := c.freshness(o, b.Remotes)
 	if err != nil {
 		return err
 	}
@@ -149,7 +186,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 	var build func(Manager, map[string]bool) Node
 	build = func(m Manager, seen map[string]bool) Node {
 		seen[m.ID] = true
-		n := Node{Manager: m, Agents: agents[m.ID], Fresh: fresh[m.ID], Off: managerOff(off, o, b.parents, m)}
+		n := Node{Manager: m, Agents: agents[m.ID], Verifiers: verifiers[m.GoalID], DormantVerifiers: dormantVerifiers[m.GoalID], Fresh: fresh[m.ID], Off: managerOff(off, o, b.parents, m)}
 		if st, ok := steers[m.ID]; ok {
 			n.Steer = &st
 		}
@@ -160,7 +197,7 @@ func (c *Core) tree(b *Board, o Org, feeds map[string]Feed) error {
 				n.Repo = g.Repo
 			}
 		}
-		if s, ok := b.Session(m.Session); ok {
+		if s, ok := b.Session(sessionOn(m.Host, m.Session)); ok {
 			n.Live = &s
 		}
 		n.Workers = n.workers(b.At, c.Woke)
@@ -273,7 +310,7 @@ func (c *Core) queue(b *Board, o Org) error {
 	}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
-		m, managed := o.Managed(s.Key(), b.parents)
+		m, managed := o.Managed(sessionOn(s.Remote, s.Key()), b.parents)
 		for _, pr := range s.AllPRs() {
 			st, ok := statuses[pr.URL]
 			if seen[pr.URL] || !ok || !st.ReadyToMerge() || !st.OwnedPR() {

@@ -29,12 +29,13 @@ type boardJSON struct {
 	// Closed are items answered or dismissed in the last week, with their history, for another host's list of every item.
 	Closed []itemJSON `json:"closed,omitempty"`
 	// Self is what this host calls itself; the rest is its goal tree and how each manager and chief stands by this host's reading.
-	Self            string               `json:"self,omitempty"`
-	Managers        []core.Manager       `json:"managers,omitempty"`
-	Goals           []core.Goal          `json:"goals,omitempty"`
-	ManagerSessions map[string]string    `json:"manager_sessions,omitempty"`
-	Standing        map[string]string    `json:"standing,omitempty"`
-	Feeds           map[string]core.Feed `json:"feeds,omitempty"`
+	Self             string                          `json:"self,omitempty"`
+	Managers         []core.Manager                  `json:"managers,omitempty"`
+	Goals            []core.Goal                     `json:"goals,omitempty"`
+	ManagerSessions  map[string]string               `json:"manager_sessions,omitempty"`
+	VerifierSessions map[string]core.VerifierSession `json:"verifier_sessions,omitempty"`
+	Standing         map[string]string               `json:"standing,omitempty"`
+	Feeds            map[string]core.Feed            `json:"feeds,omitempty"`
 	// Fresh is each manager's and chief's latest brief and whether it is behind, by this host's reading.
 	Fresh map[string]core.Freshness `json:"fresh,omitempty"`
 	// Swollen are this host's processes holding a large share of its memory.
@@ -175,6 +176,7 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
 		}
 	}
+	out.VerifierSessions = b.VerifierSessions
 	out.Self, out.ManagerSessions, out.Standing = c.SelfName(), b.Org.Sessions, map[string]string{}
 	if out.Feeds, err = c.Store.Feeds(); err != nil {
 		return out, err
@@ -255,13 +257,14 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 			Killed: parseTS(l.Killed), Recovered: l.Recovered})
 	}
 	for _, d := range j.Dormant {
-		r.Dormant = append(r.Dormant, core.Dormant{ConfigRoot: d.ConfigRoot, Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
+		r.Dormant = append(r.Dormant, core.Dormant{Remote: host, ConfigRoot: d.ConfigRoot, Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
 			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
 	}
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
 	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds, r.Fresh, r.Swollen = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds, j.Fresh, j.Swollen
+	r.VerifierSessions = j.VerifierSessions
 	r.Missions, r.GoalStats = j.Missions, j.GoalStats
 	return r
 }

@@ -105,7 +105,7 @@ func (c *Core) waiting(b Board, asked []Need) ([]Need, error) {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
 		key := s.Key()
-		if _, managed := b.Org.Managed(key, b.parents); managed {
+		if _, managed := b.Org.Managed(sessionOn(s.Remote, key), b.parents); managed {
 			continue
 		}
 		if covered[key] {

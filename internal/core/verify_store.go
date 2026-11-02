@@ -30,7 +30,50 @@ CREATE TABLE IF NOT EXISTS ym_goal_verifications (
 	decided_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ym_goal_verifications_goal ON ym_goal_verifications (goal, attempt);
+CREATE TABLE IF NOT EXISTS ym_verifier_sessions (
+	session TEXT PRIMARY KEY,
+	verification INTEGER NOT NULL,
+	at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO ym_verifier_sessions (session, verification, at)
+	SELECT verifier_session, num, coalesce(launched_at, created_at) FROM ym_goal_verifications
+	WHERE verifier_session != '' ORDER BY num;
 `
+
+type VerifierSession struct {
+	Verification int64
+	Goal         string
+}
+
+func (s *Store) VerifierSessions() (map[string]VerifierSession, error) {
+	return remembered(s, "verifier sessions", cloneMap[string, VerifierSession], s.verifierSessions)
+}
+
+func (s *Store) verifierSessions() (map[string]VerifierSession, error) {
+	rows, err := s.db.Query(`SELECT s.session, s.verification, v.goal FROM ym_verifier_sessions s
+		JOIN ym_goal_verifications v ON v.num = s.verification`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]VerifierSession{}
+	for rows.Next() {
+		var session string
+		var v VerifierSession
+		if err := rows.Scan(&session, &v.Verification, &v.Goal); err != nil {
+			return nil, err
+		}
+		out[session] = v
+	}
+	return out, rows.Err()
+}
+
+func bindVerifier(tx *sql.Tx, id int64) error {
+	_, err := tx.Exec(`INSERT OR IGNORE INTO ym_verifier_sessions (session, verification, at)
+		SELECT verifier_session, num, coalesce(launched_at, created_at) FROM ym_goal_verifications
+		WHERE num = ? AND verifier_session != ''`, id)
+	return err
+}
 
 // Verification is one attempt at proving a goal done: the manager's claim, the deterministic facts ym checked, and the verdict of
 // a fresh session, on the manager's harness, that is neither the manager nor one of its agents.
@@ -107,21 +150,47 @@ func jsonOf(v any) string {
 
 // AddVerification opens the next attempt for v.Goal.
 func (s *Store) AddVerification(v Verification) (Verification, error) {
+	defer s.invalidate()
 	if v.CreatedAt.IsZero() {
 		v.CreatedAt = time.Now().UTC()
 	}
-	err := s.db.QueryRow(`INSERT INTO ym_goal_verifications (goal, attempt, summary, evidence, created_at)
-		VALUES (?, (SELECT coalesce(max(attempt), 0) + 1 FROM ym_goal_verifications WHERE goal = ?), ?, ?, ?) RETURNING num, attempt`,
-		v.Goal, v.Goal, v.Summary, jsonOf(v.Evidence), stamp(v.CreatedAt)).Scan(&v.ID, &v.Attempt)
-	return v, err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRow(`INSERT INTO ym_goal_verifications (goal, attempt, verifier_session, summary, evidence, created_at)
+		VALUES (?, (SELECT coalesce(max(attempt), 0) + 1 FROM ym_goal_verifications WHERE goal = ?), ?, ?, ?, ?) RETURNING num, attempt`,
+		v.Goal, v.Goal, v.Session, v.Summary, jsonOf(v.Evidence), stamp(v.CreatedAt)).Scan(&v.ID, &v.Attempt); err != nil {
+		return v, err
+	}
+	if err = bindVerifier(tx, v.ID); err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
 }
 
 func (s *Store) SaveVerification(v Verification) error {
-	_, err := s.db.Exec(`UPDATE ym_goal_verifications SET verifier_session=?, summary=?, evidence=?, fact_checks=?, facts_at=?, verdict=?, findings=?,
+	defer s.invalidate()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = bindVerifier(tx, v.ID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE ym_goal_verifications SET verifier_session=?, summary=?, evidence=?, fact_checks=?, facts_at=?, verdict=?, findings=?,
 		launched_at=?, failures=?, next_attempt=?, nudged_at=?, last_error=?, ended=?, decided_at=? WHERE num=?`,
 		v.Session, v.Summary, jsonOf(v.Evidence), jsonOf(v.Facts), stamp(v.FactsAt), v.Verdict, jsonOf(v.Findings),
 		stamp(v.LaunchedAt), v.Failures, stamp(v.NextAttempt), stamp(v.NudgedAt), v.LastError, v.Ended, stamp(v.DecidedAt), v.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	if err = bindVerifier(tx, v.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Verifications lists goal's attempts, oldest first; an empty goal lists every goal's.

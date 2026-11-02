@@ -10,8 +10,28 @@ func TestConversationAliasesNeverOverwriteProfileScopedBoardEntries(t *testing.T
 		}
 		b := Board{Sessions: rows}
 		projects := group(rows, nil, map[string]string{}, Lineage{}, nil)
-		if len(projects) != 1 || len(projects[0].Sessions) != 3 {
+		if len(projects) != 2 {
 			t.Fatalf("profile copies disappeared from project: %#v", projects)
+		}
+		seen := map[string]bool{}
+		for _, p := range projects {
+			host := ProjectHost(p)
+			want := 2
+			if host != "" {
+				want = 1
+			}
+			if p.Key != "same-conversation" || len(p.Sessions) != want {
+				t.Fatalf("host %q lost profile copies: %+v", host, p)
+			}
+			for _, s := range p.Sessions {
+				if s.Remote != host {
+					t.Fatalf("hosts mixed in one project: %+v", p)
+				}
+				seen[s.UsageKey()] = true
+			}
+		}
+		if len(seen) != 3 {
+			t.Fatalf("profile copies disappeared: %v", seen)
 		}
 		for _, indexed := range []bool{false, true} {
 			if indexed {

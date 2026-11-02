@@ -169,7 +169,8 @@ type Project struct {
 	// Vibes are the agents' reads of the mission, newest first.
 	Vibes []Vibe
 	// Manager is the manager whose tree the mission's sessions belong to; empty for a mission the owner started.
-	Manager string
+	Manager  string
+	Verifier *VerifierSession
 	// Stats are the mission's numbers by the reading of the host it runs on.
 	Stats Stats
 }
@@ -225,17 +226,18 @@ type Repo struct {
 
 type Board struct {
 	// Org is every manager, chief and goal; Tree arranges them chiefs over managers.
-	Org      Org
-	Tree     []Node
-	Launched []Launched
-	At       time.Time
-	Sessions []Live
-	Projects []Project
-	Repos    []Repo
-	Needs    []Need
-	Profiles []LoginProfile
-	Fleet    Fleet
-	Kills    map[string]time.Time
+	Org              Org
+	VerifierSessions map[string]VerifierSession
+	Tree             []Node
+	Launched         []Launched
+	At               time.Time
+	Sessions         []Live
+	Projects         []Project
+	Repos            []Repo
+	Needs            []Need
+	Profiles         []LoginProfile
+	Fleet            Fleet
+	Kills            map[string]time.Time
 	// Stale are open items whose mission has no live session left.
 	Stale []Need
 	// Waiting are idle sessions the owner started whose last reply asks the owner; they stay off Needs.
@@ -295,6 +297,7 @@ func (b *Board) indexSessions() {
 		if s.Remote != "" {
 			ref = RemoteKey(s.Remote, ref)
 			explicit = RemoteKey(s.Remote, explicit)
+			bind(sessionOn(s.Remote, s.Key()), i)
 		}
 		bind(explicit, i)
 		bind(ref, i)
@@ -303,6 +306,7 @@ func (b *Board) indexSessions() {
 
 	b.projects = make(map[string]int, len(b.Projects))
 	for i, p := range b.Projects {
+		b.projects[sessionOn(ProjectHost(p), p.Key)] = i
 		if _, ok := b.projects[p.Key]; !ok {
 			b.projects[p.Key] = i
 		}
@@ -326,7 +330,7 @@ func (b Board) Project(key string) (Project, bool) {
 		return Project{}, false
 	}
 	for _, p := range b.Projects {
-		if p.Key == key {
+		if p.Key == key || sessionOn(ProjectHost(p), p.Key) == key {
 			return p, true
 		}
 	}
@@ -335,6 +339,9 @@ func (b Board) Project(key string) (Project, bool) {
 
 // ProjectOf is the key of the project the session belongs to, live or not.
 func (b Board) ProjectOf(session string) string {
+	if s, ok := b.Session(session); ok && s.Remote != "" {
+		return s.Project
+	}
 	return projectOf(session, b.parents, b.lin)
 }
 
@@ -419,7 +426,8 @@ func (c *Core) Board() (Board, error) {
 		}()
 	}
 	wg.Wait()
-	fp, reusable := c.fingerprint(stamp, len(procs), byHarness)
+	remotes := c.shownRemotes()
+	fp, reusable := c.fingerprint(stamp, len(procs), byHarness, remotes)
 	if prev, ok := c.reuse.get(fp, reusable, b.At); ok {
 		again := c.again(prev, b.At)
 		c.machine(&again, procs)
@@ -523,11 +531,12 @@ func (c *Core) Board() (Board, error) {
 	}
 	b.Launched = slices.Clone(fp.launched)
 	if c.ShowRemotes {
-		b.addRemotes(c.remoteBoards(), parents, &items, &dormant)
+		b.addRemotes(remotes, parents, &items, &dormant)
 	}
 	for _, d := range dormant {
-		if _, ok := parents[d.ID()]; !ok && d.Parent != "" && d.Parent != d.ID() {
-			parents[d.ID()] = d.Parent
+		key := sessionOn(d.Remote, d.ID())
+		if _, ok := parents[key]; !ok && d.Parent != "" && d.Parent != d.ID() {
+			parents[key] = sessionOn(d.Remote, d.Parent)
 		}
 	}
 	opened, err := c.Store.Opened()
@@ -539,6 +548,15 @@ func (c *Core) Board() (Board, error) {
 		s.Unread = !s.ResultAt.IsZero() && s.ResultAt.After(opened[s.Key()])
 	}
 	b.parents, b.lin = parents, lin
+	if b.VerifierSessions, err = c.Store.VerifierSessions(); err != nil {
+		return b, err
+	}
+	for _, r := range b.Remotes {
+		for session, v := range r.VerifierSessions {
+			v.Goal = qualifyFrom(c.SelfName(), r.Host, v.Goal)
+			b.VerifierSessions[sessionOn(r.Host, session)] = v
+		}
+	}
 	b.Projects = group(b.Sessions, items, parents, lin, dormant)
 	vibes, err := c.Store.Vibes()
 	if err != nil {
@@ -557,7 +575,7 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	for i := range b.Sessions {
-		b.Sessions[i].Project = projectOf(b.Sessions[i].Key(), parents, lin)
+		b.Sessions[i].Project = liveProject(b.Sessions[i], parents, lin)
 	}
 	for i := range b.Projects {
 		if b.Projects[i].Repo == "" {
@@ -933,15 +951,33 @@ func (c *Core) dormant(all []Dormant, live []Live, moved map[string]string) []Do
 	return out
 }
 
+func liveProject(s Live, parents map[string]string, lin Lineage) string {
+	if s.Remote != "" {
+		if s.Project != "" {
+			return s.Project
+		}
+		return s.Key()
+	}
+	return projectOf(s.Key(), parents, lin)
+}
+
+func projectOn(host, key string, parents map[string]string, lin Lineage) string {
+	if host == "" {
+		return projectOf(key, parents, lin)
+	}
+	return strings.TrimPrefix(projectOf(sessionOn(host, key), parents, Lineage{}), host+"/")
+}
+
 func group(sessions []Live, items []Item, parents map[string]string, lin Lineage, dormant []Dormant) []Project {
 	byKey := map[string]*Project{}
 	var order []string
-	get := func(key string) *Project {
-		p := byKey[key]
+	get := func(host, key string) *Project {
+		identity := sessionOn(host, key)
+		p := byKey[identity]
 		if p == nil {
 			p = &Project{Key: key}
-			byKey[key] = p
-			order = append(order, key)
+			byKey[identity] = p
+			order = append(order, identity)
 		}
 		return p
 	}
@@ -952,25 +988,25 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 			continue
 		}
 		seen[identity] = true
-		p := get(projectOf(s.Key(), parents, lin))
+		p := get(s.Remote, liveProject(s, parents, lin))
 		p.Sessions = append(p.Sessions, s)
 	}
 	for _, d := range dormant {
-		p := get(projectOf(d.ID(), parents, lin))
+		p := get(d.Remote, projectOn(d.Remote, d.ID(), parents, lin))
 		p.Dormant = append(p.Dormant, d)
 	}
 	for _, it := range items {
-		key := projectOf(it.Session, parents, lin)
-		if it.State == ItemOpen || byKey[key] != nil {
-			p := get(key)
+		key := projectOn(it.Host, it.Session, parents, lin)
+		if it.State == ItemOpen || byKey[sessionOn(it.Host, key)] != nil {
+			p := get(it.Host, key)
 			p.Items = append(p.Items, it)
 		}
 	}
 	out := make([]Project, 0, len(order))
 	for _, key := range order {
 		p := byKey[key]
-		sort.SliceStable(p.Sessions, func(i, j int) bool { return p.Sessions[i].Key() == key && p.Sessions[j].Key() != key })
-		p.Name = lin.Name[key]
+		sort.SliceStable(p.Sessions, func(i, j int) bool { return p.Sessions[i].Key() == p.Key && p.Sessions[j].Key() != p.Key })
+		p.Name = lin.Name[p.Key]
 		if p.Name == "" {
 			p.Name = defaultName(*p)
 		}

@@ -42,7 +42,7 @@ type boardReuse struct {
 
 // fingerprint reads the board's inputs; reusable is false when one of them cannot be told, such as a harness that counts no
 // changes but runs sessions.
-func (c *Core) fingerprint(procs uint64, n int, owned [][]proc.Proc) (inputs, bool) {
+func (c *Core) fingerprint(procs uint64, n int, owned [][]proc.Proc, remotes []RemoteBoard) (inputs, bool) {
 	in := inputs{procs: procs, nprocs: n}
 	reusable := true
 	for i, h := range c.Harnesses {
@@ -64,7 +64,7 @@ func (c *Core) fingerprint(procs uint64, n int, owned [][]proc.Proc) (inputs, bo
 		in.launched, in.dormant = c.Launches.Launched(), c.Launches.Dormant()
 	}
 	if c.ShowRemotes {
-		for _, r := range c.remoteBoards() {
+		for _, r := range remotes {
 			in.remotes = append(in.remotes, r.At)
 		}
 	}

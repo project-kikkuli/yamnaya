@@ -350,6 +350,10 @@ type stamped struct {
 
 // Freshness reports how every manager's and chief's brief stands, by manager id.
 func (c *Core) Freshness(o Org) (map[string]Freshness, error) {
+	return c.freshness(o, c.shownRemotes())
+}
+
+func (c *Core) freshness(o Org, remotes []RemoteBoard) (map[string]Freshness, error) {
 	briefs, err := c.Store.LatestBriefs()
 	if err != nil {
 		return nil, err
@@ -367,7 +371,7 @@ func (c *Core) Freshness(o Org) (map[string]Freshness, error) {
 	for _, m := range o.Ordered() {
 		out[m.ID] = freshness(o, reports, m, briefs, steers, events[m.ID])
 	}
-	for _, r := range c.shownRemotes() {
+	for _, r := range remotes {
 		for id, f := range r.Fresh {
 			if key := RemoteKey(r.Host, id); o.Managers[key].Host == r.Host {
 				out[key] = f
