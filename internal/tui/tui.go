@@ -1691,17 +1691,26 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 	key, harness := "", ""
 	switch {
 	case r.session != nil:
-		key, harness = r.session.Key(), r.session.Harness
+		key, harness = terminalRef(*r.session), r.session.Harness
 	case r.item != nil:
 		key, harness = r.item.Session, r.item.Harness
+		if r.item.Host != "" {
+			key = core.RemoteKey(r.item.Host, key)
+		}
 		if mg, ok := m.board.Org.ManagerOf(key); ok && mg.Session != "" {
 			key, harness = mg.Session, mg.Harness
+			if mg.Host != "" {
+				key = core.RemoteKey(mg.Host, key)
+			}
+		}
+		if s := m.sessionOf(r); s != nil {
+			key, harness = terminalRef(*s), s.Harness
 		}
 	case r.project != nil && len(r.project.Sessions) > 0:
-		key, harness = r.project.Sessions[0].Key(), r.project.Sessions[0].Harness
+		key, harness = terminalRef(r.project.Sessions[0]), r.project.Sessions[0].Harness
 	case m.mode == modeAgent || m.mode == modeSession:
 		if s, ok := m.session(); ok {
-			key, harness = s.Key(), s.Harness
+			key, harness = terminalRef(*s), s.Harness
 		}
 	}
 	if key == "" {
@@ -1713,7 +1722,11 @@ func (m Model) open(r row) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if err := m.core.Store.MarkOpened(key, time.Now()); err != nil {
+	opened := key
+	if s, ok := m.board.Session(key); ok {
+		opened = sessionKey(s)
+	}
+	if err := m.core.Store.MarkOpened(opened, time.Now()); err != nil {
 		m.message = "error: " + err.Error()
 	}
 	ts := m.core.Targets(m.board, key, harness)
@@ -1743,6 +1756,9 @@ func (m Model) focus(t core.Target) tea.Cmd {
 	}
 	cmd, err := m.core.AttachCmd(t)
 	if err != nil {
+		if t.Remote != "" {
+			return func() tea.Msg { return doneMsg{"", err} }
+		}
 		hostErr := "can't read ym's tmux: " + err.Error()
 		return func() tea.Msg { return doneMsg{core.UnreadAdvice(hostErr), nil} }
 	}
@@ -1811,13 +1827,26 @@ func (m Model) sessionOf(r row) *core.Live {
 	case r.session != nil && r.member == nil:
 		return r.session
 	case r.item != nil:
-		key := r.item.Session
-		if mg, ok := m.board.Org.ManagerOf(key); ok && mg.Session != "" {
-			key = mg.Session
+		key, host, harness := r.item.Session, r.item.Host, r.item.Harness
+		ref := key
+		if host != "" {
+			ref = core.RemoteKey(host, key)
 		}
-		if s, ok := m.board.Session(key); ok {
-			return &s
+		if mg, ok := m.board.Org.ManagerOf(ref); ok && mg.Session != "" {
+			key, host, harness = mg.Session, mg.Host, mg.Harness
 		}
+		var found *core.Live
+		for i := range m.board.Sessions {
+			s := &m.board.Sessions[i]
+			if s.Remote != host || s.Key() != key || harness != "" && s.Harness != harness {
+				continue
+			}
+			if found != nil && found.Ref() != s.Ref() {
+				return nil
+			}
+			found = s
+		}
+		return found
 	case m.mode == modeSession || m.mode == modeAgent:
 		if s, ok := m.session(); ok {
 			return s

@@ -123,7 +123,7 @@ func TestOpeningARemoteSessionAttachesOverSSH(t *testing.T) {
 		t.Fatalf("targets = %+v", ts)
 	}
 	cmd, _ := w.core.AttachCmd(ts[0])
-	if want := []string{"ssh", "-t", "box", "open", "--no-board", "remote-lead-0001"}; cmd == nil || !reflect.DeepEqual(cmd.Args, want) {
+	if want := []string{"ssh", "-t", "box", "open", "--no-board", "claude:default@remote-lead-0001"}; cmd == nil || !reflect.DeepEqual(cmd.Args, want) {
 		t.Errorf("attach = %v, want %v", cmd, want)
 	}
 	if s, err := w.core.Find("remote-lead"); err != nil || s.Remote != "box" {

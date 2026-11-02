@@ -246,6 +246,11 @@ type LoginProfile struct {
 }
 
 func (s Session) Ref() string { return profile.SessionKey(s.Harness, s.Profile, s.Key()) }
+
+func (s Session) ExactRef() string {
+	return s.Harness + ":" + profile.ID(s.Profile) + "@" + s.Key()
+}
+
 func (s Live) UsageKey() string {
 	key := profile.SessionKey(s.Harness, s.Profile, s.ID)
 	if s.Remote != "" {
