@@ -17,10 +17,14 @@ import (
 )
 
 type record struct {
+	SessionID   string    `json:"sessionId"`
+	AgentID     string    `json:"agentId"`
 	Type        string    `json:"type"`
 	Subtype     string    `json:"subtype"`
 	IsMeta      bool      `json:"isMeta"`
 	IsSidechain bool      `json:"isSidechain"`
+	IsAPIError  bool      `json:"isApiErrorMessage"`
+	Error       string    `json:"error"`
 	CustomTitle string    `json:"customTitle"`
 	AgentName   string    `json:"agentName"`
 	AITitle     string    `json:"aiTitle"`
@@ -125,7 +129,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 8
+const scanFormat = 9
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -146,10 +150,15 @@ type scan struct {
 	LastStop   string
 	Stopped    bool
 	// HandedBack is set while the last assistant record called SubagentHandback, which ends a subagent cleanly.
-	HandedBack bool
-	LastAt     time.Time
+	HandedBack         bool
+	HandbackCall       string
+	SessionID, AgentID string
+	LastAt             time.Time
 	// UserAt is the latest user record's time; Claude can write a new turn's prompt before the last turn's final reply.
-	UserAt time.Time
+	UserAt         time.Time
+	QuotaAt        time.Time
+	QuotaSidechain bool
+	Invalid        bool
 	// Creating holds tool calls that run gh pr create, until their results arrive.
 	Creating map[string]bool
 	Facts    core.Facts
@@ -184,6 +193,18 @@ type call struct {
 var wrote = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
 
 func (t *scan) add(r record) {
+	if r.SessionID != "" {
+		if t.SessionID != "" && t.SessionID != r.SessionID {
+			t.Invalid = true
+		}
+		t.SessionID = r.SessionID
+	}
+	if r.AgentID != "" {
+		if t.AgentID != "" && t.AgentID != r.AgentID {
+			t.Invalid = true
+		}
+		t.AgentID = r.AgentID
+	}
 	switch r.Type {
 	case "custom-title":
 		t.Custom = r.CustomTitle
@@ -209,6 +230,11 @@ func (t *scan) add(r record) {
 			t.Drift.Compacted(r.Timestamp)
 		}
 	case "user", "assistant":
+		t.QuotaAt = time.Time{}
+		if r.Type == "assistant" && r.IsAPIError && r.Error == "rate_limit" {
+			t.QuotaAt = r.Timestamp
+			t.QuotaSidechain = r.IsSidechain
+		}
 		t.Next = ""
 		if r.Permission != "" {
 			t.Mode = r.Permission
@@ -227,6 +253,15 @@ func (t *scan) add(r record) {
 		if r.Type == "assistant" {
 			t.assistant(r)
 		} else {
+			bs := r.blocks()
+			if len(bs) == 0 {
+				t.HandedBack = false
+			}
+			for _, b := range bs {
+				if b.Type != "tool_result" || b.ToolUseID != t.HandbackCall || b.IsError {
+					t.HandedBack = false
+				}
+			}
 			t.user(r)
 		}
 		if r.IsSidechain {
@@ -251,6 +286,7 @@ func (t *scan) add(r record) {
 
 func (t *scan) assistant(r record) {
 	t.HandedBack = false
+	t.HandbackCall = ""
 	if r.Message != nil && r.Message.Model != "" && !strings.HasPrefix(r.Message.Model, "<") {
 		t.Facts.Model = r.Message.Model
 	}
@@ -270,6 +306,7 @@ func (t *scan) assistant(r record) {
 		case "tool_use":
 			if b.Name == "SubagentHandback" {
 				t.HandedBack = true
+				t.HandbackCall = b.ID
 			}
 			a := core.Describe(b.Name, b.Input, r.Cwd, r.Timestamp)
 			var files []string
@@ -416,6 +453,8 @@ func (a *Adapter) advance(path string) *scan {
 		var rec record
 		if json.Unmarshal(line, &rec) == nil {
 			t.add(rec)
+		} else {
+			t.Invalid = true
 		}
 	}
 	if a.Cache != nil && t.Offset != start && time.Since(t.saved) >= core.ScanSaveEvery {

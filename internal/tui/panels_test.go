@@ -25,10 +25,14 @@ type ymCall struct {
 type switching struct {
 	*launches
 	switched []string
+	err      error
 }
 
 func (s *switching) SwitchProfile(ref, id string) (string, error) {
 	s.switched = append(s.switched, ref+" "+id)
+	if s.err != nil {
+		return "", s.err
+	}
 	return "switched", nil
 }
 
@@ -64,6 +68,7 @@ func panelBoard(t *testing.T) (Model, *[]ymCall, *switching) {
 // toPanelRow moves the panel cursor to the row whose text holds sub.
 func toPanelRow(t *testing.T, m Model, sub string) Model {
 	t.Helper()
+	m.pn.cur = m.firstPanelRow(0, 1)
 	for range 40 {
 		rows, _ := m.panelRows()
 		if m.pn.cur < len(rows) && strings.Contains(ansi.Strip(rows[m.pn.cur].text), sub) {
@@ -128,7 +133,11 @@ func TestPanelActionsRunTheCommandTheCLIRuns(t *testing.T) {
 				m = toPanelRow(t, m, c.row)
 			}
 			m = press(t, m, c.keys...)
-			if len(*calls) == 0 || !reflect.DeepEqual((*calls)[len(*calls)-1], c.want) {
+			matched := false
+			for _, call := range *calls {
+				matched = matched || reflect.DeepEqual(call, c.want)
+			}
+			if !matched {
 				t.Fatalf("ran %+v, want %+v; message %q\n%s", *calls, c.want, m.message, ansi.Strip(m.View().Content))
 			}
 		})

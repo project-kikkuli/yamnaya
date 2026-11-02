@@ -218,6 +218,9 @@ func (m Model) rowNote(r row) string {
 
 func (m Model) ended(msg actMsg) (tea.Model, tea.Cmd) {
 	a := m.acts[msg.key]
+	if d := m.pn.added; d != nil && a.what == "remove" && msg.err == nil && msg.key == profileRowKey(d.host, d.p.Harness, d.p.ID) {
+		m.pn.added = nil
+	}
 	a.done, a.message, a.err, a.at = true, msg.message, msg.err, time.Now()
 	m.acts[msg.key] = a
 	if msg.err != nil {

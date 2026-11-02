@@ -40,19 +40,8 @@ func (l launcher) SwitchProfile(ref, id string) (string, error) {
 		return "", fmt.Errorf("no session %q to switch", ref)
 	}
 	if live.ID != "" {
-		if !live.Settled() {
-			return "", fmt.Errorf("%s is %s or has a live action; switch when idle", core.Short(live.ID), live.Status)
-		}
-		for _, cp := range live.Copies {
-			busyChild := false
-			for _, child := range cp.Crew {
-				if child.Status == core.Busy {
-					busyChild = true
-				}
-			}
-			if cp.Status != core.Idle || cp.Prompt != nil || busyChild {
-				return "", fmt.Errorf("a copy is active; switch when every copy is idle")
-			}
+		if err := l.switchReady(live, rec, nil); err != nil {
+			return "", err
 		}
 		if !recorded {
 			rec = launch.Adopted(live, time.Now())
@@ -98,6 +87,9 @@ func (l launcher) SwitchProfile(ref, id string) (string, error) {
 		dest, err = failoverTarget(ps, core.Exhaustion{Harness: rec.Harness, Account: source.Account}, profileLimits(filepath.Dir(l.records.Dir)), a.Pools, time.Now(), rec.Worktree.Path)
 	}
 	if err != nil {
+		return "", err
+	}
+	if err = switchAuthentication(dest, rec.Worktree.Path); err != nil {
 		return "", err
 	}
 	if dest.Root == rec.ConfigRoot {
@@ -161,6 +153,20 @@ func (l launcher) SwitchProfile(ref, id string) (string, error) {
 		probe()
 	}
 	if live.ID != "" {
+		quotaWaiting := live.Status == core.Waiting
+		for _, cp := range live.Copies {
+			quotaWaiting = quotaWaiting || cp.Status == core.Waiting
+		}
+		if quotaWaiting {
+			fresh, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session)
+			if err != nil {
+				return "", err
+			}
+			if err = l.switchReady(fresh, rec, nil); err != nil {
+				return "", err
+			}
+			live = fresh
+		}
 		if err = l.drainNative(children, live.PID); err != nil {
 			return "", err
 		}

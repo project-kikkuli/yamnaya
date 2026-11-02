@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -26,6 +29,7 @@ func (h switchingHarness) Discover(ps []proc.Proc) []core.Session {
 	for _, p := range ps {
 		s := h.session
 		s.PID = p.PID
+		s.TTY = p.TTY
 		out = append(out, s)
 	}
 	return out
@@ -39,13 +43,13 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 		t.Skip("tmux not installed")
 	}
 	for _, harness := range []string{"claude", "codex"} {
-		for _, status := range []string{"idle", "exited", "busy"} {
+		for _, status := range []string{"idle", "exited", "exited removed worktree", "quota waiting", "busy", "cancelled login", "unregistered login"} {
 			t.Run(harness+"/"+status, func(t *testing.T) {
 				state, cwd, bins := t.TempDir(), t.TempDir(), t.TempDir()
 				t.Setenv("YAMNAYA_STATE_DIR", state)
 				t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
 				ran := filepath.Join(t.TempDir(), "resumed")
-				script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$YAMNAYA_PROFILE\" \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_SECURESTORAGE_CONFIG_DIR\" \"$CODEX_HOME\" \"$CODEX_SQLITE_HOME\" \"$ANTHROPIC_API_KEY$CODEX_ACCESS_TOKEN\" \"$*\" > %s.tmp && mv %s.tmp %s\nexec sleep 30\n", shellQuote(ran), shellQuote(ran), shellQuote(ran))
+				script := fmt.Sprintf("#!/bin/sh\ncase \" $* \" in *\" auth status \"*|*\" login status \"*) [ \"$YM_FIXTURE_LOGIN_FAILURE\" = 1 ] && exit 1; printf '%%s\\n' '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'; exit 0;; esac\nprintf '%%s\\n' \"$YAMNAYA_PROFILE\" \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_SECURESTORAGE_CONFIG_DIR\" \"$CODEX_HOME\" \"$CODEX_SQLITE_HOME\" \"$ANTHROPIC_API_KEY$CODEX_ACCESS_TOKEN\" \"$*\" > %s.tmp && mv %s.tmp %s\nexec sleep 30\n", shellQuote(ran), shellQuote(ran), shellQuote(ran))
 				if err := os.WriteFile(filepath.Join(bins, harness), []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -59,6 +63,15 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 					}
 				}
 				a.Root, b.Root = physicalProfileRoot(a.Root), physicalProfileRoot(b.Root)
+				subscriptionIdentity(t, &a)
+				if status != "unregistered login" {
+					subscriptionIdentity(t, &b)
+				}
+				if status == "cancelled login" {
+					t.Setenv("YM_FIXTURE_LOGIN_FAILURE", "1")
+				}
+				allowed := status == "idle" || strings.HasPrefix(status, "exited") || status == "quota waiting"
+
 				rel, data := filepath.Join("projects", "p", profileConversation+".jsonl"), profileResponse(harness, time.Now().UTC().Format(time.RFC3339Nano), "first", 100, 20)
 				if harness == "codex" {
 					rel = filepath.Join("sessions", "rollout-2026-10-23T10-00-00-"+profileConversation+".jsonl")
@@ -71,12 +84,40 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 					t.Fatal(err)
 				}
 				defer st.Close()
-				alive, signals := status != "exited", 0
+				alive, signals := !strings.HasPrefix(status, "exited"), 0
 				s := core.Session{Harness: harness, ID: profileConversation, Profile: "a", ConfigRoot: a.Root, Status: core.Idle, Cwd: cwd}
 				if status == "busy" {
 					s.Status = core.Busy
 				}
-				l.core = &core.Core{Store: st, StateDir: state, Harnesses: []core.Harness{switchingHarness{s}},
+				s.Account = a.Account
+				mainAt := time.Now().Add(-time.Second)
+				var native core.Harness = switchingHarness{session: s}
+				if status == "quota waiting" {
+					s.Status = core.Waiting
+					native = quotaHarness{switchingHarness: switchingHarness{session: s}, at: mainAt}
+					db, err := sql.Open("sqlite", filepath.Join(state, "ym.db"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					event, _ := json.Marshal(core.Exhaustion{Harness: harness, Profile: a.ID, Account: a.Account, Session: s.ID, Reason: map[string]string{"claude": "subscription_rate_limit", "codex": "usage_limit_exceeded"}[harness], Seen: mainAt.Add(100 * time.Millisecond)})
+					name := "7d"
+					if harness == "codex" {
+						name = "codex 7d"
+					}
+					window, _ := json.Marshal(core.Limit{Harness: harness, Profile: a.ID, Account: a.Account, Name: name, Used: 100, Seen: time.Now(), ResetsAt: time.Now().Add(time.Hour)})
+					_, err = db.Exec(`CREATE TABLE ym_usage_exhaustions(body TEXT);CREATE TABLE ym_usage_limits(body TEXT)`)
+					if err == nil {
+						_, err = db.Exec(`INSERT INTO ym_usage_exhaustions VALUES(?)`, string(event))
+					}
+					if err == nil {
+						_, err = db.Exec(`INSERT INTO ym_usage_limits VALUES(?)`, string(window))
+					}
+					db.Close()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				l.core = &core.Core{Store: st, StateDir: state, Harnesses: []core.Harness{native}, Hosts: []core.Host{quotaHost{text: "quota dialog"}},
 					Procs: func() ([]proc.Proc, error) {
 						if !alive {
 							return nil, nil
@@ -95,6 +136,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 					return ""
 				}
 				rec := launch.Record{Key: "conversation", Harness: harness, Session: profileConversation, NativePID: 4242, Dedicated: harness == "codex", Adopted: true, Worktree: launch.Worktree{Path: cwd}}
+				rec.AttachedAt = mainAt.Add(-time.Second)
 				setRecordProfile(&rec, a)
 				if err = l.records.Save(rec); err != nil {
 					t.Fatal(err)
@@ -111,9 +153,25 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if err != nil {
 					t.Fatal(err)
 				}
+				pending, err := st.AddMessage(rec.Session, "fixture pending instruction", core.MsgPending)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if status == "exited removed worktree" {
+					if err := os.RemoveAll(cwd); err != nil {
+						t.Fatal(err)
+					}
+				}
 				_, err = l.SwitchProfile(rec.Key, "b")
+				if allowed && err != nil {
+					t.Fatalf("switch failed: %v", err)
+				}
+				savedMessage, messageErr := st.Message(pending.Seq)
+				if messageErr != nil || !reflect.DeepEqual(savedMessage, pending) {
+					t.Fatalf("queued instruction changed: %#v %v", savedMessage, messageErr)
+				}
 				want := b
-				if status == "busy" {
+				if !allowed {
 					want = a
 				}
 				savedChief, loadErr := st.Manager(chief.ID)
@@ -124,7 +182,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if loadErr != nil || savedReport.Profile != a.ID || savedReport.ConfigRoot != a.Root || savedReport.ParentID != chief.ID {
 					t.Fatalf("chief switch changed its report: %+v, %v", savedReport, loadErr)
 				}
-				if status == "busy" {
+				if !allowed {
 					if err == nil || signals != 0 {
 						t.Fatalf("busy action interrupted: %v signals=%d", err, signals)
 					}
@@ -154,7 +212,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if err != nil || string(copied) != data {
 					t.Fatalf("history not preserved: %v", err)
 				}
-				if (signals > 0) != (status == "idle") {
+				if (signals > 0) != (!strings.HasPrefix(status, "exited")) {
 					t.Fatalf("wrong shutdown signals: %d", signals)
 				}
 			})

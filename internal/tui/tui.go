@@ -351,7 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.peaks.blurred = false
 		return m, tea.Batch(m.refresh(false), m.animate())
 	case boardMsg:
-		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && b.board.Machine.Slots.Pressure.Line(len(b.board.Machine.Holders)) == m.board.Machine.Slots.Pressure.Line(len(m.board.Machine.Holders)) && b.board.Machine.Slots.Throttle.Line() == m.board.Machine.Slots.Throttle.Line() && maps.Equal(b.nicks, m.nicks) {
+		if b.err == nil && m.loaded && m.err == nil && m.page != nil && !m.noting() && len(queued(b.relays, b.board)) == 0 && b.board.Gen != 0 && b.board.Gen == m.board.Gen && m.listMode() != modeItems && (m.listMode() != modePanel || m.pn.kind != panelProfiles) && b.board.Machine.Slots.Pressure.Line(len(b.board.Machine.Holders)) == m.board.Machine.Slots.Pressure.Line(len(m.board.Machine.Holders)) && b.board.Machine.Slots.Throttle.Line() == m.board.Machine.Slots.Throttle.Line() && maps.Equal(b.nicks, m.nicks) {
 			m.board = b.board
 			m.themed(b)
 			if b.tick {
@@ -392,6 +392,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.waitRepos()
 	case boardMsg:
 		keep, rows := "", m.rows()
+		panelKey := ""
+		if m.listMode() == modePanel && m.pn.kind == panelProfiles {
+			ps, _ := m.panelRows()
+			if m.pn.cur >= 0 && m.pn.cur < len(ps) {
+				panelKey = ps[m.pn.cur].key
+			}
+		}
 		var after, before []string
 		if m.cursor >= 0 && m.cursor < len(rows) {
 			keep = rowKey(rows[m.cursor])
@@ -414,6 +421,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loadItems()
 		}
 		m.follow(keep, after, before)
+		if m.listMode() == modePanel && m.pn.kind == panelProfiles {
+			m.refreshProfileTarget()
+		}
+		if panelKey != "" {
+			m.focusPanelRow(panelKey)
+		}
 		var cmds []tea.Cmd
 		if msg.tick {
 			cmds = append(cmds, m.tick())
@@ -450,6 +463,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refresh(false)
 	case actMsg:
 		return m.ended(msg)
+	case profileAddedMsg:
+		return m.profileAdded(msg)
+	case profileLoginMsg:
+		return m.profileLoggedIn(msg)
+	case profileSwitchedMsg:
+		return m.profileSwitched(msg)
 	case repairLineMsg:
 		return m.repairLine(msg)
 	case pastMsg:

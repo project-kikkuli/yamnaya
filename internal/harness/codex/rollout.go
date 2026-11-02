@@ -15,19 +15,23 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/health"
 )
 
-const scanFormat = 8
+const scanFormat = 9
 
 // scan accumulates what a rollout says about its thread, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
 type scan struct {
 	// V is the scan format; a cached scan of another format is read again from the start.
-	V        int
-	Offset   int64
-	Open     bool
-	First    string
-	Brief    string
-	Creating map[string]bool
-	Facts    core.Facts
+	V         int
+	Offset    int64
+	Open      bool
+	QuotaAt   time.Time
+	Stopped   bool
+	Invalid   bool
+	SessionID string
+	First     string
+	Brief     string
+	Creating  map[string]bool
+	Facts     core.Facts
 	// Before is the result as it stood before the latest reply, written at BeforeAt, restored when that reply was a compaction summary.
 	Before   string
 	BeforeAt time.Time
@@ -52,6 +56,8 @@ type rolloutLine struct {
 }
 
 type payload struct {
+	ID        string          `json:"id"`
+	ErrorInfo string          `json:"codex_error_info"`
 	Type      string          `json:"type"`
 	Role      string          `json:"role"`
 	Message   string          `json:"message"`
@@ -108,14 +114,29 @@ func typed(text string) string {
 func (t *scan) add(l rolloutLine, cwd string) {
 	var p payload
 	if json.Unmarshal(l.Payload, &p) != nil {
+		t.Invalid = true
 		return
 	}
+	if l.Type == "response_item" || l.Type == "event_msg" && (p.Type == "task_started" || p.Type == "user_message" || p.Type == "agent_message" || p.Type == "item_started" || p.Type == "item_completed") {
+		t.QuotaAt, t.Stopped = time.Time{}, false
+	}
 	switch l.Type {
+	case "session_meta":
+		if t.SessionID != "" && t.SessionID != p.ID {
+			t.Invalid = true
+		}
+		t.SessionID = p.ID
 	case "compacted":
 		t.Facts.Result, t.Facts.ResultAt = t.Before, t.BeforeAt
 		t.Drift.Compacted(l.Timestamp)
 	case "event_msg":
 		switch p.Type {
+		case "error":
+			t.QuotaAt = time.Time{}
+			t.Stopped = false
+			if p.ErrorInfo == "UsageLimitExceeded" || p.ErrorInfo == "usage_limit_exceeded" {
+				t.QuotaAt, t.Stopped = l.Timestamp, true
+			}
 		case "item_completed":
 			if p.Item != nil && p.Item.Type == "CommandExecution" && p.Item.ExitCode != nil && *p.Item.ExitCode == 0 {
 				cmd := strings.Join(p.Item.Command, " ")
@@ -130,6 +151,7 @@ func (t *scan) add(l rolloutLine, cwd string) {
 			t.Open = true
 		case "task_complete", "turn_aborted":
 			t.Open = false
+			t.Stopped = true
 		case "user_message":
 			t.prompt(p.Message)
 		case "token_count":
@@ -346,6 +368,8 @@ func (a *Adapter) advance(t *scan, path, cwd string) {
 		var l rolloutLine
 		if json.Unmarshal(line, &l) == nil {
 			t.add(l, cwd)
+		} else {
+			t.Invalid = true
 		}
 	}
 	if a.Cache != nil && t.Offset != start && time.Since(t.saved) >= core.ScanSaveEvery {
