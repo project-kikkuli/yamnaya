@@ -26,13 +26,14 @@ import (
 )
 
 type launcher struct {
-	rootOf     func(int, string) string
-	resumeNote string
-	operation  string
-	core       *core.Core
-	srv        *tmux.Host
-	records    launch.Records
-	conf       string
+	rootOf         func(int, string) string
+	resumeNote     string
+	operation      string
+	core           *core.Core
+	bindAssignment func(string, string, string) error
+	srv            *tmux.Host
+	records        launch.Records
+	conf           string
 	// stamp is the file whose age throttles the board's background gc; empty never starts one.
 	stamp  string
 	squash *launch.Squash
@@ -234,10 +235,14 @@ func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 		}
 	}
 	if rec.Assignment != "" && rec.Session != "" {
-		if l.core == nil {
+		bind := l.bindAssignment
+		if bind == nil && l.core != nil {
+			bind = l.core.SettleAssignment
+		}
+		if bind == nil {
 			return rec, errors.New("assignment settlement needs ym's core")
 		}
-		if err := l.core.SettleAssignment(rec.Assignment, rec.Session, rec.Parent); err != nil {
+		if err := bind(rec.Assignment, rec.Session, rec.Parent); err != nil {
 			return rec, fmt.Errorf("settle assignment %s for %s: %w", rec.Assignment, rec.Key, err)
 		}
 	}
@@ -343,19 +348,27 @@ func (l launcher) boilerplate(n core.NewLaunch) []string {
 	return out
 }
 
+func (l launcher) StartBound(n core.NewLaunch, bind func(string, string, string) error) (core.Started, error) {
+	l.bindAssignment = bind
+	return l.Start(n)
+}
+
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
 func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	if n.Assignment != "" {
 		if err := os.MkdirAll(l.records.Dir, 0o755); err != nil {
 			return core.Started{}, err
 		}
-		lock, err := os.OpenFile(filepath.Join(l.records.Dir, "assignment-start.lock"), os.O_CREATE|os.O_RDWR, 0o600)
-		if err != nil {
-			return core.Started{}, err
-		}
-		defer lock.Close()
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-			return core.Started{}, err
+		// Transactional binding holds the origin writer lock before entering the launcher.
+		if l.bindAssignment == nil {
+			lock, err := os.OpenFile(filepath.Join(l.records.Dir, "assignment-start.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+			if err != nil {
+				return core.Started{}, err
+			}
+			defer lock.Close()
+			if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+				return core.Started{}, err
+			}
 		}
 		all, err := l.records.All()
 		if err != nil {

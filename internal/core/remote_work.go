@@ -390,7 +390,7 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 		if err != nil {
 			return err
 		}
-		if g.Ended() {
+		if g.State == GoalKilled || g.State == GoalDropped {
 			if err := c.queueWork(w.Requester, WorkMessage{Op: "revoke", Work: w}); err != nil {
 				return err
 			}

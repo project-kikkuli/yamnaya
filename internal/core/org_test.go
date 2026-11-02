@@ -33,6 +33,14 @@ func (l *fakeLaunches) End(ref, goal string) (string, error) {
 
 func (l *fakeLaunches) Launched() []Launched { return l.launched }
 
+func (l *fakeLaunches) StartBound(n NewLaunch, bind func(string, string, string) error) (Started, error) {
+	st, err := l.Start(n)
+	if err == nil && st.Session != "" {
+		err = bind(n.Assignment, st.Session, n.Parent)
+	}
+	return st, err
+}
+
 func (l *fakeLaunches) Start(n NewLaunch) (Started, error) {
 	l.starts = append(l.starts, n)
 	if during := l.during; during != nil {

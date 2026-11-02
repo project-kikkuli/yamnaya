@@ -56,7 +56,10 @@ func (c *Core) registerLaunch(w RemoteAssignment) error {
 		return err
 	}
 	host, worker, remote := SplitRemote(a.Session)
-	if !remote || w.Origin != origin || a.Goal != w.Goal || host != w.Host || a.Generation != w.Assignment.Generation || w.Launch == nil {
+	if !remote {
+		host, worker = origin, a.Session
+	}
+	if w.Origin != origin || a.Goal != w.Goal || host != w.Host || a.Generation != w.Assignment.Generation || w.Launch == nil {
 		return errors.New("launch intent changed assignment ownership")
 	}
 	g, err := goalIn(tx, a.Goal)
@@ -65,7 +68,7 @@ func (c *Core) registerLaunch(w RemoteAssignment) error {
 	}
 	w.Assignment, w.Worker, w.Manager = a, worker, g.ManagerID
 	state := "pending"
-	if g.Ended() || a.State != "outstanding" {
+	if g.Ended() || a.State != "outstanding" || a.Report != 0 {
 		state = "revoked"
 	}
 	if _, err = tx.Exec(`INSERT INTO ym_work_dispatches(id,goal,body,state) VALUES (?,?,?,?) ON CONFLICT DO NOTHING`, a.ID, a.Goal, jsonOf(w), state); err != nil {
@@ -101,6 +104,8 @@ func (s *Store) pendingLaunches() ([]RemoteAssignment, error) {
 }
 
 func (c *Core) AuthorizeWork(id string, run func(RemoteAssignment) error) error {
+	self := c.SelfName()
+	defer c.Store.invalidate()
 	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return err
@@ -110,11 +115,8 @@ func (c *Core) AuthorizeWork(id string, run func(RemoteAssignment) error) error 
 	if err = tx.QueryRow(`SELECT body,state FROM ym_work_dispatches WHERE id=?`, id).Scan(&body, &state); err != nil {
 		return err
 	}
-	if state == "revoked" {
+	if state != "pending" && state != "dispatching" && state != "started" {
 		return ErrWorkRevoked
-	}
-	if state == "started" {
-		return nil
 	}
 	var w RemoteAssignment
 	if err = json.Unmarshal([]byte(body), &w); err != nil {
@@ -128,13 +130,21 @@ func (c *Core) AuthorizeWork(id string, run func(RemoteAssignment) error) error 
 	if err != nil {
 		return err
 	}
-	if w.Launch == nil || g.Ended() || a.State != "outstanding" || a.Generation != w.Assignment.Generation {
+	if w.Launch == nil || g.Ended() || a.State != "outstanding" || a.Report != 0 || a.Generation != w.Assignment.Generation {
 		return ErrWorkRevoked
+	}
+	if state == "started" {
+		return nil
 	}
 	if _, err = tx.Exec(`UPDATE ym_work_dispatches SET state='dispatching' WHERE id=?`, id); err != nil {
 		return err
 	}
-	dispatchErr := run(w)
+	var dispatchErr error
+	if w.Host == self {
+		dispatchErr = c.launchAtOrigin(tx, w)
+	} else {
+		dispatchErr = run(w)
+	}
 	state = "started"
 	if dispatchErr != nil {
 		state = "pending"
@@ -145,15 +155,63 @@ func (c *Core) AuthorizeWork(id string, run func(RemoteAssignment) error) error 
 			}
 			w.Launch = nil
 			w.State = "failed"
-			if err = workMessageIn(tx, w.Host, WorkMessage{Op: "register", Work: w}, c.now()); err != nil {
-				return err
+			if w.Host != self {
+				if err = workMessageIn(tx, w.Host, WorkMessage{Op: "register", Work: w}, c.now()); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	if _, err = tx.Exec(`UPDATE ym_work_dispatches SET state=? WHERE id=?`, state, id); err != nil {
+	if _, err = tx.Exec(`UPDATE ym_work_dispatches SET state=?,body=? WHERE id=?`, state, jsonOf(w), id); err != nil {
 		return err
 	}
 	return errors.Join(dispatchErr, tx.Commit())
+}
+
+func (c *Core) launchAtOrigin(tx *sql.Tx, w RemoteAssignment) error {
+	l, ok := c.Launches.(interface {
+		StartBound(NewLaunch, func(string, string, string) error) (Started, error)
+	})
+	if !ok {
+		return errors.New("local authority requires a launcher with transactional binding")
+	}
+	n := *w.Launch
+	n.Assignment, n.Source, n.Session, n.Parent = w.Assignment.ID, w.Assignment.ID, w.Worker, c.localKey(w.Parent)
+	n.Prompt += fmt.Sprintf("\n\nThis work is assignment %s generation %d. Submit its terminal report with ym goal report %s --summary \"<result and evidence>\" for manager acceptance.", w.Assignment.ID, w.Assignment.Generation, w.Assignment.ID)
+	_, err := l.StartBound(n, func(id, worker, parent string) error {
+		if id != w.Assignment.ID {
+			return errors.New("local launch changed assignment identity")
+		}
+		return settleAssignmentIn(tx, id, worker, parent)
+	})
+	return err
+}
+
+func (c *Core) drainLocalRevocations() error {
+	self := c.SelfName()
+	rows, err := c.Store.PendingRelays()
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if r.Dest != self || r.Kind != RelayWork {
+			continue
+		}
+		var m WorkMessage
+		if err = json.Unmarshal([]byte(r.Body), &m); err != nil {
+			return err
+		}
+		if m.Op != "revoke" || m.Work.Origin != self || m.Work.Host != self {
+			continue
+		}
+		if err = c.cancelOwnedWork(m.Work); err != nil {
+			return err
+		}
+		if err = c.Store.markRelayed([]int64{r.Seq}, c.now()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func revokeWorkIn(tx *sql.Tx, goal string, at time.Time) error {
@@ -181,6 +239,17 @@ func revokeWorkIn(tx *sql.Tx, goal string, at time.Time) error {
 		return err
 	}
 	for _, w := range all {
+		a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
+		if err != nil {
+			return err
+		}
+		var latest string
+		if err = tx.QueryRow(`SELECT id FROM ym_assignments WHERE session=? ORDER BY generation DESC LIMIT 1`, a.Session).Scan(&latest); err != nil {
+			return err
+		}
+		if latest != a.ID {
+			continue
+		}
 		if err = workMessageIn(tx, w.Host, WorkMessage{Op: "revoke", Work: w}, at); err != nil {
 			return err
 		}
@@ -196,7 +265,7 @@ func (c *Core) dispatchOwn(hosts []string, courier WorkCourier) error {
 		return err
 	}
 	for _, w := range pending {
-		if !slices.Contains(hosts, w.Host) {
+		if w.Host != self && !slices.Contains(hosts, w.Host) {
 			continue
 		}
 		if err = c.AuthorizeWork(w.Assignment.ID, func(work RemoteAssignment) error { return courier.StartWork(self, work.Host, work) }); err != nil && !errors.Is(err, ErrWorkRevoked) && !errors.Is(err, ErrUnreachable) {
@@ -244,6 +313,9 @@ func (c *Core) StartWork(w RemoteAssignment) error {
 }
 
 func (c *Core) revokeForeign(w RemoteAssignment) error {
+	if w.Origin == c.SelfName() && w.Host == w.Origin {
+		return c.cancelOwnedWork(w)
+	}
 	w.State = "revoked"
 	if err := c.Store.putRemoteWork(w); err != nil {
 		return err
@@ -255,6 +327,31 @@ func (c *Core) revokeForeign(w RemoteAssignment) error {
 	if err != nil || c.Launches == nil || current.Host != c.SelfName() {
 		return err
 	}
+	return c.cancelOwnedWork(current)
+}
+
+func (c *Core) cancelOwnedWork(w RemoteAssignment) error {
+	if c.Launches == nil {
+		return nil
+	}
+	worker, latest := w.Worker, ""
+	var err error
+	if w.Origin == c.SelfName() {
+		a, readErr := scanAssignment(c.Store.db.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
+		if readErr != nil {
+			return readErr
+		}
+		worker = c.localKey(a.Session)
+		err = c.Store.db.QueryRow(`SELECT id FROM ym_assignments WHERE session IN (?,?) ORDER BY generation DESC LIMIT 1`, worker, RemoteKey(w.Origin, worker)).Scan(&latest)
+	} else {
+		err = c.Store.db.QueryRow(`SELECT id FROM ym_remote_work WHERE bound_session=? ORDER BY rowid DESC LIMIT 1`, worker).Scan(&latest)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if latest != "" && latest != w.Assignment.ID {
+		return nil
+	}
 	if ends, ok := c.Launches.(interface {
 		EndAssignment(string, string) (string, error)
 	}); ok {
@@ -262,7 +359,7 @@ func (c *Core) revokeForeign(w RemoteAssignment) error {
 			return err
 		}
 	}
-	_, err = c.Launches.End(current.Worker, w.Goal)
+	_, err = c.Launches.End(worker, w.Goal)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}

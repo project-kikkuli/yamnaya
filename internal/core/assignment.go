@@ -294,11 +294,19 @@ func (c *Core) SettleAssignment(id, worker, parent string) error {
 		return err
 	}
 	defer tx.Rollback()
-	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
+	err = settleAssignmentIn(tx, id, worker, parent)
 	if errors.Is(err, sql.ErrNoRows) {
 		tx.Rollback()
 		return c.settleForeign(id, worker)
 	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func settleAssignmentIn(tx *sql.Tx, id, worker, parent string) error {
+	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
 	if err != nil {
 		return err
 	}
@@ -323,5 +331,5 @@ func (c *Core) SettleAssignment(id, worker, parent string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }

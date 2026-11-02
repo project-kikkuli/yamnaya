@@ -455,6 +455,9 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 			return RelayReply{StartError: err.Error(), StartFinal: errors.Is(err, ErrFinal)}, err
 		}
 	}
+	if err := c.drainLocalRevocations(); err != nil {
+		return RelayReply{}, err
+	}
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
@@ -473,6 +476,9 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
 // and is acted on or carried on. A host that does not answer keeps its relays and gets them on a later cycle.
 func (c *Core) SyncRelays(hosts []string, cr Courier) error {
+	if err := c.drainLocalRevocations(); err != nil {
+		return err
+	}
 	if len(hosts) == 0 {
 		return nil
 	}
