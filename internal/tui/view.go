@@ -539,11 +539,11 @@ func (m Model) isStale(n *core.Need) bool {
 func (m Model) needsIn(r core.Repo) int {
 	keys := map[string]bool{}
 	for _, p := range r.Missions {
-		keys[p.Key] = true
+		keys[projectRef(p)] = true
 	}
 	n := 0
 	for _, need := range m.board.Needs {
-		if keys[need.Project] {
+		if keys[needProject(need)] {
 			n++
 		}
 	}
@@ -882,7 +882,7 @@ func (m Model) repoView() viewPage {
 	b.WriteString("\n" + pal.bold.Render(" MISSIONS") + "\n")
 	cols := m.missionCols(0)
 	for i, p := range r.Missions {
-		b.place = "m:" + p.Key
+		b.place = "m:" + projectRef(p)
 		b.WriteString(m.missionLine(i, p, cols))
 		if len(p.Sessions) > 0 {
 			lead := p.Sessions[0]
@@ -905,7 +905,7 @@ func (m Model) detailView() viewPage {
 	if !ok {
 		return textPage(pal.dim.Render("   this mission has no live sessions now; esc back"), "")
 	}
-	b := viewPage{place: "m:" + p.Key}
+	b := viewPage{place: "m:" + projectRef(p)}
 	b.WriteString(pal.bold.Render(" "+p.Name) + pal.dim.Render("  "+p.RepoName+"  "+p.Key) + "\n")
 	if len(p.Phases.Names) > 0 {
 		var ps []string
@@ -959,19 +959,19 @@ func (m Model) detailView() viewPage {
 		if i == m.cursor && s.Adoptable() {
 			line += pal.dim.Render("   M move in")
 		}
-		b.place = "s:" + s.Key()
+		b.place = "s:" + sessionKey(s)
 		b.WriteString(withNote(line+"\n", m.note(sessionKey(s))))
 		if d := doingText(m.board.At, s.Session); d != "" {
 			b.WriteString(pal.dim.Render("     now: ") + d + "\n")
 		}
 		i++
 		for _, c := range s.Crew {
-			b.place = "a:" + s.Key() + "/" + c.ID
+			b.place = "a:" + sessionKey(s) + "/" + c.ID
 			b.WriteString(m.crewLine(i, s, c))
 			i++
 		}
 	}
-	b.place = "m:" + p.Key
+	b.place = "m:" + projectRef(p)
 	for _, d := range p.Dormant {
 		title := d.Title
 		if title == "" {
@@ -1151,7 +1151,7 @@ func (m Model) sessionView() viewPage {
 	if !ok {
 		return textPage(pal.dim.Render("   this session is gone; esc back"), "")
 	}
-	b := viewPage{place: "s:" + s.Key()}
+	b := viewPage{place: "s:" + sessionKey(*s)}
 	title := s.Title
 	if title == "" {
 		title = core.Short(s.Key())
@@ -1194,11 +1194,11 @@ func (m Model) sessionView() viewPage {
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" CREW (%d)", len(s.Crew))) + "\n")
 	i := 0
 	for _, c := range s.Crew {
-		b.place = "a:" + s.Key() + "/" + c.ID
+		b.place = "a:" + sessionKey(*s) + "/" + c.ID
 		b.WriteString(m.crewLine(i, *s, c))
 		i++
 	}
-	b.place = "s:" + s.Key()
+	b.place = "s:" + sessionKey(*s)
 	if len(s.Crew) == 0 {
 		b.WriteString(pal.dim.Render("   none") + "\n")
 	}
@@ -1271,7 +1271,7 @@ func (m Model) agentView() viewPage {
 	if !ok {
 		return textPage(pal.dim.Render("   this agent is gone; esc back"), "")
 	}
-	b := viewPage{place: "a:" + s.Key() + "/" + c.ID}
+	b := viewPage{place: "a:" + sessionKey(*s) + "/" + c.ID}
 	b.WriteString(pal.bold.Render(" "+c.Name) + pal.dim.Render("  in "+s.Title+"  "+c.ID) + "\n\n")
 	kind := c.Type
 	if c.Teammate {

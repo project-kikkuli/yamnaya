@@ -92,6 +92,21 @@ func sessionKey(s core.Live) string {
 	return s.Key()
 }
 
+func projectRef(p core.Project) string {
+	if host := core.ProjectHost(p); host != "" {
+		return core.RemoteKey(host, p.Key)
+	}
+	return p.Key
+}
+
+func (m Model) projectAction(host string, args []string, local func() (string, error)) tea.Cmd {
+	if host != "" {
+		c := m.core
+		return m.do(func() (string, error) { return c.RunRemote(host, args...) })
+	}
+	return m.do(local)
+}
+
 // queued are the board's own commands waiting for a host that did not answer, by the row key they act on: the session as
 // the command named it and, when b knows that session by a launch key or shorter id, by its full id.
 func queued(relays []core.Relay, b core.Board) map[string]core.Relay {

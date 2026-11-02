@@ -98,7 +98,7 @@ func (c cols) workWidth() int {
 // missionLine is one mission: name, phase, state, progress, vibe, spend, then what its lead does now.
 func (m Model) missionLine(i int, p core.Project, c cols) string {
 	exited := len(p.Sessions) == 0 && len(p.Dormant) > 0
-	name := m.hue(p.Key)
+	name := m.hue(projectRef(p))
 	if exited {
 		name = pal.dim
 	}
@@ -158,7 +158,7 @@ func (m Model) hue(key string) lipgloss.Style {
 func (m Model) hueSlots() map[string]int {
 	keys := make([]string, len(m.board.Projects))
 	for i, p := range m.board.Projects {
-		keys[i] = p.Key
+		keys[i] = projectRef(p)
 	}
 	return hueSlots(keys)
 }

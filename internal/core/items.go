@@ -555,9 +555,13 @@ func (c *Core) ItemsIn(b Board, project string, all bool) ([]Item, error) {
 	if project == "" {
 		return items, nil
 	}
+	p, ok := b.Project(project)
+	if !ok {
+		p.Key = project
+	}
 	var kept []Item
 	for _, it := range items {
-		if b.ProjectOf(it.Session) == project {
+		if it.Host == ProjectHost(p) && projectOn(it.Host, it.Session, b.parents, b.lin) == p.Key {
 			kept = append(kept, it)
 		}
 	}
