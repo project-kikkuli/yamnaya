@@ -210,6 +210,12 @@ func (c *Core) RunRemote(host string, args ...string) (string, error) {
 // RunOrRelay runs ym args on host now, or, when host cannot be reached now or is reached only through the host that carries this
 // one's relays, queues them for ym serve to carry there.
 func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
+	return c.runOrRelay(host, relayYM{Args: args})
+}
+
+// runOrRelay is RunOrRelay for the command y names, keeping who asked for it with a relay.
+func (c *Core) runOrRelay(host string, y relayYM) (string, error) {
+	args := y.Args
 	if c.Remotes != nil && slices.Contains(c.Remotes.Hosts(), host) {
 		if c.Silent(host) == nil {
 			out, err := c.Remotes.Run(host, args...)
@@ -233,7 +239,7 @@ func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
 			}
 		}
 	}
-	if err := c.Relay(host, RelayYM, relayYM{Args: args}); err != nil {
+	if err := c.Relay(host, RelayYM, y); err != nil {
 		return "", err
 	}
 	return queued, nil

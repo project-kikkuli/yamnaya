@@ -61,6 +61,21 @@ func shortHosts(hosts []string) map[string]string {
 	return out
 }
 
+// RouteHost is the host ref names among those ym routes to, this one included: by full name or nickname, with or without its @.
+func (s *Store) RouteHost(ref string) (string, error) {
+	nicks, err := s.TextNicknames()
+	if err != nil {
+		return "", err
+	}
+	ref = strings.TrimSpace(ref)
+	for h, n := range nicks {
+		if strings.EqualFold(h, ref) || strings.EqualFold(n, strings.TrimPrefix(ref, "@")) {
+			return h, nil
+		}
+	}
+	return "", fmt.Errorf("ym does not route to a host named %s: %w", ref, ErrNotFound)
+}
+
 // SetNicknames are the nicknames the owner gave hosts, by host.
 func (s *Store) SetNicknames() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT host, nick FROM ym_host_nicknames`)

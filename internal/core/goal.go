@@ -64,6 +64,28 @@ func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string
 	return g, m, nil
 }
 
+// NewGoalOn starts a goal for ask on host, in the repository repo names there, its manager reporting to under. A host ym does not
+// reach now gets it through a relay; if that host refuses it for good, requester, a session here, hears of it in an item.
+func (c *Core) NewGoalOn(host, ask, repo, harness, under, requester string, selected ...string) (Goal, error) {
+	ask = strings.TrimSpace(ask)
+	if ask == "" {
+		return Goal{}, errors.New("a goal needs the ask in your words")
+	}
+	if repo == "" {
+		return Goal{}, fmt.Errorf("a goal on %s needs --repo naming the repository there", host)
+	}
+	harness, err := managerHarness(harness)
+	if err != nil {
+		return Goal{}, err
+	}
+	parent, err := c.goalChief(under)
+	if err != nil {
+		return Goal{}, err
+	}
+	out, err := c.runOrRelay(host, relayYM{Args: goalArgs(ask, repo, harness, firstProfile(selected), c.parentOn(host, parent)), Requester: requester})
+	return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, err
+}
+
 // goalChief resolves under, a chief here or host/id on another host, to the id a new manager records as its parent.
 func (c *Core) goalChief(under string) (string, error) {
 	if under == "" {
