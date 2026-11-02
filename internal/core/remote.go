@@ -232,12 +232,15 @@ func (c *Core) runOrRelay(host string, y relayYM) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		want, _ := json.Marshal(relayYM{Args: args})
 		for _, r := range pending {
-			if r.Origin == "" && r.Dest == host && r.Kind == RelayYM && r.Body == string(want) {
+			var y relayYM
+			if r.Origin == "" && r.Dest == host && r.Kind == RelayYM && json.Unmarshal([]byte(r.Body), &y) == nil && slices.Equal(y.Args, args) {
 				return queued, nil
 			}
 		}
+	}
+	if y.Requester == "" && c.Requester != nil {
+		y.Requester = c.Requester()
 	}
 	if err := c.Relay(host, RelayYM, y); err != nil {
 		return "", err

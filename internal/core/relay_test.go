@@ -675,3 +675,142 @@ func TestARelaunchQueuedOnAHostOthersPullFromRunsOnTheHostItNames(t *testing.T) 
 		})
 	}
 }
+
+func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) {
+	long := " in yamnaya-wt-mgr54-yamnaya-seems-to-mark-2, " + strings.Repeat("with every word of why kept ", 10) + "to the end"
+	for _, tc := range []struct {
+		name string
+		// fails is how many runs fail before one succeeds; final makes the first failure end the relay.
+		fails int
+		final bool
+		want  []string
+	}{
+		{name: "it ran", want: []string{"relayed: ym goal relaunch MGR from b: MGR relaunched as 0badc0de" + long}},
+		{name: "it failed, then ran", fails: 2, want: []string{
+			"relay-failed: ym goal relaunch MGR from b failed: git ls-remote --heads origin: Connection closed" + long,
+			"relayed: ym goal relaunch MGR from b: MGR relaunched as 0badc0de" + long}},
+		{name: "it was refused for good", fails: 1, final: true, want: []string{
+			"relay-failed: ym goal relaunch MGR from b refused: git ls-remote --heads origin: Connection closed" + long}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.b.chief(t, "platform")
+			g, mgr := f.a.goal(t, "ship the fix", "/repo/app")
+			if err := f.a.core.Attach(mgr.ID, RemoteKey("b", chief.ID)); err != nil {
+				t.Fatal(err)
+			}
+			cycle := func() {
+				t.Helper()
+				if err := f.a.core.Loop(f.a.board(t)); err != nil {
+					t.Fatal(err)
+				}
+				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
+			}
+			cycle()
+			fails := tc.fails
+			f.a.core.RunSelf = func(args ...string) (string, error) {
+				if fails > 0 {
+					fails--
+					err := errors.New("ym " + strings.Join(args, " ") + ": git ls-remote --heads origin: Connection closed" + long)
+					if tc.final {
+						err = Final(err)
+					}
+					return "", err
+				}
+				return mgr.ID + " relaunched as 0badc0de" + long, nil
+			}
+			f.b.core.Requester = func() string { return chief.Session }
+			if _, err := f.b.core.ReplaceManager(Board{}, RemoteKey("a", mgr.ID)); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 + tc.fails {
+				cycle()
+			}
+			var heard []string
+			for _, h := range f.b.handedTo(chief.Session) {
+				for _, line := range strings.Split(h, "\n") {
+					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.ID) {
+						_, rest, _ := strings.Cut(kind, " ")
+						heard = append(heard, rest)
+					}
+				}
+			}
+			var want []string
+			for _, w := range tc.want {
+				want = append(want, strings.ReplaceAll(w, "MGR", mgr.ID))
+			}
+			if !slices.Equal(heard, want) {
+				t.Errorf("chief heard %q, want %q", heard, want)
+			}
+			if items, _ := f.b.core.Store.Items(ItemFilter{}); len(items) != 0 {
+				t.Errorf("b filed %+v; the goal's feed carries the outcome", items)
+			}
+		})
+	}
+}
+
+func TestARelayedCommandThatNamesNoGoalTellsItsRequesterHowItWent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// dest pulls b's relays, or is a host only the puller reaches.
+		dest  string
+		fails int
+		final bool
+		// told is what the requester hears directly; asked is the item it gets, "" for none.
+		told, asked string
+	}{
+		{name: "ran on the host that pulls", dest: "a", told: "msg: ym: ym item answer #3 yes on a: answered #3"},
+		{name: "ran on a host the puller reaches", dest: "c", told: "msg: ym: ym item answer #3 yes on c: answered #3"},
+		{name: "failed twice, then ran", dest: "a", fails: 2,
+			told: "msg: ym: ym item answer #3 yes on a: answered #3", asked: "ym item answer #3 yes on a failed: database is locked"},
+		{name: "refused for good past the puller", dest: "c", fails: 1, final: true,
+			asked: "ym item answer #3 yes on c was refused for good: database is locked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.b.chief(t, "platform")
+			fails := tc.fails
+			map[string]*orgWorld{"a": f.a, "c": f.c}[tc.dest].core.RunSelf = func(args ...string) (string, error) {
+				if fails > 0 {
+					fails--
+					err := errors.New("ym " + strings.Join(args, " ") + ": database is locked")
+					if tc.final {
+						err = Final(err)
+					}
+					return "", err
+				}
+				return "answered #3", nil
+			}
+			f.b.core.Requester = func() string { return chief.Session }
+			if _, err := f.b.core.RunOrRelay(tc.dest, "item", "answer", "#3", "yes"); err != nil {
+				t.Fatal(err)
+			}
+			for range 4 + tc.fails {
+				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
+			}
+			var told []string
+			for _, h := range f.b.handedTo(chief.Session) {
+				if strings.Contains(h, " on "+tc.dest+": ") {
+					told = append(told, h)
+				}
+			}
+			if want := []string{tc.told}; tc.told == "" && len(told) != 0 || tc.told != "" && !slices.Equal(told, want) {
+				t.Errorf("requester was told %q, want %q", told, tc.told)
+			}
+			items, err := f.b.core.Store.Items(ItemFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var asked []string
+			for _, it := range items {
+				asked = append(asked, it.Question)
+			}
+			if want := []string{tc.asked}; tc.asked == "" && len(asked) != 0 || tc.asked != "" && !slices.Equal(asked, want) {
+				t.Errorf("requester's items %q, want one: %q", asked, tc.asked)
+			}
+			if tc.asked != "" && len(items) == 1 && items[0].Recipient != chief.ID {
+				t.Errorf("item went to %q, want the chief that asked, %s", items[0].Recipient, chief.ID)
+			}
+		})
+	}
+}

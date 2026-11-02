@@ -39,6 +39,9 @@ const (
 	EventMachineThrottled = "machine-throttled"
 	EventResumed          = "resumed"
 	EventResumeFailed     = "resume-failed"
+	// EventRelayed is a ym command another host relayed here, with what it printed; EventRelayFailed is one that failed.
+	EventRelayed     = "relayed"
+	EventRelayFailed = "relay-failed"
 	// EventRefreshed is ym retiring a manager's or chief's large session and starting a fresh one from its brief.
 	EventRefreshed = "refreshed"
 	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, a repeat or a still-waiting note.
@@ -48,7 +51,7 @@ const (
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
 var ownerKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventMerged: true, EventClosed: true, EventStuck: true, EventDone: true,
-	EventFailedVerify: true, EventUpdate: true, EventResumeFailed: true, EventWorkResumed: true,
+	EventFailedVerify: true, EventUpdate: true, EventResumeFailed: true, EventWorkResumed: true, EventRelayFailed: true,
 }
 
 // chiefKinds are the state changes a chief hears from every goal below it.
@@ -56,7 +59,7 @@ var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventResumed: true, EventResumeFailed: true,
-	EventSteered: true, EventAdopted: true, EventWorkResumed: true,
+	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true,
 }
 
 // notifyKinds are the only events that also raise a desktop notification.

@@ -119,6 +119,13 @@ func NewRoot() *cobra.Command {
 			}
 			defer c.Store.Close()
 			e.core = c
+			c.Requester = func() string {
+				cl, err := e.caller()
+				if err != nil {
+					return ""
+				}
+				return cl.Session
+			}
 			for i := range args {
 				args[i] = c.Store.Unnicked(args[i])
 			}

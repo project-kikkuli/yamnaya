@@ -29,6 +29,8 @@ const (
 	RelayVouched = "vouched"
 	// RelayNotify raises the owner's desktop notification on the destination, the host the owner sits at.
 	RelayNotify = "notify"
+	// RelayResult hands a relayed ym command's outcome back to the host that queued it, from a host that carried it on.
+	RelayResult = "result"
 )
 
 // Relay is one message for another host, kept until a host carrying it there confirms it, so a host that is unreachable loses
@@ -73,7 +75,7 @@ type relayRoute struct {
 
 type relayYM struct {
 	Args []string `json:"args"`
-	// Requester is the session that asked for the command on its origin, which hears there if the command is refused for good.
+	// Requester is the session that asked for the command on its origin, which hears there how it turned out.
 	Requester string `json:"requester,omitempty"`
 }
 
@@ -104,6 +106,8 @@ type RelaySync struct {
 	Ack []int64 `json:"ack"`
 	// Refused names the called host's entries the caller could not act on yet, with why; the called host keeps them.
 	Refused []RelayRef `json:"refused,omitempty"`
+	// Done names the called host's ym commands the caller ran, with what they printed.
+	Done []RelayRef `json:"done,omitempty"`
 }
 
 // RelayReply is what the called host still has to carry, by its own seq.
@@ -114,6 +118,8 @@ type RelayReply struct {
 	Entries    []Relay            `json:"entries"`
 	// Refused names the caller's entries this host could not act on or keep yet; the caller keeps them and sends them again.
 	Refused []RelayRef `json:"refused,omitempty"`
+	// Done names the caller's ym commands this host ran, with what they printed.
+	Done []RelayRef `json:"done,omitempty"`
 }
 
 // RelayRef names a relay on every host it passes through.
@@ -124,6 +130,9 @@ type RelayRef struct {
 	Error string `json:"error,omitempty"`
 	// Final says no later try can change the refusal, so the relay ends with it; the receiver recorded where the owner looks.
 	Final bool `json:"final,omitempty"`
+	// Output is what a ym command printed where it ran; Goal is the goal there whose feed recorded how it turned out, if any.
+	Output string `json:"output,omitempty"`
+	Goal   string `json:"goal,omitempty"`
 }
 
 func (r Relay) ref() RelayRef { return RelayRef{Origin: r.Origin, OriginSeq: r.OriginSeq} }
@@ -270,9 +279,9 @@ func relayErrors(db *sql.DB) error {
 }
 
 // noteRefused records why another host refused each of this host's relays refs name, own or carried on: a final refusal ends the
-// relay, any other counts toward the owner hearing of it. It returns this host's own relays a final refusal ended.
+// relay, any other counts toward the owner hearing of it. It returns the relays it refused for the first time or for good.
 func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) ([]Relay, error) {
-	var ended []Relay
+	var news []Relay
 	for _, r := range refs {
 		set := `last_error = ?, refusals = refusals + 1, refused_since = COALESCE(refused_since, ?)`
 		args := []any{r.Error, at.UnixNano()}
@@ -285,62 +294,22 @@ func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) ([]Relay
 		}
 		res, err := s.db.Exec(`UPDATE ym_relay SET `+set+where, append(args, key...)...)
 		if err != nil {
-			return ended, err
+			return news, err
 		}
-		if n, err := res.RowsAffected(); err != nil || n == 0 || !r.Final || r.Origin != self {
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
 			continue
 		}
-		var own Relay
-		if err := s.db.QueryRow(`SELECT seq, dest, kind, body FROM ym_relay WHERE seq = ?`, r.OriginSeq).Scan(&own.Seq, &own.Dest, &own.Kind, &own.Body); err != nil {
-			return ended, err
+		var got Relay
+		if err := s.db.QueryRow(`SELECT seq, origin, origin_seq, dest, kind, body, refusals FROM ym_relay WHERE`+strings.TrimPrefix(where, " WHERE delivered IS NULL AND"),
+			key...).Scan(&got.Seq, &got.Origin, &got.OriginSeq, &got.Dest, &got.Kind, &got.Body, &got.Refusals); err != nil {
+			return news, err
 		}
-		own.Error = r.Error
-		ended = append(ended, own)
+		if r.Final || got.Refusals == 1 {
+			got.Error = r.Error
+			news = append(news, got)
+		}
 	}
-	return ended, nil
-}
-
-// noteRefused records refs as Store.noteRefused does, and tells the requester of each own command refused for good.
-func (c *Core) noteRefused(refs []RelayRef) error {
-	ended, err := c.Store.noteRefused(c.SelfName(), refs, c.now())
-	errs := []error{err}
-	for _, r := range ended {
-		errs = append(errs, c.refusedHere(r))
-	}
-	return errors.Join(errs...)
-}
-
-// refusedHere files an item for the session that asked another host to start a goal that host refused for good, routed to that
-// session when it is a manager or chief, as its own ask would be otherwise.
-func (c *Core) refusedHere(r Relay) error {
-	var y relayYM
-	if r.Kind != RelayYM || json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) < 2 || y.Args[0] != "goal" || !strings.HasPrefix(y.Args[1], "--") {
-		return nil
-	}
-	ask := y.Args[len(y.Args)-1]
-	b, berr := c.Board()
-	o, err := c.LoadOrg()
-	if err != nil {
-		return err
-	}
-	it := Item{Kind: KindChore, Session: y.Requester, CreatedAt: c.now(),
-		Question: fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(ask), lineMax), r.Error),
-		Rec:      fmt.Sprintf("rerun ym goal --host %s with --repo naming a repository %s has, or start it on a host that has it", r.Dest, r.Dest),
-		Evidence: []string{"ym " + strings.Join(y.Args, " ")}}
-	if it.Session == "" {
-		it.Session = "ym"
-	}
-	if m, ok := o.ManagerOf(c.Resolve(y.Requester)); ok {
-		it.Recipient = m.ID
-	} else if y.Requester != "" {
-		it.Recipient = o.Recipient(c.Resolve(y.Requester), c.parentsFor(b, berr))
-	}
-	it.Scope = c.ScopeOf(b, it.Session)
-	added, err := c.Store.addItem(it)
-	if err != nil || added.Recipient == Owner {
-		return err
-	}
-	return c.askManager(b, o, added)
+	return news, nil
 }
 
 // DropRelay stops carrying relay seq, as the owner decides for one that keeps being refused.
@@ -464,13 +433,16 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.noteRefused(req.Refused); err != nil {
 		return RelayReply{}, err
 	}
-	refused, recvErr := c.Receive(req.Entries)
+	if err := c.noteDone(req.Done); err != nil {
+		return RelayReply{}, err
+	}
+	refused, done, recvErr := c.Receive(req.Entries)
 	out, err := c.outgoing()
 	if out == nil {
 		out = []Relay{}
 	}
 	launches, launchErr := c.Store.pendingLaunches()
-	return RelayReply{Entries: out, Refused: refused, Launches: launches}, errors.Join(recvErr, err, launchErr)
+	return RelayReply{Entries: out, Refused: refused, Done: done, Launches: launches}, errors.Join(recvErr, err, launchErr)
 }
 
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
@@ -514,6 +486,9 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		if err := c.noteRefused(reply.Refused); err != nil {
 			return err
 		}
+		if err := c.noteDone(reply.Done); err != nil {
+			return err
+		}
 		refused := map[RelayRef]bool{}
 		for _, ref := range reply.Refused {
 			refused[RelayRef{Origin: ref.Origin, OriginSeq: ref.OriginSeq}] = true
@@ -535,7 +510,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		if len(reply.Entries) == 0 {
 			continue
 		}
-		failed, err := c.Receive(reply.Entries)
+		failed, done, err := c.Receive(reply.Entries)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -549,7 +524,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 				ack = append(ack, r.Seq)
 			}
 		}
-		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack, Refused: failed}); err != nil {
+		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack, Refused: failed, Done: done}); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 		}
 	}
@@ -557,11 +532,10 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 }
 
 // Receive acts on every relay addressed to this host and keeps the rest to carry on; one already acted on does nothing again. It
-// returns the relays it could neither act on nor keep, which their sender holds and sends again.
-func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
+// returns the relays it could neither act on nor keep, which their sender holds and sends again, and the ym commands it ran.
+func (c *Core) Receive(entries []Relay) (failed, done []RelayRef, err error) {
 	self := c.SelfName()
 	var errs []error
-	var failed []RelayRef
 	var b Board
 	var berr error
 	loaded := false
@@ -587,26 +561,36 @@ func (c *Core) Receive(entries []Relay) ([]RelayRef, error) {
 			b, berr = c.Board()
 			loaded = true
 		}
-		if err := c.act(b, berr, r); err != nil {
+		out, err := c.act(b, berr, r)
+		goal, nerr := c.noteRelayed(r, out, err)
+		if nerr != nil {
+			errs = append(errs, nerr)
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("relay %s %s from %s: %w", r.Kind, r.Body, r.Origin, err))
+			ref := refused(r, err)
+			ref.Goal = goal
 			switch {
 			case errors.Is(err, ErrFinal):
-				ref := refused(r, err)
 				ref.Final = true
 				failed = append(failed, ref)
 				if err := c.noteFinal(r, err); err != nil {
 					errs = append(errs, err)
 				}
 			case !errors.Is(err, errUnusable):
-				failed = append(failed, refused(r, err))
+				failed = append(failed, ref)
 				continue
 			}
+		} else if r.Kind == RelayYM {
+			ref := r.ref()
+			ref.Output, ref.Goal = out, goal
+			done = append(done, ref)
 		}
 		if _, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now()); err != nil {
 			errs, failed = append(errs, err), append(failed, refused(r, err))
 		}
 	}
-	return failed, errors.Join(errs...)
+	return failed, done, errors.Join(errs...)
 }
 
 func refused(r Relay, err error) RelayRef {
@@ -615,7 +599,26 @@ func refused(r Relay, err error) RelayRef {
 	return ref
 }
 
-func (c *Core) act(b Board, berr error, r Relay) error {
+// act acts on r and returns what a ym command it runs printed.
+func (c *Core) act(b Board, berr error, r Relay) (string, error) {
+	if r.Kind != RelayYM {
+		return "", c.actOn(b, berr, r)
+	}
+	var y relayYM
+	if err := unmarshal(r.Body, &y); err != nil {
+		return "", err
+	}
+	if c.RunSelf == nil {
+		return "", fmt.Errorf("ym cannot run itself here: %w", errUnusable)
+	}
+	out, err := c.RunSelf(y.Args...)
+	if errors.Is(err, ErrGone) {
+		return err.Error(), nil
+	}
+	return out, err
+}
+
+func (c *Core) actOn(b Board, berr error, r Relay) error {
 	o, err := c.LoadOrg()
 	if err != nil {
 		return err
@@ -728,18 +731,12 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 			return err
 		}
 		return c.notify(strings.Replace(n.Title, "ym: ", "ym: "+r.Origin+" ", 1), n.Body)
-	case RelayYM:
-		var y relayYM
-		if err := unmarshal(r.Body, &y); err != nil {
+	case RelayResult:
+		var ref RelayRef
+		if err := unmarshal(r.Body, &ref); err != nil {
 			return err
 		}
-		if c.RunSelf == nil {
-			return fmt.Errorf("ym cannot run itself here: %w", errUnusable)
-		}
-		if _, err := c.RunSelf(y.Args...); !errors.Is(err, ErrGone) {
-			return err
-		}
-		return nil
+		return c.heardOutcome(ref)
 	}
 	return fmt.Errorf("unknown relay kind %q: %w", r.Kind, errUnusable)
 }
@@ -872,10 +869,6 @@ func (c *Core) noteFinal(r Relay, err error) error {
 			return nil
 		}
 		what := "ym " + strings.Join(y.Args, " ") + " from " + r.Origin
-		switch y.Args[0] + " " + y.Args[1] {
-		case "goal steer":
-			return c.noteGoal(y.Args[len(y.Args)-1], what, why, r)
-		}
 		if y.Args[0] != "item" {
 			return nil
 		}

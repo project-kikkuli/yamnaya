@@ -14,8 +14,11 @@ import (
 var wakeKinds = map[string]bool{
 	EventAsked: true, EventStuck: true, EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true,
 	EventResumeFailed: true, EventCIRed: true, EventConflict: true, EventReview: true, EventSteered: true, EventFailedVerify: true,
-	EventTimer: true, EventNudge: true, EventMachineThrottled: true,
+	EventTimer: true, EventNudge: true, EventMachineThrottled: true, EventRelayFailed: true,
 }
+
+// wholeKinds are the events a wake shows whole: a failure's cause and a relayed command's outcome are lost when cut.
+var wholeKinds = map[string]bool{EventResumeFailed: true, EventRelayed: true, EventRelayFailed: true}
 
 const (
 	// WakeDebounce is how long ym waits after the first event that wakes a manager, so a burst reaches it as one message.
@@ -72,7 +75,10 @@ func inboxText(head string, events []GoalEvent, host string, label func(GoalEven
 	for _, e := range events {
 		line := eventLine(e, host)
 		if label != nil {
-			line = clip(label(e)+" "+line, lineMax-2)
+			line = label(e) + " " + line
+			if !wholeKinds[e.Kind] {
+				line = clip(line, lineMax-2)
+			}
 		}
 		switch {
 		case e.Kind == EventIdleAgain:
@@ -111,7 +117,11 @@ func eventLine(e GoalEvent, host string) string {
 		id = RemoteKey(host, id)
 	}
 	text := strings.Replace(oneLine(e.Payload), " is idle. Its last message, verbatim: ", ": ", 1)
-	return clip("#"+id+" "+e.Kind+": "+text, lineMax-2)
+	line := "#" + id + " " + e.Kind + ": " + text
+	if wholeKinds[e.Kind] {
+		return line
+	}
+	return clip(line, lineMax-2)
 }
 
 // GoalEvent is the event numbered seq.

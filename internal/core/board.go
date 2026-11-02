@@ -81,6 +81,8 @@ type Core struct {
 	ShowRemotes bool
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
+	// Requester is the session running this ym, which hears how a command it queues for another host turns out; nil or "" is none.
+	Requester func() string
 	// Slots is this host's pool of shared slots, Loads its load average, CPU each process's processor use and Mem its resident
 	// memory in bytes; a nil Slots leaves the board without a Machine, a nil Loads reads the system's.
 	Slots func() (slot.Pool, error)
