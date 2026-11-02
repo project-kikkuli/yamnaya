@@ -2,6 +2,7 @@ package core
 
 import (
 	"bufio"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -258,15 +259,46 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if assignment.ID == "" && n.Parent != "" {
+		if _, remoteErr := c.remoteOwner(n.Parent); remoteErr == nil {
+			n.Session = planned
+			a, requestErr := c.requestRemoteAssignment(n.Parent, planned, source, n.Prompt, &n)
+			if errors.Is(requestErr, ErrWorkPending) {
+				return "queued origin registration for assignment " + a.ID, nil
+			}
+			if requestErr != nil {
+				return "", requestErr
+			}
+			work, readErr := c.Store.remoteWork(a.ID)
+			if readErr != nil {
+				return "", readErr
+			}
+			return "origin-owned assignment " + a.ID, c.startForeign(work)
+		} else if !errors.Is(remoteErr, sql.ErrNoRows) {
+			return "", remoteErr
+		}
+	}
 	suffix := ""
 	if assignment.ID != "" {
 		n.Session, n.Source, n.Assignment = planned, source, assignment.ID
 		suffix = fmt.Sprintf("\nassignment: %s (generation %d); terminal report: ym goal report %s --summary \"<result>\"", assignment.ID, assignment.Generation, assignment.ID)
 	}
 	if assignment.ID != "" && !created {
+		if host, remote := c.RepoHost(n.Repo); remote {
+			n.Session = assignment.Session
+			if boundHost, worker, bound := SplitRemote(n.Session); bound && boundHost == host {
+				n.Session = worker
+			}
+			out, err := c.sendRemoteLaunch(host, n, assignment)
+			return out + suffix, err
+		}
 		return "assignment already registered; inspect ym goal assignments" + suffix, nil
 	}
 	if host, ok := c.RepoHost(n.Repo); ok {
+		if assignment.ID != "" {
+			out, err := c.sendRemoteLaunch(host, n, assignment)
+			return out + suffix, err
+		}
 		args := []string{"new", "--repo", MainCheckout(n.Repo)}
 		if n.Harness == "codex" {
 			args = append(args, "--codex")

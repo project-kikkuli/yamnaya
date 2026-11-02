@@ -216,21 +216,32 @@ func commitDirs(w launch.Worktree) []string {
 }
 
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
-func (l launcher) settle(rec launch.Record) launch.Record {
+func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 	if rec.Handoff != "" && l.core != nil {
 		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, "The prior turn stopped because") {
 			rec.Handoff = ""
-			l.records.Save(rec)
+			if err := l.records.Save(rec); err != nil {
+				return rec, err
+			}
 		}
 	}
-	if rec.Session != "" || rec.Harness != codex.Name {
-		return rec
+	if rec.Session == "" && rec.Harness == codex.Name {
+		if id := recordCodex(rec).LatestIn(rec.Worktree.Path, rec.Started); id != "" {
+			rec.Session = id
+			if err := l.records.Save(rec); err != nil {
+				return rec, err
+			}
+		}
 	}
-	if id := recordCodex(rec).LatestIn(rec.Worktree.Path, rec.Started); id != "" {
-		rec.Session = id
-		l.records.Save(rec)
+	if rec.Assignment != "" && rec.Session != "" {
+		if l.core == nil {
+			return rec, errors.New("assignment settlement needs ym's core")
+		}
+		if err := l.core.SettleAssignment(rec.Assignment, rec.Session, rec.Parent); err != nil {
+			return rec, fmt.Errorf("settle assignment %s for %s: %w", rec.Assignment, rec.Key, err)
+		}
 	}
-	return rec
+	return rec, nil
 }
 
 func (l launcher) find(ref string) (launch.Record, error) {
@@ -240,9 +251,11 @@ func (l launcher) find(ref string) (launch.Record, error) {
 	}
 	if head := launch.Head(rec.Worktree.Path); head != "" && head != rec.Head {
 		rec.Head = head
-		l.records.Save(rec)
+		if err := l.records.Save(rec); err != nil {
+			return rec, err
+		}
 	}
-	return l.settle(rec), nil
+	return l.settle(rec)
 }
 
 func (l launcher) lookup(ref string) (launch.Record, error) {
@@ -332,11 +345,52 @@ func (l launcher) boilerplate(n core.NewLaunch) []string {
 
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
 func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
+	if n.Assignment != "" {
+		if err := os.MkdirAll(l.records.Dir, 0o755); err != nil {
+			return core.Started{}, err
+		}
+		lock, err := os.OpenFile(filepath.Join(l.records.Dir, "assignment-start.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return core.Started{}, err
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+			return core.Started{}, err
+		}
+		all, err := l.records.All()
+		if err != nil {
+			return core.Started{}, err
+		}
+		for _, rec := range all {
+			if rec.Assignment != n.Assignment {
+				continue
+			}
+			if rec.Starting {
+				pane, state := l.state(rec)
+				if state != "running" {
+					return core.Started{}, fmt.Errorf("assignment %s launch %s has no confirmed running pane", n.Assignment, rec.Key)
+				}
+				rec.Starting, rec.NativePID = false, pane.PID
+				if err := l.records.Save(rec); err != nil {
+					return core.Started{}, err
+				}
+			}
+			if n.Await {
+				rec, err = l.await(rec)
+			} else {
+				rec, err = l.settle(rec)
+			}
+			if err != nil {
+				return core.Started{}, err
+			}
+			return l.started(rec), nil
+		}
+	}
 	slug := launch.NormalizeSlug(n.Slug)
 	if slug == "" {
 		slug = launch.Unique(launch.Slug(launch.Strip(n.Prompt, l.boilerplate(n))))
 	}
-	rec := launch.Record{Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Started: time.Now()}
+	rec := launch.Record{Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Assignment: n.Assignment, Started: time.Now()}
 	switch n.Harness {
 	case codex.Name:
 		rec.Harness = codex.Name
@@ -425,31 +479,44 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 		if rec, err = l.await(rec); err != nil {
 			return core.Started{}, err
 		}
+	} else if rec, err = l.settle(rec); err != nil {
+		return core.Started{}, err
 	}
 	if rec.Parent != "" {
 		if rec.Session != "" {
-			if err := l.core.Store.Link(rec.Session, rec.Parent); err != nil {
-				return core.Started{}, err
+			if rec.Assignment == "" {
+				if err := l.core.Store.Link(rec.Session, rec.Parent); err != nil {
+					return core.Started{}, err
+				}
 			}
 		} else if err := detach("launch-link", rec.Key); err != nil {
 			return core.Started{}, err
 		}
 	}
+	return l.started(rec), nil
+}
+
+func (l launcher) started(rec launch.Record) core.Started {
 	var b strings.Builder
-	printLaunch(&b, rec, name, l.srv.Socket)
-	return core.Started{Key: rec.Key, Session: rec.Session, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Message: strings.TrimRight(b.String(), "\n")}, nil
+	printLaunch(&b, rec, tmux.SessionName(rec.Key), l.srv.Socket)
+	return core.Started{Key: rec.Key, Session: rec.Session, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Message: strings.TrimRight(b.String(), "\n")}
 }
 
 // await waits until Codex records rec's thread; a session that records none in time is ended, so no agent runs that ym cannot name.
 func (l launcher) await(rec launch.Record) (launch.Record, error) {
-	for deadline := time.Now().Add(core.StartGrace); rec.Session == ""; time.Sleep(250 * time.Millisecond) {
+	for deadline := time.Now().Add(core.StartGrace); ; time.Sleep(250 * time.Millisecond) {
+		var err error
+		if rec, err = l.settle(rec); err != nil {
+			return rec, err
+		}
+		if rec.Session != "" {
+			return rec, nil
+		}
 		if time.Now().After(deadline) {
 			l.forget(rec)
 			return rec, fmt.Errorf("codex in %s recorded no thread within %s, so ym ended it", rec.Key, core.StartGrace)
 		}
-		rec = l.settle(rec)
 	}
-	return rec, nil
 }
 
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -539,12 +606,16 @@ func linkLaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 			if err != nil {
 				return err
 			}
+			l.core = e.core
 			for deadline := time.Now().Add(3 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
 				rec, err := l.find(args[0])
 				if err != nil {
 					return err
 				}
 				if rec.Session != "" {
+					if rec.Assignment != "" {
+						return nil
+					}
 					return e.core.Store.Link(rec.Session, rec.Parent)
 				}
 			}
@@ -619,14 +690,27 @@ func (l launcher) Launched() []core.Launched {
 		if !rec.Seen.IsZero() {
 			continue
 		}
-		rec = l.settle(rec)
+		settled, err := l.settle(rec)
+		if err != nil {
+			if l.core != nil && l.core.Log != nil {
+				l.core.Log(fmt.Sprintf("launch %s: %v", rec.Key, err))
+			}
+			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: settled.Session, State: core.LaunchUnknown, Path: rec.Worktree.Path, Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})
+			continue
+		}
+		rec = settled
 		st := stateIn(panes, listErr, rec)
 		if st == "gone" {
 			// A table read before a launch's session started lacks it, so gone goes by the pane as it is now.
 			_, st = l.state(rec)
 		}
 		if was := rec; mark(&rec, st) != was {
-			l.records.Save(rec)
+			if err := l.records.Save(rec); err != nil {
+				if l.core != nil && l.core.Log != nil {
+					l.core.Log(fmt.Sprintf("save launch %s: %v", rec.Key, err))
+				}
+				st = core.LaunchUnknown
+			}
 		}
 		out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: st, Path: rec.Worktree.Path,
 			Parent: rec.Parent, Killed: rec.Killed, Revive: rec.Revive})

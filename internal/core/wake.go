@@ -125,7 +125,7 @@ func (c *Core) Notice(b Board) error {
 			}
 		}
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, c.noticeForeign(b))...)
 }
 
 // prEvents are the events a pull request's last fetched status stands for, each keyed so it happens once.

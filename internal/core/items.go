@@ -432,6 +432,16 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		if goal == "" {
 			goal = it.Dossier.Goal
 		}
+		if _, _, remote := SplitRemote(goal); remote {
+			var approved int
+			if err = tx.QueryRow(`SELECT count(*) FROM ym_remote_go WHERE item=?`, it.Seq).Scan(&approved); err != nil {
+				return it, err
+			}
+			if approved == 0 {
+				return it, errors.New("remote go authorization awaits committed origin withdrawal")
+			}
+			goal = ""
+		}
 		if goal != "" {
 			if _, err = workIn(tx, goal, fmt.Sprintf("go:%d", it.Seq), "authorized "+it.ID, time.Now().UTC()); err != nil {
 				return it, err

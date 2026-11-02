@@ -2,8 +2,10 @@ package core
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -50,28 +52,33 @@ func scopeIn(tx *sql.Tx, g Goal) (string, error) {
 }
 
 func prSnapshotIn(tx *sql.Tx, goal string, v Verification) (string, error) {
+	var touched []string
+	for _, f := range v.Facts {
+		if f.Check == "touched" {
+			touched = append(touched, f.Subject)
+		}
+	}
 	rows, err := tx.Query(`WITH owned AS (
  SELECT substr(key,length(goal)+5) AS url FROM ym_goal_events WHERE goal=? AND kind='pr-opened'
  UNION SELECT value FROM json_each(?))
- SELECT o.url,coalesce(p.state,''),coalesce(p.head,''),coalesce(p.passed,0),coalesce(p.failed,0),coalesce(p.pending,0),coalesce(p.unresolved,0),coalesce(p.merge_details,'{}')
- FROM owned o LEFT JOIN ym_prs p ON p.url=o.url
+ SELECT o.url FROM owned o LEFT JOIN ym_prs p ON p.url=o.url
  WHERE NOT EXISTS (SELECT 1 FROM ym_goal_events d WHERE d.goal=? AND d.kind='pr-dropped' AND d.key=d.goal||':dropped:'||o.url)
+ AND o.url NOT IN (SELECT value FROM json_each(?))
  AND NOT (coalesce(json_extract(p.merge_details,'$.Author'),'')!='' AND coalesce(json_extract(p.merge_details,'$.Viewer'),'')!='' AND lower(json_extract(p.merge_details,'$.Author'))!=lower(json_extract(p.merge_details,'$.Viewer')))
- ORDER BY o.url`, goal, jsonOf(prsOf(v)), goal)
+ ORDER BY o.url`, goal, jsonOf(prsOf(v)), goal, jsonOf(touched))
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
-	var out []string
+	urls := []string{}
 	for rows.Next() {
-		var url, state, head, details string
-		var passed, failed, pending, threads int
-		if err := rows.Scan(&url, &state, &head, &passed, &failed, &pending, &threads, &details); err != nil {
+		var url string
+		if err := rows.Scan(&url); err != nil {
 			return "", err
 		}
-		out = append(out, jsonOf([]any{url, state, head, passed, failed, pending, threads, details}))
+		urls = append(urls, url)
 	}
-	return jsonOf(out), rows.Err()
+	return jsonOf(urls), rows.Err()
 }
 
 func eventIn(tx *sql.Tx, g, kind, payload, key string, at time.Time, told bool) error {
@@ -234,6 +241,21 @@ func (s *Store) commitVerdict(g Goal, v Verification, verdict string, findings [
 		}
 		return g, ErrStale
 	}
+	if verdict == VerdictPass && v.checkedCache != "" {
+		cache, err := prCacheIn(tx, v.PRSnapshot)
+		if err != nil {
+			return g, err
+		}
+		if !compatibleCache(v.checkedCache, cache, v.Facts) {
+			if err = withdrawAttemptIn(tx, current, v, "owned PR facts changed during pass checks; run ym goal done again", at); err != nil {
+				return g, err
+			}
+			if err = tx.Commit(); err != nil {
+				return g, err
+			}
+			return g, ErrStale
+		}
+	}
 	if err = outstandingIn(tx, g.ID); err != nil {
 		return g, err
 	}
@@ -335,4 +357,61 @@ func (s *Store) withdrawCompletion(g Goal, v Verification, reason string, at tim
 		return err
 	}
 	return fmt.Errorf("%w: %s", ErrStale, reason)
+}
+
+func (s *Store) prepareVerifier(v Verification) (Verification, error) {
+	defer s.invalidate()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return v, err
+	}
+	defer tx.Rollback()
+	g, err := goalIn(tx, v.Goal)
+	if err != nil {
+		return v, err
+	}
+	if g.State != GoalVerifying || g.ActiveVerification != v.ID || g.WorkRevision != v.WorkRevision {
+		return v, ErrStale
+	}
+	scope, err := scopeIn(tx, g)
+	if err != nil {
+		return v, err
+	}
+	snapshot, err := prSnapshotIn(tx, g.ID, v)
+	if err != nil {
+		return v, err
+	}
+	var ids []string
+	if err = json.Unmarshal([]byte(v.PRSnapshot), &ids); err != nil {
+		return v, err
+	}
+	ids = slices.DeleteFunc(ids, func(url string) bool {
+		for _, f := range v.Facts {
+			if f.Check == "touched" && f.Subject == url {
+				return true
+			}
+		}
+		return false
+	})
+	if scope != v.Scope || snapshot != jsonOf(ids) {
+		original := v
+		original.Session = v.previousSession
+		if err = withdrawAttemptIn(tx, g, original, "owned PR identities changed before verification; run ym goal done again", v.LaunchedAt); err != nil {
+			return v, err
+		}
+		if err = tx.Commit(); err != nil {
+			return v, err
+		}
+		return v, ErrStale
+	}
+	if err = outstandingIn(tx, g.ID); err != nil {
+		return v, err
+	}
+	v.PRSnapshot = snapshot
+	res, err := tx.Exec(`UPDATE ym_goal_verifications SET verifier_session=?,fact_checks=?,facts_at=?,pr_snapshot=?,launched_at=?,nudged_at=?,last_error=?,failures=?,next_attempt=?,version=version+1 WHERE num=? AND version=? AND verdict=''`, v.Session, jsonOf(v.Facts), stamp(v.FactsAt), v.PRSnapshot, stamp(v.LaunchedAt), stamp(v.NudgedAt), v.LastError, v.Failures, stamp(v.NextAttempt), v.ID, v.Version)
+	if err = changed(res, err); err != nil {
+		return v, err
+	}
+	v.Version++
+	return v, tx.Commit()
 }

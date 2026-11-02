@@ -336,7 +336,7 @@ func TestStaleAttemptAndSupervisorCannotReplaceCurrentCompletion(t *testing.T) {
 }
 
 func TestPRChangesRequireACurrentClaimAndFacts(t *testing.T) {
-	for _, change := range []string{"add owned", "head", "CI", "threads", "merge commit", "cached head", "touched", "dropped"} {
+	for _, change := range []string{"add owned", "head", "CI", "threads", "merge commit", "cache convergence", "touched", "dropped"} {
 		t.Run(change, func(t *testing.T) {
 			w := newVerifyWorld(t)
 			w.landings[pr1] = Landing{State: "MERGED", Head: "head1", MergeCommit: "merge1", Passed: 1}
@@ -369,8 +369,8 @@ func TestPRChangesRequireACurrentClaimAndFacts(t *testing.T) {
 				l := w.landings[pr1]
 				l.MergeCommit = "merge2"
 				w.landings[pr1] = l
-			case "cached head":
-				err = w.core.Store.SavePRStatus(pr1, PRStatus{State: "MERGED", Merge: PRMergeFacts{OID: "head2"}, Fetched: w.clock})
+			case "cache convergence":
+				err = w.core.Store.SavePRStatus(pr1, PRStatus{State: "MERGED", Merge: PRMergeFacts{OID: "head1"}, Passed: 1, Fetched: w.clock})
 			case "touched":
 				_, _, err = w.core.RecordGoalEvent(g.ID, EventPRTouched, "reviewed", g.ID+":touched:https://github.com/acme/august/pull/8")
 			case "dropped":
@@ -380,7 +380,7 @@ func TestPRChangesRequireACurrentClaimAndFacts(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = w.core.RecordVerdict(v.Session, g.ID, VerdictPass, nil)
-			pass := change == "touched" || change == "dropped"
+			pass := change == "touched" || change == "dropped" || change == "cache convergence"
 			if (err == nil) != pass {
 				t.Fatalf("change %s: pass=%v error=%v", change, pass, err)
 			}
@@ -732,5 +732,56 @@ func TestReassignedWorkersKeepAuthorizationOwnershipAndMoveNestedWork(t *testing
 	}
 	if original.WorkRevision != 2 || after.WorkRevision != before.WorkRevision {
 		t.Fatalf("authorization followed the worker instead of its filing goal: %+v %+v", original, after)
+	}
+}
+
+func TestContinuedWorkerCanReportOnlyItsAssignmentGeneration(t *testing.T) {
+	for _, caller := range []string{"old", "mid", "new", "unrelated"} {
+		t.Run(caller, func(t *testing.T) {
+			w := continuedWorld(t, Idle)
+			g, err := w.core.Store.AddGoal(Goal{Ask: "work"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err := w.core.Store.AddManager(Manager{Role: RoleManager, GoalID: g.ID, Session: "manager"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = w.core.Store.SaveManager(m); err != nil {
+				t.Fatal(err)
+			}
+			g.ManagerID = m.ID
+			if err = w.core.Store.SaveGoal(g); err != nil {
+				t.Fatal(err)
+			}
+			a, _, err := w.core.Store.assign("manager", "old", "original", "work", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := w.core.ReportAssignment(caller, a.ID, "terminal")
+			if caller == "unrelated" {
+				if err == nil {
+					t.Fatal("unrelated worker reported")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = w.core.AcceptAssignment("manager", a.ID, report); err != nil {
+				t.Fatal(err)
+			}
+			next, _, err := w.core.Store.assign("manager", "new", "new-generation", "new work", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = w.core.AcceptAssignment("manager", next.ID, report); err == nil {
+				t.Fatal("continued caller's old report settled newer generation")
+			}
+			assignments, _ := w.core.Store.Assignments(g.ID)
+			if assignments[0].Generation != a.Generation || assignments[1].State != "outstanding" {
+				t.Fatalf("generation changed: %+v", assignments)
+			}
+		})
 	}
 }

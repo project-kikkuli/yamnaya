@@ -101,6 +101,10 @@ func goalReportCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 		if err != nil {
 			return err
 		}
+		if report == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "terminal report queued to the originating manager; acceptance happens in the origin ledger")
+			return nil
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "terminal report #%d; manager: ym goal accept %s --report %d\n", report, args[0], report)
 		return nil
 	})}

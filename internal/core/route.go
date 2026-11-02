@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 )
@@ -183,6 +184,16 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 		return it, err
 	}
 	it.Recipient = o.Recipient(c.Resolve(it.Session), c.parentsFor(b, berr))
+	foreign, remoteErr := RemoteAssignment{}, error(sql.ErrNoRows)
+	if _, local := o.Managed(c.Resolve(it.Session), c.parentsFor(b, berr)); !local {
+		foreign, remoteErr = c.remoteOwner(it.Session)
+	}
+	if remoteErr == nil {
+		it.Recipient = RemoteKey(foreign.Origin, foreign.Manager)
+	} else if !errors.Is(remoteErr, sql.ErrNoRows) {
+		return it, remoteErr
+	}
+
 	if owner {
 		it.Recipient = Owner
 	}
@@ -193,6 +204,9 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 	}
 	if it.Dossier, err = c.dossier(b, o, it); err != nil {
 		return it, err
+	}
+	if remoteErr == nil {
+		it.Dossier.Goal = RemoteKey(foreign.Origin, foreign.Goal)
 	}
 	added, err := c.Store.addItem(it)
 	if err != nil {

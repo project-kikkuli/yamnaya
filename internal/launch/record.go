@@ -40,6 +40,7 @@ type Record struct {
 	Key              string    `json:"key"`
 	Harness          string    `json:"harness"`
 	Session          string    `json:"session,omitempty"`
+	Assignment       string    `json:"assignment,omitempty"`
 	Parent           string    `json:"parent,omitempty"`
 	Prompt           string    `json:"prompt"`
 	Worktree         Worktree  `json:"worktree"`

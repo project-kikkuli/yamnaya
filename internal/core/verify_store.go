@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS ym_goal_verifications_goal ON ym_goal_verifications (
 // Verification is one attempt at proving a goal done: the manager's claim, the deterministic facts ym checked, and the verdict of
 // a fresh session, on the manager's harness, that is neither the manager nor one of its agents.
 type Verification struct {
+	checkedCache        string
+	previousSession     string
 	recovery            bool
 	expectedGoalVersion int64
 	Version             int64
@@ -67,6 +69,7 @@ type Verification struct {
 
 // Fact is one deterministic check on a pull request the goal claims: merged, CI green on the merge commit, no open threads.
 type Fact struct {
+	Snapshot string `json:"snapshot,omitempty"`
 	Revision string `json:"revision,omitempty"`
 	Check    string `json:"check"`
 	Subject  string `json:"subject"`

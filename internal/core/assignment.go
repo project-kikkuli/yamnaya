@@ -31,7 +31,7 @@ func scanAssignment(row interface{ Scan(...any) error }) (Assignment, error) {
 }
 
 func (s *Store) Assignments(goal string) ([]Assignment, error) {
-	rows, err := s.db.Query(`SELECT `+assignmentCols+` FROM ym_assignments WHERE goal=? ORDER BY created_at,id`, goal)
+	rows, err := s.db.Query(`SELECT `+assignmentCols+` FROM ym_assignments WHERE goal=? ORDER BY generation,id`, goal)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (s *Store) Assignments(goal string) ([]Assignment, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) assign(parent, worker, source, reason string, at time.Time) (Assignment, bool, error) {
+func (s *Store) assign(parent, worker, source, reason string, at time.Time, requestedID ...string) (Assignment, bool, error) {
 	defer s.invalidate()
 	if strings.TrimSpace(source) == "" || strings.TrimSpace(reason) == "" || strings.TrimSpace(worker) == "" {
 		return Assignment{}, false, errors.New("assignment needs a worker, stable --source and --reason")
@@ -72,7 +72,11 @@ func (s *Store) assign(parent, worker, source, reason string, at time.Time) (Ass
 	if _, err = workIn(tx, goal, "assignment:"+source, reason, at); err != nil {
 		return Assignment{}, false, err
 	}
-	a := Assignment{ID: uuid.NewString(), Goal: goal, Session: worker, Source: source, Reason: reason, State: "outstanding"}
+	id := uuid.NewString()
+	if len(requestedID) > 0 {
+		id = requestedID[0]
+	}
+	a := Assignment{ID: id, Goal: goal, Session: worker, Source: source, Reason: reason, State: "outstanding"}
 	err = tx.QueryRow(`INSERT INTO ym_assignments (id,goal,session,generation,source,reason,created_at)
  VALUES (?,?,?,(SELECT coalesce(max(generation),0)+1 FROM ym_assignments ),?,?,?) RETURNING generation`, a.ID, goal, worker, source, reason, stamp(at)).Scan(&a.Generation)
 	if err != nil {
@@ -86,6 +90,13 @@ func (s *Store) assign(parent, worker, source, reason string, at time.Time) (Ass
 
 func (c *Core) AssignWork(parent, worker, source, reason string) (Assignment, error) {
 	a, _, err := c.Store.assign(c.Resolve(parent), c.Resolve(worker), source, reason, c.now())
+	if err == nil && a.ID == "" {
+		if _, remoteErr := c.remoteOwner(parent); remoteErr == nil {
+			return c.requestRemoteAssignment(parent, worker, source, reason, nil)
+		} else if !errors.Is(remoteErr, sql.ErrNoRows) {
+			return a, remoteErr
+		}
+	}
 	return a, err
 }
 
@@ -112,6 +123,10 @@ func (c *Core) ReportAssignment(session, id, summary string) (int64, error) {
 	}
 	defer tx.Rollback()
 	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
+		return c.reportForeign(session, id, summary)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -181,6 +196,12 @@ func (c *Core) AcceptAssignment(session, id string, report int64) error {
 	if err = changed(res, err); err != nil {
 		return err
 	}
+	if host, _, remote := SplitRemote(a.Session); remote {
+		w := RemoteAssignment{Origin: c.SelfName(), Host: host, Goal: a.Goal, Assignment: a}
+		if _, err = tx.Exec(`INSERT INTO ym_relay(dest,kind,body,created) VALUES (?,?,?,?)`, host, RelayWork, jsonOf(WorkMessage{Op: "accepted", Work: w}), c.now().UnixNano()); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -202,6 +223,21 @@ func (c *Core) BindAssignment(session, id, worker string) error {
 	}
 	defer tx.Rollback()
 	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
+		w, readErr := c.Store.remoteWork(id)
+		if readErr != nil {
+			return readErr
+		}
+		owner, readErr := c.remoteOwner(session)
+		if readErr != nil {
+			return readErr
+		}
+		if owner.Origin != w.Origin || owner.Goal != w.Goal {
+			return errors.New("caller does not own this remote assignment")
+		}
+		return c.settleForeign(id, worker)
+	}
 	if err != nil {
 		return err
 	}
@@ -240,11 +276,18 @@ func (c *Core) SettleAssignment(id, worker, parent string) error {
 	}
 	defer tx.Rollback()
 	a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		tx.Rollback()
+		return c.settleForeign(id, worker)
+	}
 	if err != nil {
 		return err
 	}
 	if a.Session == worker {
 		return nil
+	}
+	if parent == "" {
+		_ = tx.QueryRow(`SELECT parent FROM ym_links WHERE child=?`, a.Session).Scan(&parent)
 	}
 	if a.State != "outstanding" || a.Report != 0 {
 		return errors.New("assignment already has a terminal report")

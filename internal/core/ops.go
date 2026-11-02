@@ -273,6 +273,27 @@ func (c *Core) Answer(b Board, id, text string) (Item, Delivery, error) {
 	if it, d, ok, err := c.remoteItem(id, "answer", text); ok {
 		return it, d, err
 	}
+	pending, readErr := c.Store.Item(id)
+	if readErr != nil {
+		return pending, Queued, readErr
+	}
+	if host, goal, remote := SplitRemote(pending.GoalOwner); remote && pending.Kind == KindGo && strings.TrimSpace(text) == GoAhead {
+		var approved int
+		if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_remote_go WHERE item=?`, pending.Seq).Scan(&approved); err != nil {
+			return pending, Queued, err
+		}
+		if approved == 0 {
+			var key string
+			if err := c.Store.db.QueryRow(`SELECT id FROM ym_remote_work WHERE origin=? AND goal=? AND json_extract(body,'$.Host')=? AND state!='pending' ORDER BY rowid DESC LIMIT 1`, host, goal, c.SelfName()).Scan(&key); err != nil {
+				return pending, Queued, err
+			}
+			work, err := c.Store.remoteWork(key)
+			if err != nil {
+				return pending, Queued, err
+			}
+			return pending, Queued, c.queueWork(host, WorkMessage{Op: "go", Work: work, Item: pending.Seq, Answer: text})
+		}
+	}
 	it, err := c.Store.Transition(id, ItemAnswered, text)
 	if err != nil {
 		return it, Queued, err

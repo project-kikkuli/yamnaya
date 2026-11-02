@@ -170,16 +170,18 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 // launchVerifier starts a fresh verifier session on v, in a new worktree of the goal's repository.
 func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 	v.LaunchedAt, v.NudgedAt = c.now(), timeZero
+	v.previousSession = v.Session
 	v.Session = uuid.NewString()
 	v.LastError = ""
 	if c.Launches == nil {
 		v.Session, v.LastError = "", "ym's launcher is unavailable"
 		return c.Store.SaveVerification(v)
 	}
-	if err := c.Store.SaveVerification(v); err != nil {
+	var err error
+	v, err = c.Store.prepareVerifier(v)
+	if err != nil {
 		return err
 	}
-	v.Version++
 	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
 		Slug: fmt.Sprintf("verify-%s-%d", g.ID, v.Attempt), Session: v.Session, Await: true})
 	if err != nil {
@@ -260,6 +262,10 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 			}
 		}
 
+		v.checkedCache, err = c.Store.checkedPRCache(v.PRSnapshot)
+		if err != nil {
+			return err
+		}
 		prs := slices.DeleteFunc(prsOf(v), func(url string) bool { return dropped[g.ID][url] })
 		facts := c.checkFacts(prs, c.now())
 		for _, f := range facts {
@@ -384,7 +390,7 @@ func (c *Core) checkFacts(prs []string, now time.Time) []Fact {
 		}
 		switch l.State {
 		case "MERGED":
-			out = append(out, Fact{Check: "merged", Subject: url, Revision: l.Head + ":" + l.MergeCommit, OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)})
+			out = append(out, Fact{Check: "merged", Subject: url, Revision: l.Head + ":" + l.MergeCommit, Snapshot: jsonOf(cacheFact(l)), OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)})
 			ci := Fact{Check: "ci on merge commit", Subject: url, OK: true}
 			switch {
 			case l.Failed > 0:

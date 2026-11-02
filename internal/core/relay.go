@@ -588,6 +588,12 @@ func (c *Core) act(b Board, berr error, r Relay) error {
 		return err
 	}
 	switch r.Kind {
+	case RelayWork:
+		var message WorkMessage
+		if err := unmarshal(r.Body, &message); err != nil {
+			return err
+		}
+		return c.WorkReceive(message)
 	case RelayTell:
 		var t relayTell
 		if err := unmarshal(r.Body, &t); err != nil {
