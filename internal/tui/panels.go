@@ -283,7 +283,7 @@ func (m Model) panelView() viewPage {
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   enter switches "+m.tagged(t.host, t.label)+" to the login under the cursor") + "\n")
-		b.WriteString(pal.dim.Render("   current: "+t.harness+"/"+profile.ID(t.profile)+m.onHost(t.host)+"; a adds a login here, then native authentication; enter switches only this conversation when idle or exited") + "\n")
+		b.WriteString(pal.dim.Render("   current: "+t.harness+"/"+profile.ID(t.profile)+m.onHost(t.host)+"; a adds a login here, then native authentication; enter switches only this conversation when idle, stopped, or at a verified quota stop") + "\n")
 	} else if m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   a adds a login and starts native authentication; select a session and press B to switch it") + "\n")
 	}
