@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func remoteWorkFleet(t *testing.T) *fleet {
+func remoteWorkFleet(t *testing.T) (*fleet, string) {
 	t.Helper()
 	f := newFleet(t)
+	repo := filepath.Join(t.TempDir(), "b", "app")
 	f.b.core.RunSelf = func(args ...string) (string, error) {
 		if len(args) != 2 || args[0] != "work-receive" {
 			return "", fmt.Errorf("unexpected command %v", args)
@@ -21,9 +23,9 @@ func remoteWorkFleet(t *testing.T) *fleet {
 		}
 		return "remote work recorded", f.b.core.WorkReceive(m)
 	}
-	r := &sshTo{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b", Goals: []Goal{{ID: "remote", Repo: boxRepo}}}}}, hosts: map[string]*orgWorld{"b": f.b}}
+	r := &sshTo{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b", Goals: []Goal{{ID: "remote", Repo: repo}}}}}, hosts: map[string]*orgWorld{"b": f.b}}
 	f.a.core.Remotes = r
-	return f
+	return f, repo
 }
 
 func syncWork(t *testing.T, f *fleet) {
@@ -40,15 +42,15 @@ func TestRemoteOwnedLaunchAndReportUseOnlyTheOriginLedger(t *testing.T) {
 	}{{false, "claude"}, {true, "claude"}, {false, "codex"}, {true, "codex"}} {
 		queued := mode.queued
 		t.Run(fmt.Sprintf("queued=%v/%s", queued, mode.harness), func(t *testing.T) {
-			f := remoteWorkFleet(t)
+			f, repo := remoteWorkFleet(t)
 			g, m := f.a.goal(t, "implement remote work", "/repo/app")
 			if queued {
 				f.a.core.Remotes = nil
 				f.net.down["b"] = true
 				// Repository discovery uses a cached remote board while transport is disconnected.
-				f.a.core.Remotes = &remoteDisconnected{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b", Goals: []Goal{{Repo: boxRepo}}}}}}
+				f.a.core.Remotes = &remoteDisconnected{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "b", Goals: []Goal{{Repo: repo}}}}}}
 			}
-			n := NewLaunch{Parent: m.Session, Repo: boxRepo, Prompt: "implement", Session: "remote-worker", Source: "remote:stable", Harness: mode.harness}
+			n := NewLaunch{Parent: m.Session, Repo: repo, Prompt: "implement", Session: "remote-worker", Source: "remote:stable", Harness: mode.harness}
 			if _, err := f.a.core.StartNew(n); err != nil {
 				t.Fatal(err)
 			}
@@ -133,9 +135,9 @@ type remoteDisconnected struct{ fakeRemotes }
 func (r *remoteDisconnected) Run(string, ...string) (string, error) { return "", ErrUnreachable }
 
 func TestRemoteNestedLaunchAndGoWaitForOriginCommit(t *testing.T) {
-	f := remoteWorkFleet(t)
+	f, repo := remoteWorkFleet(t)
 	g, m := f.a.goal(t, "remote nested work", "/repo/app")
-	if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: boxRepo, Prompt: "root work", Session: "root-worker", Source: "root"}); err != nil {
+	if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: repo, Prompt: "root work", Session: "root-worker", Source: "root"}); err != nil {
 		t.Fatal(err)
 	}
 	syncWork(t, f)
@@ -206,9 +208,9 @@ func TestRemoteNestedLaunchAndGoWaitForOriginCommit(t *testing.T) {
 }
 
 func TestRemoteAssignmentApprovalReplayAndRestartPreserveGeneration(t *testing.T) {
-	f := remoteWorkFleet(t)
+	f, repo := remoteWorkFleet(t)
 	g, m := f.a.goal(t, "remote native work", "/repo/app")
-	if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: boxRepo, Prompt: "root", Session: "worker", Source: "root"}); err != nil {
+	if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: repo, Prompt: "root", Session: "worker", Source: "root"}); err != nil {
 		t.Fatal(err)
 	}
 	syncWork(t, f)
@@ -261,13 +263,13 @@ func TestRemoteAssignmentApprovalReplayAndRestartPreserveGeneration(t *testing.T
 func TestRemoteNestedThirdHostLaunchRetainsOriginAuthority(t *testing.T) {
 	for _, queued := range []bool{false, true} {
 		t.Run(fmt.Sprintf("queued=%v", queued), func(t *testing.T) {
-			f := remoteWorkFleet(t)
+			f, repo := remoteWorkFleet(t)
 			g, m := f.a.goal(t, "three-host work", "/repo/app")
-			if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: boxRepo, Prompt: "root", Session: "root", Source: "root"}); err != nil {
+			if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: repo, Prompt: "root", Session: "root", Source: "root"}); err != nil {
 				t.Fatal(err)
 			}
 			syncWork(t, f)
-			const thirdRepo = "/srv/third/app"
+			thirdRepo := filepath.Join(t.TempDir(), "c", "app")
 			f.b.core.Remotes = &remoteDisconnected{fakeRemotes: fakeRemotes{boards: []RemoteBoard{{Host: "c", Goals: []Goal{{Repo: thirdRepo}}}}}}
 			f.c.core.RunSelf = func(args ...string) (string, error) {
 				var msg WorkMessage
@@ -324,9 +326,9 @@ func TestRemoteNestedThirdHostLaunchRetainsOriginAuthority(t *testing.T) {
 func TestRemotePRDiscoveryPrecedesTerminalReportAndPreservesTouchedDropped(t *testing.T) {
 	for _, mode := range []string{"owned", "touched", "dropped"} {
 		t.Run(mode, func(t *testing.T) {
-			f := remoteWorkFleet(t)
+			f, repo := remoteWorkFleet(t)
 			g, m := f.a.goal(t, "remote PR", "/repo/app")
-			if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: boxRepo, Prompt: "work", Session: "worker", Source: "root"}); err != nil {
+			if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: repo, Prompt: "work", Session: "worker", Source: "root"}); err != nil {
 				t.Fatal(err)
 			}
 			syncWork(t, f)
