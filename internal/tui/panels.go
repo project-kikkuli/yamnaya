@@ -147,7 +147,6 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		mg := n.Manager
 		ref, host := profile.SessionKey(mg.Harness, mg.Profile, mg.Session), mg.Host
 		if n.Live != nil {
-			m.pn.target.session = n.Live.ID
 			ref, host = n.Live.Ref(), n.Live.Remote
 		}
 		if host != "" {
@@ -157,6 +156,7 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		m.pn.target.profile = mg.Profile
 		m.pn.target.session = mg.Session
 		if n.Live != nil {
+			m.pn.target.session = n.Live.ID
 			m.pn.target.harness = n.Live.Harness
 			m.pn.target.profile = n.Live.Profile
 			m.pn.target.root = n.Live.ConfigRoot

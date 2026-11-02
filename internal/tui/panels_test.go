@@ -197,15 +197,22 @@ func TestBSwitchesTheSelectedChiefOrGoalWithoutSwitchingItsReports(t *testing.T)
 						n.Goal = &core.Goal{ID: "goal1", Ask: "ship the platform"}
 					}
 					if live {
-						n.Live = &core.Live{Session: core.Session{ID: mg.Session, Harness: harness, Profile: mg.Profile, Status: core.Idle}, Remote: host}
+						n.Live = &core.Live{Session: core.Session{ID: "live-conversation", Harness: harness, Profile: mg.Profile, Status: core.Idle}, Remote: host}
 					}
 					m.board.Tree = []core.Node{n}
 					m = press(t, to(t, m, isNode(mg.ID)), "B")
+					session := mg.Session
+					if live {
+						session = n.Live.ID
+					}
+					if m.pn.target == nil || m.pn.target.session != session {
+						t.Fatalf("wrong authoritative conversation: %+v", m.pn.target)
+					}
 					if v := ansi.Strip(m.View().Content); !strings.Contains(v, "enter switches "+ansi.Strip(m.tagged(host, mg.Label()))) {
 						t.Fatalf("profile panel does not name the selected agent:\n%s", v)
 					}
 					m = press(t, toPanelRow(t, m, harness+"/"+login), "enter")
-					ref := harness + ":source@" + mg.Session
+					ref := harness + ":source@" + session
 					if host != "" {
 						ref = core.RemoteKey(host, ref)
 					}
