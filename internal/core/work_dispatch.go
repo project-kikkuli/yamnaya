@@ -13,6 +13,10 @@ var ErrWorkRevoked = errors.New("origin revoked this assignment's launch")
 
 const workDispatchSchema = `CREATE TABLE IF NOT EXISTS ym_work_dispatches (
  id TEXT PRIMARY KEY, goal TEXT NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ym_work_successors (
+ host TEXT NOT NULL, session TEXT NOT NULL, successor TEXT NOT NULL,
+ PRIMARY KEY(host,session)
 );`
 
 type WorkCourier interface {
@@ -238,16 +242,25 @@ func revokeWorkIn(tx *sql.Tx, goal string, at time.Time) error {
 	if err != nil {
 		return err
 	}
+	successors, err := workSuccessorsIn(tx)
+	if err != nil {
+		return err
+	}
+	ownersByOrigin := map[string]map[string]string{}
 	for _, w := range all {
 		a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
 		if err != nil {
 			return err
 		}
-		var latest string
-		if err = tx.QueryRow(`SELECT id FROM ym_assignments WHERE session=? ORDER BY generation DESC LIMIT 1`, a.Session).Scan(&latest); err != nil {
-			return err
+		owners, ok := ownersByOrigin[w.Origin]
+		if !ok {
+			owners, err = assignmentOwnersIn(tx, func(session string) string { return workIdentity(w.Origin, session, successors) })
+			if err != nil {
+				return err
+			}
+			ownersByOrigin[w.Origin] = owners
 		}
-		if latest != a.ID {
+		if owners[workIdentity(w.Origin, a.Session, successors)] != a.ID {
 			continue
 		}
 		if err = workMessageIn(tx, w.Host, WorkMessage{Op: "revoke", Work: w}, at); err != nil {
@@ -334,24 +347,50 @@ func (c *Core) cancelOwnedWork(w RemoteAssignment) error {
 	if c.Launches == nil {
 		return nil
 	}
+	self := c.SelfName()
+	successors, err := workSuccessorsIn(c.Store.db)
+	if err != nil {
+		return err
+	}
+	identity := func(session string) string { return c.currentWorkIdentity(self, session, successors) }
 	worker, latest := w.Worker, ""
-	var err error
-	if w.Origin == c.SelfName() {
+	if w.Origin == self {
 		a, readErr := scanAssignment(c.Store.db.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
 		if readErr != nil {
 			return readErr
 		}
-		worker = c.localKey(a.Session)
-		err = c.Store.db.QueryRow(`SELECT id FROM ym_assignments WHERE session IN (?,?) ORDER BY generation DESC LIMIT 1`, worker, RemoteKey(w.Origin, worker)).Scan(&latest)
+		worker = a.Session
+		owners, err := assignmentOwnersIn(c.Store.db, identity)
+		if err != nil {
+			return err
+		}
+		latest = owners[identity(worker)]
 	} else {
-		err = c.Store.db.QueryRow(`SELECT id FROM ym_remote_work WHERE bound_session=? ORDER BY rowid DESC LIMIT 1`, worker).Scan(&latest)
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+		rows, err := c.Store.db.Query(`SELECT id,bound_session FROM ym_remote_work WHERE bound_session!='' ORDER BY rowid DESC`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id, session string
+			if err = rows.Scan(&id, &session); err != nil {
+				rows.Close()
+				return err
+			}
+			if identity(session) == identity(worker) {
+				latest = id
+				break
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
 	}
 	if latest != "" && latest != w.Assignment.ID {
 		return nil
 	}
+	_, worker, _ = SplitRemote(identity(worker))
 	if ends, ok := c.Launches.(interface {
 		EndAssignment(string, string) (string, error)
 	}); ok {

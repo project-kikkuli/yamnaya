@@ -25,13 +25,14 @@ CREATE TABLE IF NOT EXISTS ym_remote_go (item INTEGER PRIMARY KEY,origin TEXT NO
 `
 
 type WorkMessage struct {
-	Events  []GoalEvent
-	Op      string
-	Work    RemoteAssignment
-	Summary string
-	Item    int64
-	Answer  string
-	Event   GoalEvent
+	Events     []GoalEvent
+	Successors map[string]string `json:",omitempty"`
+	Op         string
+	Work       RemoteAssignment
+	Summary    string
+	Item       int64
+	Answer     string
+	Event      GoalEvent
 }
 
 func (s *Store) remoteWork(id string) (RemoteAssignment, error) {
@@ -264,6 +265,8 @@ func (c *Core) launchForeign(w RemoteAssignment) error {
 }
 
 func (c *Core) settleForeign(id, worker string) error {
+	self := c.SelfName()
+	worker = c.Resolve(worker)
 	w, err := c.Store.remoteWork(id)
 	if err != nil {
 		return err
@@ -280,23 +283,32 @@ func (c *Core) settleForeign(id, worker string) error {
 	if err = tx.QueryRow(`SELECT bound_session FROM ym_remote_work WHERE id=?`, id).Scan(&bound); err != nil {
 		return err
 	}
-	if bound == worker {
+	successors, learned, err := c.remoteWorkSuccessorsIn(tx, self, w.Origin, worker)
+	if err != nil {
+		return err
+	}
+	if bound == worker && !learned {
 		return nil
 	}
-	if _, err = tx.Exec(`UPDATE ym_remote_work SET bound_session=?,session=?,state=CASE WHEN state IN ('approved','starting','launched') THEN 'started' ELSE state END WHERE id=?`, worker, worker, id); err != nil {
+	if err = saveWorkSuccessorsIn(tx, self, successors); err != nil {
 		return err
 	}
-	var newer int
-	if err = tx.QueryRow(`SELECT count(*) FROM ym_remote_work WHERE session=? AND rowid>(SELECT rowid FROM ym_remote_work WHERE id=?)`, worker, id).Scan(&newer); err != nil {
-		return err
-	}
-	if newer == 0 {
-		if _, err = tx.Exec(`INSERT INTO ym_links(child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, c.localKey(w.Parent)); err != nil {
+	if bound != worker {
+		if _, err = tx.Exec(`UPDATE ym_remote_work SET bound_session=?,session=?,state=CASE WHEN state IN ('approved','starting','launched') THEN 'started' ELSE state END WHERE id=?`, worker, worker, id); err != nil {
 			return err
+		}
+		var newer int
+		if err = tx.QueryRow(`SELECT count(*) FROM ym_remote_work WHERE session=? AND rowid>(SELECT rowid FROM ym_remote_work WHERE id=?)`, worker, id).Scan(&newer); err != nil {
+			return err
+		}
+		if newer == 0 {
+			if _, err = tx.Exec(`INSERT INTO ym_links(child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, c.localKey(w.Parent)); err != nil {
+				return err
+			}
 		}
 	}
 	w.Worker = worker
-	body := jsonOf(WorkMessage{Op: "bound", Work: w})
+	body := jsonOf(WorkMessage{Op: "bound", Work: w, Successors: successors})
 	if _, err = tx.Exec(`INSERT INTO ym_relay(dest,kind,body,created) VALUES (?,?,?,?)`, w.Origin, RelayWork, body, c.now().UnixNano()); err != nil {
 		return err
 	}
@@ -423,18 +435,30 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 		}
 		return c.startForeign(w)
 	case "bound":
-		a, err := scanAssignment(c.Store.db.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
+		defer c.Store.invalidate()
+		self := c.SelfName()
+		tx, err := c.Store.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
 		if err != nil {
 			return err
 		}
 		host, _, remote := SplitRemote(a.Session)
-		if a.Goal != w.Goal || a.Generation != w.Assignment.Generation || !remote || host != w.Host || w.Origin != c.SelfName() {
+		if a.Goal != w.Goal || a.Generation != w.Assignment.Generation || !remote || host != w.Host || w.Origin != self {
 			return errors.New("binding changed assignment goal")
 		}
-		if a.Report != 0 {
-			return nil
+		if err = saveWorkSuccessorsIn(tx, w.Host, m.Successors); err != nil {
+			return err
 		}
-		return c.SettleAssignment(a.ID, RemoteKey(w.Host, w.Worker), "")
+		if a.Report == 0 {
+			if err = settleAssignmentIn(tx, a.ID, RemoteKey(w.Host, w.Worker), ""); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
 	case "report":
 		a, err := scanAssignment(c.Store.db.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE id=?`, w.Assignment.ID))
 		if err != nil {

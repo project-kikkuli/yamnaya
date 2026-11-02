@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -21,7 +20,7 @@ type assignmentEndLaunches struct{ *fakeLaunches }
 func (l assignmentEndLaunches) EndAssignment(id, goal string) (string, error) {
 	for _, n := range l.starts {
 		if n.Assignment == id {
-			return l.End(n.Session, goal)
+			return l.End(l.w.core.Resolve(n.Session), goal)
 		}
 	}
 	return "", ErrNotFound
@@ -167,60 +166,119 @@ func TestNestedWorkReturnsToOriginWithoutSelfRPC(t *testing.T) {
 }
 
 func TestOldGoalRevocationPreservesReownedWorker(t *testing.T) {
-	for _, restart := range []bool{false, true} {
-		t.Run(map[bool]string{false: "connected", true: "restart"}[restart], func(t *testing.T) {
-			f, repo := remoteWorkFleet(t)
-			f.b.core.Launches = assignmentEndLaunches{f.b.launches}
-			g1, m1 := f.a.goal(t, "first", "/repo/app")
-			if _, err := f.a.core.StartNew(NewLaunch{Parent: m1.Session, Repo: repo, Prompt: "first", Session: "worker", Source: "first"}); err != nil {
-				t.Fatal(err)
+	for _, identity := range []string{"same", "one hop", "multiple hops"} {
+		for _, restart := range []bool{false, true} {
+			for _, known := range []bool{false, true} {
+				t.Run(identity+"/"+map[bool]string{false: "connected", true: "restart"}[restart]+"/"+map[bool]string{false: "binding queued", true: "binding delivered"}[known], func(t *testing.T) {
+					f, repo := remoteWorkFleet(t)
+					f.b.core.Launches = assignmentEndLaunches{f.b.launches}
+					g1, m1 := f.a.goal(t, "first", "/repo/app")
+					if _, err := f.a.core.StartNew(NewLaunch{Parent: m1.Session, Repo: repo, Prompt: "first", Session: "worker", Source: "first"}); err != nil {
+						t.Fatal(err)
+					}
+					syncWork(t, f)
+					all, _ := f.a.core.Store.Assignments(g1.ID)
+					if _, err := f.b.core.ReportAssignment("worker", all[0].ID, "first complete"); err != nil {
+						t.Fatal(err)
+					}
+					syncWork(t, f)
+					all, _ = f.a.core.Store.Assignments(g1.ID)
+					if err := f.a.core.AcceptAssignment(m1.Session, all[0].ID, all[0].Report); err != nil {
+						t.Fatal(err)
+					}
+					syncWork(t, f)
+					old, err := f.b.core.Store.remoteWork(all[0].ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					worker := "worker"
+					if identity != "same" {
+						worker = "new"
+						f.b.stop("worker")
+						f.b.spawn(worker, "")
+						f.b.claude.next = map[string]string{"worker": worker}
+						if identity == "multiple hops" {
+							f.b.claude.next = map[string]string{"worker": "mid", "mid": worker}
+						}
+					}
+					g2, m2 := f.a.goal(t, "second", "/repo/app")
+					next, err := f.a.core.AssignWork(m2.Session, "b/"+worker, "second", "new authorized work")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if known {
+						syncWork(t, f)
+					} else {
+						pending, err := f.a.core.Store.PendingRelays()
+						if err != nil {
+							t.Fatal(err)
+						}
+						registered := false
+						for _, r := range pending {
+							var message WorkMessage
+							if r.Kind == RelayWork && json.Unmarshal([]byte(r.Body), &message) == nil && message.Op == "register" && message.Work.Assignment.ID == next.ID {
+								if err = f.b.core.WorkReceive(message); err != nil {
+									t.Fatal(err)
+								}
+								registered = true
+							}
+						}
+						if !registered {
+							t.Fatal("new assignment route missing")
+						}
+					}
+					_, local := f.a.goal(t, "host collision", "/repo/app")
+					if _, err = f.a.core.AssignWork(local.Session, worker, "local-collision", "unrelated local work"); err != nil {
+						t.Fatal(err)
+					}
+					if restart {
+						restartWorkHost(t, f.a)
+						restartWorkHost(t, f.b)
+					}
+					if _, err = f.a.core.KillGoal(f.a.board(t), g1.ID); err != nil {
+						t.Fatal(err)
+					}
+					pending, err := f.a.core.Store.PendingRelays()
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, r := range pending {
+						var message WorkMessage
+						if (known || identity == "same") && r.Kind == RelayWork && json.Unmarshal([]byte(r.Body), &message) == nil && message.Op == "revoke" && message.Work.Assignment.ID == old.Assignment.ID {
+							t.Error("origin canceled a conversation already owned by the newer generation")
+						}
+					}
+					syncWork(t, f)
+					if restart {
+						restartWorkHost(t, f.a)
+						restartWorkHost(t, f.b)
+					}
+					successors := f.b.claude.next
+					f.b.claude.next = nil
+					if err = f.b.core.WorkReceive(WorkMessage{Op: "revoke", Work: old}); err != nil {
+						t.Fatal(err)
+					}
+					f.b.claude.next = successors
+					if _, live := f.b.board(t).Session(worker); !live || len(f.b.launches.forgot) != 0 {
+						t.Fatal("historical goal cancellation killed reowned worker")
+					}
+					owner, err := f.b.core.remoteOwner(worker)
+					if err != nil || owner.Assignment.ID != next.ID || owner.Goal != g2.ID {
+						t.Fatalf("new ownership lost: %+v %v", owner, err)
+					}
+					history, err := f.a.core.Store.Assignments(g1.ID)
+					if err != nil || len(history) != 1 || history[0].Session != "b/worker" || history[0].Report != all[0].Report || history[0].AcceptedReport != all[0].Report {
+						t.Fatalf("continuation rewrote accepted history: %+v %v", history, err)
+					}
+					if _, err = f.a.core.KillGoal(f.a.board(t), g2.ID); err != nil {
+						t.Fatal(err)
+					}
+					syncWork(t, f)
+					if _, live := f.b.board(t).Session(worker); live {
+						t.Fatal("current owner cancellation failed")
+					}
+				})
 			}
-			syncWork(t, f)
-			all, _ := f.a.core.Store.Assignments(g1.ID)
-			if _, err := f.b.core.ReportAssignment("worker", all[0].ID, "first complete"); err != nil {
-				t.Fatal(err)
-			}
-			syncWork(t, f)
-			all, _ = f.a.core.Store.Assignments(g1.ID)
-			if err := f.a.core.AcceptAssignment(m1.Session, all[0].ID, all[0].Report); err != nil {
-				t.Fatal(err)
-			}
-			syncWork(t, f)
-			old, err := f.b.core.Store.remoteWork(all[0].ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			g2, m2 := f.a.goal(t, "second", "/repo/app")
-			next, err := f.a.core.AssignWork(m2.Session, "b/worker", "second", "new authorized work")
-			if err != nil {
-				t.Fatal(err)
-			}
-			syncWork(t, f)
-			if restart {
-				restartWorkHost(t, f.a)
-				restartWorkHost(t, f.b)
-			}
-			if _, err = f.a.core.KillGoal(f.a.board(t), g1.ID); err != nil {
-				t.Fatal(err)
-			}
-			syncWork(t, f)
-			if err = f.b.core.WorkReceive(WorkMessage{Op: "revoke", Work: old}); err != nil {
-				t.Fatal(err)
-			}
-			if _, live := f.b.board(t).Session("worker"); !live || strings.Contains(strings.Join(f.b.launches.forgot, ","), "worker") {
-				t.Fatal("historical goal cancellation killed reowned worker")
-			}
-			owner, err := f.b.core.remoteOwner("worker")
-			if err != nil || owner.Assignment.ID != next.ID || owner.Goal != g2.ID {
-				t.Fatalf("new ownership lost: %+v %v", owner, err)
-			}
-			if _, err = f.a.core.KillGoal(f.a.board(t), g2.ID); err != nil {
-				t.Fatal(err)
-			}
-			syncWork(t, f)
-			if _, live := f.b.board(t).Session("worker"); live {
-				t.Fatal("current owner cancellation failed")
-			}
-		})
+		}
 	}
 }
