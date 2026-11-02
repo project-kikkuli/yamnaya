@@ -28,6 +28,7 @@ func (a *Adapter) QuotaDialog(text string) bool {
 		return false
 	}
 	for _, line := range lines[max(0, len(lines)-9) : len(lines)-5] {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "⎿"))
 		if strings.HasPrefix(line, "You've hit your weekly limit") || strings.HasPrefix(line, "You've hit your limit") {
 			return true
 		}
