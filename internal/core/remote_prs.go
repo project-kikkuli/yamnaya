@@ -29,14 +29,9 @@ func (c *Core) noticeForeign(b Board) error {
 		if err != nil {
 			return err
 		}
-		places := s.prPlaces()
 		for _, pr := range s.AllPRs() {
 			st, fetched := statuses[pr.URL]
-			p := places[pr.URL]
-			if !fetched || !pushedPR(p.Facts, pr, st) && !ownsPR(p.Worktree, p.Branch, p.Ahead, st, c.now()) {
-				continue
-			}
-			events := prEvents(pr.URL, pr.URL, "agent "+RemoteKey(c.SelfName(), s.Key()), st, true)
+			events := prEvents(pr.URL, pr.URL, "agent "+RemoteKey(c.SelfName(), s.Key()), st, fetched)
 			if st.Foreign() {
 				events = []GoalEvent{{Kind: EventPRTouched, Key: "touched:" + pr.URL, Payload: "worked on another author's " + pr.URL}}
 			}

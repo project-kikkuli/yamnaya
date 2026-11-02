@@ -75,7 +75,7 @@ func compatibleCache(before string, current map[string]prCacheFact, facts []Fact
 		if prior, ok := old[url]; ok && prior == now {
 			continue
 		}
-		if fresh, ok := checked[url]; !ok || fresh != now {
+		if fresh, ok := checked[url]; !ok || now.State != fresh.State || now.Head != fresh.Head || now.Unresolved != fresh.Unresolved || now.CI != "" && now.CI != fresh.CI {
 			return false
 		}
 	}

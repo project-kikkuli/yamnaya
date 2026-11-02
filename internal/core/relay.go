@@ -93,6 +93,7 @@ type relayNotify struct {
 
 // RelaySync is one round trip between a host and a host it reaches over ssh: what the caller carries there and what it confirms.
 type RelaySync struct {
+	Start *RemoteAssignment `json:"start,omitempty"`
 	// From is the caller's name for itself; As is the caller's name for the host it calls, which every host uses for itself.
 	From string `json:"from"`
 	As   string `json:"as"`
@@ -107,7 +108,10 @@ type RelaySync struct {
 
 // RelayReply is what the called host still has to carry, by its own seq.
 type RelayReply struct {
-	Entries []Relay `json:"entries"`
+	StartFinal bool               `json:"start_final,omitempty"`
+	StartError string             `json:"start_error,omitempty"`
+	Launches   []RemoteAssignment `json:"launches,omitempty"`
+	Entries    []Relay            `json:"entries"`
 	// Refused names the caller's entries this host could not act on or keep yet; the caller keeps them and sends them again.
 	Refused []RelayRef `json:"refused,omitempty"`
 }
@@ -434,9 +438,21 @@ func (c *Core) outgoing() ([]Relay, error) {
 // ServeSync answers a host that reaches this one: it records the names that host uses, drops the relays it confirms, takes in what
 // it carries, and hands back everything this host still has to deliver.
 func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
+	if req.Start != nil && req.Peers == nil {
+		prior, err := c.Store.RelaySelf()
+		if err != nil {
+			return RelayReply{}, err
+		}
+		req.Peers = prior.Peers
+	}
 	if req.As != "" && req.From != "" {
 		if err := c.Store.setRelaySelf(RelaySelf{Name: req.As, Courier: req.From, Peers: req.Peers, At: c.now()}); err != nil {
 			return RelayReply{}, err
+		}
+	}
+	if req.Start != nil {
+		if err := c.StartWork(*req.Start); err != nil {
+			return RelayReply{StartError: err.Error(), StartFinal: errors.Is(err, ErrFinal)}, err
 		}
 	}
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
@@ -450,7 +466,8 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if out == nil {
 		out = []Relay{}
 	}
-	return RelayReply{Entries: out, Refused: refused}, errors.Join(recvErr, err)
+	launches, launchErr := c.Store.pendingLaunches()
+	return RelayReply{Entries: out, Refused: refused, Launches: launches}, errors.Join(recvErr, err, launchErr)
 }
 
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
@@ -461,6 +478,11 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 	}
 	self := c.SelfName()
 	var errs []error
+	if work, ok := cr.(WorkCourier); ok {
+		if err := c.dispatchOwn(hosts, work); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, h := range hosts {
 		out, err := c.outgoing()
 		if err != nil {
@@ -498,6 +520,11 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		}
 		if err := c.Store.markRelayed(sent, c.now()); err != nil {
 			return err
+		}
+		if work, ok := cr.(WorkCourier); ok {
+			if err := c.dispatchCarried(h, reply.Launches, hosts, work); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		if len(reply.Entries) == 0 {
 			continue

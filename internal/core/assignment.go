@@ -48,6 +48,10 @@ func (s *Store) Assignments(goal string) ([]Assignment, error) {
 }
 
 func (s *Store) assign(parent, worker, source, reason string, at time.Time, requestedID ...string) (Assignment, bool, error) {
+	return s.assignWithRoute("", parent, worker, source, reason, at, requestedID...)
+}
+
+func (s *Store) assignWithRoute(origin, parent, worker, source, reason string, at time.Time, requestedID ...string) (Assignment, bool, error) {
 	defer s.invalidate()
 	if strings.TrimSpace(source) == "" || strings.TrimSpace(reason) == "" || strings.TrimSpace(worker) == "" {
 		return Assignment{}, false, errors.New("assignment needs a worker, stable --source and --reason")
@@ -62,7 +66,10 @@ func (s *Store) assign(parent, worker, source, reason string, at time.Time, requ
 		return Assignment{}, false, err
 	}
 	if a, err := scanAssignment(tx.QueryRow(`SELECT `+assignmentCols+` FROM ym_assignments WHERE goal=? AND source=?`, goal, source)); err == nil {
-		return a, false, nil
+		if err := publishAssignmentIn(tx, origin, parent, a, at); err != nil {
+			return a, false, err
+		}
+		return a, false, tx.Commit()
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return a, false, err
 	}
@@ -85,11 +92,14 @@ func (s *Store) assign(parent, worker, source, reason string, at time.Time, requ
 	if _, err = tx.Exec(`INSERT INTO ym_links (child,parent) VALUES (?,?) ON CONFLICT(child) DO UPDATE SET parent=excluded.parent`, worker, parent); err != nil {
 		return a, false, err
 	}
+	if err = publishAssignmentIn(tx, origin, parent, a, at); err != nil {
+		return a, false, err
+	}
 	return a, true, tx.Commit()
 }
 
 func (c *Core) AssignWork(parent, worker, source, reason string) (Assignment, error) {
-	a, _, err := c.Store.assign(c.Resolve(parent), c.Resolve(worker), source, reason, c.now())
+	a, _, err := c.Store.assignWithRoute(c.SelfName(), c.Resolve(parent), c.Resolve(worker), source, reason, c.now())
 	if err == nil && a.ID == "" {
 		if _, remoteErr := c.remoteOwner(parent); remoteErr == nil {
 			return c.requestRemoteAssignment(parent, worker, source, reason, nil)
@@ -150,16 +160,25 @@ func (c *Core) ReportAssignment(session, id, summary string) (int64, error) {
 	if a.State != "outstanding" {
 		return 0, errors.New("assignment is already accepted")
 	}
-	var seq int64
-	err = tx.QueryRow(`INSERT INTO ym_goal_events (goal,kind,payload,key,created) VALUES (?,?,?,?,?) RETURNING seq`, a.Goal, EventFinished,
-		fmt.Sprintf("assignment %s generation %d terminal report from %s: %s; manager: ym goal accept %s --report <this-event>", a.ID, a.Generation, Short(a.Session), summary, a.ID), "assignment-report:"+a.ID, stamp(c.now())).Scan(&seq)
+	seq, err := assignmentReportIn(tx, a, summary, c.now())
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.Exec(`UPDATE ym_assignments SET report=? WHERE id=?`, seq, id); err != nil {
+	return seq, tx.Commit()
+}
+
+func assignmentReportIn(tx *sql.Tx, a Assignment, summary string, at time.Time) (int64, error) {
+	if a.Report != 0 {
+		return a.Report, nil
+	}
+	var seq int64
+	err := tx.QueryRow(`INSERT INTO ym_goal_events (goal,kind,payload,key,created) VALUES (?,?,?,?,?) RETURNING seq`, a.Goal, EventFinished,
+		fmt.Sprintf("assignment %s generation %d terminal report from %s: %s; manager: ym goal accept %s --report <this-event>", a.ID, a.Generation, Short(a.Session), summary, a.ID), "assignment-report:"+a.ID, stamp(at)).Scan(&seq)
+	if err != nil {
 		return 0, err
 	}
-	return seq, tx.Commit()
+	_, err = tx.Exec(`UPDATE ym_assignments SET report=? WHERE id=?`, seq, a.ID)
+	return seq, err
 }
 
 func (c *Core) AcceptAssignment(session, id string, report int64) error {

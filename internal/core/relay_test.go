@@ -620,3 +620,18 @@ func TestAQueuedKillLandsOnceWhetherItsTargetLivesEndedOrWasKilledTwice(t *testi
 		})
 	}
 }
+
+func (n *hostNet) StartWork(from, host string, w RemoteAssignment) error {
+	if n.down[host] {
+		return ErrUnreachable
+	}
+	_, err := n.hosts[host].core.ServeSync(RelaySync{From: from, As: host, Start: &w})
+	return err
+}
+
+func (n *hostNet) AuthorizeWork(origin, id string, run func(RemoteAssignment) error) error {
+	if n.down[origin] {
+		return ErrUnreachable
+	}
+	return n.hosts[origin].core.AuthorizeWork(id, run)
+}

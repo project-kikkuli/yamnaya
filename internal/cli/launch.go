@@ -1339,3 +1339,16 @@ func (l launcher) ReviveProfile(ref, id string) (string, error) {
 	}
 	return l.SwitchProfile(ref, id)
 }
+
+func (l launcher) EndAssignment(id, goal string) (string, error) {
+	all, err := l.records.All()
+	if err != nil {
+		return "", err
+	}
+	for _, rec := range all {
+		if rec.Assignment == id {
+			return l.End(rec.Key, goal)
+		}
+	}
+	return "", core.ErrNotFound
+}

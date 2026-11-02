@@ -248,6 +248,9 @@ func (s *Store) SaveGoal(g Goal) error {
 		return err
 	}
 	if g.State == GoalKilled || g.State == GoalDropped {
+		if err = revokeWorkIn(tx, g.ID, g.DoneAt); err != nil {
+			return err
+		}
 		if _, err = tx.Exec(`UPDATE ym_goal_verifications SET verdict='superseded',decided_at=?,version=version+1 WHERE goal=? AND verdict=''`, stamp(g.DoneAt), g.ID); err != nil {
 			return err
 		}

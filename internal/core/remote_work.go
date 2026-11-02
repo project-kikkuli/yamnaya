@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS ym_remote_go (item INTEGER PRIMARY KEY,origin TEXT NO
 `
 
 type WorkMessage struct {
+	Events  []GoalEvent
 	Op      string
 	Work    RemoteAssignment
 	Summary string
@@ -145,11 +146,11 @@ func (c *Core) sendRemoteLaunch(host string, n NewLaunch, a Assignment) (string,
 	if err = c.SettleAssignment(a.ID, RemoteKey(host, n.Session), n.Parent); err != nil {
 		return "", err
 	}
-	raw, err := json.Marshal(WorkMessage{Op: "launch", Work: w})
-	if err != nil {
+	if err = c.registerLaunch(w); err != nil {
 		return "", err
 	}
-	return c.RunOrRelay(host, "work-receive", string(raw))
+
+	return "origin-owned launch intent registered", nil
 }
 
 func (c *Core) requestRemoteAssignment(parent, worker, source, reason string, n *NewLaunch) (Assignment, error) {
@@ -209,7 +210,7 @@ func (c *Core) startForeign(w RemoteAssignment) error {
 		return err
 	}
 	switch current.State {
-	case "launched", "started", "reported", "accepted", "failed":
+	case "launched", "started", "reported", "accepted", "failed", "revoked":
 		return nil
 	}
 	if current.State == "pending" {
@@ -218,18 +219,22 @@ func (c *Core) startForeign(w RemoteAssignment) error {
 	if current.Launch == nil {
 		return nil
 	}
-	if current.Host != c.SelfName() {
-		current.State = "approved"
-		raw, err := json.Marshal(WorkMessage{Op: "launch", Work: current})
-		if err != nil {
-			return err
-		}
-		_, err = c.RunOrRelay(current.Host, "work-receive", string(raw))
-		if err == nil {
-			_, err = c.Store.db.Exec(`UPDATE ym_remote_work SET state='launched' WHERE id=? AND state IN ('approved','starting')`, current.Assignment.ID)
-		}
+	return c.queueWork(current.Origin, WorkMessage{Op: "launch-request", Work: current})
+}
+
+func (c *Core) launchForeign(w RemoteAssignment) error {
+	current, err := c.Store.remoteWork(w.Assignment.ID)
+	if err != nil {
 		return err
 	}
+	switch current.State {
+	case "started", "launched", "reported", "accepted", "failed", "revoked":
+		return nil
+	}
+	if current.Host != c.SelfName() || current.Launch == nil {
+		return errors.New("live dispatch is not addressed to this host")
+	}
+
 	if _, err = c.Store.db.Exec(`UPDATE ym_remote_work SET state='starting' WHERE id=? AND state='approved'`, w.Assignment.ID); err != nil {
 		return err
 	}
@@ -317,12 +322,16 @@ func (c *Core) reportForeign(session, id, summary string) (int64, error) {
 		return 0, err
 	}
 	w.Worker = c.Resolve(session)
+	events, err := c.Store.GoalEvents(RemoteKey(w.Origin, w.Goal))
+	if err != nil {
+		return 0, err
+	}
 	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`INSERT INTO ym_relay(dest,kind,body,created) VALUES (?,?,?,?)`, w.Origin, RelayWork, jsonOf(WorkMessage{Op: "report", Work: w, Summary: summary}), c.now().UnixNano()); err != nil {
+	if _, err = tx.Exec(`INSERT INTO ym_relay(dest,kind,body,created) VALUES (?,?,?,?)`, w.Origin, RelayWork, jsonOf(WorkMessage{Op: "report", Work: w, Summary: summary, Events: events}), c.now().UnixNano()); err != nil {
 		return 0, err
 	}
 	if _, err = tx.Exec(`UPDATE ym_remote_work SET state='reported' WHERE id=? AND state!='accepted'`, id); err != nil {
@@ -334,6 +343,21 @@ func (c *Core) reportForeign(session, id, summary string) (int64, error) {
 func (c *Core) WorkReceive(m WorkMessage) error {
 	w := m.Work
 	switch m.Op {
+	case "register":
+		if w.Host != c.SelfName() || w.Origin == "" || w.Assignment.ID == "" || w.Launch != nil {
+			return errors.New("invalid assignment route")
+		}
+		if err := c.Store.putRemoteWork(w); err != nil {
+			return err
+		}
+		return c.settleForeign(w.Assignment.ID, w.Worker)
+	case "launch-request":
+		return c.registerLaunch(w)
+	case "revoke":
+		if w.Origin == "" {
+			return errors.New("invalid work revocation")
+		}
+		return c.revokeForeign(w)
 	case "launch":
 		if identity, err := c.Store.RelaySelf(); err != nil {
 			return err
@@ -365,6 +389,15 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 		g, err := c.Store.Goal(parent.Goal)
 		if err != nil {
 			return err
+		}
+		if g.Ended() {
+			if err := c.queueWork(w.Requester, WorkMessage{Op: "revoke", Work: w}); err != nil {
+				return err
+			}
+			if w.Requester != w.Host {
+				return c.queueWork(w.Host, WorkMessage{Op: "revoke", Work: w})
+			}
+			return nil
 		}
 		manager, err := c.Store.Manager(g.ManagerID)
 		if err != nil {
@@ -413,6 +446,11 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 		if a.Report != 0 {
 			return nil
 		}
+		for _, e := range m.Events {
+			if err = c.WorkReceive(WorkMessage{Op: "event", Work: w, Event: e}); err != nil {
+				return err
+			}
+		}
 		if _, err = c.ReportAssignment(a.Session, a.ID, m.Summary); err != nil {
 			return err
 		}
@@ -425,7 +463,7 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 		if existing.Origin != w.Origin || existing.Assignment.Generation != w.Assignment.Generation || existing.Goal != w.Goal {
 			return errors.New("acceptance changed assignment identity")
 		}
-		_, err = c.Store.db.Exec(`UPDATE ym_remote_work SET state='accepted' WHERE id=?`, w.Assignment.ID)
+		_, err = c.Store.db.Exec(`UPDATE ym_remote_work SET state='accepted' WHERE id=? AND state!='revoked'`, w.Assignment.ID)
 		return err
 	case "go":
 		if w.Origin != c.SelfName() {

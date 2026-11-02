@@ -166,7 +166,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 	}
 	for _, urls := range tracked {
 		for _, url := range urls {
-			if _, ok := known[url]; ok && goal[url] && !seen[url] {
+			if goal[url] && !seen[url] {
 				seen[url] = true
 				candidates = append(candidates, url)
 			}
