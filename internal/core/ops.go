@@ -112,6 +112,7 @@ type Target struct {
 	Resume  []string
 	// Remote is the host the session runs on when that is not this one.
 	Remote string
+	Pick   int
 	// HostErr says which terminal host ym could not read, so where the session runs is unknown.
 	HostErr string
 	// Ours is set when ym launched the session, so it runs on ym's server even when its pane is not found there.
@@ -166,15 +167,36 @@ func (t Target) Advice() string {
 	return "runs as " + where + "; switch to it there, or M moves it into ym once it is idle"
 }
 
-// Targets lists every live copy of a session with its host; a session with no live process yields its resume command.
+// Targets lists the resolved session's copies, or a resume command for an absent native session id.
 func (c *Core) Targets(b Board, key, harnessName string) []Target {
 	var out []Target
-	for _, s := range b.Sessions {
-		if s.Key() != key && s.Ref() != key {
-			continue
-		}
+	if s, ok := b.Session(key); ok {
 		if s.Remote != "" {
-			return []Target{{Session: s.Session, Remote: s.Remote}}
+			seen := map[struct {
+				pid int
+				tty string
+			}]bool{}
+			for _, live := range b.Sessions {
+				if live.Remote != s.Remote || live.ExactRef() != s.ExactRef() {
+					continue
+				}
+				for _, cp := range copiesOf(live) {
+					identity := struct {
+						pid int
+						tty string
+					}{cp.PID, cp.TTY}
+					if !seen[identity] {
+						seen[identity] = true
+						out = append(out, Target{Session: cp, Remote: s.Remote})
+					}
+				}
+			}
+			if len(out) > 1 {
+				for i := range out {
+					out[i].Pick = i + 1
+				}
+			}
+			return out
 		}
 		for _, cp := range copiesOf(s) {
 			t := Target{Session: cp, App: s.App, Ours: s.Ours}
@@ -188,6 +210,14 @@ func (c *Core) Targets(b Board, key, harnessName string) []Target {
 			out = append(out, t)
 		}
 		return out
+	}
+	if _, _, remote := SplitRemote(key); remote || strings.Contains(key, "@") {
+		return nil
+	}
+	for _, s := range b.Sessions {
+		if s.Key() == key || s.Ref() == key {
+			return nil
+		}
 	}
 	if r := c.resume(harnessName, key); r != nil {
 		out = append(out, Target{Session: Session{Harness: harnessName, ID: key}, Resume: r})
@@ -221,7 +251,7 @@ var ErrNoHost = errors.New("no terminal host")
 // A session in a terminal app comes forward in its window and tab; one in a tmux ym does not run brings forward the terminal
 // that shows that tmux.
 func (c *Core) Focus(t Target) error {
-	if t.HostErr != "" {
+	if t.Remote != "" || t.HostErr != "" {
 		return ErrNoHost
 	}
 	if t.Handle == nil {

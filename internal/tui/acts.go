@@ -92,6 +92,13 @@ func sessionKey(s core.Live) string {
 	return s.Key()
 }
 
+func terminalRef(s core.Live) string {
+	if s.Remote != "" {
+		return core.RemoteKey(s.Remote, s.ExactRef())
+	}
+	return s.ExactRef()
+}
+
 func projectRef(p core.Project) string {
 	if host := core.ProjectHost(p); host != "" {
 		return core.RemoteKey(host, p.Key)

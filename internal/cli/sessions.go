@@ -123,7 +123,7 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 			}
 		}
 		if s.Handle == nil && s.Remote == "" {
-			for _, t := range c.Targets(b, s.Key(), s.Harness) {
+			for _, t := range c.Targets(b, s.ExactRef(), s.Harness) {
 				j.Resume = t.Resume
 			}
 		}

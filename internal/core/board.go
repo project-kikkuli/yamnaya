@@ -295,7 +295,7 @@ func (b *Board) indexSessions() {
 	}
 	for i, s := range b.Sessions {
 		ref := s.Ref()
-		explicit := s.Harness + ":" + profile.ID(s.Profile) + "@" + s.Key()
+		explicit := s.ExactRef()
 		if s.Remote != "" {
 			ref = RemoteKey(s.Remote, ref)
 			explicit = RemoteKey(s.Remote, explicit)

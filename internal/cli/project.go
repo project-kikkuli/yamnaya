@@ -180,8 +180,10 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			if noBoard {
 				show = (*exec.Cmd).Run
 			}
-			if ok, err := e.openLaunched(out, args[0], show); ok || err != nil {
-				return err
+			if pick == 0 {
+				if ok, err := e.openLaunched(out, args[0], show); ok || err != nil {
+					return err
+				}
 			}
 			b, err := e.core.Board()
 			if err != nil {
@@ -190,8 +192,14 @@ func openCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			key, harness := args[0], ""
 			if it, err := e.item(b, args[0]); err == nil {
 				key, harness = it.Session, it.Harness
+				if it.Host != "" {
+					key = core.RemoteKey(it.Host, key)
+				}
 			} else if s, err := sessionByPrefix(b, args[0]); err == nil {
-				key, harness = s.Key(), s.Harness
+				key, harness = s.ExactRef(), s.Harness
+				if s.Remote != "" {
+					key = core.RemoteKey(s.Remote, key)
+				}
 			} else if !errors.Is(err, core.ErrNotFound) {
 				return err
 			}
