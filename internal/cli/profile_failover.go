@@ -109,8 +109,10 @@ func (l launcher) Failover(b core.Board) error {
 		if err != nil || selected.Account != e.Account || !selected.SubscriptionSafe(rec.Worktree.Path) {
 			continue
 		}
-		if s, alive := b.Session(e.Session); alive && !s.Settled() {
-			continue
+		if s, alive := b.Session(e.Session); alive {
+			if err := l.switchReady(s, rec, &b.Fleet); err != nil {
+				continue
+			}
 		}
 		a, err := loadFailover(dir, e.Harness, e.Session)
 		if err != nil {

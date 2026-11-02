@@ -1595,10 +1595,10 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 then local branches merged into origin that no worktree uses (asks y/n); the board
                 runs it by itself at most hourly
    T            end the idle session and relaunch it in the other harness on ym's server (asks y/n)
-   B            login profiles: every Claude and Codex login on every host with its limit windows; a adds one
-                (tab harness, ctrl+t host, then its root), i logs in (device auth on another host), d makes it
+   B            login profiles: starts on the selected conversation's current login; a adds one on its host
+                and harness (tab harness, ctrl+t host, then root and native login), i retries login, d makes it
                 the launch default, x removes it, m opens its MCP connections; on a session, goal or chief,
-                enter switches its conversation to it
+                enter switches only its conversation to it; B on a stopped launch in E also selects it
    F            MCP connections for the selected session, or choose a host and login: n connects Notion,
                 a adds HTTP/SSE/stdio, i logs in in your terminal (no-browser remotely), c checks explicitly,
                 x removes the selected scope; r rereads files without starting any servers, p changes login

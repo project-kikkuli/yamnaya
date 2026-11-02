@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
@@ -20,6 +22,25 @@ type profileHarness struct {
 }
 
 func (h *profileHarness) Name() string { return h.name }
+
+func (h *profileHarness) InspectHandoff(s core.Session) (time.Time, error) {
+	ps, as := h.all()
+	p, err := profile.Find(ps, h.name, s.Profile)
+	if err != nil || physicalProfileRoot(p.Root) != physicalProfileRoot(s.ConfigRoot) || p.Account == "" || p.Account != s.Account {
+		return time.Time{}, fmt.Errorf("native profile root changed")
+	}
+	i, ok := as[p.ID].(core.HandoffInspector)
+	if !ok {
+		return time.Time{}, fmt.Errorf("native handoff inspection unavailable")
+	}
+	return i.InspectHandoff(s)
+}
+
+func (h *profileHarness) QuotaDialog(text string) bool {
+	_, as := h.all()
+	i, ok := as["default"].(core.HandoffInspector)
+	return ok && i.QuotaDialog(text)
+}
 func (h *profileHarness) all() ([]profile.Profile, map[string]core.Harness) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

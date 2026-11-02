@@ -35,8 +35,11 @@ const (
 var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "F": panelMCP}
 
 type panelState struct {
-	kind panelKind
-	cur  int
+	kind   panelKind
+	cur    int
+	epoch  uint64
+	added  *profileDraft
+	rebind *profileRebind
 	// target is the session B was pressed on; enter on a profile switches it to that login.
 	target *panelTarget
 	in     *panelInput
@@ -54,7 +57,7 @@ type panelState struct {
 	past   pastList
 }
 
-type panelTarget struct{ ref, label, harness, host, profile, root, cwd string }
+type panelTarget struct{ ref, label, harness, host, profile, root, cwd, session string }
 
 // panelInput is a line a panel asks for; secret hides what is typed.
 type panelInput struct {
@@ -77,7 +80,8 @@ type settingsMsg settingsData
 
 // prow is one line of a panel; rows with no actions are headings or notes the cursor skips.
 type prow struct {
-	text string
+	text   string
+	target *panelTarget
 	// key names the row's actions in m.acts, so it shows how the latest one stands.
 	key  string
 	does []pdo
@@ -122,6 +126,9 @@ func selfTTY(c *core.Core) func(host string, args ...string) *exec.Cmd {
 
 // openPanel shows kind, aimed at the session on row r when it has one.
 func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
+	m.pn.epoch++
+	m.pn.added = nil
+	m.pn.rebind = nil
 	m.pn.kind, m.pn.cur, m.pn.target = kind, 0, nil
 	s := m.sessionOf(r)
 	if s == nil && r.project != nil && r.session == nil && r.item == nil && len(r.project.Sessions) == 1 {
@@ -132,10 +139,10 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		if s.Remote != "" {
 			ref = core.RemoteKey(s.Remote, ref)
 		}
-		m.pn.target = &panelTarget{ref: ref, label: s.Label(), harness: s.Harness, host: s.Remote, profile: s.Profile, root: s.ConfigRoot, cwd: s.Cwd}
+		m.pn.target = &panelTarget{ref: ref, label: s.Label(), harness: s.Harness, host: s.Remote, profile: s.Profile, root: s.ConfigRoot, cwd: s.Cwd, session: s.ID}
 	} else if r.dormant != nil {
 		host, _ := m.splitHost(r.dormant.Key)
-		m.pn.target = &panelTarget{ref: r.dormant.Key, label: r.dormant.Title, harness: r.dormant.Harness, host: host, profile: r.dormant.Profile, root: r.dormant.ConfigRoot, cwd: r.dormant.Cwd}
+		m.pn.target = &panelTarget{ref: r.dormant.Key, label: r.dormant.Title, harness: r.dormant.Harness, host: host, profile: r.dormant.Profile, root: r.dormant.ConfigRoot, cwd: r.dormant.Cwd, session: r.dormant.Session}
 	} else if n, ok := m.nodeOf(r); ok && (n.Live != nil || n.Manager.Session != "") {
 		mg := n.Manager
 		ref, host := profile.SessionKey(mg.Harness, mg.Profile, mg.Session), mg.Host
@@ -147,7 +154,11 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		}
 		m.pn.target = &panelTarget{ref: ref, label: mg.Label(), harness: mg.Harness, host: host}
 		m.pn.target.profile = mg.Profile
+		m.pn.target.session = mg.Session
 		if n.Live != nil {
+			m.pn.target.session = n.Live.ID
+			m.pn.target.harness = n.Live.Harness
+			m.pn.target.profile = n.Live.Profile
 			m.pn.target.root = n.Live.ConfigRoot
 			m.pn.target.cwd = n.Live.Cwd
 		} else {
@@ -156,6 +167,9 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 	}
 	m.push(modePanel)
 	m.pn.cur = m.firstPanelRow(0, 1)
+	if kind == panelProfiles {
+		m.contextProfile()
+	}
 	if kind == panelSettings {
 		return m, m.loadSettings()
 	}
@@ -174,6 +188,18 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 
 func (m Model) panelKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.pn.kind == panelLaunched {
+		if k.String() == "B" && m.pn.past.query == "" {
+			rows, _ := m.panelRows()
+			if m.pn.cur >= 0 && m.pn.cur < len(rows) && rows[m.pn.cur].target != nil {
+				t := *rows[m.pn.cur].target
+				m.pn.kind, m.pn.target = panelProfiles, &t
+				m.pn.epoch++
+				m.pn.added = nil
+				m.pn.rebind = nil
+				m.contextProfile()
+				return m, nil
+			}
+		}
 		if next, ok := m.pastKey(k); ok {
 			return next, nil
 		}
@@ -257,6 +283,9 @@ func (m Model) panelView() viewPage {
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   enter switches "+m.tagged(t.host, t.label)+" to the login under the cursor") + "\n")
+		b.WriteString(pal.dim.Render("   current: "+t.harness+"/"+profile.ID(t.profile)+m.onHost(t.host)+"; a adds a login here, then native authentication; enter switches only this conversation when idle, stopped, or at a verified quota stop") + "\n")
+	} else if m.pn.kind == panelProfiles {
+		b.WriteString(pal.dim.Render("   a adds a login and starts native authentication; select a session and press B to switch it") + "\n")
 	}
 	b.WriteString("\n")
 	for i, r := range rows {
@@ -303,6 +332,10 @@ func (m *Model) askLine(label, initial string, secret bool, then func(Model, str
 
 // handOver gives this terminal to ym args on host, coming back to the board when it ends.
 func (m Model) handOver(host, back string, args ...string) (tea.Model, tea.Cmd) {
+	if host != "" && !slices.Contains(m.launchTargets(), host) {
+		m.message = "error: unknown remote " + host + "; H adds or repairs it"
+		return m, nil
+	}
 	if err := m.silent(host); err != nil {
 		m.message = "error: " + err.Error()
 		return m, nil
@@ -320,6 +353,9 @@ func (m Model) profileRows() ([]prow, []pdo) {
 			does: []pdo{{"enter", "switch", func(m Model) (tea.Model, tea.Cmd) { return m.switchProfile(ref, "auto") }}}})
 	}
 	group := func(host string, ps []core.LoginProfile, limits []core.Limit) {
+		if d := m.pn.added; d != nil && d.host == host && d.registered && !slices.ContainsFunc(ps, func(p core.LoginProfile) bool { return p.Harness == d.p.Harness && p.ID == d.p.ID }) {
+			ps = append(slices.Clone(ps), d.p)
+		}
 		name := "local " + m.host
 		if host != "" {
 			name = m.tagged(host, host)
@@ -339,6 +375,9 @@ func (m Model) profileRows() ([]prow, []pdo) {
 			limits = r.Usage.Limits
 		}
 		group(r.Host, r.Profiles, limits)
+	}
+	if d := m.pn.added; d != nil && d.host != "" && !slices.ContainsFunc(m.board.Remotes, func(r core.RemoteBoard) bool { return r.Host == d.host }) {
+		group(d.host, nil, nil)
 	}
 	return rows, []pdo{add}
 }
@@ -371,6 +410,9 @@ func (m Model) profileRow(host string, p core.LoginProfile, limits []core.Limit)
 	if p.Default {
 		text += pal.green.Render("  launch default")
 	}
+	if t := m.pn.target; t != nil && t.host == host && t.harness == p.Harness && profile.ID(t.profile) == p.ID {
+		text += pal.yellow.Render("  current login")
+	}
 	if p.Root != "" {
 		text += pal.dim.Render("  " + p.Root)
 	}
@@ -386,11 +428,7 @@ func (m Model) profileRow(host string, p core.LoginProfile, limits []core.Limit)
 		does = append(does, pdo{"enter", "switch " + t.label + " to it", func(m Model) (tea.Model, tea.Cmd) { return m.switchProfile(ref, pid) }})
 	}
 	does = append(does, pdo{"i", "log in", func(m Model) (tea.Model, tea.Cmd) {
-		args := []string{"profiles", "login", h, pid}
-		if host != "" && h == "codex" {
-			args = append(args, "--device-auth")
-		}
-		return m.handOver(host, "back from logging in to "+h+"/"+pid, args...)
+		return m.loginProfile(host, h, pid)
 	}})
 	if !p.Default {
 		does = append(does, pdo{"d", "make it the launch default", func(m Model) (tea.Model, tea.Cmd) {
@@ -423,6 +461,12 @@ func (m Model) onHost(host string) string {
 
 // switchProfile resumes the session ref names under the login id, as ym switch --profile does.
 func (m Model) switchProfile(ref, id string) (tea.Model, tea.Cmd) {
+	if t := m.pn.target; t != nil && t.ref == ref {
+		if err := m.profileHost(t.host); err != nil {
+			m.message = "error: " + err.Error()
+			return m, nil
+		}
+	}
 	switcher, ok := m.core.Launches.(interface {
 		SwitchProfile(string, string) (string, error)
 	})
@@ -430,7 +474,17 @@ func (m Model) switchProfile(ref, id string) (tea.Model, tea.Cmd) {
 		m.message = "error: ym's launcher is unavailable"
 		return m, nil
 	}
-	return m, m.act("panel:switch:"+ref, "switching", "switch", func() (string, error) { return switcher.SwitchProfile(ref, id) })
+	epoch := m.pn.epoch
+	var target panelTarget
+	if m.pn.target != nil {
+		target = *m.pn.target
+	}
+	key := "panel:switch:" + ref
+	m.acts[key] = act{doing: "switching", what: "switch", at: time.Now()}
+	return m, func() tea.Msg {
+		out, err := switcher.SwitchProfile(ref, id)
+		return profileSwitchedMsg{actMsg: actMsg{key, out, err}, epoch: epoch, target: target, id: id}
+	}
 }
 
 var notID = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -445,25 +499,18 @@ func (m Model) addProfile() (tea.Model, tea.Cmd) {
 	if m.pn.harness == "" {
 		m.pn.harness = "claude"
 	}
-	if !slices.Contains(m.launchTargets(), m.pn.host) {
-		m.pn.host = ""
-	}
-	m.askLine("", "", false, func(m Model, label string) (tea.Model, tea.Cmd) {
+	return m.profileLabel("")
+}
+
+func (m Model) profileLabel(initial string) (tea.Model, tea.Cmd) {
+	m.askLine("", initial, false, func(m Model, label string) (tea.Model, tea.Cmd) {
 		id := profileID(label)
 		if id == "" || id == "default" {
 			m.message = "error: a label needs a letter or digit, and default is the native login"
-			return m, nil
+			return m.profileLabel(label)
 		}
 		h, host := m.pn.harness, m.pn.host
-		m.askLine("root of "+h+"/"+id+m.onHost(host)+", an absolute directory there", m.defaultRoot(host, h, id), false, func(m Model, root string) (tea.Model, tea.Cmd) {
-			if root == "" {
-				return m, nil
-			}
-			key := "panel:profile:" + qual(host, h+"/"+id)
-			m.message = "adding " + h + "/" + id + m.onHost(host) + "; i on it logs in"
-			return m, m.runYM(key, "adding", "add", host, "", "profiles", "add", h, id, "--label", label, "--root", root)
-		})
-		return m, nil
+		return m.profileRoot(profileDraft{host: host, p: core.LoginProfile{Harness: h, ID: id, Label: label, Root: m.defaultRoot(host, h, id)}})
 	})
 	m.pn.in.pick = true
 	return m, nil
@@ -758,12 +805,17 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		l    core.Launched
 	}
 	var all []launch
+	seen := map[string]bool{}
 	for _, l := range m.board.Launched {
-		all = append(all, launch{"", l})
+		host, _ := m.splitHost(l.Key)
+		all = append(all, launch{host, l})
+		seen[l.Key] = true
 	}
 	for _, r := range m.board.Remotes {
 		for _, l := range r.Launched {
-			all = append(all, launch{r.Host, l})
+			if !seen[l.Key] {
+				all = append(all, launch{r.Host, l})
+			}
 		}
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].l.Landed.After(all[j].l.Landed) })
@@ -774,8 +826,9 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		key := "panel:launch:" + l.Key
 		if l.Landed.IsZero() {
 			r := prow{text: text + pad(l.State, 10) + pal.dim.Render(" "+l.Path), key: key}
-			if strings.HasPrefix(l.State, "exited") || l.State == "gone" {
-				r.does = []pdo{revive(host, "", l.Key)}
+			if strings.HasPrefix(l.State, "exited") || strings.HasPrefix(l.State, "sig") || l.State == "gone" {
+				r.target = &panelTarget{ref: qual(host, shown), label: shown, host: host, harness: l.Harness, profile: l.Profile, cwd: l.Path, session: l.Session}
+				r.does = []pdo{revive(host, "", l.Key), {"B", "logins / switch", nil}}
 			}
 			running = append(running, r)
 			continue
@@ -788,7 +841,7 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		if l.Recovered {
 			how += ", work bundled"
 		}
-		ended = append(ended, prow{text: text + pad(how, 30) + pal.dim.Render(" "+l.Path), key: key, does: []pdo{revive(host, "", l.Key)}})
+		ended = append(ended, prow{text: text + pad(how, 30) + pal.dim.Render(" "+l.Path), key: key, target: &panelTarget{ref: qual(host, shown), label: shown, host: host, harness: l.Harness, profile: l.Profile, cwd: l.Path, session: l.Session}, does: []pdo{revive(host, "", l.Key), {"B", "logins / switch", nil}}})
 	}
 	rows := []prow{{text: pal.bold.Render("running and exited")}}
 	if len(running) == 0 {

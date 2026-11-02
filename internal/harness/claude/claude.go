@@ -26,11 +26,13 @@ const Name = "claude"
 const staleAfter = 15 * time.Minute
 
 type Adapter struct {
-	Dir   string
-	Bin   string
-	Cwd   func(pid int) string
-	Now   func() time.Time
-	Cache core.ScanCache
+	Dir    string
+	Bin    string
+	Cwd    func(pid int) string
+	Now    func() time.Time
+	Cache  core.ScanCache
+	Procs  func() ([]proc.Proc, error)
+	RootOf func(int, string) string
 	// SendTimeout bounds one delivery to a session's messaging socket; zero means two seconds.
 	SendTimeout time.Duration
 	// ReceiptWait is how long a send waits for a session to report it held the message; zero means one second.
