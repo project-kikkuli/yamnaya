@@ -18,21 +18,40 @@ import (
 )
 
 func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo, selected, under string
+	var repo, selected, under, host string
 	var useCodex bool
 	cmd := &cobra.Command{
-		Use:   "goal [--codex] [--repo NAME|PATH] [--under CHIEF] <ask>",
+		Use:   "goal [--codex] [--host HOST] [--repo NAME|PATH] [--under CHIEF] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			var requester string
+			if cl, err := e.caller(); err == nil {
+				requester = cl.Session
+				if under == "" {
+					under = e.core.ChiefOf(cl.Session)
+				}
+			}
+			if host != "" {
+				to, err := e.core.Store.RouteHost(host)
+				if errors.Is(err, core.ErrNotFound) && strings.EqualFold(strings.TrimPrefix(host, "@"), e.core.SelfName()) {
+					to, err = e.core.SelfName(), nil
+				}
+				if err != nil {
+					return err
+				}
+				if to != e.core.SelfName() {
+					g, err := e.core.NewGoalOn(to, args[0], repo, harnessFlag(useCodex), under, requester, selected)
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "goal for %s on %s: %s\n", repo, to, g.Evidence)
+					return nil
+				}
+			}
 			dir, err := e.repoArg(repo)
 			if err != nil {
 				return err
-			}
-			if under == "" {
-				if cl, err := e.caller(); err == nil {
-					under = e.core.ChiefOf(cl.Session)
-				}
 			}
 			g, m, err := e.core.NewGoalUnder(args[0], dir, harnessFlag(useCodex), under, selected)
 			if err != nil {
@@ -57,6 +76,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
+	cmd.Flags().StringVar(&host, "host", "", "start the goal on this host, by name or @nickname, in the repository --repo names there; one ym reaches only through relays gets it when it next syncs")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))

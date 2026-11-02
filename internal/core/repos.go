@@ -203,7 +203,7 @@ func (c *Core) Repos() ([]string, error) {
 }
 
 // ResolveRepo turns a repository name, or any part of it, into its main checkout; a path is taken as it is. Clones of
-// one repository count as one, the most recently picked first.
+// one repository count as one, the most recently picked first. A name that matches none, or several, is refused for good.
 func (c *Core) ResolveRepo(ref string) (string, error) {
 	if IsRepoPath(ref) {
 		return ExpandHome(ref), nil
@@ -214,7 +214,7 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 	}
 	matches := MatchRepos(repos, ref)
 	if len(matches) == 0 {
-		return "", fmt.Errorf("no repository matches %q", ref)
+		return "", Final(fmt.Errorf("no repository matches %q", ref))
 	}
 	idOf := func(r string) string {
 		if id := RepoIDOf(r); id != "" {
@@ -232,7 +232,7 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 		}
 	}
 	if len(ids) > 1 {
-		return "", fmt.Errorf("%q matches several repositories; name one by path:\n  %s", ref, strings.Join(tied, "\n  "))
+		return "", Final(fmt.Errorf("%q matches several repositories; name one by path:\n  %s", ref, strings.Join(tied, "\n  ")))
 	}
 	for _, r := range repos {
 		if ids[idOf(r)] {

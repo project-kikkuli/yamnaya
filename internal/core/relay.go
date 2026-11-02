@@ -73,6 +73,8 @@ type relayRoute struct {
 
 type relayYM struct {
 	Args []string `json:"args"`
+	// Requester is the session that asked for the command on its origin, which hears there if the command is refused for good.
+	Requester string `json:"requester,omitempty"`
 }
 
 type relayVouch struct {
@@ -264,8 +266,9 @@ func relayErrors(db *sql.DB) error {
 }
 
 // noteRefused records why another host refused each of this host's relays refs name, own or carried on: a final refusal ends the
-// relay, any other counts toward the owner hearing of it.
-func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) error {
+// relay, any other counts toward the owner hearing of it. It returns this host's own relays a final refusal ended.
+func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) ([]Relay, error) {
+	var ended []Relay
 	for _, r := range refs {
 		set := `last_error = ?, refusals = refusals + 1, refused_since = COALESCE(refused_since, ?)`
 		args := []any{r.Error, at.UnixNano()}
@@ -276,11 +279,64 @@ func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) error {
 		if r.Origin == self {
 			where, key = ` WHERE delivered IS NULL AND origin = '' AND seq = ?`, []any{r.OriginSeq}
 		}
-		if _, err := s.db.Exec(`UPDATE ym_relay SET `+set+where, append(args, key...)...); err != nil {
-			return err
+		res, err := s.db.Exec(`UPDATE ym_relay SET `+set+where, append(args, key...)...)
+		if err != nil {
+			return ended, err
 		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 || !r.Final || r.Origin != self {
+			continue
+		}
+		var own Relay
+		if err := s.db.QueryRow(`SELECT seq, dest, kind, body FROM ym_relay WHERE seq = ?`, r.OriginSeq).Scan(&own.Seq, &own.Dest, &own.Kind, &own.Body); err != nil {
+			return ended, err
+		}
+		own.Error = r.Error
+		ended = append(ended, own)
 	}
-	return nil
+	return ended, nil
+}
+
+// noteRefused records refs as Store.noteRefused does, and tells the requester of each own command refused for good.
+func (c *Core) noteRefused(refs []RelayRef) error {
+	ended, err := c.Store.noteRefused(c.SelfName(), refs, c.now())
+	errs := []error{err}
+	for _, r := range ended {
+		errs = append(errs, c.refusedHere(r))
+	}
+	return errors.Join(errs...)
+}
+
+// refusedHere files an item for the session that asked another host to start a goal that host refused for good, routed to that
+// session when it is a manager or chief, as its own ask would be otherwise.
+func (c *Core) refusedHere(r Relay) error {
+	var y relayYM
+	if r.Kind != RelayYM || json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) < 2 || y.Args[0] != "goal" || !strings.HasPrefix(y.Args[1], "--") {
+		return nil
+	}
+	ask := y.Args[len(y.Args)-1]
+	b, berr := c.Board()
+	o, err := c.LoadOrg()
+	if err != nil {
+		return err
+	}
+	it := Item{Kind: KindChore, Session: y.Requester, CreatedAt: c.now(),
+		Question:  fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(ask), lineMax), r.Error),
+		Rec:       fmt.Sprintf("rerun ym goal --host %s with --repo naming a repository %s has, or start it on a host that has it", r.Dest, r.Dest),
+		Evidence:  []string{"ym " + strings.Join(y.Args, " ")}}
+	if it.Session == "" {
+		it.Session = "ym"
+	}
+	if m, ok := o.ManagerOf(c.Resolve(y.Requester)); ok {
+		it.Recipient = m.ID
+	} else if y.Requester != "" {
+		it.Recipient = o.Recipient(c.Resolve(y.Requester), c.parentsFor(b, berr))
+	}
+	it.Scope = c.ScopeOf(b, it.Session)
+	added, err := c.Store.addItem(it)
+	if err != nil || added.Recipient == Owner {
+		return err
+	}
+	return c.askManager(b, o, added)
 }
 
 // DropRelay stops carrying relay seq, as the owner decides for one that keeps being refused.
@@ -386,7 +442,7 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
-	if err := c.Store.noteRefused(c.SelfName(), req.Refused, c.now()); err != nil {
+	if err := c.noteRefused(req.Refused); err != nil {
 		return RelayReply{}, err
 	}
 	refused, recvErr := c.Receive(req.Entries)
@@ -427,7 +483,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
 		}
-		if err := c.Store.noteRefused(self, reply.Refused, c.now()); err != nil {
+		if err := c.noteRefused(reply.Refused); err != nil {
 			return err
 		}
 		refused := map[RelayRef]bool{}
