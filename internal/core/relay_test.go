@@ -635,3 +635,43 @@ func (n *hostNet) AuthorizeWork(origin, id string, run func(RemoteAssignment) er
 	}
 	return n.hosts[origin].core.AuthorizeWork(id, run)
 }
+
+func TestARelaunchQueuedOnAHostOthersPullFromRunsOnTheHostItNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// dest is where the manager lives: a pulls b's relays, and c is a host only a reaches.
+		dest    string
+		refuses int
+	}{
+		{name: "the host that pulls", dest: "a"},
+		{name: "the host that pulls, after its first run fails", dest: "a", refuses: 1},
+		{name: "a host the puller reaches", dest: "c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			var ran []string
+			refuses := tc.refuses
+			map[string]*orgWorld{"a": f.a, "c": f.c}[tc.dest].core.RunSelf = func(args ...string) (string, error) {
+				if refuses > 0 {
+					refuses--
+					return "", errors.New("ym goal relaunch mgr54: git ls-remote --heads origin: exit status 128: Connection closed")
+				}
+				ran = append(ran, strings.Join(args, " "))
+				return "", nil
+			}
+			m, err := f.b.core.ReplaceManager(Board{}, RemoteKey(tc.dest, "mgr54"))
+			if err != nil || m.Host != tc.dest {
+				t.Fatalf("ReplaceManager = %+v, %v; want it queued for %s", m, err, tc.dest)
+			}
+			for range 2 + tc.refuses {
+				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
+			}
+			if len(ran) != 1 || ran[0] != "goal relaunch mgr54" {
+				t.Errorf("%s ran %q, want b's relaunch run there once", tc.dest, ran)
+			}
+			if pending, _ := f.b.core.Store.PendingRelays(); len(pending) != 0 {
+				t.Errorf("b still holds %+v after %s ran the relaunch", pending, tc.dest)
+			}
+		})
+	}
+}
