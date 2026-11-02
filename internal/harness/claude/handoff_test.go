@@ -87,12 +87,32 @@ func TestQuotaHandoffInspectsMainAndIndependentChildren(t *testing.T) {
 }
 
 func TestQuotaDialogRequiresLiveBottomDialog(t *testing.T) {
+	captured, err := os.ReadFile("testdata/weekly-limit-screen.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := string(captured)
 	for _, tc := range []struct {
 		name, text string
 		want       bool
 	}{
 		{"observed", quotaDialog, true},
+		{"captured weekly limit", remote, true},
+		{"captured without decoration", strings.ReplaceAll(remote, "⎿", ""), true},
+		{"decorated nonweekly limit", strings.ReplaceAll(remote, "weekly limit", "limit"), true},
+		{"captured different selected option", strings.ReplaceAll(strings.ReplaceAll(remote, "❯ 1.", "1."), "3. Switch", "❯ 3. Switch"), true},
 		{"different selected option", strings.ReplaceAll(strings.ReplaceAll(quotaDialog, "❯ 1.", "1."), "2. Wait", "❯ 2. Wait"), true},
+		{"captured scrollback", remote + "❯ Continue working\n", false},
+		{"captured permission", strings.ReplaceAll(remote, "1. Stop and wait for limit to reset", "1. Yes"), false},
+		{"captured heading absent", strings.ReplaceAll(remote, "You've hit your weekly limit", "Different dialog"), false},
+		{"quoted quota heading", strings.ReplaceAll(remote, "⎿", "> ⎿"), false},
+		{"quota heading in prose", strings.ReplaceAll(remote, "⎿", "The tool said: ⎿"), false},
+		{"stale quota heading", strings.ReplaceAll(remote, "What do you want to do?", "more output\nmore output\nWhat do you want to do?"), false},
+		{"missing question", strings.ReplaceAll(remote, "What do you want to do?", ""), false},
+		{"missing stop option", strings.ReplaceAll(remote, "❯ 1. Stop and wait for limit to reset", ""), false},
+		{"missing wait option", strings.ReplaceAll(remote, "2. Wait here, then continue automatically at Nov 5, 3am", ""), false},
+		{"missing credits option", strings.ReplaceAll(remote, "3. Switch to usage credits", ""), false},
+		{"missing confirmation", strings.ReplaceAll(remote, "Enter to confirm · Esc to cancel", ""), false},
 		{"scrollback", quotaDialog + "Now another dialog\n", false},
 		{"permission", strings.ReplaceAll(quotaDialog, "1. Stop and wait for limit to reset", "1. Yes"), false},
 		{"heading absent", strings.ReplaceAll(quotaDialog, "You've hit your weekly limit", "Different dialog"), false},
