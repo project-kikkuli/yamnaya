@@ -36,6 +36,8 @@ type Core struct {
 	Landings Landings
 	// Launches reports launched sessions that exited; nil shows none.
 	Launches Launches
+	// History reads the conversations the harnesses' own history files list; nil lists none.
+	History func() ([]Past, error)
 	// Roots are the directories new-session pickers look for repositories under; nil looks nowhere.
 	Roots func() []string
 	// Ask is the line of an agent's reply that asks the owner for something, "" when none; nil lists no waiting sessions.

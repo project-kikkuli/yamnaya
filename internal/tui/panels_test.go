@@ -223,3 +223,64 @@ func TestProfilesPanelListsEveryHostsLoginsWithTheirWindows(t *testing.T) {
 		t.Fatalf("B again left mode %v", m.mode)
 	}
 }
+
+func TestEFiltersPreviewsAndResumesOtherConversations(t *testing.T) {
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.Local)
+	past := []core.Past{
+		{Harness: "claude", Session: "c1", Cwd: "/src/app", Last: at, Prompts: []string{"fix the login", "and its tests"}, Transcript: "/t/c1.jsonl"},
+		{Harness: "codex", Session: "x1", Cwd: "/src/web", Last: at.Add(-time.Hour), Prompts: []string{"style the login page"}},
+		{Harness: "claude", Session: "lead", Cwd: "/src/lead", Last: at, Prompts: []string{"login lead work"}, Transcript: "/t/lead.jsonl"},
+	}
+	for _, c := range []struct {
+		name       string
+		keys       []string
+		shows      []string
+		hides      []string
+		relaunched []string
+		message    string
+	}{
+		{"filter narrows and previews the first match", typed("login tests"), []string{"fix the login", "1. fix the login", "2. and its tests", "filter: login tests"},
+			[]string{"style the login page", "login lead work"}, nil, ""},
+		{"enter resumes the match in its directory", append(typed("tests"), "enter"), nil, nil, []string{"c1 claude c1 /src/app"}, "revived adopt-c1"},
+		{"enter on a row whose transcript is gone says so", append(typed("style"), "enter"), []string{"transcript gone"}, nil, nil, "no transcript on disk"},
+		{"esc clears the filter before closing", append(typed("style"), "esc"), []string{"fix the login", "style the login page", "type to filter"}, nil, nil, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, sw := panelBoard(t)
+			m.width, m.height = 160, 60
+			m.core.History = func() ([]core.Past, error) { return past, nil }
+			m = press(t, m, "E")
+			m = press(t, m, c.keys...)
+			if m.mode != modePanel {
+				t.Fatalf("left the panel for mode %v", m.mode)
+			}
+			v := ansi.Strip(m.View().Content)
+			for _, want := range c.shows {
+				if !strings.Contains(v, want) {
+					t.Errorf("lacks %q:\n%s", want, v)
+				}
+			}
+			for _, hide := range c.hides {
+				if strings.Contains(v, hide) {
+					t.Errorf("shows %q:\n%s", hide, v)
+				}
+			}
+			if !reflect.DeepEqual(sw.relaunched, c.relaunched) {
+				t.Errorf("relaunched %q, want %q", sw.relaunched, c.relaunched)
+			}
+			if !strings.Contains(m.message, c.message) {
+				t.Errorf("message %q, want %q", m.message, c.message)
+			}
+		})
+	}
+}
+
+func TestEStillClosesEUntilSomethingIsTyped(t *testing.T) {
+	m, _, _ := panelBoard(t)
+	if m = press(t, m, "E", "E"); m.mode != modeList {
+		t.Fatalf("E E left mode %v", m.mode)
+	}
+	if m = press(t, m, "E", "x", "E"); m.mode != modePanel || m.pn.past.query != "xE" {
+		t.Fatalf("typing then E: mode %v query %q", m.mode, m.pn.past.query)
+	}
+}

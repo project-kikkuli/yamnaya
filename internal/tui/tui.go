@@ -452,6 +452,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.ended(msg)
 	case repairLineMsg:
 		return m.repairLine(msg)
+	case pastMsg:
+		msg.query = m.pn.past.query
+		m.pn.past = pastList(msg)
+		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)
+		return m, nil
 	case settingsMsg:
 		m.pn.settings = settingsData(msg)
 		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)

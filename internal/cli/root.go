@@ -62,6 +62,7 @@ func Wire(path string) (*core.Core, error) {
 		Landings:    gh.New(),
 		Port:        port,
 		Roots:       core.RepoRoots,
+		History:     readHistory,
 		Ask:         health.Addressed,
 		Measure:     func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() },
 		StateDir:    filepath.Dir(path),
@@ -80,6 +81,11 @@ func Wire(path string) (*core.Core, error) {
 		c.BackgroundSend = func(s core.Live, text string) error { _, err := l.sendFrom(s, text, false); return err }
 	}
 	return c, c.ScopeItems()
+}
+
+func readHistory() ([]core.Past, error) {
+	cx := codex.New()
+	return core.ReadPast(core.PastDirs{Claude: claude.New().Dir, Codex: cx.Home, CodexState: profile.SQLiteHome(cx.Home)})
 }
 
 type env struct {

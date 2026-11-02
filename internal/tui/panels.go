@@ -51,6 +51,7 @@ type panelState struct {
 	stream func(args ...string) (<-chan string, error)
 	repair *repairLog
 	mcp    mcpPanel
+	past   pastList
 }
 
 type panelTarget struct{ ref, label, harness, host, profile, root, cwd string }
@@ -158,6 +159,10 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 	if kind == panelSettings {
 		return m, m.loadSettings()
 	}
+	if kind == panelLaunched {
+		m.pn.past = pastList{}
+		return m, m.loadPast()
+	}
 	if kind == panelMCP {
 		m.pn.mcp = mcpPanel{}
 		if t := m.pn.target; t != nil && t.cwd != "" {
@@ -168,6 +173,11 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) panelKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.pn.kind == panelLaunched {
+		if next, ok := m.pastKey(k); ok {
+			return next, nil
+		}
+	}
 	rows, global := m.panelRows()
 	switch key := k.String(); key {
 	case "esc", "q":
@@ -243,7 +253,7 @@ func (m Model) panelView() viewPage {
 	rows, _ := m.panelRows()
 	sub := map[panelKind]string{panelProfiles: "every Claude and Codex login on every host, with its limit windows",
 		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "MCP connections, ym serve, Notion discussion inbox, the context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
-		panelLaunched: "what ym launched, and every ended session or killed goal ym revive brings back"}[m.pn.kind]
+		panelLaunched: "what ym launched, every ended session or killed goal ym revive brings back, and every other conversation to resume"}[m.pn.kind]
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   enter switches "+m.tagged(t.host, t.label)+" to the login under the cursor") + "\n")
@@ -798,7 +808,7 @@ func (m Model) launchRows() ([]prow, []pdo) {
 	if len(ended) == 0 {
 		rows = append(rows, prow{text: pal.dim.Render("   none")})
 	}
-	return append(rows, ended...), nil
+	return append(append(rows, ended...), m.pastRows()...), nil
 }
 
 // killedGoals are the goals ym kill ended on every host, as host, id and ask.

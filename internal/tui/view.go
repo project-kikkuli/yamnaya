@@ -354,6 +354,7 @@ func (m Model) footer() []string {
 			lines = append(lines, " "+l)
 		}
 	}
+	lines = append(lines, m.pastFooter()...)
 	if m.filter != "" {
 		lines = append(lines, pal.dim.Render(" filter: "+m.filter+"   esc clears"))
 	}
@@ -1616,7 +1617,10 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
    E            every session ym launched and whether its agent still runs, killed goals and ended sessions;
-                enter revives one with its worktree and work
+                enter revives one with its worktree and work. Below them, every other Claude and Codex conversation
+                the harnesses' history lists, newest first: type to filter its prompts and directory (exact, space =
+                AND, backspace and ctrl+u edit, esc clears), the footer previews the one under the cursor, and enter
+                resumes it in its own directory on ym's server
    A            show or hide the scene behind the board (hidden at start)
    L            switch the theme of that scene to the next one (mountains first); ym theme <name> sets it
                 from a shell
