@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func remoteWorkFleet(t *testing.T) (*fleet, string) {
@@ -32,6 +34,39 @@ func syncWork(t *testing.T, f *fleet) {
 	t.Helper()
 	for range 5 {
 		f.sync(t)
+	}
+}
+
+func TestSandboxedItemRoutingUsesPersistedRemoteOwnership(t *testing.T) {
+	for _, mode := range []string{"no remote assignments", "unrelated", "worker", "nested"} {
+		t.Run(mode, func(t *testing.T) {
+			f, repo := remoteWorkFleet(t)
+			g, m := f.a.goal(t, "remote work", "/repo/app")
+			if mode != "no remote assignments" {
+				if _, err := f.a.core.StartNew(NewLaunch{Parent: m.Session, Repo: repo, Prompt: "work", Session: "worker", Source: "root"}); err != nil {
+					t.Fatal(err)
+				}
+				syncWork(t, f)
+			}
+			session, recipient, goal := "unrelated", Owner, ""
+			if mode == "worker" || mode == "nested" {
+				session, recipient, goal = "worker", "a/"+m.ID, "a/"+g.ID
+			}
+			if mode == "nested" {
+				session = "nested"
+				if err := f.b.core.Store.Link(session, "worker"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.b.core.Procs = func() ([]proc.Proc, error) { return nil, errors.New("exec: ps: operation not permitted") }
+			it, err := f.b.core.AddItem(Item{Scope: "/repo/app/.git", Session: session, Kind: KindDecision, Question: "choose work", Rec: "a", Options: picks})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if it.Recipient != recipient || it.GoalOwner != goal {
+				t.Fatalf("persisted routing lost: %+v; want recipient %s and goal %s", it, recipient, goal)
+			}
+		})
 	}
 }
 

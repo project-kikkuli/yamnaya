@@ -108,10 +108,7 @@ func (c *Core) remoteOwner(session string) (RemoteAssignment, error) {
 		return w, err
 	}
 	// Native harness edges are also present in the board before ym spawn records them.
-	b, err := c.Board()
-	if err != nil {
-		return w, err
-	}
+	b, _ := c.Board()
 	seen := map[string]bool{}
 	for at := session; at != "" && !seen[at]; {
 		seen[at] = true
