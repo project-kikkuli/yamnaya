@@ -200,7 +200,7 @@ func (m Model) boardScene() scene.Scene {
 func needs(b core.Board) map[string]bool {
 	out := map[string]bool{}
 	for _, n := range b.Needs {
-		out[n.Project] = true
+		out[needProject(n)] = true
 		if n.Goal != nil {
 			out[n.Goal.ManagerID] = true
 		}
@@ -254,8 +254,8 @@ func goalPeak(n core.Node, waiting map[string]bool) scene.Peak {
 // missionPeak is a session the owner started, its weather read from what its agents and pull requests do.
 func missionPeak(pr core.Project, waiting map[string]bool) scene.Peak {
 	p := expedition(pr)
-	p.ID, p.Name = pr.Key, pr.Name
-	p.NeedsYou = waiting[pr.Key]
+	p.ID, p.Name = projectRef(pr), pr.Name
+	p.NeedsYou = waiting[p.ID]
 	p.Weather = scene.Clouds
 	merged := len(p.Camps) > 0
 	for _, c := range p.Camps {
@@ -360,15 +360,23 @@ func (m Model) peakOfRow(r row) string {
 	case r.need != nil && r.need.Goal != nil:
 		return r.need.Goal.ManagerID
 	case r.need != nil:
-		return r.need.Project
-	case r.session != nil:
-		return b.ProjectOf(r.session.Key())
+		return needProject(*r.need)
 	case r.project != nil:
-		return r.project.Key
+		return projectRef(*r.project)
+	case r.session != nil:
+		return m.sessionProject(sessionKey(*r.session))
 	case r.dormant != nil:
-		return b.ProjectOf(r.dormant.Key)
+		key := r.dormant.ID()
+		if r.dormant.Remote != "" {
+			key = core.RemoteKey(r.dormant.Remote, key)
+		}
+		return b.ProjectOf(key)
 	case r.item != nil:
-		return b.ProjectOf(r.item.Session)
+		key := r.item.Session
+		if r.item.Host != "" {
+			key = core.RemoteKey(r.item.Host, key)
+		}
+		return m.sessionProject(key)
 	case r.repo != nil:
 		if r.repo.Key == "" {
 			return "repo:elsewhere"
@@ -376,6 +384,30 @@ func (m Model) peakOfRow(r row) string {
 		return "repo:" + r.repo.Key
 	}
 	return ""
+}
+
+func (m Model) sessionProject(key string) string {
+	if s, ok := m.board.Session(key); ok && s.Remote != "" {
+		project := s.Project
+		if project == "" {
+			project = s.Key()
+		}
+		return core.RemoteKey(s.Remote, project)
+	}
+	return m.board.ProjectOf(key)
+}
+
+func needProject(n core.Need) string {
+	host := ""
+	if n.Session != nil {
+		host = n.Session.Remote
+	} else if n.Item != nil {
+		host = n.Item.Host
+	}
+	if host != "" && n.Project != "" {
+		return core.RemoteKey(host, n.Project)
+	}
+	return n.Project
 }
 
 func shortAsk(ask string, n int) string {

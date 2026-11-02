@@ -103,7 +103,7 @@ func (m Model) reply(r row) (tea.Model, tea.Cmd) {
 		m.message = "nothing here to reply to"
 		return m, nil
 	}
-	m.startInput(inSend, s.Key(), "", "", false)
+	m.startInput(inSend, sessionKey(*s), "", "", false)
 	m.inLabel = titleOf(*s)
 	return m, nil
 }

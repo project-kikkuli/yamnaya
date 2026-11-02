@@ -31,9 +31,9 @@ func (m *Model) fell(keys []string, now time.Time) {
 			ids[id] = true
 			continue
 		}
-		id := m.board.ProjectOf(k)
+		id := m.sessionProject(k)
 		for _, p := range m.board.Projects {
-			if p.Key != id {
+			if projectRef(p) != id {
 				continue
 			}
 			all := true

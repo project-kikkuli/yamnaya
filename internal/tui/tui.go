@@ -158,14 +158,16 @@ type Model struct {
 	inItem     string
 	inLabel    string
 	inProj     string
+	inHost     string
 	filter     string
 	targets    []core.Target
 	cursor2    int
 	// beside opens the chosen target in a split next to ym instead of switching to it.
-	beside   bool
-	mergeSrc string
-	why      *core.Item
-	screen   string
+	beside    bool
+	mergeSrc  string
+	mergeHost string
+	why       *core.Item
+	screen    string
 	// screenCopy is what y copies from the text page, when it is not the page itself.
 	screenCopy string
 	screenKey  string
@@ -585,21 +587,21 @@ func rowKey(r row) string {
 	case r.need != nil:
 		return "need:" + needID(*r.need)
 	case r.node != nil && r.session != nil:
-		return "node:" + r.node.Manager.ID + "/" + r.session.Key()
+		return "node:" + r.node.Manager.ID + "/" + sessionKey(*r.session)
 	case r.node != nil:
 		return "node:" + r.node.Manager.ID
 	case r.item != nil:
 		return "item:" + r.item.Key()
 	case r.member != nil:
-		return "member:" + r.session.Key() + "/" + r.member.ID
+		return "member:" + sessionKey(*r.session) + "/" + r.member.ID
 	case r.dormant != nil:
 		return "dormant:" + r.dormant.Key
 	case r.stale:
 		return "stale"
 	case r.session != nil:
-		return "session:" + r.session.Key()
+		return "session:" + sessionKey(*r.session)
 	case r.project != nil:
-		return "project:" + r.project.Key
+		return "project:" + projectRef(*r.project)
 	case r.repo != nil:
 		return "repo:" + r.repo.Key
 	}
@@ -1078,7 +1080,11 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if k.Code == tea.KeyEnter && r.project != nil && r.need == nil && r.session == nil && r.member == nil {
 			src, dst := m.mergeSrc, r.project.Key
 			m.mode = m.back
-			return m, m.do(func() (string, error) {
+			if m.mergeHost != core.ProjectHost(*r.project) {
+				m.message = "missions on different hosts cannot merge"
+				return m, nil
+			}
+			return m, m.projectAction(m.mergeHost, []string{"project", "merge", src, dst}, func() (string, error) {
 				return "merged into " + r.project.Name, m.core.Store.Merge(src, dst)
 			})
 		}
@@ -1107,14 +1113,17 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.push(modeAgent)
 			m.sess, m.agent, m.scrollY = sessionKey(*r.session), r.member.ID, 0
 			if r.project != nil {
-				m.detail = r.project.Key
+				m.detail = projectRef(*r.project)
 			}
 		case r.session != nil:
 			m.push(modeSession)
 			m.sess = sessionKey(*r.session)
+			if r.project != nil {
+				m.detail = projectRef(*r.project)
+			}
 		case r.project != nil:
 			m.push(modeDetail)
-			m.detail = r.project.Key
+			m.detail = projectRef(*r.project)
 		case r.repo != nil:
 			m.push(modeRepo)
 			m.repo = r.repo.Key
@@ -1173,7 +1182,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		if p := m.projectOf(r); p != nil {
-			m.startInput(inRename, "", p.Key, p.Name, true)
+			m.startProjectInput(inRename, *p, p.Name, true)
 		}
 	case "V":
 		if r.item != nil && r.item.Kind == core.KindReview && len(r.item.Evidence) > 0 {
@@ -1182,18 +1191,18 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "m":
 		if p := m.projectOf(r); p != nil && (m.mode == modeList || m.mode == modeRepo) {
-			m.mergeSrc, m.back, m.mode = p.Key, m.mode, modeMerge
+			m.mergeSrc, m.mergeHost, m.back, m.mode = p.Key, core.ProjectHost(*p), m.mode, modeMerge
 			m.message = "pick the mission to merge " + p.Name + " into, then enter; esc cancels"
 		}
 	case "s":
 		if s := m.sessionOf(r); s != nil && s.ID != "" && m.core.Launches != nil {
-			m.startInput(inSend, s.Key(), "", "", false)
+			m.startInput(inSend, sessionKey(*s), "", "", false)
 			m.inLabel = titleOf(*s)
 		}
 	case "S":
 		if p := m.projectOf(r); p != nil {
 			key, name := p.Key, p.Name
-			return m, m.do(func() (string, error) {
+			return m, m.projectAction(core.ProjectHost(*p), []string{"project", "split", key}, func() (string, error) {
 				n, err := m.core.Store.Split(key)
 				if err == nil && n == 0 {
 					err = fmt.Errorf("%s has no merges", name)
@@ -1222,20 +1231,18 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.message = p.Name + " has no next phase; P sets its phases"
 				return m, nil
 			}
-			m.confirm("advance "+p.Name+" to "+ph.Names[ph.Current+1]+"?", m.do(func() (string, error) {
+			m.confirm("advance "+p.Name+" to "+ph.Names[ph.Current+1]+"?", m.projectAction(core.ProjectHost(*p), []string{"phase", "next", "-p", key}, func() (string, error) {
 				ph, err := m.core.Store.NextPhase(key)
 				return phaseText(ph), err
 			}))
 		}
 	case "P":
 		if p := m.projectOf(r); p != nil {
-			m.startInput(inPhases, "", p.Key, strings.Join(p.Phases.Names, ", "), false)
-			m.inLabel = p.Name
+			m.startProjectInput(inPhases, *p, strings.Join(p.Phases.Names, ", "), false)
 		}
 	case "v":
 		if p := m.projectOf(r); p != nil {
-			m.startInput(inVibe, "", p.Key, "", false)
-			m.inLabel = p.Name
+			m.startProjectInput(inVibe, *p, "", false)
 		}
 	}
 	return m, nil
@@ -1468,6 +1475,12 @@ func (m *Model) startInput(kind inputKind, item, project, initial string, fresh 
 	m.back = m.mode
 	m.mode, m.inKind, m.inItem, m.inProj, m.input = modeInput, kind, item, project, []rune(initial)
 	m.fresh = fresh && initial != ""
+	m.inHost = ""
+}
+
+func (m *Model) startProjectInput(kind inputKind, p core.Project, initial string, fresh bool) {
+	m.startInput(kind, "", p.Key, initial, fresh)
+	m.inHost, m.inLabel = core.ProjectHost(p), p.Name
 }
 
 func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -1586,7 +1599,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		case inRename:
 			key := m.inProj
-			return m, m.do(func() (string, error) { return "renamed", m.core.Store.Rename(key, text) })
+			return m, m.projectAction(m.inHost, []string{"project", "rename", key, text}, func() (string, error) { return "renamed", m.core.Store.Rename(key, text) })
 		case inNew:
 			if text == "" {
 				return m, nil
@@ -1616,7 +1629,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			key := m.inProj
-			return m, m.do(func() (string, error) {
+			return m, m.projectAction(m.inHost, []string{"phase", "set", strings.Join(names, ","), "-p", key}, func() (string, error) {
 				ph, err := m.core.Store.SetPhases(key, names)
 				return phaseText(ph), err
 			})
@@ -1625,13 +1638,10 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			place, why, _ := strings.Cut(text, ":")
-			key, board := m.inProj, m.board
-			return m, m.do(func() (string, error) {
-				target, err := board.VibeTarget(key, "")
-				if err != nil {
-					return "", err
-				}
-				v, err := m.core.Store.AddVibe(core.Vibe{Place: strings.TrimSpace(place), Why: strings.TrimSpace(why), Target: target})
+			key := m.inProj
+			place, why = strings.TrimSpace(place), strings.TrimSpace(why)
+			return m, m.projectAction(m.inHost, []string{"vibe", place, "--why", why, "-p", key}, func() (string, error) {
+				v, err := m.core.Store.AddVibe(core.Vibe{Place: place, Why: why, Target: key})
 				return "vibe: " + v.Place, err
 			})
 		}

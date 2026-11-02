@@ -16,7 +16,7 @@ func (m Model) killTargets(r row) ([]core.Live, string) {
 		return []core.Live{*s}, s.Label()
 	}
 	dormant := func(d core.Dormant) core.Live {
-		return core.Live{Session: core.Session{ID: d.ID(), Harness: d.Harness, Title: d.Title}}
+		return core.Live{Session: core.Session{ID: d.ID(), Harness: d.Harness, Title: d.Title}, Remote: d.Remote}
 	}
 	if r.dormant != nil {
 		return []core.Live{dormant(*r.dormant)}, r.dormant.Key
