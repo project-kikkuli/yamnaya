@@ -1,56 +1,104 @@
 package core
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
+func verifierGoal(t *testing.T, st *Store) Goal {
+	t.Helper()
+	g, err := st.AddGoal(Goal{Ask: "verify importer", Repo: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+func currentVerifier(t *testing.T, st *Store, goal string) Verification {
+	t.Helper()
+	all, err := st.Verifications(goal)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("attempts: %v, %v", all, err)
+	}
+	return all[len(all)-1]
+}
+
 func TestVerifierSessionHistorySurvivesLifecycle(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		sessions []string
-		verdict  string
-		ended    bool
-	}{
-		{"retry", []string{"old", "new"}, "", false},
-		{"empty retry", []string{"old", "", "new", ""}, "", false},
-		{"passed and ended", []string{"old", "new", ""}, VerdictPass, true},
-		{"failed and ended", []string{"old", ""}, VerdictFail, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	for _, verdict := range []string{"", VerdictPass, VerdictFail, VerdictError} {
+		t.Run("verdict="+verdict, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ym.db")
+			st, err := OpenStore(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer st.Close()
-			v, err := st.AddVerification(Verification{Goal: "goal46", Session: tc.sessions[0]})
+			defer func() { st.Close() }()
+			g := verifierGoal(t, st)
+			v, err := st.AddVerification(Verification{Goal: g.ID, Session: "old"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := map[string]VerifierSession{}
-			for _, session := range tc.sessions {
-				v.Session, v.Verdict, v.Ended = session, tc.verdict, tc.ended
+			want := map[string]VerifierSession{"old": {Verification: v.ID, Goal: g.ID}}
+			for _, session := range []string{"new", "", "retry"} {
+				v.Session = session
 				if err := st.SaveVerification(v); err != nil {
 					t.Fatal(err)
 				}
+				v = currentVerifier(t, st, g.ID)
 				if session != "" {
-					want[session] = VerifierSession{Verification: v.ID, Goal: v.Goal}
+					want[session] = VerifierSession{Verification: v.ID, Goal: g.ID}
 				}
 				got, err := st.VerifierSessions()
 				if err != nil || !reflect.DeepEqual(got, want) {
-					t.Fatalf("history = %v, %v; want %v", got, err, want)
+					t.Fatalf("history=%v, %v; want %v", got, err, want)
 				}
 			}
-			second, err := st.AddVerification(Verification{Goal: v.Goal, Session: "next-attempt"})
+			if verdict != "" {
+				g, err = st.Goal(g.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = st.commitVerdict(g, v, verdict, []string{"checked"}, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				v = currentVerifier(t, st, g.ID)
+				v.Ended = true
+				v.Session = "unaccepted-terminal-session"
+				if err = st.SaveVerification(v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = st.ResumeGoal(g.ID, "implementation", "new work", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			second, err := st.AddVerification(Verification{Goal: g.ID, Session: "next-attempt"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			want[second.Session] = VerifierSession{Verification: second.ID, Goal: second.Goal}
+			want[second.Session] = VerifierSession{Verification: second.ID, Goal: g.ID}
+			all, err := st.Verifications(g.ID)
+			if err != nil || len(all) != 2 {
+				t.Fatalf("attempts=%v, %v", all, err)
+			}
+			expected := verdict
+			if expected == "" {
+				expected = VerdictSuperseded
+			}
+			if all[0].Verdict != expected {
+				t.Fatalf("history verdict=%s, want %s", all[0].Verdict, expected)
+			}
+			if err = st.Close(); err != nil {
+				t.Fatal(err)
+			}
+			st, err = OpenStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			got, err := st.VerifierSessions()
 			if err != nil || !reflect.DeepEqual(got, want) {
-				t.Fatalf("attempt history = %v, %v; want %v", got, err, want)
+				t.Fatalf("restarted history=%v, %v; want %v", got, err, want)
 			}
 		})
 	}
@@ -63,28 +111,34 @@ func TestVerifierHistoryBackfillsAvailableRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]VerifierSession{}
-	for _, tc := range []struct {
-		session, verdict string
-		ended            bool
-	}{
-		{"running", "", false}, {"passed", VerdictPass, true}, {"failed", VerdictFail, true}, {"", VerdictError, true},
-	} {
-		v, err := st.AddVerification(Verification{Goal: "goal46", Session: tc.session})
+	for _, tc := range []struct{ session, verdict string }{{"running", ""}, {"passed", VerdictPass}, {"failed", VerdictFail}, {"", VerdictError}} {
+		g := verifierGoal(t, st)
+		v, err := st.AddVerification(Verification{Goal: g.ID, Session: tc.session})
 		if err != nil {
 			t.Fatal(err)
 		}
-		v.Verdict, v.Ended = tc.verdict, tc.ended
-		if err := st.SaveVerification(v); err != nil {
-			t.Fatal(err)
+		if tc.verdict != "" {
+			g, err = st.Goal(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = st.commitVerdict(g, v, tc.verdict, []string{"checked"}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			v = currentVerifier(t, st, g.ID)
+			v.Ended = true
+			if err = st.SaveVerification(v); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if tc.session != "" {
-			want[tc.session] = VerifierSession{Verification: v.ID, Goal: v.Goal}
+			want[tc.session] = VerifierSession{Verification: v.ID, Goal: g.ID}
 		}
 	}
-	if _, err := st.db.Exec(`DROP TABLE ym_verifier_sessions`); err != nil {
+	if _, err = st.db.Exec(`DROP TABLE ym_verifier_sessions`); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Close(); err != nil {
+	if err = st.Close(); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -94,43 +148,189 @@ func TestVerifierHistoryBackfillsAvailableRows(t *testing.T) {
 		}
 		got, err := st.VerifierSessions()
 		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("backfill = %v, %v; want %v", got, err, want)
+			t.Fatalf("backfill=%v, %v; want %v", got, err, want)
 		}
-		if err := st.Close(); err != nil {
+		if err = st.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
 func TestVerifierBindingAndCurrentSessionCommitTogether(t *testing.T) {
-	w := newWorld(t)
-	st := w.core.Store
-	v, err := st.AddVerification(Verification{Goal: "goal46", Session: "old"})
-	if err != nil {
-		t.Fatal(err)
+	for _, operation := range []string{"save", "prepare", "open"} {
+		t.Run(operation, func(t *testing.T) {
+			w := newWorld(t)
+			st := w.core.Store
+			g := verifierGoal(t, st)
+			v, err := st.AddVerification(Verification{Goal: g.ID, Session: "old"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := st.Goal(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = st.db.Exec(`CREATE TRIGGER reject_verifier BEFORE INSERT ON ym_verifier_sessions WHEN NEW.session='new' BEGIN SELECT RAISE(ABORT,'binding failed'); END`); err != nil {
+				t.Fatal(err)
+			}
+			v.Session = "new"
+			switch operation {
+			case "save":
+				err = st.SaveVerification(v)
+			case "prepare":
+				_, err = st.prepareVerifier(v)
+			case "open":
+				_, err = st.AddVerification(Verification{Goal: g.ID, Session: "new"})
+			}
+			if err == nil {
+				t.Fatal("write succeeded despite rejected binding")
+			}
+			all, err := st.Verifications(g.ID)
+			if err != nil || len(all) != 1 || all[0].Session != "old" || all[0].Verdict != "" || all[0].Version != 0 {
+				t.Fatalf("attempt changed: %v, %v", all, err)
+			}
+			after, err := st.Goal(g.ID)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("goal changed: %+v, %v", after, err)
+			}
+			got, err := st.VerifierSessions()
+			if err != nil || len(got) != 1 || got["old"].Verification != v.ID {
+				t.Fatalf("history changed: %v, %v", got, err)
+			}
+		})
 	}
-	if _, err := st.db.Exec(`CREATE TRIGGER reject_verifier BEFORE INSERT ON ym_verifier_sessions WHEN NEW.session='new'
-  BEGIN SELECT RAISE(ABORT, 'binding failed'); END`); err != nil {
-		t.Fatal(err)
+}
+
+func TestVerifierRejectedWritersRollBackHistory(t *testing.T) {
+	for _, operation := range []string{"save", "prepare"} {
+		for _, reason := range []string{"version", "work", "active claim"} {
+			t.Run(operation+"/"+reason, func(t *testing.T) {
+				st := newWorld(t).core.Store
+				g := verifierGoal(t, st)
+				stale, err := st.AddVerification(Verification{Goal: g.ID, Session: "stored"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				switch reason {
+				case "version":
+					if err = st.SaveVerification(stale); err != nil {
+						t.Fatal(err)
+					}
+				case "work":
+					if err = st.ResumeGoal(g.ID, "new-work", "implementation", time.Now()); err != nil {
+						t.Fatal(err)
+					}
+				case "active claim":
+					if _, err = st.AddVerification(Verification{Goal: g.ID}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if _, err = st.db.Exec(`DELETE FROM ym_verifier_sessions`); err != nil {
+					t.Fatal(err)
+				}
+				stale.Session = "rejected"
+				if operation == "save" {
+					err = st.SaveVerification(stale)
+				} else {
+					_, err = st.prepareVerifier(stale)
+				}
+				if !errors.Is(err, ErrStale) {
+					t.Fatalf("stale writer: %v", err)
+				}
+				got, err := st.VerifierSessions()
+				if err != nil || len(got) != 0 {
+					t.Fatalf("rejected transaction left history: %v, %v", got, err)
+				}
+			})
+		}
 	}
-	v.Session = "new"
-	if err := st.SaveVerification(v); err == nil {
-		t.Fatal("save succeeded despite rejected binding")
+}
+
+func TestVerifierPreparedIdentitySurvivesLaunchOutcome(t *testing.T) {
+	for _, outcome := range []string{"actual", "failure", "superseded during launch"} {
+		t.Run(outcome, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			m := w.manager
+			m.Harness = "codex"
+			if err := w.core.Store.SaveManager(m); err != nil {
+				t.Fatal(err)
+			}
+			w.manager = m
+			v := w.done(t, "checked importer")
+			var replacement Verification
+			switch outcome {
+			case "failure":
+				w.launches.fail = errors.New("launch failed")
+			case "superseded during launch":
+				w.launches.during = func() { replacement = w.done(t, "replacement claim") }
+			}
+			w.clock = w.clock.Add(time.Second)
+			err := w.core.Loop(w.board(t))
+			if outcome == "superseded during launch" {
+				if !errors.Is(err, ErrStale) {
+					t.Fatalf("stale launch: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			prepared := w.launches.starts[len(w.launches.starts)-1].Session
+			if prepared == "" {
+				t.Fatal("launch missing prepared identity")
+			}
+			history, err := w.core.Store.VerifierSessions()
+			if err != nil || history[prepared].Verification != v.ID {
+				t.Fatalf("prepared identity lost: %v, %v", history, err)
+			}
+			current := currentVerifier(t, w.core.Store, v.Goal)
+			if outcome == "actual" {
+				if current.Session == "" || current.Session == prepared || history[current.Session].Verification != v.ID || len(history) != 2 {
+					t.Fatalf("actual identity lost: current=%+v history=%v", current, history)
+				}
+			} else if outcome == "failure" {
+				if current.Session != "" || len(history) != 1 {
+					t.Fatalf("failed launch history: %+v, %v", current, history)
+				}
+			} else if current.ID != replacement.ID || len(history) != 1 {
+				t.Fatalf("superseding history: %+v, %v", current, history)
+			}
+		})
 	}
-	all, err := st.Verifications(v.Goal)
-	if err != nil || len(all) != 1 || all[0].Session != "old" {
-		t.Fatalf("current session changed: %v, %v", all, err)
-	}
-	got, err := st.VerifierSessions()
-	if err != nil || len(got) != 1 || got["old"].Verification != v.ID {
-		t.Fatalf("history changed: %v, %v", got, err)
-	}
-	if _, err := st.AddVerification(Verification{Goal: "goal46", Session: "new"}); err == nil {
-		t.Fatal("insert succeeded despite rejected binding")
-	}
-	all, err = st.Verifications(v.Goal)
-	if err != nil || len(all) != 1 {
-		t.Fatalf("failed insert persisted: %v, %v", all, err)
+}
+
+func TestVerifierPreparedTransitionsKeepFirstBinding(t *testing.T) {
+	for _, actual := range []string{"actual", ""} {
+		t.Run("actual="+actual, func(t *testing.T) {
+			st := newWorld(t).core.Store
+			g := verifierGoal(t, st)
+			v, err := st.AddVerification(Verification{Goal: g.ID, Session: "stored"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.Session = "prepared"
+			v, err = st.prepareVerifier(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v.Session = actual
+			if err = st.SaveVerification(v); err != nil {
+				t.Fatal(err)
+			}
+			second, err := st.AddVerification(Verification{Goal: g.ID, Session: "prepared"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			history, err := st.VerifierSessions()
+			want := map[string]VerifierSession{
+				"stored":   {Verification: v.ID, Goal: g.ID},
+				"prepared": {Verification: v.ID, Goal: g.ID},
+			}
+			if actual != "" {
+				want[actual] = VerifierSession{Verification: v.ID, Goal: g.ID}
+			}
+			if err != nil || !reflect.DeepEqual(history, want) {
+				t.Fatalf("first binding changed after attempt %d: %v, %v; want %v", second.ID, history, err, want)
+			}
+		})
 	}
 }
 
@@ -141,10 +341,6 @@ func TestVerifierBoardRoleIsSeparateFromRoutingAndWorkers(t *testing.T) {
 				t.Run(state+"/manager="+boolName(managerLive)+"/ended="+boolName(ended), func(t *testing.T) {
 					w := newOrgWorld(t)
 					g, m := w.goal(t, "verify the importer", "/repo/yamnaya")
-					g.State, g.DoneAt = state, w.clock
-					if err := w.core.Store.SaveGoal(g); err != nil {
-						t.Fatal(err)
-					}
 					w.spawn("ordinary-owner", "")
 					w.spawn("891caa221ff5", m.Session)
 					for _, id := range []string{"old-verifier", "new-verifier"} {
@@ -155,15 +351,35 @@ func TestVerifierBoardRoleIsSeparateFromRoutingAndWorkers(t *testing.T) {
 						t.Fatal(err)
 					}
 					v.Session = "new-verifier"
-					v.Ended = ended
-					if ended {
-						v.Verdict = VerdictPass
-					}
 					if err := w.core.Store.SaveVerification(v); err != nil {
 						t.Fatal(err)
 					}
+					v = currentVerifier(t, w.core.Store, g.ID)
 					v.Session = ""
 					if err := w.core.Store.SaveVerification(v); err != nil {
+						t.Fatal(err)
+					}
+					v = currentVerifier(t, w.core.Store, g.ID)
+					if ended {
+						g, err = w.core.Store.Goal(g.ID)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if _, err = w.core.Store.commitVerdict(g, v, VerdictPass, nil, w.clock); err != nil {
+							t.Fatal(err)
+						}
+						v = currentVerifier(t, w.core.Store, g.ID)
+						v.Ended = true
+						if err = w.core.Store.SaveVerification(v); err != nil {
+							t.Fatal(err)
+						}
+					}
+					g, err = w.core.Store.Goal(g.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					g.State, g.DoneAt = state, w.clock
+					if err = w.core.Store.SaveGoal(g); err != nil {
 						t.Fatal(err)
 					}
 					if !managerLive {

@@ -35,13 +35,22 @@ func TestVerifierIsReachableInGoalDetailOutsideOwnerSessions(t *testing.T) {
 				if err := c.Store.SaveManager(mg); err != nil {
 					t.Fatal(err)
 				}
-				g.ManagerID, g.State, g.DoneAt = mg.ID, state, at
+				g.ManagerID = mg.ID
 				if err := c.Store.SaveGoal(g); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := c.Store.AddVerification(core.Verification{Goal: g.ID, Session: "twin"}); err != nil {
 					t.Fatal(err)
 				}
+				g, err = c.Store.Goal(g.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				g.State, g.DoneAt = state, at
+				if err = c.Store.SaveGoal(g); err != nil {
+					t.Fatal(err)
+				}
+				g.Version++
 				if !managerLive {
 					mg.Session = "absent-manager"
 					if err := c.Store.SaveManager(mg); err != nil {
@@ -118,6 +127,7 @@ func TestVerifierIsReachableInGoalDetailOutsideOwnerSessions(t *testing.T) {
 					if _, ok := m.board.Node(mg.ID); ok {
 						t.Fatal("acknowledged goal kept visible")
 					}
+					g.Version++
 					g.AckedAt, g.DoneAt = time.Time{}, at.Add(-core.DoneShown)
 					if err := c.Store.SaveGoal(g); err != nil {
 						t.Fatal(err)

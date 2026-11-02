@@ -17,7 +17,11 @@ func TestVerifierOwnershipUsesTheExportedBoardSnapshot(t *testing.T) {
 	}
 	defer st.Close()
 	c := &core.Core{Store: st, StateDir: t.TempDir(), Procs: func() ([]proc.Proc, error) { return nil, nil }}
-	v, err := st.AddVerification(core.Verification{Goal: "goal46", Session: "original"})
+	g, err := st.AddGoal(core.Goal{Ask: "verify importer", Repo: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := st.AddVerification(core.Verification{Goal: g.ID, Session: "original"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +52,7 @@ func TestVerifierOwnershipUsesTheExportedBoardSnapshot(t *testing.T) {
 	if !reflect.DeepEqual(r.VerifierSessions, b.VerifierSessions) {
 		t.Fatalf("wire lost verifier association: %v", r.VerifierSessions)
 	}
-	if got := r.VerifierSessions["original"]; got.Goal != "goal46" || got.Verification != v.ID {
+	if got := r.VerifierSessions["original"]; got.Goal != g.ID || got.Verification != v.ID {
 		t.Fatalf("wire binding=%+v", got)
 	}
 }
