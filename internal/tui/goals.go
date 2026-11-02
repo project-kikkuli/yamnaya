@@ -240,6 +240,12 @@ func (m Model) goalRows() []row {
 	for i := range n.Agents {
 		out = append(out, row{session: &n.Agents[i]})
 	}
+	for i := range n.Verifiers {
+		out = append(out, row{session: &n.Verifiers[i], verifier: true})
+	}
+	for i := range n.DormantVerifiers {
+		out = append(out, row{dormant: &n.DormantVerifiers[i], verifier: true})
+	}
 	return out
 }
 
@@ -621,8 +627,14 @@ func (m Model) goalView() viewPage {
 	}
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" SESSIONS (%d)", len(m.rows()))) + "\n")
 	for i, r := range m.rows() {
+		if r.dormant != nil {
+			b.WriteString(m.mark(i) + pal.dim.Render("verifier  ") + pad(r.dormant.Title, 36) + " " + pal.dim.Render(r.dormant.State) + "\n")
+			continue
+		}
 		label := ""
-		if r.session.Key() == n.Manager.Session {
+		if r.verifier {
+			label = pal.dim.Render("verifier  ")
+		} else if r.session.Key() == n.Manager.Session {
 			label = pal.dim.Render("manager  ")
 		}
 		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + doingText(m.board.At, r.session.Session) + "\n")

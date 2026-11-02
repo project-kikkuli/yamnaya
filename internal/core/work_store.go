@@ -134,9 +134,12 @@ func (s *Store) openCompletion(v Verification) (Goal, Verification, error) {
 	if _, err = tx.Exec(`UPDATE ym_goal_verifications SET verdict='superseded', decided_at=?, version=version+1 WHERE goal=? AND verdict=''`, stamp(v.CreatedAt), g.ID); err != nil {
 		return g, v, err
 	}
-	err = tx.QueryRow(`INSERT INTO ym_goal_verifications (goal,attempt,summary,evidence,created_at,work_revision,scope,pr_snapshot)
- VALUES (?,(SELECT coalesce(max(attempt),0)+1 FROM ym_goal_verifications WHERE goal=?),?,?,?,?,?,?) RETURNING num,attempt`, g.ID, g.ID, v.Summary, jsonOf(v.Evidence), stamp(v.CreatedAt), v.WorkRevision, v.Scope, v.PRSnapshot).Scan(&v.ID, &v.Attempt)
+	err = tx.QueryRow(`INSERT INTO ym_goal_verifications (goal,attempt,verifier_session,summary,evidence,created_at,work_revision,scope,pr_snapshot)
+ VALUES (?,(SELECT coalesce(max(attempt),0)+1 FROM ym_goal_verifications WHERE goal=?),?,?,?,?,?,?,?) RETURNING num,attempt`, g.ID, g.ID, v.Session, v.Summary, jsonOf(v.Evidence), stamp(v.CreatedAt), v.WorkRevision, v.Scope, v.PRSnapshot).Scan(&v.ID, &v.Attempt)
 	if err != nil {
+		return g, v, err
+	}
+	if err = bindVerifier(tx, v.ID); err != nil {
 		return g, v, err
 	}
 	_, err = tx.Exec(`UPDATE ym_goals SET state='verifying',summary=?,evidence='',acked_at=NULL,active_verification=?,version=version+1 WHERE num=?`, v.Summary, v.ID, strings.TrimPrefix(g.ID, "goal"))
@@ -408,8 +411,14 @@ func (s *Store) prepareVerifier(v Verification) (Verification, error) {
 		return v, err
 	}
 	v.PRSnapshot = snapshot
+	if err = bindVerifier(tx, v.ID); err != nil {
+		return v, err
+	}
 	res, err := tx.Exec(`UPDATE ym_goal_verifications SET verifier_session=?,fact_checks=?,facts_at=?,pr_snapshot=?,launched_at=?,nudged_at=?,last_error=?,failures=?,next_attempt=?,version=version+1 WHERE num=? AND version=? AND verdict=''`, v.Session, jsonOf(v.Facts), stamp(v.FactsAt), v.PRSnapshot, stamp(v.LaunchedAt), stamp(v.NudgedAt), v.LastError, v.Failures, stamp(v.NextAttempt), v.ID, v.Version)
 	if err = changed(res, err); err != nil {
+		return v, err
+	}
+	if err = bindVerifier(tx, v.ID); err != nil {
 		return v, err
 	}
 	v.Version++

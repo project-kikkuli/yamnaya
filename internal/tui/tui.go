@@ -73,6 +73,7 @@ const (
 
 // row is one selectable line: a permission prompt, an item, a repo, a mission, a session or a crew member.
 type row struct {
+	verifier bool
 	// node is a goal's manager or a chief.
 	node    *core.Node
 	need    *core.Need
@@ -700,7 +701,7 @@ func (m Model) rows() []row {
 			all := m.matches(r.Name)
 			var missions []row
 			for j := range r.Missions {
-				if r.Missions[j].Manager != "" {
+				if r.Missions[j].Manager != "" || r.Missions[j].Verifier != nil {
 					continue
 				}
 				if all || m.matches(r.Missions[j].Name, m.hostText(m.projectHost(r.Missions[j]))) {
@@ -720,7 +721,7 @@ func (m Model) rows() []row {
 func (m Model) session() (*core.Live, bool) {
 	if p, ok := m.board.Project(m.detail); ok {
 		for i := range p.Sessions {
-			if p.Sessions[i].Key() == m.sess {
+			if sessionKey(p.Sessions[i]) == m.sess {
 				return &p.Sessions[i], true
 			}
 		}
@@ -1104,13 +1105,13 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.revive(*r.dormant)
 		case r.member != nil:
 			m.push(modeAgent)
-			m.sess, m.agent, m.scrollY = r.session.Key(), r.member.ID, 0
+			m.sess, m.agent, m.scrollY = sessionKey(*r.session), r.member.ID, 0
 			if r.project != nil {
 				m.detail = r.project.Key
 			}
 		case r.session != nil:
 			m.push(modeSession)
-			m.sess = r.session.Key()
+			m.sess = sessionKey(*r.session)
 		case r.project != nil:
 			m.push(modeDetail)
 			m.detail = r.project.Key

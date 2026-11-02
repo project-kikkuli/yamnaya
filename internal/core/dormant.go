@@ -7,6 +7,7 @@ import (
 
 // Dormant is a session ym launched whose agent no longer runs; reviving it resumes it in its worktree.
 type Dormant struct {
+	Remote       string
 	Profile      string
 	ProfileLabel string
 	Account      string

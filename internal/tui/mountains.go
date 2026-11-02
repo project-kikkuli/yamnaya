@@ -184,7 +184,7 @@ func (m Model) boardScene() scene.Scene {
 		}
 	}
 	for _, p := range b.Projects {
-		if p.Manager != "" || !p.Shown() {
+		if p.Manager != "" || p.Verifier != nil || !p.Shown() {
 			continue
 		}
 		r := repo(p.Repo)

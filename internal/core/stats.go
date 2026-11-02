@@ -241,5 +241,15 @@ func ProjectHost(p Project) string {
 			return s.Remote
 		}
 	}
+	for _, d := range p.Dormant {
+		if d.Remote != "" {
+			return d.Remote
+		}
+	}
+	for _, it := range p.Items {
+		if it.Host != "" {
+			return it.Host
+		}
+	}
 	return ""
 }

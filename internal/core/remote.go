@@ -39,11 +39,12 @@ type RemoteBoard struct {
 	Waiting  []RemoteWaiting
 	// Self is what the host calls itself; Managers, Goals and ManagerSessions are its goal tree, Standing how each of its managers
 	// and chiefs stands by its own reading.
-	Self            string
-	Managers        []Manager
-	Goals           []Goal
-	ManagerSessions map[string]string
-	Standing        map[string]string
+	Self             string
+	Managers         []Manager
+	Goals            []Goal
+	VerifierSessions map[string]VerifierSession
+	ManagerSessions  map[string]string
+	Standing         map[string]string
 	// Feeds are its goals' news for the owner.
 	Feeds map[string]Feed
 	// Fresh is each of its managers' and chiefs' latest brief and whether it is behind, by its own reading.
@@ -102,6 +103,18 @@ func (r RemoteBoard) StateAt(now time.Time) string {
 
 // RemoteKey names ref on host, so keys another host numbers on its own never meet this host's.
 func RemoteKey(host, ref string) string { return host + "/" + ref }
+
+func sessionOn(host, session string) string {
+	if host != "" {
+		return RemoteKey(host, session)
+	}
+	return session
+}
+
+func (b Board) Verifier(s Live) (VerifierSession, bool) {
+	v, ok := b.VerifierSessions[sessionOn(s.Remote, s.Key())]
+	return v, ok
+}
 
 // ParseStatus is the Status s names, Unknown when it names none.
 func ParseStatus(s string) Status {
@@ -259,7 +272,7 @@ func (c *Core) mergeRemoteOrg(o *Org, boards []RemoteBoard, feeds map[string]Fee
 			}
 		}
 		for session, id := range r.ManagerSessions {
-			o.Sessions[session] = q(r.Host, id)
+			o.Sessions[sessionOn(r.Host, session)] = q(r.Host, id)
 		}
 		for _, g := range r.Goals {
 			g.ID, g.ManagerID, g.Host = q(r.Host, g.ID), q(r.Host, g.ManagerID), r.Host
@@ -353,13 +366,17 @@ func (b *Board) addRemotes(boards []RemoteBoard, parents map[string]string, item
 	b.Remotes = boards
 	for _, r := range boards {
 		for _, s := range r.Sessions {
+			s.Remote = r.Host
 			if s.Project != "" && s.Project != s.Key() {
-				parents[s.Key()] = s.Project
+				parents[sessionOn(r.Host, s.Key())] = sessionOn(r.Host, s.Project)
 			}
 			b.Sessions = append(b.Sessions, s)
 		}
 		*items = append(*items, r.Items...)
-		*dormant = append(*dormant, r.Dormant...)
+		for _, d := range r.Dormant {
+			d.Remote = r.Host
+			*dormant = append(*dormant, d)
+		}
 		b.Launched = append(b.Launched, r.Launched...)
 	}
 }
