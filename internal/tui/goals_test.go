@@ -182,7 +182,7 @@ func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(brief), "# data team\n\n"+tc.remit+"\n") {
+			if !strings.Contains(string(brief), "# data-team\n\n"+tc.remit+"\n") {
 				t.Fatalf("the chief's brief does not hold its remit %q:\n%s", tc.remit, brief)
 			}
 		})

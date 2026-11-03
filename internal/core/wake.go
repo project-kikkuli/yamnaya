@@ -346,6 +346,9 @@ func chiefText(o Org, events []GoalEvent) string {
 		if !ok {
 			return "your agent"
 		}
+		if host != "" && g.Host == "" {
+			return RemoteKey(host, g.Shown())
+		}
 		return g.Ref()
 	})
 }
