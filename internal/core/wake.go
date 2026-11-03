@@ -14,7 +14,7 @@ func (c *Core) Loop(b Board) error {
 	var errs []error
 	c.watchCold(b)
 	c.trackRunning(b)
-	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold, c.sweepLaunches} {
+	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold, c.archiveDone, c.sweepLaunches} {
 		errs = append(errs, step(b))
 	}
 	return errors.Join(append(errs, c.NotifyOwner())...)

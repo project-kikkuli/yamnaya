@@ -84,6 +84,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	sb.WriteString("- Escalations from your reports arrive here as one line naming the item; ym item show '<#key>' prints it whole. Answer each with ym item answer '<#key>' <answer>, or use ym item escalate '<#key>' when only the owner can answer. Keep its original id and source; do not close it and create a copy.\n")
 	sb.WriteString(escalate)
 	fmt.Fprintf(sb, "- Change what a report is about with ym goal steer --file - <id> and the new plan on stdin: it becomes the report's next numbered revision, which it must adopt with ym goal adopt; ym nudges it and tells you if it does not.\n")
+	sb.WriteString("- Close a goal below you, at any depth and on any host, with ym goal close <goal> --as finished|superseded|abandoned --why \"<reason>\": its manager, agents and verifier end, their unpushed work is kept for ym revive, its open items are dismissed, and pull requests stay as they are. --as finished needs a verifier pass at its current work, or --override-verifier, recorded as finished-override with no pass written. ym goal list --archived lists ended goals; ym revive <goal> reopens a closed one.\n")
 	c.briefRules(sb, m)
 	c.steerRules(sb, m)
 	sb.WriteString(chiefWakeRules)

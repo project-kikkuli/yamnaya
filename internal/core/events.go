@@ -50,6 +50,12 @@ const (
 	EventRefreshed = "refreshed"
 	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, a repeat or a still-waiting note.
 	EventIdleAgain = "idle-again"
+	// EventGoalClosed is a chief or the owner closing a goal: its disposition, reason, actor and still open pull requests.
+	EventGoalClosed = "goal-closed"
+	// EventGoalReopened is a closed goal brought back with ym revive; the closure no longer stands.
+	EventGoalReopened = "goal-reopened"
+	// EventGoalArchived is ym ending the sessions a verified done goal left behind.
+	EventGoalArchived = "goal-archived"
 )
 
 // ownerKinds are the events that count as unread news in the owner's feed; the rest show in it but never ask for attention.
@@ -64,6 +70,7 @@ var chiefKinds = map[string]bool{
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventAgentOnboarding: true, EventResumed: true, EventResumeFailed: true,
 	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true,
+	EventGoalClosed: true, EventGoalReopened: true, EventGoalArchived: true,
 }
 
 // notifyKinds are the only events that also raise a desktop notification.

@@ -393,9 +393,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	}
 	switch {
 	case n.Goal != nil && n.Goal.Ended():
-		keys += " · x clear"
+		keys += " · x clear · d close"
 	case n.Goal != nil:
-		keys += " · K kill"
+		keys += " · K kill · d close"
 	default:
 		keys += " · K retire"
 	}
@@ -978,6 +978,12 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		m.dropPR(n)
 		return m, nil, true
+	case "d":
+		if n.Goal == nil || (m.mode != modeGoal && r.node == nil) {
+			return m, nil, false
+		}
+		m.closeGoal(n)
+		return m, nil, true
 	case "D":
 		if r.node == nil || n.Manager.ParentID == "" {
 			return m, nil, false
@@ -1114,6 +1120,41 @@ func relayWhat(r core.Relay) string {
 }
 
 // dropPR asks which of the goal's pull requests to untie, and why, then drops it on the host the goal runs on.
+// closeGoal asks how the goal ended and why, then closes it as the owner: a chief's ym goal close, from the board.
+func (m *Model) closeGoal(n core.Node) {
+	goal, board := n.Goal.ID, m.board
+	m.askLine("close "+goal+" as? 1 finished, 2 superseded, 3 abandoned, 4 finished past the verifier", "", false, func(m Model, pick string) (tea.Model, tea.Cmd) {
+		order := core.CloseOrder{Ref: goal, Author: core.Owner}
+		switch strings.TrimSpace(pick) {
+		case "1", core.CloseFinished:
+			order.As = core.CloseFinished
+		case "2", core.CloseSuperseded:
+			order.As = core.CloseSuperseded
+		case "3", core.CloseAbandoned:
+			order.As = core.CloseAbandoned
+		case "4", core.CloseFinishedOverride:
+			order.As, order.Override = core.CloseFinished, true
+		case "":
+			return m, nil
+		default:
+			m.message = "error: pick 1, 2, 3 or 4"
+			return m, nil
+		}
+		m.askLine("why close "+goal+" as "+order.As, "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
+			if strings.TrimSpace(why) == "" {
+				return m, nil
+			}
+			order.Why = why
+			c := m.core
+			return m, m.do(func() (string, error) {
+				closed, err := c.CloseGoal(board, order)
+				return closed.String(), err
+			})
+		})
+		return m, nil
+	})
+}
+
 func (m *Model) dropPR(n core.Node) {
 	prs := append(append([]string(nil), n.Feed.PRs...), n.Feed.Touched...)
 	if len(prs) == 0 {

@@ -79,7 +79,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
 	cmd.Flags().StringVar(&host, "host", "", "start the goal on this host, by name or @nickname, in the repository --repo names there; one ym reaches only through relays gets it when it next syncs")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
-		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
+		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalCloseCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
 		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))
 	return cmd
 }
@@ -141,6 +141,8 @@ type goalRow struct {
 	HostState string `json:"host_state,omitempty"`
 	Depth     int    `json:"-"`
 	fresh     core.Freshness
+	// ref is the name hiddenRow found the row by.
+	ref string
 }
 
 type workerRow struct {
@@ -223,15 +225,18 @@ func treeRows(b core.Board, under string) []goalRow {
 
 func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var under string
-	var asJSON, full bool
+	var asJSON, full, archived bool
 	cmd := &cobra.Command{
-		Use:   "list [--under CHIEF] [--full] [--json]",
-		Short: "List goals, managers and chiefs as a tree, each goal under a one-line title, with their state and brief",
+		Use:   "list [--under CHIEF] [--full] [--archived] [--json]",
+		Short: "List goals, managers and chiefs as a tree, each goal under a one-line title, with their state and brief; --archived lists ended goals with how they ended",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			b, err := e.core.Board()
 			if err != nil {
 				return err
+			}
+			if archived {
+				return printArchived(cmd.OutOrStdout(), b, asJSON)
 			}
 			rows := titled(treeRows(b, under), full)
 			if asJSON {
@@ -250,6 +255,7 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 	cmd.Flags().StringVar(&under, "under", "", "only the reports below this chief")
 	cmd.Flags().BoolVar(&full, "full", false, "print each goal's whole ask instead of its title")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	cmd.Flags().BoolVar(&archived, "archived", false, "list ended goals with how, why, who and when, newest first")
 	return cmd
 }
 
@@ -422,10 +428,17 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				fmt.Fprintln(cmd.OutOrStdout(), out)
 				return nil
 			}
-			for _, r := range treeRows(b, "") {
-				if strings.EqualFold(r.ID, args[0]) || strings.EqualFold(r.Goal, args[0]) {
+			rows := treeRows(b, "")
+			if r, ok := hiddenRow(e.core, b, args[0], rows); ok {
+				rows = append(rows, r)
+			}
+			for _, r := range rows {
+				if strings.EqualFold(r.ID, args[0]) || strings.EqualFold(r.Goal, args[0]) || r.ref == args[0] {
 					r.Depth = 0
 					printGoalRow(cmd.OutOrStdout(), r)
+					if line := core.ClosedLine(b.Org.Goals[r.Goal]); line != "" {
+						fmt.Fprintln(cmd.OutOrStdout(), "  "+line)
+					}
 					if r.Artifact != "" {
 						fmt.Fprintln(cmd.OutOrStdout(), "  artifact "+r.Artifact)
 					}
@@ -610,6 +623,104 @@ func goalRelaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 			return nil
 		}),
 	}
+}
+
+func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var order core.CloseOrder
+	var by string
+	cmd := &cobra.Command{
+		Use:   "close <goal> --as finished|superseded|abandoned --why TEXT [--override-verifier]",
+		Short: "(chief above the goal, or the owner) End a goal with a recorded reason, as d does on the board; ym revive reopens it",
+		Long: "Ends the goal's manager, agents and verifier as ym kill does, keeping their unpushed and uncommitted work for ym revive, and\n" +
+			"dismisses its open items with the reason. Pull requests are left as they are, and open ones are listed. A live goal becomes\n" +
+			"dropped; a done or killed one keeps its state and clears from the tree. --as finished needs a verifier pass at the goal's\n" +
+			"current work, or --override-verifier, recorded as finished-override with no pass or done written.",
+		Args: cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			session := ""
+			c, err := e.core.Calling(os.Getpid(), os.Getenv)
+			if err == nil {
+				session = c.Session
+			} else if !errors.Is(err, core.ErrNotFound) {
+				return err
+			}
+			if order.Author, err = e.core.CloseAuthor(session, by); err != nil {
+				return err
+			}
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			order.Ref = args[0]
+			closed, err := e.core.CloseGoal(b, order)
+			if closed.Pending != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the close lands once that host confirms %s is above it, and %s hears if not\n", closed.Goal, closed.Pending, order.Author, order.Author)
+				return err
+			}
+			if line := closed.String(); line != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
+			return err
+		}),
+	}
+	cmd.Flags().StringVar(&order.As, "as", "", "how it ended: finished, superseded or abandoned")
+	cmd.Flags().StringVar(&order.Why, "why", "", "the reason, in words")
+	cmd.Flags().BoolVar(&order.Override, "override-verifier", false, "with --as finished, close without a verifier pass at its current work")
+	cmd.Flags().StringVar(&by, "by", "", "the chief on another host that closes, as host/id")
+	cmd.Flags().MarkHidden("by")
+	cmd.MarkFlagRequired("as")
+	cmd.MarkFlagRequired("why")
+	return cmd
+}
+
+// printArchived prints every ended goal, newest first.
+func printArchived(w io.Writer, b core.Board, asJSON bool) error {
+	goals := b.ArchivedGoals()
+	if asJSON {
+		return json.NewEncoder(w).Encode(goals)
+	}
+	if len(goals) == 0 {
+		fmt.Fprintln(w, "no ended goals")
+		return nil
+	}
+	for _, a := range goals {
+		id := a.ID
+		if a.Host != "" {
+			id = a.Host + "/" + a.ID
+		}
+		who := a.Actor
+		if who == "" {
+			who = "-"
+		}
+		fmt.Fprintf(w, "%-14s %-18s %-16s %s ago  %s\n", id, a.Disposition, who, core.Span(b.At.Sub(a.At)), oneLine(a.Ask))
+		if a.Reason != "" {
+			fmt.Fprintf(w, "  why: %s\n", oneLine(a.Reason))
+		}
+	}
+	return nil
+}
+
+// hiddenRow is the row ref names when the goal tree does not show it: a goal that ended and left it, or a retired manager or chief.
+func hiddenRow(c *core.Core, b core.Board, ref string, rows []goalRow) (goalRow, bool) {
+	for _, r := range rows {
+		if strings.EqualFold(r.ID, ref) || strings.EqualFold(r.Goal, ref) {
+			return goalRow{}, false
+		}
+	}
+	m, err := c.OrgManager(ref)
+	if err != nil {
+		return goalRow{}, false
+	}
+	r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: "retired", Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, BriefURL: core.BriefURL(m.ID), Adopted: true, ref: ref}
+	if briefs, err := c.Store.Briefs(m.ID); err == nil && len(briefs) > 0 {
+		r.fresh.Brief = &briefs[len(briefs)-1]
+		r.BriefVersion = r.fresh.Brief.Version
+	}
+	if g, ok := b.Org.Goals[m.GoalID]; ok {
+		r.Goal, r.Ask, r.State = g.ID, g.Ask, g.State
+		r.Brief, r.Artifact = g.BriefPath, g.ArtifactURL
+	}
+	return r, true
 }
 
 func goalAckCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {

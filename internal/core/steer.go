@@ -265,8 +265,9 @@ func raisedTo(o Org, st Steer) string {
 	return o.Above(st.Author)
 }
 
-// climb walks up from id's chief toward chief. It reports whether it reached chief; when the walk ends at a chief on another host
-// first, via names that chief, whose host knows the rest of the way.
+// climb walks up from id's chief toward chief, past any retired chief, whose reports report one level up. It reports whether it
+// reached chief, which must not be retired itself; when the walk ends at a chief on another host first, via names that chief, whose
+// host knows the rest of the way.
 func climb(o Org, chief, id string) (reports bool, via string) {
 	seen := map[string]bool{id: true}
 	for at := o.Managers[id].ParentID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
@@ -275,11 +276,11 @@ func climb(o Org, chief, id string) (reports bool, via string) {
 			return !ok || !m.Retired, ""
 		}
 		seen[at] = true
-		m, ok := o.Managers[at]
+		_, ok := o.Managers[at]
 		if _, _, remote := SplitRemote(at); !ok && remote {
 			return false, at
 		}
-		if !ok || m.Retired {
+		if !ok {
 			return false, ""
 		}
 	}

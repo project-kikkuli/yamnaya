@@ -731,6 +731,47 @@ func TestXOnAGoalUntiesTheChosenPullRequest(t *testing.T) {
 	}
 }
 
+func TestDClosesAGoalWithAPickedDispositionAndReason(t *testing.T) {
+	for _, tc := range []struct {
+		name, pick, wants string
+		closes            bool
+	}{
+		{"superseded by number", "2", core.CloseSuperseded, true},
+		{"abandoned by name", "abandoned", core.CloseAbandoned, true},
+		{"finished past the verifier", "4", core.CloseFinishedOverride, true},
+		{"finished without a pass is refused", "1", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make the importer handle CSV")
+			g := ms[0].GoalID
+			next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 140, Height: 50})
+			m = press(t, to(t, next.(Model), isNode(ms[0].ID)), "d")
+			m = press(t, m, append(typed(tc.pick), "enter")...)
+			m = press(t, m, append(typed("goal27 took it"), "enter")...)
+			now, err := c.Store.Goal(g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.closes {
+				if now.State != core.GoalActive || !strings.Contains(m.message, "override") {
+					t.Fatalf("state %s, message %q; want refused", now.State, m.message)
+				}
+				return
+			}
+			if now.State != core.GoalDropped {
+				t.Fatalf("state %s after d", now.State)
+			}
+			m = press(t, refresh(t, m), "E")
+			v := ansi.Strip(m.View().Content)
+			for _, want := range []string{"ended goals", g, tc.wants, "the owner", "goal27 took it"} {
+				if !strings.Contains(v, want) {
+					t.Errorf("E lacks %q:\n%s", want, v)
+				}
+			}
+		})
+	}
+}
+
 func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
 	for _, key := range []string{"N", "+"} {
 		t.Run(key, func(t *testing.T) {

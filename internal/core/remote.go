@@ -250,7 +250,7 @@ func (c *Core) runOrRelay(host string, y relayYM) (string, error) {
 		return "", fmt.Errorf("%s: ym has not reached that host: %w", host, ErrNotFound)
 	}
 	queued := fmt.Sprintf("queued for %s; ym serve carries it there when it next reaches %s", host, host)
-	if args[0] == "kill" {
+	if args[0] == "kill" || len(args) > 1 && args[0] == "goal" && args[1] == "close" {
 		pending, err := c.Store.PendingRelays()
 		if err != nil {
 			return "", err

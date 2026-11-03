@@ -40,7 +40,14 @@ func (c *Core) LoadOrg() (Org, error) {
 	if err != nil {
 		return o, err
 	}
+	closures, err := c.Store.goalClosures()
+	if err != nil {
+		return o, err
+	}
 	for _, g := range gs {
+		if cl, ok := closures[g.ID]; ok {
+			g.Closure = &cl
+		}
 		o.Goals[g.ID] = g
 	}
 	o.Sessions, err = c.Store.ManagerSessions()

@@ -1059,7 +1059,7 @@ func (l launcher) Revive(key string) (string, error) {
 	return l.revive(rec)
 }
 
-// ReviveGoal brings back the goal or chief ref names and every session its kill ended, worktrees and work included.
+// ReviveGoal brings back the goal or chief ref names and every session its kill or close ended, worktrees and work included.
 func (l launcher) ReviveGoal(ref string) (string, error) {
 	m, err := l.core.ReopenGoal(ref)
 	if err != nil {

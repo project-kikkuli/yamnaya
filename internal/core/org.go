@@ -48,6 +48,8 @@ type Goal struct {
 	AckedAt time.Time
 	// Host is the host the goal runs on when that is not this one.
 	Host string
+	// Closure is what its standing ym goal close recorded, nil when none stands.
+	Closure *GoalClosure `json:",omitempty"`
 }
 
 // Ended reports whether the goal is over: done, dropped or killed.

@@ -279,7 +279,7 @@ func (m Model) panelView() viewPage {
 	rows, _ := m.panelRows()
 	sub := map[panelKind]string{panelProfiles: "every Claude and Codex login on every host, with its limit windows",
 		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "MCP connections, ym serve, Notion discussion inbox, the context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
-		panelLaunched: "what ym launched, every ended session or killed goal ym revive brings back, and every other conversation to resume"}[m.pn.kind]
+		panelLaunched: "what ym launched, every ended session or closed or killed goal ym revive brings back, and every other conversation to resume"}[m.pn.kind]
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   enter switches "+m.tagged(t.host, t.label)+" to the login under the cursor") + "\n")
@@ -849,12 +849,19 @@ func (m Model) launchRows() ([]prow, []pdo) {
 	}
 	rows = append(rows, running...)
 	var goals []prow
-	for _, g := range m.killedGoals() {
-		host, id, ask := g[0], g[1], g[2]
-		goals = append(goals, prow{text: pad(m.hostTag(host), 6) + " " + pad(id, 10) + " " + oneLine(ask), key: "panel:launch:" + qual(host, id), does: []pdo{revive(host, host, id)}})
+	for _, a := range m.board.ArchivedGoals() {
+		text := pad(m.hostTag(a.Host), 6) + " " + pad(a.ID, 10) + " " + pad(a.Disposition, 18) + " " + pad(a.Actor, 16) + " " + pad(core.Span(m.board.At.Sub(a.At)), 6) + " " + oneLine(a.Ask)
+		if a.Reason != "" {
+			text += pal.dim.Render("  why: " + oneLine(a.Reason))
+		}
+		row := prow{text: text, key: "panel:launch:" + qual(a.Host, a.ID)}
+		if a.Reopens {
+			row.does = []pdo{revive(a.Host, a.Host, a.ID)}
+		}
+		goals = append(goals, row)
 	}
 	if len(goals) > 0 {
-		rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("killed goals") + pal.dim.Render("  enter reopens it and revives every session its kill ended")})
+		rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("ended goals") + pal.dim.Render("  how, who, when, ask; enter reopens a closed or killed one and revives every session it ended")})
 		rows = append(rows, goals...)
 	}
 	rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("ended, recoverable") + pal.dim.Render("  enter recreates the worktree, puts the work back and resumes the conversation")})
@@ -862,23 +869,4 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		rows = append(rows, prow{text: pal.dim.Render("   none")})
 	}
 	return append(append(rows, ended...), m.pastRows()...), nil
-}
-
-// killedGoals are the goals ym kill ended on every host, as host, id and ask.
-func (m Model) killedGoals() [][3]string {
-	var out [][3]string
-	for _, g := range m.board.Org.Goals {
-		if g.State == core.GoalKilled {
-			out = append(out, [3]string{"", g.ID, g.Ask})
-		}
-	}
-	for _, r := range m.board.Remotes {
-		for _, g := range r.Goals {
-			if g.State == core.GoalKilled {
-				out = append(out, [3]string{r.Host, g.ID, g.Ask})
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i][0]+out[i][1] < out[j][0]+out[j][1] })
-	return out
 }

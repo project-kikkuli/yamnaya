@@ -1523,6 +1523,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 reporting one level up. Work no remote holds is kept in ym's state; ym revive <id> brings
                 the session or goal back with it. Teardown runs in the background, its rows marked x.
                 An exited launch is cleaned up the same way by ym serve as soon as it exits
+   d            on a goal, close it with a reason: pick finished, superseded, abandoned or finished past the
+                verifier, then type why. Its manager, agents and verifier end with their work kept, its open items
+                are dismissed, pull requests stay. It moves to E, where enter reopens it
    c            chief menu: a attaches the goal or chief (and every selected one) to a chief you pick, or to
                 you; d detaches it from its chief, so it reports to you (asks y/n); n starts a new chief:
                 check the goals and chiefs it oversees with space (the selected ones start checked), enter,
@@ -1606,7 +1609,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    I            every item, answered, dismissed and snoozed too; in a mission, just its items
    h            health: agents adrift now, weekly item answer times, stale items, questions reprinted in chat, time blocked on you
    U            usage: spend today and this week, limits, and the top sessions by spend
-   E            every session ym launched and whether its agent still runs, killed goals and ended sessions;
+   E            every session ym launched and whether its agent still runs, ended goals with how, why, who and when, and ended sessions;
                 enter revives one with its worktree and work. Below them, every other Claude and Codex conversation
                 the harnesses' history lists, newest first: type to filter its prompts and directory (exact, space =
                 AND, backspace and ctrl+u edit, esc clears), the footer previews the one under the cursor, and enter

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,9 @@ const (
 	RelayVouch = "vouch"
 	// RelayVouched tells the goal's host the author is above its chief, so the steer lands.
 	RelayVouched = "vouched"
+	// RelayVouchClose and RelayVouchedClose are the same for a close; a host too old to know them refuses them rather than steer.
+	RelayVouchClose   = "vouch-close"
+	RelayVouchedClose = "vouched-close"
 	// RelayNotify raises the owner's desktop notification on the destination, the host the owner sits at.
 	RelayNotify = "notify"
 	// RelayResult hands a relayed ym command's outcome back to the host that queued it, from a host that carried it on.
@@ -89,6 +93,8 @@ type relayVouch struct {
 	Target string `json:"target"`
 	Text   string `json:"text"`
 	Hops   int    `json:"hops"`
+	// Close is the close to land, nil on a steer.
+	Close *CloseOrder `json:"close,omitempty"`
 }
 
 type relayNotify struct {
@@ -770,12 +776,18 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 			return c.digestChiefs(o, t)
 		}
 		return c.tellChiefs(b, o, t.Manager, t.Text)
-	case RelayVouch:
+	case RelayVouch, RelayVouchClose:
 		var v relayVouch
 		if err := unmarshal(r.Body, &v); err != nil {
 			return err
 		}
 		return c.vouch(b, o, v)
+	case RelayVouchedClose:
+		var v relayVouch
+		if err := unmarshal(r.Body, &v); err != nil {
+			return err
+		}
+		return c.closeVouched(b, o, v)
 	case RelayVouched:
 		var v relayVouch
 		if err := unmarshal(r.Body, &v); err != nil {
@@ -882,9 +894,10 @@ func (c *Core) notify(title, body string) error {
 func (c *Core) wakeRemoteChiefs(o Org) error {
 	var errs []error
 	for _, m := range o.Ordered() {
-		if _, _, remote := SplitRemote(m.ParentID); !remote || !o.Active(m) {
+		if _, _, remote := SplitRemote(m.ParentID); !remote {
 			continue
 		}
+		ended := !o.Active(m)
 		var goals []string
 		for _, below := range o.Subtree(m.ID) {
 			if g, ok := o.Goals[below.GoalID]; ok {
@@ -897,6 +910,9 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 			continue
 		}
 		events, err := c.Store.chiefPending(m.ParentID, goals, time.Time{})
+		if ended {
+			events = slices.DeleteFunc(events, func(e GoalEvent) bool { return e.Kind != EventGoalClosed && e.Kind != EventGoalArchived })
+		}
 		if err != nil || len(events) == 0 && heard {
 			errs = append(errs, err)
 			continue
@@ -918,8 +934,8 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 	return errors.Join(errs...)
 }
 
-// vouch answers whether a steer's author is the chief v names or above it: it lets the steer land on the goal's host, asks the next
-// host up when the climb leaves this one, or tells the author the goal does not report to it.
+// vouch answers whether a steer's or close's author is the chief v names or above it: it lets the order land on the goal's host,
+// asks the next host up when the climb leaves this one, or tells the author the goal does not report to it.
 func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 	self := c.SelfName()
 	author := v.Author
@@ -929,18 +945,22 @@ func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 	reports, via := climb(o, author, v.Chief)
 	reports = reports || author == v.Chief
 	host, _, _ := SplitRemote(v.Target)
+	ask, answer, what := RelayVouch, RelayVouched, "steer"
+	if v.Close != nil {
+		ask, answer, what = RelayVouchClose, RelayVouchedClose, "close"
+	}
 	switch {
 	case reports:
-		return c.Relay(host, RelayVouched, v)
+		return c.Relay(host, answer, v)
 	case via != "" && v.Hops < maxHops:
 		next, rest, _ := SplitRemote(via)
 		v.Chief, v.Hops = rest, v.Hops+1
-		return c.Relay(next, RelayVouch, v)
+		return c.Relay(next, ask, v)
 	}
 	if _, _, remote := SplitRemote(author); !remote && o.Managers[author].Session == "" {
 		return nil
 	}
-	return c.tellManager(b, o, author, fmt.Sprintf("ym: your steer of %s was refused: it does not report to you.", v.Target))
+	return c.tellManager(b, o, author, fmt.Sprintf("ym: your %s of %s was refused: it does not report to you.", what, v.Target))
 }
 
 // noteFinal records a relay this host refused for good where the owner reads its outcome: an item's history, or the goal's feed.
@@ -974,6 +994,13 @@ func (c *Core) noteFinal(r Relay, err error) error {
 		}
 		_, id, _ := SplitRemote(v.Target)
 		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, v.Author), why, r)
+	case RelayVouchedClose:
+		var v relayVouch
+		if json.Unmarshal([]byte(r.Body), &v) != nil {
+			return nil
+		}
+		_, id, _ := SplitRemote(v.Target)
+		return c.noteGoal(id, "the close by "+v.Author, why, r)
 	}
 	return nil
 }

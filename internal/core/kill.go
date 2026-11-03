@@ -110,6 +110,15 @@ func (c *Core) OrgRef(ref string) bool {
 	return err == nil
 }
 
+// OrgManager is the manager or chief ref names, by id or name or by its goal, ended or retired too.
+func (c *Core) OrgManager(ref string) (Manager, error) {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return Manager{}, err
+	}
+	return o.lookup(ref)
+}
+
 // KillTargets are the sessions killing the goal or chief ref ends, live or exited: a chief's own, or a goal's manager's, its
 // agents' and its running verifier's.
 func (c *Core) KillTargets(b Board, ref string) (Manager, []Live, error) {
@@ -218,6 +227,20 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 			return "", err
 		}
 	}
+	goal := ""
+	if isGoal {
+		goal = g.ID
+	}
+	err = c.teardown(m, goal, targets)
+	what, id := "retired chief "+m.ID, m.ID
+	if isGoal {
+		what, id = "killed "+g.ID, g.ID
+	}
+	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), err
+}
+
+// teardown ends targets, each session's work kept for ym revive under m, and any verifier goal still has open.
+func (c *Core) teardown(m Manager, goal string, targets []Live) error {
 	stopped := make([]error, len(targets))
 	var wg sync.WaitGroup
 	for i, s := range targets {
@@ -237,8 +260,8 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 			errs = append(errs, err)
 		}
 	}
-	if isGoal {
-		vs, err := c.Store.Verifications(g.ID)
+	if goal != "" {
+		vs, err := c.Store.Verifications(goal)
 		errs = append(errs, err)
 		for _, v := range vs {
 			if !v.Ended {
@@ -247,11 +270,7 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 			}
 		}
 	}
-	what, id := "retired chief "+m.ID, m.ID
-	if isGoal {
-		what, id = "killed "+g.ID, g.ID
-	}
-	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // SignalFunc is how c signals a process: Signal, else proc.Signal.
@@ -332,8 +351,13 @@ func (s Live) Label() string {
 	return label
 }
 
-// ReopenGoal undoes a kill's hold on the goal or chief ref names: a goal is active again, a chief no longer retired, so ym
-// supervises its manager once more.
+// Reopenable reports whether ym revive brings the goal back: it ended by a kill or a close, not by moving host.
+func (g Goal) Reopenable() bool {
+	return g.State == GoalKilled || g.Ended() && g.Closure != nil
+}
+
+// ReopenGoal undoes a kill's or close's hold on the goal or chief ref names: a goal is active again, a chief no longer retired, so
+// ym supervises its manager once more.
 func (c *Core) ReopenGoal(ref string) (Manager, error) {
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -344,12 +368,19 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 		return m, err
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
-		if g.State != GoalKilled {
-			return m, fmt.Errorf("%s is %s, not killed", g.ID, g.State)
+		if !g.Reopenable() {
+			return m, fmt.Errorf("%s is %s, not killed or closed", g.ID, g.State)
 		}
+		closed := g.Closure != nil
 		g.State, g.DoneAt, g.AckedAt, g.LastMovedAt = GoalActive, timeZero, timeZero, c.now()
 		if err := c.Store.SaveGoal(g); err != nil {
 			return m, err
+		}
+		if closed {
+			now := c.now()
+			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.ID + " reopened; the items its close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
+				return m, err
+			}
 		}
 	}
 	m.Retired, m.Failures, m.NextAttempt, m.LastError = false, 0, timeZero, ""
