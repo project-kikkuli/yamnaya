@@ -108,6 +108,9 @@ func TestServeForADeletedStateDirEndsTheAgentsItLaunched(t *testing.T) {
 			}
 			_, paneErr := srv.Pane("agent")
 			agentRuns := syscall.Kill(pane.PID, 0) == nil
+			for end := time.Now().Add(5 * time.Second); c.deleted && agentRuns && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+				agentRuns = syscall.Kill(pane.PID, 0) == nil
+			}
 			if (paneErr == nil) == c.deleted || agentRuns == c.deleted {
 				t.Fatalf("pane err %v, agent runs %v; want agent ended %v", paneErr, agentRuns, c.deleted)
 			}
