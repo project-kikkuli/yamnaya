@@ -114,6 +114,7 @@ The footer shows the everyday keys; `?` lists every key.
 | `r` | reply: answer an item; on a goal or chief, send it a message; on a session, send it a follow-up |
 | `g` | go ahead: answer a go item with "PLEASE GO IMPLEMENT THIS" |
 | `K` | kill a session, mission or goal, or retire a chief (one y/n naming what dies; see Killing) |
+| `d` | close a goal: pick finished, superseded, abandoned or finished past the verifier, then type why |
 | `c` | chief menu: `a` attach the goal or chief (and the selection) to a chief, or to you; `d` detach it from its chief; `n` new chief over the goals and chiefs you check |
 | `b` | show the goal's or chief's brief |
 | `n` | new goal: pick the repository first, then type it in your words |
@@ -145,7 +146,7 @@ Behind `?`:
 | `t` | goals by repository with each chief's reports nested under it, or every goal under its own repository |
 | `e` `m` `p` `P` `v` | rename, merge, advance phase, set phases, set the vibe of a mission |
 | `I` `U` `h` | every item, usage and limits, machine slots and load with agents adrift now and weekly health |
-| `E` | everything ym launched, killed goals and ended sessions; `enter` revives one with its worktree and work |
+| `E` | everything ym launched, ended goals with how, why, who and when, and ended sessions; `enter` revives one with its worktree and work |
 | `A` | hide or show the scene behind the board |
 | `L` | switch the scene to the next theme (listed only in `?`) |
 | `tab` (while typing a new goal, chief or session) | switch it between claude and codex; each of `n`, `N`, `c n` and `+` starts on the harness it used last |
@@ -468,6 +469,8 @@ Answers reach a Claude session as its next prompt through its messaging socket, 
 | | `ym goal relaunch <id>` / `drop <id>` | fresh session from prompt and brief / stop supervising |
 | | `ym goal context-cap [<tokens>\|off]` | the context size past which ym restarts an idle manager or chief fresh from its brief |
 | | `ym goal ack <goal>` | clear a stuck goal from your queue, or a done goal from the goal tree |
+| | `ym goal close <goal> --as finished\|superseded\|abandoned --why <reason> [--override-verifier]` | end a goal with a recorded reason, as a chief above it or the owner; `ym revive <goal>` reopens it |
+| | `ym goal list --archived [--json]` | every ended goal with its disposition, reason, actor and age |
 | | `ym goal authority [<repo> --merge\|--no-merge]` | where managers may merge |
 | | `ym chief [--codex] [--over ID,ID] [--remit T] "<name>"` | start a chief, on codex with `--codex`; `attach <child> <chief>`, `detach <child>` |
 | Manager | `ym goal update "<line>"` | post where the goal stands |
@@ -527,6 +530,7 @@ You never need these commands by hand: `ym` opens the board, and every one of th
 | `ym goal steer` / `relaunch` / `ack` / `pr drop` | `S` / `R` / `x` / `X` |
 | `ym chief attach`, `ym chief detach` | `c a`, `c d` |
 | `ym kill` | `K` |
+| `ym goal close` | `d` |
 | `ym off`, `ym on` | `z` |
 | `ym switch --to` / `--profile` | `T` / `B` on the session |
 | `ym profiles`, `add`, `login`, `default`, `remove` | `B` |
