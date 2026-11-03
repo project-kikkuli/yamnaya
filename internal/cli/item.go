@@ -79,25 +79,6 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			return nil
 		}),
 	}, &cobra.Command{
-		Use:   "snooze <id>",
-		Short: "Snooze an open item",
-		Args:  cobra.ExactArgs(1),
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			b, err := e.core.Board()
-			if err != nil {
-				return err
-			}
-			key, err := e.itemKey(b, args[0])
-			if err != nil {
-				return err
-			}
-			it, err := e.core.Snooze(key)
-			if err == nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
-			}
-			return err
-		}),
-	}, &cobra.Command{
 		Use:   "reopen <id>",
 		Short: "Return an item to open",
 		Args:  cobra.ExactArgs(1),
@@ -116,7 +97,109 @@ func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error)
 			}
 			return err
 		}),
-	})
+	}, itemSnoozeCmd(with), itemRankCmd(with), itemQueueCmd(with))
+	return cmd
+}
+
+func itemSnoozeCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var when string
+	cmd := &cobra.Command{
+		Use:   "snooze <id|pull request url>",
+		Short: "Snooze an open item or a pull request's row; --for 1h, tonight or tomorrow brings it back on its own",
+		Args:  cobra.ExactArgs(1),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if found := core.PRsIn(args[0]); len(found) == 1 {
+				if when == "" {
+					return fmt.Errorf("a pull request's row needs --for 1h, tonight or tomorrow")
+				}
+				return e.core.SnoozeNeed(core.Need{Review: &core.ReviewRequest{URL: found[0].URL}}, when)
+			}
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			key, err := e.itemKey(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, err := e.core.SnoozeFor(key, when)
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", it.ID, it.State)
+			}
+			return err
+		}),
+	}
+	cmd.Flags().StringVar(&when, "for", "", "1h, tonight or tomorrow; omitted, until reopened")
+	return cmd
+}
+
+func itemQueueCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var width int
+	cmd := &cobra.Command{
+		Use:   "queue",
+		Short: "Print the owner's queue in order, as the board and brief page draw it",
+		Args:  cobra.NoArgs,
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			w := cmd.OutOrStdout()
+			fmt.Fprintln(w, core.QueueHeader(b.Needs, len(b.Later)))
+			for i, label := range core.RankLabels(len(b.Needs)) {
+				line, side := core.RowLine(b.Needs[i], label, width, b.At)
+				fmt.Fprintln(w, line+side)
+			}
+			for _, n := range b.Later {
+				line, side := core.RowLine(n, core.LaterLabel, width, b.At)
+				fmt.Fprintln(w, line+side)
+			}
+			return nil
+		}),
+	}
+	cmd.Flags().IntVar(&width, "width", core.QueueWidth, "columns; at 100 or more each row adds its why, id and age")
+	return cmd
+}
+
+func itemRankCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	var chief bool
+	cmd := &cobra.Command{
+		Use:   "rank <id|pull request url> top|up|down",
+		Short: "Pin a row of the owner's queue over or under its score: top over every pin, up or down one step; a session ranks as a chief, and the owner's rank stands over a chief's",
+		Args:  cobra.ExactArgs(2),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if _, err := e.caller(); err == nil {
+				chief = true
+			}
+			if len(core.PRsIn(args[0])) == 1 {
+				ok, err := e.core.Store.RankRow("pr:"+args[0], args[1], !chief)
+				if err == nil && !ok {
+					fmt.Fprintln(cmd.OutOrStdout(), args[0]+" keeps the owner's rank")
+				}
+				return err
+			}
+			b, err := e.core.Board()
+			if err != nil {
+				return err
+			}
+			key, err := e.itemKey(b, args[0])
+			if err != nil {
+				return err
+			}
+			it, ok, err := e.core.Rank(key, args[1], !chief)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s keeps the owner's rank\n", it.ID)
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s pin %d\n", it.ID, it.Pin)
+			return nil
+		}),
+	}
+	cmd.Flags().BoolVar(&chief, "chief", false, "rank as a chief, for a relay from another host")
+	cmd.Flags().MarkHidden("chief")
 	return cmd
 }
 
@@ -188,6 +271,9 @@ func itemCreateCmd(with func(runFunc) func(*cobra.Command, []string) error, revi
 	cmd.Flags().StringArrayVar(&it.Evidence, "evidence", nil, "a PR, CI run, commit, file or other link the call rests on (repeatable)")
 	cmd.Flags().StringVar(&it.Tried, "tried", "", "what you tried before asking")
 	cmd.Flags().IntVar(&it.Blocks, "blocks", 0, "how many pieces of work wait on this")
+	cmd.Flags().StringVar(&it.DoLine, "do", "", "the row's words: an imperative of at most 28 characters that states the rec")
+	cmd.Flags().StringVar(&it.Impact, "impact", "", "prod, clinical, agents or routine; prod and clinical rank first")
+	cmd.Flags().IntVar(&it.Minutes, "minutes", 0, "minutes it takes the owner, when the kind's default is wrong")
 	cmd.MarkFlagRequired("question")
 	if review {
 		cmd.MarkFlagRequired("rec")
@@ -239,6 +325,9 @@ func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s prepared\n", it.ID)
+			if p.Do == "" && it.DoLine == "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s has no do-line, so its row shows the question cut to fit and no check mark; add --do '<imperative, at most %d characters>'\n", it.ID, core.MaxDoLine)
+			}
 			return nil
 		}),
 	}
@@ -247,6 +336,9 @@ func itemPrepareCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringArrayVar(&p.Evidence, "evidence", nil, "a PR, CI run, commit, file or other link the call rests on (repeatable)")
 	cmd.Flags().StringVar(&p.Tried, "tried", "", "what was tried before asking")
 	cmd.Flags().StringVar(&p.Assumption, "assumption", "", "what is assumed meanwhile")
+	cmd.Flags().StringVar(&p.Do, "do", "", "the row's words: an imperative of at most 28 characters that states the rec")
+	cmd.Flags().StringVar(&p.Impact, "impact", "", "prod, clinical, agents or routine")
+	cmd.Flags().IntVar(&p.Minutes, "minutes", 0, "minutes it takes the owner")
 	return cmd
 }
 
@@ -422,35 +514,40 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 }
 
 type itemJSON struct {
-	Seq        int64         `json:"seq"`
-	Action     string        `json:"action,omitempty"`
-	ID         string        `json:"id"`
-	Project    string        `json:"project"`
-	Scope      string        `json:"scope"`
-	Alias      string        `json:"alias,omitempty"`
-	Kind       string        `json:"kind"`
-	State      string        `json:"state"`
-	Question   string        `json:"question"`
-	Rec        string        `json:"rec"`
-	Options    []core.Option `json:"options"`
-	Assumption string        `json:"assumption"`
-	Evidence   []string      `json:"evidence"`
-	Tried      string        `json:"tried,omitempty"`
-	Dossier    *core.Dossier `json:"dossier,omitempty"`
-	Missing    []string      `json:"missing,omitempty"`
-	Preparer   string        `json:"preparer,omitempty"`
-	Blocks     int           `json:"blocks"`
-	Session    string        `json:"session"`
-	Harness    string        `json:"harness"`
-	Answer     string        `json:"answer,omitempty"`
-	Reason     string        `json:"reason,omitempty"`
-	CreatedAt  string        `json:"created_at"`
-	AnsweredAt string        `json:"answered_at,omitempty"`
-	Received   bool          `json:"received"`
-	Recipient  string        `json:"recipient"`
-	Path       []string      `json:"path,omitempty"`
-	Host       string        `json:"host,omitempty"`
-	History    []core.Event  `json:"history,omitempty"`
+	Seq         int64         `json:"seq"`
+	Action      string        `json:"action,omitempty"`
+	ID          string        `json:"id"`
+	Project     string        `json:"project"`
+	Scope       string        `json:"scope"`
+	Alias       string        `json:"alias,omitempty"`
+	Kind        string        `json:"kind"`
+	State       string        `json:"state"`
+	Question    string        `json:"question"`
+	Rec         string        `json:"rec"`
+	Options     []core.Option `json:"options"`
+	Assumption  string        `json:"assumption"`
+	Evidence    []string      `json:"evidence"`
+	Tried       string        `json:"tried,omitempty"`
+	Dossier     *core.Dossier `json:"dossier,omitempty"`
+	Missing     []string      `json:"missing,omitempty"`
+	Preparer    string        `json:"preparer,omitempty"`
+	Do          string        `json:"do,omitempty"`
+	Impact      string        `json:"impact,omitempty"`
+	Minutes     int           `json:"minutes,omitempty"`
+	Pin         int           `json:"pin,omitempty"`
+	SnoozeUntil string        `json:"snooze_until,omitempty"`
+	Blocks      int           `json:"blocks"`
+	Session     string        `json:"session"`
+	Harness     string        `json:"harness"`
+	Answer      string        `json:"answer,omitempty"`
+	Reason      string        `json:"reason,omitempty"`
+	CreatedAt   string        `json:"created_at"`
+	AnsweredAt  string        `json:"answered_at,omitempty"`
+	Received    bool          `json:"received"`
+	Recipient   string        `json:"recipient"`
+	Path        []string      `json:"path,omitempty"`
+	Host        string        `json:"host,omitempty"`
+	History     []core.Event  `json:"history,omitempty"`
 }
 
 func ts(t time.Time) string {
@@ -469,7 +566,7 @@ func toJSON(it core.Item) itemJSON {
 	if ev == nil {
 		ev = []string{}
 	}
-	return itemJSON{Path: it.Path, Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{Path: it.Path, Do: it.DoLine, Impact: it.Impact, Minutes: it.Minutes, Pin: it.Pin, SnoozeUntil: ts(it.SnoozeUntil), Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero(), History: it.History}
 }

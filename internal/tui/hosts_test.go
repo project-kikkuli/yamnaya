@@ -345,7 +345,7 @@ func TestBoardNamesARenamedHostByItsNicknameAndTheFilterTakesBothNames(t *testin
 	}
 	m, _ = withBox(t, m, c)
 	v := ansi.Strip(m.View().Content)
-	if !strings.Contains(v, "hosts @far ok") || !strings.Contains(v, "@far Far work") || strings.Contains(v, "@boxmachine") {
+	if !strings.Contains(v, "hosts @far ok") || !strings.Contains(v, "@far  Merge the far branch?") || strings.Contains(v, "@boxmachine") {
 		t.Fatalf("board after renaming %s to far:\n%s", box, v)
 	}
 	for _, f := range []string{"@far", "boxmachine.example"} {

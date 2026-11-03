@@ -217,6 +217,8 @@ type Need struct {
 	Steer *Steer
 	// Relay is one this host carries that the host it goes to keeps refusing, RefusalsBeforeOwner times or for RefusedBeforeOwner.
 	Relay *Relay
+	// Mark is what the owner or a chief set on a row that is not an item.
+	Mark QueueMark
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -242,8 +244,8 @@ type Board struct {
 	Profiles         []LoginProfile
 	Fleet            Fleet
 	Kills            map[string]time.Time
-	// Stale are open items whose mission has no live session left.
-	Stale []Need
+	// Later are the rows folded under the queue: snoozed, or left by a goal that ended.
+	Later []Need
 	// Waiting are idle sessions the owner started whose last reply asks the owner; they stay off Needs.
 	Waiting []Need
 	// Gen numbers the boards built; a board reused because nothing it reads changed keeps the number.
@@ -402,6 +404,9 @@ func terminals(procs []proc.Proc) uint64 {
 // Board reads every session, groups sessions into projects and lists what needs the owner.
 func (c *Core) Board() (Board, error) {
 	b := Board{At: c.now()}
+	if err := c.Store.wakeSnoozed(b.At); err != nil {
+		return b, err
+	}
 	if c.ProfileList != nil {
 		b.Profiles = c.ProfileList()
 	}
@@ -621,13 +626,16 @@ func (c *Core) Board() (Board, error) {
 		return b, err
 	}
 	b.Repos = repos(b.Projects)
-	b.Needs, b.Stale = needs(b)
+	b.Needs, b.Later = needs(b)
 	if b.Waiting, err = c.waiting(b, b.Needs); err != nil {
 		return b, err
 	}
 	b.Waiting = append(b.Waiting, b.remoteWaiting()...)
 	b.Needs = collapse(b.Needs, b.Org, b)
 	if err := c.queue(&b, b.Org); err != nil {
+		return b, err
+	}
+	if err := c.foldLater(&b); err != nil {
 		return b, err
 	}
 	c.reuse.put(fp, reusable, &b)
@@ -1084,9 +1092,10 @@ func projectStatus(p Project) Status {
 	return best
 }
 
-// needs orders permission prompts and first-run setups first, then open items by how much they block, oldest first.
+// needs lists the rows of the owner's queue, and later the ones snoozed or left by a goal that ended. Ranked here, a session's
+// folded row leads with its strongest ask; foldLater ranks the whole queue.
 // Open owner requests stay visible after their source sessions end.
-func needs(b Board) (live, stale []Need) {
+func needs(b Board) (live, later []Need) {
 	asked := map[string]bool{}
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
@@ -1098,33 +1107,28 @@ func needs(b Board) (live, stale []Need) {
 			asked[s.Key()] = true
 		}
 	}
-	var items []Need
 	for i := range b.Projects {
 		p := &b.Projects[i]
 		for j := range p.Items {
-			if p.Items[j].State == ItemOpen && p.Items[j].Recipient == Owner {
-				n := Need{Item: &p.Items[j], Project: p.Key}
-				manager, managed := b.Org.ManagerOf(p.Items[j].Session)
-				if managed {
-					n.Manager = manager.ID
-					if s, ok := b.Session(manager.Session); ok {
-						n.Project = s.Project
-					}
+			it := &p.Items[j]
+			if it.Recipient != Owner || (it.State != ItemOpen && it.State != ItemSnoozed) {
+				continue
+			}
+			n := Need{Item: it, Project: p.Key}
+			manager, managed := b.Org.ManagerOf(it.Session)
+			if managed {
+				n.Manager = manager.ID
+				if s, ok := b.Session(manager.Session); ok {
+					n.Project = s.Project
 				}
-				items = append(items, n)
+			}
+			if it.State == ItemSnoozed || itemGoalEnded(b.Org, *it) {
+				later = append(later, n)
+			} else {
+				live = append(live, n)
 			}
 		}
 	}
-	order := func(ns []Need) {
-		sort.SliceStable(ns, func(i, j int) bool {
-			a, c := ns[i].Item, ns[j].Item
-			if a.Blocks != c.Blocks {
-				return a.Blocks > c.Blocks
-			}
-			return a.CreatedAt.Before(c.CreatedAt)
-		})
-	}
-	order(items)
-	order(stale)
-	return append(live, items...), stale
+	rank(live, b.At)
+	return live, later
 }

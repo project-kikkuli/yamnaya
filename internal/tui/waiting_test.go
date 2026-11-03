@@ -44,7 +44,7 @@ func lineOf(view, text string) string {
 func TestAnIdleSessionYouStartedShowsItsLastLineOnItsRowNotInNeedsYou(t *testing.T) {
 	m := waitingBoard(t)
 	view := m.View().Content
-	if !strings.Contains(view, "NEEDS YOU (0)") {
+	if !strings.Contains(view, "NEXT 0") {
 		t.Fatalf("an idle session's last message reached Needs you:\n%s", view)
 	}
 	if head := lineOf(view, " ym "); !strings.Contains(head, "2 sessions") || !strings.Contains(head, "0 goals") || !strings.Contains(head, "nothing needs you") {

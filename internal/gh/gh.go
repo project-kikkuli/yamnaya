@@ -23,6 +23,8 @@ type Source struct {
 	Batch func(query string, vars map[string]string) ([]byte, error)
 	// Repo reports whether GitHub has repository owner/name.
 	Repo func(repo string) (bool, error)
+	// Exec runs gh for a write the owner asked for.
+	Exec func(args ...string) ([]byte, error)
 	Now  func() time.Time
 	// LandingRun runs the landing query for a pull request URL; nil runs gh.
 	LandingRun func(url string) ([]byte, error)
@@ -42,7 +44,29 @@ const rateLimitWait = 5 * time.Minute
 var ErrPaused = errors.New("GitHub refused a batch for its rate limit; waiting before the next")
 
 func New() *Source {
-	return &Source{Run: query, Batch: graphQL, REST: rest, Repo: repoExists, Now: time.Now}
+	return &Source{Run: query, Batch: graphQL, REST: rest, Repo: repoExists, Now: time.Now, Exec: ghExec}
+}
+
+func ghExec(args ...string) ([]byte, error) {
+	out, err := exec.Command("gh", args...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+// Merge merges the pull request by the repository's default method for the owner, only while its head is still head.
+func (s *Source) Merge(url, head string) error {
+	found := core.PRsIn(url)
+	if len(found) != 1 {
+		return fmt.Errorf("%s is not a pull request link", url)
+	}
+	out, err := s.Exec("repo", "view", found[0].Repo, "--json", "viewerDefaultMergeMethod", "--jq", ".viewerDefaultMergeMethod")
+	if err != nil {
+		return err
+	}
+	_, err = s.Exec("pr", "merge", url, "--"+strings.ToLower(strings.TrimSpace(string(out))), "--match-head-commit", head)
+	return err
 }
 
 func repoExists(repo string) (bool, error) {
@@ -54,7 +78,7 @@ func repoExists(repo string) (bool, error) {
 }
 
 const prFields = `... on PullRequest {
-  state title reviewDecision headRefName headRefOid isDraft mergeable mergeStateStatus
+  state title reviewDecision headRefName headRefOid isDraft mergeable mergeStateStatus additions deletions createdAt
   commits { totalCount }
   reviewThreads(first: 100) { totalCount nodes { isResolved } }
   author { login }
@@ -186,14 +210,17 @@ type count struct {
 }
 
 type prJSON struct {
-	HeadRefOID     string `json:"headRefOid"`
-	Draft          bool   `json:"isDraft"`
-	Mergeable      string `json:"mergeable"`
-	MergeState     string `json:"mergeStateStatus"`
-	State          string `json:"state"`
-	Title          string `json:"title"`
-	ReviewDecision string `json:"reviewDecision"`
-	HeadRefName    string `json:"headRefName"`
+	HeadRefOID     string    `json:"headRefOid"`
+	Additions      int       `json:"additions"`
+	Deletions      int       `json:"deletions"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Draft          bool      `json:"isDraft"`
+	Mergeable      string    `json:"mergeable"`
+	MergeState     string    `json:"mergeStateStatus"`
+	State          string    `json:"state"`
+	Title          string    `json:"title"`
+	ReviewDecision string    `json:"reviewDecision"`
+	HeadRefName    string    `json:"headRefName"`
 	Commits        struct {
 		TotalCount int `json:"totalCount"`
 	} `json:"commits"`
@@ -266,7 +293,7 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 }
 
 func (s *Source) status(url string, pr *prJSON) core.PRStatus {
-	st := core.PRStatus{Merge: core.PRMergeFacts{OID: pr.HeadRefOID, Draft: pr.Draft, Mergeable: pr.Mergeable, MergeState: pr.MergeState}, State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
+	st := core.PRStatus{Merge: core.PRMergeFacts{Additions: pr.Additions, Deletions: pr.Deletions, Opened: pr.CreatedAt, OID: pr.HeadRefOID, Draft: pr.Draft, Mergeable: pr.Mergeable, MergeState: pr.MergeState}, State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
 		Commits: pr.Commits.TotalCount, Threads: pr.ReviewThreads.TotalCount, Fetched: s.Now()}
 	for _, t := range pr.ReviewThreads.Nodes {
 		if !t.IsResolved {

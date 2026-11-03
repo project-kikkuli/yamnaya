@@ -69,7 +69,7 @@ While ym is off for a session:
 
 ## What reaches you
 
-The **Needs you** queue holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a permission prompt answered. It holds:
+The **Needs you** queue is one ranked list, "do these, in this order", drawn the same on the board and the brief page: one line per row with its rank, verb, minutes, `!` for prod or clinical, what to do, then `✓` (the row does what it says with `a`: go ahead, answer with the rec, or merge your own pull request the queue lists as ready) or `▸` (open it). The score adds impact (prod or clinical 40, each piece of work blocked 20, merge-ready 15, else 5), age (1 an hour, at most 24) and a quick win (2 minutes or less, 10); ties go to the shorter row, a pin beats the score, and your own rank or snooze beats a chief's pin. An unknown time shows `?m` and stays out of the total. On the brief page the `✓` acts too, by a form carrying a token this `ym serve` made, from the same origin, and only on the row as you read it: if its words or head changed, it does nothing. `l` snoozes a row for 1h, tonight or tomorrow; snoozed rows and items of finished goals fold into `later N`. It holds only what needs you now, and each row leaves on its own once it is settled: an ask answered or dismissed, a pull request merged or closed, a review request withdrawn or done, a discussion resolved, a stuck goal moving again or passing verification, a permission prompt answered. It holds:
 
 - stuck goals
 - asks that climbed past every manager and chief

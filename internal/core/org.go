@@ -455,6 +455,9 @@ type ReviewRequest struct {
 	Updated string
 	// Title and Author are the pull request's title and who opened it, as GitHub last listed them.
 	Title, Author string
+	// Additions, Deletions and Opened come from the pull request's status, once read.
+	Additions, Deletions int
+	Opened               time.Time
 }
 
 // SyncReviews makes the open review requests exactly reqs: new ones open, ones GitHub no longer lists close.

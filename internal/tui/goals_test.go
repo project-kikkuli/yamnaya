@@ -398,7 +398,7 @@ func TestADocShowsOneRowForItsThreadsOpensThePageAndDismisses(t *testing.T) {
 		opens   string
 	}{
 		{"one thread", 1, "Alice: @Rajat is PR 7 the final cut?", "https://www.notion.so/Launch-plan-a0?d=d1"},
-		{"two threads", 2, "Launch plan 2 open threads", "https://www.notion.so/Launch-plan-a0"},
+		{"two threads", 2, "2 open threads", "https://www.notion.so/Launch-plan-a0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, c, _ := goalSetup(t)
@@ -544,7 +544,7 @@ func TestAReviewRowNamesThePullRequestAndWhoOpenedIt(t *testing.T) {
 		want string
 	}{
 		{"titled", core.ReviewRequest{URL: "https://github.com/acme/august/pull/7", Updated: "1", Title: "Read CSV", Author: "mira"},
-			"Read CSV by mira https://github.com/acme/august/pull/7"},
+			"Read CSV by mira"},
 		{"read before titles were kept", core.ReviewRequest{URL: "https://github.com/acme/august/pull/7", Updated: "1"}, "https://github.com/acme/august/pull/7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -560,26 +560,29 @@ func TestAReviewRowNamesThePullRequestAndWhoOpenedIt(t *testing.T) {
 	}
 }
 
-func TestAQueueRowForAManagersDutyNamesItsGoal(t *testing.T) {
+func TestAQueueRowOpensOnlyWhenSelectedAndKeepsToOneLineAtPhoneWidth(t *testing.T) {
 	m := New(&core.Core{})
-	m.board = core.Board{Tree: []core.Node{{Manager: core.Manager{ID: "mgr1"}, Goal: &core.Goal{ID: "goal1", Ask: "make the importer handle CSV"}}}}
-	m.loaded, m.width = true, 200
-	pr := core.PR{URL: "https://github.com/acme/august/pull/7", Status: &core.PRStatus{Title: "Read CSV"}}
+	m.loaded, m.width = true, 40
+	m.board.At = time.Now()
+	pr := core.PR{URL: "https://github.com/acme/august/pull/7", Repo: "acme/august", Number: 7, Status: &core.PRStatus{Title: "Read CSV"}}
 	for _, tc := range []struct {
 		name string
 		need core.Need
 		want string
 	}{
-		{"merge by a manager", core.Need{PR: &pr, Manager: "mgr1"}, "goal1 (make the importer handle CSV): Read CSV"},
-		{"merge by the owner's session", core.Need{PR: &pr}, "merge    Read CSV"},
-		{"unadopted steer", core.Need{Steer: &core.Steer{Manager: "mgr1", Revision: 2, Nudges: 2, Text: "ship TSV too"}, Manager: "mgr1"},
-			"goal1 (make the importer handle CSV) has not adopted r2 after 2 nudges: ship TSV too"},
-		{"steer of a manager gone from the tree", core.Need{Steer: &core.Steer{Manager: "mgr9", Revision: 1, Text: "stop"}, Manager: "mgr9"}, "mgr9 has not adopted r1"},
+		{"pull request", core.Need{PR: &pr, Manager: "mgr1"}, "august#7 · mgr1"},
+		{"steer", core.Need{Steer: &core.Steer{Manager: "mgr1", Revision: 2, Nudges: 2, Text: "ship TSV too"}, Manager: "mgr1"}, "not adopted after 2 nudges"},
+		{"item", core.Need{Item: &core.Item{ID: "D1", Kind: core.KindDecision, Question: "use CAS?", Rec: "yes", DoLine: "use CAS"}}, "rec: yes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			line, ok := m.queueLines(1, tc.need)
-			if line = ansi.Strip(line); !ok || !strings.Contains(line, tc.want) {
-				t.Fatalf("row %q, want it to read %q", line, tc.want)
+			m.cursor = 9
+			closed := strings.TrimRight(ansi.Strip(m.queueRowLines(1, tc.need, "1")), "\n")
+			if strings.Contains(closed, "\n") || ansi.StringWidth(closed) != 40 {
+				t.Fatalf("closed row is not one 40 column line: %q", closed)
+			}
+			m.cursor = 1
+			if open := ansi.Strip(m.queueRowLines(1, tc.need, "1")); !strings.Contains(open, tc.want) {
+				t.Fatalf("open row %q lacks %q", open, tc.want)
 			}
 		})
 	}
@@ -750,6 +753,72 @@ func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
 			m = press(t, m, "enter")
 			if len(l.started) != before+1 || l.started[before].Repo != repo {
 				t.Fatalf("explicit repo lost: %s; %s", fmtLaunches(l.started), m.message)
+			}
+		})
+	}
+}
+
+type mergerStub struct {
+	core.PRSource
+	merged []string
+}
+
+func (s *mergerStub) PRStatus(string) (core.PRStatus, error) { return core.PRStatus{}, nil }
+
+func (s *mergerStub) Merge(url, head string) error {
+	s.merged = append(s.merged, url+"@"+head)
+	return nil
+}
+
+func TestTheAcceptKeyAndLaterActOnPullRequestRowsAsTheyRead(t *testing.T) {
+	url := "https://github.com/acme/august/pull/7"
+	ready := core.PRStatus{State: "OPEN", Title: "Read CSV", Review: "APPROVED", Passed: 1, Merge: core.PRMergeFacts{Viewer: "me", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	isPR := func(r row) bool {
+		return r.need != nil && (r.need.PR != nil || r.need.Review != nil)
+	}
+	for _, tc := range []struct {
+		name, author, verb string
+		review             bool
+		merged             int
+	}{
+		{"my ready pull request merges", "me", "mrg", false, 1},
+		{"a teammate's review request never merges", "teammate", "rev", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, _ := goalSetup(t)
+			stub := &mergerStub{}
+			c.PRs = stub
+			st := ready
+			st.Fetched = time.Now()
+			st.Merge.Author = tc.author
+			if err := c.Store.SavePRStatus(url, st); err != nil {
+				t.Fatal(err)
+			}
+			if tc.review {
+				err := c.Store.SyncReviews([]core.ReviewRequest{{URL: url, Updated: "2026-11-01T00:00:00Z", Title: "Read CSV", Author: tc.author}})
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err := c.Store.SyncAuthored(map[string]string{url: "Read CSV"}); err != nil {
+				t.Fatal(err)
+			}
+			m = to(t, press(t, refresh(t, m), slices.Repeat([]string{"up"}, 30)...), isPR)
+			if v := ansi.Strip(m.View().Content); !strings.Contains(v, " "+tc.verb+" ") {
+				t.Fatalf("row does not read %s:\n%s", tc.verb, v)
+			}
+			m = press(t, m, "l", "enter")
+			m = refresh(t, m)
+			r := m.rows()
+			if slices.ContainsFunc(r, func(r row) bool { return isPR(r) && !m.isLater(r.need) }) || len(m.board.Later) != 1 {
+				t.Fatalf("later left the row in the queue:\n%s", ansi.Strip(m.View().Content))
+			}
+			if err := c.Store.WakeRow("pr:" + url); err != nil {
+				t.Fatal(err)
+			}
+			m = to(t, press(t, refresh(t, m), slices.Repeat([]string{"up"}, 30)...), isPR)
+			press(t, m, "a")
+			if len(stub.merged) != tc.merged {
+				t.Fatalf("merged %v, want %d merges", stub.merged, tc.merged)
 			}
 		})
 	}

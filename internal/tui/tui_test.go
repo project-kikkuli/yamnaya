@@ -186,7 +186,7 @@ func press(t *testing.T, m Model, keys ...string) Model {
 
 func TestAnswerInlineTypesIntoTheIdleAgent(t *testing.T) {
 	m, c, h := setup(t)
-	if v := m.View().Content; !strings.Contains(v, "NEEDS YOU (2)") || !strings.Contains(v, "D1") || !strings.Contains(v, "enter expand") {
+	if v := m.View().Content; !strings.Contains(v, "NEXT 2") || !strings.Contains(v, "D1") || !strings.Contains(v, "⏎ full") {
 		t.Fatalf("view:\n%s", v)
 	}
 	m = press(t, m, "r", "ctrl+u", "ship", " ", "it", "enter")
@@ -242,7 +242,7 @@ func TestGTypesTheGoAheadIntoTheAgentOnlyForAGoItem(t *testing.T) {
 			}
 			m = refresh(t, m)
 			m.cursor = 0
-			if v := m.View().Content; !strings.Contains(v, "go ahead? Build the importer?") || !strings.Contains(v, "g go ahead") {
+			if v := m.View().Content; !strings.Contains(v, "Build the importer?") || !strings.Contains(v, "a go ahead") {
 				t.Fatalf("view:\n%s", v)
 			}
 			press(t, m, c.keys...)
@@ -275,11 +275,11 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 	if len(h.focused) != 0 {
 		t.Fatalf("enter on an item jumped to %v", h.focused)
 	}
-	m = press(t, m, "l")
+	m = press(t, m, "l", "enter")
 	if it, _ := c.Store.Item("D2"); it.State != core.ItemSnoozed {
 		t.Fatalf("l in the expanded view left D2 %s", it.State)
 	}
-	m = press(t, m, "enter", "o")
+	m = press(t, m, "enter", "home", "o")
 	if len(h.focused) != 1 || h.focused[0] != "/dev/a" {
 		t.Fatalf("o from the expanded view focused %v", h.focused)
 	}
@@ -299,7 +299,7 @@ func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 
 func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	m, c, _ := setup(t)
-	m = press(t, m, "r", "esc", "l")
+	m = press(t, m, "r", "esc", "l", "enter")
 	if it, _ := c.Store.Item("D1"); it.State != core.ItemSnoozed {
 		t.Fatalf("D1 = %s", it.State)
 	}
@@ -307,7 +307,7 @@ func TestLaterDismissAndEscapeLeaveItemsAlone(t *testing.T) {
 	if it, _ := c.Store.Item("D2"); it.State != core.ItemDismissed || it.Reason != "not needed" {
 		t.Fatalf("D2 = %+v", it)
 	}
-	if !strings.Contains(m.View().Content, "NEEDS YOU (0)") {
+	if !strings.Contains(m.View().Content, "NEXT 0") {
 		t.Fatal(m.View().Content)
 	}
 }
@@ -540,7 +540,7 @@ func TestItemsFromEndedSessionsRemainActionableInNeedsYou(t *testing.T) {
 	}
 	m = refresh(t, m)
 	v := m.View().Content
-	if !strings.Contains(v, "NEEDS YOU (3)") || strings.Contains(v, "stale (2)") || !strings.Contains(v, "Old question?") {
+	if !strings.Contains(v, "NEXT 3") || strings.Contains(v, "later 2") || !strings.Contains(v, "Old question?") {
 		t.Fatalf("open owner requests must stay visible after their source exits:\n%s", v)
 	}
 	m = to(t, press(t, m, "home"), func(r row) bool { return r.item != nil && r.item.ID == "D3" })
@@ -635,7 +635,7 @@ func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
 		t.Fatal(err)
 	}
-	m = press(t, refresh(t, m), "down", "down", "enter", "enter")
+	m = press(t, refresh(t, m), "home", "down", "down", "enter", "enter")
 	v := m.View().Content
 	if m.mode != modeDetail || !strings.Contains(v, "other:D1") || strings.Count(v, " D1 ") != 1 {
 		t.Fatalf("mission items from two projects should name the project where IDs repeat:\n%s", v)
@@ -871,7 +871,7 @@ func TestAnUnpreparedAskIsMarkedOnItsRowAndWhenExpanded(t *testing.T) {
 	m = refresh(t, m)
 	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Question == "Use v2 key ids?" })
 	want := "unprepared: missing a recommendation and two options with their effects"
-	if v := m.View().Content; !strings.Contains(v, "unprepared · Use v2 key ids?") || !strings.Contains(v, want) {
+	if v := m.View().Content; !strings.Contains(v, "Use v2 key ids?") || !strings.Contains(v, want) {
 		t.Fatalf("row does not mark the ask unprepared:\n%s", v)
 	}
 	if r, _ := m.selected(); r.need != nil && len(r.need.Asks) > 1 {

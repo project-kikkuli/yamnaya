@@ -182,6 +182,16 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 			candidates = append(candidates, url)
 		}
 	}
+	reviews, err := c.Store.OpenReviews()
+	if err != nil {
+		return 0, err
+	}
+	for _, r := range reviews {
+		if !seen[r.URL] {
+			seen[r.URL] = true
+			candidates = append(candidates, r.URL)
+		}
+	}
 	// A pull request nothing names any more is read at the slowest pace until it closes, or its last read would stand forever.
 	idle := map[string]bool{}
 	for url, st := range known {

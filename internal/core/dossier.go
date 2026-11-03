@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -395,14 +396,19 @@ type Prepared struct {
 	Rec, Tried, Assumption string
 	Options                []Option
 	Evidence               []string
+	Do, Impact             string
+	Minutes                int
 }
 
 func (p Prepared) flags() []string {
 	var out []string
-	for _, f := range [][2]string{{"--rec", p.Rec}, {"--tried", p.Tried}, {"--assumption", p.Assumption}} {
+	for _, f := range [][2]string{{"--rec", p.Rec}, {"--tried", p.Tried}, {"--assumption", p.Assumption}, {"--do", p.Do}, {"--impact", p.Impact}} {
 		if f[1] != "" {
 			out = append(out, f[0], f[1])
 		}
+	}
+	if p.Minutes > 0 {
+		out = append(out, "--minutes", strconv.Itoa(p.Minutes))
 	}
 	for _, o := range p.Options {
 		out = append(out, "--option", o.Label+"="+o.Effect)
@@ -425,8 +431,20 @@ func (c *Core) Prepare(b Board, ref string, p Prepared) (Item, error) {
 	if it.State != ItemOpen {
 		return it, fmt.Errorf("item %s is %s; only an open ask can be prepared", it.ID, it.State)
 	}
+	if err := checkQueueFields(p.Do, p.Impact, p.Minutes); err != nil {
+		return it, err
+	}
 	if p.Rec != "" {
 		it.Rec = p.Rec
+	}
+	if p.Do != "" {
+		it.DoLine = p.Do
+	}
+	if p.Impact != "" {
+		it.Impact = p.Impact
+	}
+	if p.Minutes > 0 {
+		it.Minutes = p.Minutes
 	}
 	if p.Tried != "" {
 		it.Tried = p.Tried
@@ -474,8 +492,8 @@ func (s *Store) prepare(it Item) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE ym_items SET rec = ?, options = ?, tried = ?, assumption = ?, evidence = ?, preparer = '' WHERE seq = ?`,
-		it.Rec, string(opts), it.Tried, it.Assumption, string(evidence), it.Seq); err != nil {
+	if _, err := tx.Exec(`UPDATE ym_items SET rec = ?, options = ?, tried = ?, assumption = ?, evidence = ?, preparer = '', do_line = ?, impact = ?, minutes = ? WHERE seq = ?`,
+		it.Rec, string(opts), it.Tried, it.Assumption, string(evidence), it.DoLine, it.Impact, it.Minutes, it.Seq); err != nil {
 		return err
 	}
 	if err := addEvent(tx, it.Key(), ItemOpen, ItemOpen, "prepared"); err != nil {

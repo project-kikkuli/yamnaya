@@ -50,7 +50,8 @@ const (
 	inDismiss
 	inRename
 	inFilter
-	inDismissStale
+	inDismissLater
+	inLater
 	inSend
 	inPanel
 	inNew
@@ -83,8 +84,8 @@ type row struct {
 	member  *core.Member
 	dormant *core.Dormant
 	item    *core.Item
-	// stale is the collapsed line standing for every item whose mission has no live session.
-	stale bool
+	// later is the collapsed line standing for every row folded under the queue.
+	later bool
 	// depth is how far below a chief the node row sits in the tree.
 	depth int
 	// group is the goal row's group on the board: its repository, or the chiefs.
@@ -151,17 +152,19 @@ type Model struct {
 	helpQ      string
 	helpTyping bool
 	helpAt     int
-	showStale  bool
-	input      []rune
-	fresh      bool
-	inKind     inputKind
-	inItem     string
-	inLabel    string
-	inProj     string
-	inHost     string
-	filter     string
-	targets    []core.Target
-	cursor2    int
+	showLater  bool
+	// laterRow is the row the later prompt will snooze.
+	laterRow *core.Need
+	input    []rune
+	fresh    bool
+	inKind   inputKind
+	inItem   string
+	inLabel  string
+	inProj   string
+	inHost   string
+	filter   string
+	targets  []core.Target
+	cursor2  int
 	// beside opens the chosen target in a split next to ym instead of switching to it.
 	beside    bool
 	mergeSrc  string
@@ -615,8 +618,8 @@ func rowKey(r row) string {
 		return "member:" + sessionKey(*r.session) + "/" + r.member.ID
 	case r.dormant != nil:
 		return "dormant:" + r.dormant.Key
-	case r.stale:
-		return "stale"
+	case r.later:
+		return "later"
 	case r.session != nil:
 		return "session:" + sessionKey(*r.session)
 	case r.project != nil:
@@ -707,11 +710,11 @@ func (m Model) rows() []row {
 		}
 	default:
 		out = append(out, m.queueRows()...)
-		if len(m.board.Stale) > 0 {
-			out = append(out, row{stale: true})
-			for i := range m.board.Stale {
-				n := &m.board.Stale[i]
-				if m.showStale && m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
+		if len(m.board.Later) > 0 {
+			out = append(out, row{later: true})
+			for i := range m.board.Later {
+				n := &m.board.Later[i]
+				if m.showLater && m.matches(m.projectName(n.Project), needText(*n), m.hostText(m.needHost(*n))) {
 					out = append(out, row{need: n, item: n.Item})
 				}
 			}
@@ -848,7 +851,7 @@ func (m Model) selected() (row, bool) {
 	return rs[m.cursor], true
 }
 
-const rowScopedKeys = "oOrgxluemsSKzTpPv"
+const rowScopedKeys = "oOrgxluemsSKzTpPvaf,."
 
 func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
@@ -1117,12 +1120,12 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if r.stale {
+	if r.later {
 		switch k.String() {
 		case "enter":
-			m.showStale = !m.showStale
+			m.showLater = !m.showLater
 		case "x":
-			m.startInput(inDismissStale, "", "", "stale: its session ended", true)
+			m.startInput(inDismissLater, "", "", "its goal ended", true)
 		}
 		return m, nil
 	}
@@ -1177,13 +1180,29 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.startInput(inDismiss, r.item.Key(), "", "", false)
 			m.inLabel = r.item.ID
 		}
+	case "a":
+		n := r.need
+		if n == nil && r.item != nil && r.item.State == core.ItemOpen {
+			n = &core.Need{Item: r.item}
+		}
+		if n != nil && n.Accept() != core.CheckNone {
+			need, board := *n, m.board
+			return m, m.do(func() (string, error) { return m.core.DoCheck(board, need) })
+		}
+	case "f", ",", ".":
+		if r.need != nil {
+			n, dir := *r.need, map[string]string{"f": "top", ",": "up", ".": "down"}[k.String()]
+			return m, m.do(func() (string, error) { return n.ID() + " ranked " + dir, m.core.RankNeed(n, dir) })
+		}
 	case "l":
-		if r.item != nil && r.item.State == core.ItemOpen {
-			key, id := r.item.Key(), r.item.ID
-			return m, m.do(func() (string, error) {
-				_, err := m.core.Snooze(key)
-				return id + " snoozed", err
-			})
+		if r.need != nil {
+			m.laterRow = r.need
+			m.startInput(inLater, "", "", "1h", true)
+			m.inLabel = r.need.ID()
+		} else if r.item != nil && r.item.State == core.ItemOpen {
+			m.laterRow = &core.Need{Item: r.item}
+			m.startInput(inLater, "", "", "1h", true)
+			m.inLabel = r.item.ID
 		}
 	case "u":
 		if r.item != nil && r.item.State == core.ItemSnoozed {
@@ -1192,6 +1211,10 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				_, err := m.core.Reopen(key)
 				return id + " reopened", err
 			})
+		}
+		if r.need != nil && r.need.Item == nil && m.isLater(r.need) {
+			key, id := r.need.MarkKey(), r.need.ID()
+			return m, m.do(func() (string, error) { return id + " back", m.core.Store.WakeRow(key) })
 		}
 	case "J":
 		if r.item != nil && r.item.State == core.ItemOpen {
@@ -1318,7 +1341,7 @@ func (m Model) killable(r row) *core.Live {
 	switch {
 	case r.need != nil && r.item == nil:
 		return r.session
-	case r.need != nil || r.dormant != nil || r.stale:
+	case r.need != nil || r.dormant != nil || r.later:
 		return nil
 	case r.session != nil:
 		return r.session
@@ -1607,13 +1630,21 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				it, d, err := m.core.Dismiss(board, id, text)
 				return it.ID + " dismissed, " + d.String(), err
 			})
-		case inDismissStale:
+		case inLater:
+			if text == "" || m.laterRow == nil {
+				return m, nil
+			}
+			n := *m.laterRow
+			return m, m.do(func() (string, error) { return n.ID() + " later", m.core.SnoozeNeed(n, text) })
+		case inDismissLater:
 			if text == "" {
 				return m, nil
 			}
 			var ids []string
-			for _, n := range m.board.Stale {
-				ids = append(ids, n.Item.Key())
+			for _, n := range m.board.Later {
+				if n.Item != nil && n.Item.State == core.ItemOpen {
+					ids = append(ids, n.Item.Key())
+				}
 			}
 			board := m.board
 			return m, m.do(func() (string, error) {
@@ -1622,7 +1653,7 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 						return "", err
 					}
 				}
-				return fmt.Sprintf("dismissed %d stale items", len(ids)), nil
+				return fmt.Sprintf("dismissed %d items of ended goals", len(ids)), nil
 			})
 		case inRename:
 			key := m.inProj

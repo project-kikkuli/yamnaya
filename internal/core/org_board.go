@@ -376,6 +376,9 @@ func (c *Core) queue(b *Board, o Org) error {
 		return err
 	}
 	for _, r := range reviews {
+		if st, ok := statuses[r.URL]; ok {
+			r.Additions, r.Deletions, r.Opened = st.Merge.Additions, st.Merge.Deletions, st.Merge.Opened
+		}
 		n := Need{Review: &r}
 		if !dismissed[n.Key()] {
 			extra = append(extra, n)

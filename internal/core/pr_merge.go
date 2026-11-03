@@ -16,6 +16,10 @@ type PRMergeFacts struct {
 	Mergeable  string
 	MergeState string
 	Error      string
+	// Additions, Deletions and Opened size and date the pull request; zero when not read yet.
+	Additions int
+	Deletions int
+	Opened    time.Time
 }
 
 // ReadyToMerge reports whether a recent read shows the pull request open, green, not a draft, approved or unreviewed, with no open threads and a clean merge.

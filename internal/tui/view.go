@@ -302,7 +302,7 @@ func (m Model) footer() []string {
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
 		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
-			inDismissStale: "dismiss every stale item because", inPanel: m.panelLabel(), inSend: "send " + m.inLabel, inBroadcast: "broadcast to " + m.inLabel,
+			inDismissLater: "dismiss every item of an ended goal because", inLater: "later (1h, t tonight, m tomorrow)", inPanel: m.panelLabel(), inSend: "send " + m.inLabel, inBroadcast: "broadcast to " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
@@ -418,9 +418,9 @@ func (m Model) hints() string {
 		}
 		return "↑↓ pgup pgdn scroll · y copy · esc back"
 	case modeItems:
-		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · u unsnooze · x dismiss · esc back"
+		return "↑↓ move · enter expand · r reply · e escalate to you · J consolidate copy · V review document · g go ahead · a accept rec · l later · u unsnooze · x dismiss · esc back"
 	case modeWhy:
-		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
+		return "r reply · e escalate to you · J consolidate copy · V review document · g go ahead · a accept rec · l later · x dismiss · u unsnooze · o go to its session · O beside · y copy · esc back"
 	case modePick:
 		return "↑↓ choose · enter open · esc back"
 	case modeMerge:
@@ -461,17 +461,18 @@ func (m Model) listView() viewPage {
 	rows := m.rows()
 	needs := 0
 	for _, r := range rows {
-		if r.need != nil && !m.isStale(r.need) {
+		if r.need != nil && !m.isLater(r.need) {
 			needs++
 		}
 	}
-	b.WriteString(pal.bold.Render(fmt.Sprintf(" NEEDS YOU (%d)", needs)) + "\n")
+	b.WriteString(pal.bold.Render(core.QueueHeader(m.queueNeeds(rows), len(m.board.Later))) + "\n")
 	if needs == 0 {
 		b.WriteString(pal.dim.Render("   nothing") + "\n")
 	}
 	goals, repos := false, false
 	group := ""
 	cols := m.missionCols(2)
+	labels := m.queueLabels(rows)
 	for i, r := range rows {
 		if r.node != nil && !goals {
 			goals = true
@@ -497,20 +498,16 @@ func (m Model) listView() viewPage {
 			}
 		}
 		switch {
-		case r.stale:
-			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("stale (%d)", len(m.board.Stale))) + pal.dim.Render(" open items whose sessions ended")
+		case r.later:
+			line := m.mark(i) + pal.dim.Render(fmt.Sprintf("later %d", len(m.board.Later))) + pal.dim.Render(" snoozed, or their goal ended")
 			if i == m.cursor {
-				line += pal.dim.Render("   enter expand · x dismiss all")
+				line += pal.dim.Render("   enter expand · x dismiss ended goals'")
 			}
 			b.WriteString(line + "\n")
 		case r.node != nil:
 			b.WriteString(withNote(m.nodeLines(i, *r.node, r.depth), m.rowNote(r)))
 		case r.need != nil:
-			if text, ok := m.queueLines(i, *r.need); ok {
-				b.WriteString(text)
-			} else {
-				b.WriteString(withNote(m.needLines(i, *r.need), m.rowNote(r)))
-			}
+			b.WriteString(withNote(m.queueRowLines(i, *r.need, labels[r.need]), m.rowNote(r)))
 		case r.item != nil:
 			b.WriteString(m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)}))
 		case r.project == nil:
@@ -528,9 +525,9 @@ func (m Model) listView() viewPage {
 	return b
 }
 
-func (m Model) isStale(n *core.Need) bool {
-	for i := range m.board.Stale {
-		if n == &m.board.Stale[i] {
+func (m Model) isLater(n *core.Need) bool {
+	for i := range m.board.Later {
+		if n == &m.board.Later[i] {
 			return true
 		}
 	}
@@ -742,19 +739,6 @@ func (m Model) needLines(i int, n core.Need) string {
 	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
 	var b strings.Builder
-	if n.Item == nil {
-		label, what := "PERM ", "permission prompt"
-		if n.Session.Prompt != nil {
-			what = n.Session.Prompt.String()
-		} else if n.Session.Status == core.Onboarding {
-			label, what = "SETUP", onboardingWhat(n.Session.Session)
-		}
-		b.WriteString(m.mark(i) + pal.yellow.Render(label) + " " + name + " " + what + "\n")
-		if sel {
-			b.WriteString(pal.dim.Render("         enter go to its session · r reply") + "\n")
-		}
-		return b.String()
-	}
 	it := n.Item
 	q, keys := it.Question, "enter expand · r reply · l later · x dismiss · o go to session · O beside"
 	if it.Action == "chat" {
@@ -806,7 +790,7 @@ func (m Model) itemID(it core.Item) string {
 
 func (m Model) mixed() bool {
 	scopes := map[string]bool{}
-	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Later} {
 		for _, n := range ns {
 			if n.Item != nil {
 				scopes[n.Item.Scope] = true
@@ -818,7 +802,7 @@ func (m Model) mixed() bool {
 
 func (m Model) idWidth() int {
 	w := 5
-	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Later} {
 		for _, n := range ns {
 			if n.Item != nil {
 				w = max(w, len(m.itemID(*n.Item)))
@@ -1498,7 +1482,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
  NEEDS YOU is your queue: stuck goals, escalations no manager or chief could settle, pull requests ready
  to merge in repos where managers may not merge, reviews GitHub asks of you personally, Notion discussions
  and reviews addressed to you that no goal claims, permission prompts, and one row per session you started
- that asks you something. A row leaves on its own once it is settled.
+ that asks you something. A row leaves on its own once it is settled. Rows are ranked by one score and read
+ rank, verb, minutes, ! for prod or clinical, what to do, then ✓ (a does it) or ▸ (open it); later N folds
+ snoozed rows and items of finished goals.
  GOALS groups the goals that report to you by repository, and lists every chief under "chiefs" with its
  managers and chiefs indented beneath it; a chief's standing is its reports' worst. Every row shows its standing and its brief's age, "brief stale" or "no brief"; enter on a
  chief opens it with its reports.
@@ -1555,7 +1541,9 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 view; needs ym running inside tmux
    x            dismiss the item with a reason; on a stuck goal, a merge, a review or a doc ask, clear it from the queue; on a done goal, clear it
                 from the goal tree
-   l            later: snooze the item
+   a            do what the row's check mark says: go ahead, answer with its rec, or merge your own PR
+   l            later: 1h, tonight or tomorrow; the row returns on its own
+   f , .        rank the row: to the top, up, down; your rank beats a chief's
    u            reopen a snoozed item (detail)
 
    More

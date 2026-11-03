@@ -80,7 +80,14 @@ type Item struct {
 	// Recipient is who the item waits on: Owner, or the id of the manager or chief it was routed to.
 	Recipient string
 	Path      []string
-	History   []Event
+	// DoLine is the row's imperative; Impact, Minutes, Pin and PinOwner rank it; SnoozeUntil is when a snooze ends, zero for until reopened.
+	DoLine      string
+	Impact      string
+	Minutes     int
+	Pin         int
+	PinOwner    bool
+	SnoozeUntil time.Time
+	History     []Event
 	// Host is the host whose ym holds the item when that is not this one.
 	Host string
 }
@@ -265,6 +272,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := heldItems(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate held items: %w", err)
+	}
+	if err := queueItems(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate queue items: %w", err)
 	}
 	if err := itemActions(db); err != nil {
 		db.Close()

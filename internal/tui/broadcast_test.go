@@ -30,7 +30,7 @@ func broadcastBoard() core.Board {
 		Projects: []core.Project{owned, managed},
 		Repos:    []core.Repo{{Key: "rk1", Name: "one", Missions: []core.Project{owned, managed}}},
 		Sessions: []core.Live{live("s1"), live("s2"), chiefLive, m1, live("a1"), m2, live("a2"), {Session: core.Session{PID: 9}}},
-		Stale:    []core.Need{{Item: &core.Item{ID: "D9", Question: "old"}}},
+		Later:    []core.Need{{Item: &core.Item{ID: "D9", Question: "old"}}},
 	}
 }
 
@@ -42,7 +42,7 @@ func TestBroadcastReachesEveryAgentUnderTheCursorsLevel(t *testing.T) {
 		scope string
 		want  []string
 	}{
-		{"needs you rows reach every agent", modeList, func(r row) bool { return r.stale }, "every agent",
+		{"needs you rows reach every agent", modeList, func(r row) bool { return r.later }, "every agent",
 			[]string{"a1", "a2", "cs", "m1s", "m2s", "s1", "s2"}},
 		{"chief reaches its whole subtree", modeList, func(r row) bool { return r.node != nil && r.node.Manager.ID == "c1" }, "boss (c1) and everyone below",
 			[]string{"a1", "a2", "cs", "m1s", "m2s"}},
@@ -61,7 +61,7 @@ func TestBroadcastReachesEveryAgentUnderTheCursorsLevel(t *testing.T) {
 			l := &launches{}
 			m := New(&core.Core{Launches: l})
 			m.board, m.mode, m.detail = broadcastBoard(), tc.mode, "p1"
-			m.showStale = true
+			m.showLater = true
 			m = to(t, m, tc.at)
 			m = press(t, m, broadcastKey)
 			if m.mode != modeInput || m.inKind != inBroadcast {

@@ -30,8 +30,8 @@ func TestOwnerRequestsSurviveManagerAndChiefSessionChanges(t *testing.T) {
 					t.Fatal(err)
 				}
 				b := w.board(t)
-				if !slices.ContainsFunc(b.Needs, func(n Need) bool { return n.Item != nil && n.Item.Seq == it.Seq && n.Manager == m.ID }) || len(b.Stale) != 0 {
-					t.Fatalf("owner request disappeared: needs=%+v stale=%+v", b.Needs, b.Stale)
+				if !slices.ContainsFunc(b.Needs, func(n Need) bool { return n.Item != nil && n.Item.Seq == it.Seq && n.Manager == m.ID }) || len(b.Later) != 0 {
+					t.Fatalf("owner request disappeared: needs=%+v stale=%+v", b.Needs, b.Later)
 				}
 				if state == "refreshed" {
 					if _, _, err := w.core.Answer(b, it.Key(), "approved"); err != nil {

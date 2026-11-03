@@ -19,6 +19,14 @@ func (c *Core) ItemText(it Item) string {
 			fmt.Fprintf(&w, "%s: %s\n", k, v)
 		}
 	}
+	line("do", it.DoLine)
+	line("impact", it.Impact)
+	if it.Minutes > 0 {
+		line("minutes", fmt.Sprint(it.Minutes))
+	}
+	if !it.SnoozeUntil.IsZero() {
+		line("snoozed until", it.SnoozeUntil.Local().Format("Jan 2 15:04"))
+	}
 	line("action", it.Action)
 	line("rec", it.Rec)
 	for _, o := range it.Options {

@@ -21,7 +21,7 @@ func (m Model) killTargets(r row) ([]core.Live, string) {
 	if r.dormant != nil {
 		return []core.Live{dormant(*r.dormant)}, r.dormant.Key
 	}
-	if r.need != nil || r.item != nil || r.stale || r.member != nil {
+	if r.need != nil || r.item != nil || r.later || r.member != nil {
 		return nil, ""
 	}
 	if p := m.projectOf(r); p != nil && r.session == nil && (len(p.Sessions) > 0 || len(p.Dormant) > 0) {

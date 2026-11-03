@@ -514,69 +514,107 @@ func (m Model) managerName(id string) string {
 	return n.Manager.Label()
 }
 
-// queueLines draws the owner duties that are not an item or a session: stuck goals, steers, relays, merges, reviews and doc asks.
-func (m Model) queueLines(i int, n core.Need) (string, bool) {
-	sel := i == m.cursor
-	var head, what, keys string
+// queueNeeds are the ranked rows on screen, without the later fold.
+func (m Model) queueNeeds(rows []row) []core.Need {
+	var out []core.Need
+	for _, r := range rows {
+		if r.need != nil && !m.isLater(r.need) {
+			out = append(out, *r.need)
+		}
+	}
+	return out
+}
+
+// queueLabels numbers the ranked rows; a later row has no rank.
+func (m Model) queueLabels(rows []row) map[*core.Need]string {
+	ranks := core.RankLabels(len(m.queueNeeds(rows)))
+	out := map[*core.Need]string{}
+	at := 0
+	for _, r := range rows {
+		if r.need == nil {
+			continue
+		}
+		if m.isLater(r.need) {
+			out[r.need] = core.LaterLabel
+			continue
+		}
+		out[r.need] = ranks[at]
+		at++
+	}
+	return out
+}
+
+// queueKeys are the keys of the selected row.
+func queueKeys(n core.Need, later bool) string {
+	var keys []string
+	switch n.Accept() {
+	case core.CheckGo:
+		keys = append(keys, "a go ahead")
+	case core.CheckAccept:
+		keys = append(keys, "a accept rec")
+	case core.CheckMerge:
+		keys = append(keys, "a merge")
+	}
 	switch {
-	case n.Goal != nil:
-		head, what = pal.red.Render(pad("stuck", 8)), m.goalName(*n.Goal)+" "+n.Goal.Ask
-		keys = "enter open · r reply · b brief · o manager · R relaunch · x clear"
-	case n.Steer != nil:
-		head = pal.yellow.Render(pad("steer", 8))
-		what = fmt.Sprintf("%s has not adopted r%d after %d nudges: %s", m.managerName(n.Manager), n.Steer.Revision, n.Steer.Nudges, n.Steer.Text)
-		keys = "enter open · o manager · S steer again · R relaunch · x dismiss"
-	case n.Relay != nil:
-		head = pal.red.Render(pad("refused", 8))
-		what = fmt.Sprintf("%s keeps refusing %s, %d times since %s: %s", n.Relay.Dest, relayWhat(*n.Relay), n.Relay.Refusals,
-			n.Relay.RefusedSince.Local().Format(time.Kitchen), n.Relay.Error)
-		keys = "x drop it"
-	case n.PR != nil:
-		head, what = pal.yellow.Render(pad("merge", 8)), n.PR.URL
-		if st := n.PR.Status; st != nil {
-			ci := "no checks"
-			if st.Passed > 0 {
-				ci = fmt.Sprintf("ci green, %d passed", st.Passed)
-			}
-			what = st.Title + pal.dim.Render(fmt.Sprintf("  %s#%d · %s · approved", n.PR.Repo, n.PR.Number, ci))
-		}
-		if n.Manager != "" {
-			what = m.managerName(n.Manager) + ": " + what
-		}
-		keys = "enter open in browser · x dismiss"
-	case n.Review != nil:
-		head, what = pal.yellow.Render(pad("review", 8)), n.Review.URL
-		if n.Review.Title != "" {
-			what = n.Review.Title + pal.dim.Render("  by "+n.Review.Author+"  "+n.Review.URL)
-		}
-		keys = "enter open in browser · x dismiss"
-	case n.Doc != nil:
-		head, what = pal.yellow.Render(pad("doc", 8)), n.Doc.Title+pal.dim.Render("  "+n.Doc.Asker+": "+n.Doc.Text)
-		if len(n.Docs) > 1 {
-			head, what = pal.yellow.Render(pad("doc", 8)), fmt.Sprintf("%s  %d open threads", n.Doc.Title, len(n.Docs))+pal.dim.Render("  newest "+n.Doc.Asker+": "+n.Doc.Text)
-		}
-		keys = "enter open in browser · x dismiss"
+	case n.Item != nil:
+		keys = append(keys, "⏎ full", "r reply", "o session")
+	case n.Session != nil:
+		keys = append(keys, "⏎ go to session", "r reply")
 	default:
-		return "", false
+		keys = append(keys, "⏎ open")
 	}
-	line := m.mark(i) + head + " "
-	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
+	if later && (n.Item == nil || n.Item.State == core.ItemSnoozed) {
+		keys = append(keys, "u back")
+	} else {
+		keys = append(keys, "l later")
+	}
+	if n.Session == nil {
+		keys = append(keys, "x dismiss")
+	}
+	return strings.Join(append(keys, "f , . rank"), " · ")
+}
+
+// queueRowLines draws one queue row with the renderer the brief page shares; the selected row opens under itself, and no other.
+func (m Model) queueRowLines(i int, n core.Need, label string) string {
+	line, side := core.RowLine(n, label, m.width, m.board.At)
+	later := label == core.LaterLabel
+	style := pal.plain
+	if later {
+		style = pal.dim
+	}
+	sel := i == m.cursor
+	switch {
+	case m.dyingAt[i]:
+		style = pal.red
+	case sel:
+		style = style.Reverse(true)
+	}
+	tag := m.hostTag(m.needHost(n))
+	if side != "" && tag != "" {
+		side = ansi.Truncate(" "+tag+side, max(1, m.width-ansi.StringWidth(line)), "…")
+	}
+	b := style.Render(line) + pal.dim.Render(side) + "\n"
 	if sel {
+		if tag != "" {
+			b += pal.dim.Render("  "+tag) + "\n"
+		}
+		for _, l := range core.RowDetail(n, m.width, m.board.At) {
+			b += pal.dim.Render("  "+l) + "\n"
+		}
+		if n.Item != nil {
+			if line := m.unprepared(*n.Item); line != "" {
+				b += pal.yellow.Render("  "+ansi.Truncate(line, max(10, m.width-2), "…")) + "\n"
+			}
+			if line := evidenceLine(*n.Item); line != "" {
+				b += pal.dim.Render("  "+ansi.Truncate(line, max(10, m.width-2), "…")) + "\n"
+			}
+		}
 		if n.Goal != nil && n.Goal.Evidence != "" {
-			b += pal.dim.Render("         "+n.Goal.Evidence) + "\n"
+			b += pal.dim.Render("  "+ansi.Truncate(oneLine(n.Goal.Evidence), max(10, m.width-2), "…")) + "\n"
 		}
-		for _, d := range n.Docs {
-			lines := []string{d.Asker + ": " + d.Text, d.URL}
-			if len(n.Docs) == 1 {
-				lines = append(strings.Split(d.Evidence, "\n"), d.URL)
-			}
-			for _, l := range lines {
-				b += pal.dim.Render("         "+ansi.Truncate(oneLine(l), max(10, m.width-10), "…")) + "\n"
-			}
-		}
-		b += pal.dim.Render("         "+keys) + "\n"
+		b += pal.dim.Render(ansi.Wordwrap("  "+queueKeys(n, later), max(10, m.width), " ")) + "\n"
 	}
-	return b, true
+	return b
 }
 
 func (m Model) goalView() viewPage {

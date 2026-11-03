@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
@@ -24,6 +27,11 @@ type briefSite struct {
 	mu   sync.Mutex
 	// standing maps manager ids to how they stood on the latest board.
 	standing map[string]string
+	// board is the latest board; the queue reads it, so a page load does no scan of its own.
+	board *core.Board
+	// secret is the token this serve puts in its forms; acted holds the rows acted on, which stay off the page until a new board drops them.
+	secret string
+	acted  map[string]bool
 	// public is the URL a proxy publishes the site at, as core.BriefsURL gives it; its path prefixes every link, and its host is
 	// answered along with addresses.
 	public string
@@ -43,6 +51,7 @@ func (s *briefSite) observe(b core.Board) {
 	}
 	s.mu.Lock()
 	s.standing = st
+	s.board = &b
 	s.mu.Unlock()
 }
 
@@ -129,7 +138,162 @@ func (s *briefSite) items(keep func(core.Item) bool) ([]itemView, error) {
 
 type indexData struct {
 	Roots []briefNode
-	Items []itemView
+	Queue queueView
+}
+
+// queueView is the owner's queue as the board draws it, from the same renderer.
+type queueView struct {
+	Header string
+	Rows   []queueRowView
+	Later  []queueRowView
+}
+
+// queueRowView is one row; Command is the ym command its check mark stands for, Link what its ▸ opens. Act names what POST /do/<ID>
+// does, empty when the row has nothing to do; Check says the closed row's mark does it.
+type queueRowView struct {
+	Line, Mark, Side, Command, Link, LinkText string
+	ID, Token, Act                            string
+	Check                                     bool
+	Detail                                    []string
+}
+
+func queueRow(n core.Need, label, token string, now time.Time) queueRowView {
+	line, side := core.RowLine(n, label, 200, now)
+	body, mark := line[:len(line)-len("▸")], line[len(line)-len("▸"):]
+	v := queueRowView{Line: body, Mark: mark, Side: side, Detail: core.RowDetail(n, core.QueueWidth, now), Check: n.Check() != core.CheckNone}
+	switch n.Accept() {
+	case core.CheckGo:
+		v.ID, v.Token, v.Act = n.RowID(), token, "go ahead"
+	case core.CheckAccept:
+		v.ID, v.Token, v.Act = n.RowID(), token, "accept rec"
+	case core.CheckMerge:
+		v.ID, v.Token, v.Act = n.RowID(), token, "merge"
+	}
+	switch {
+	case n.Item != nil:
+		v.Link, v.LinkText = fmt.Sprintf("/i/%d", n.Item.Seq), "full item"
+		switch n.Accept() {
+		case core.CheckGo:
+			v.Command = fmt.Sprintf("ym item go '%s'", n.Item.Key())
+		case core.CheckAccept:
+			v.Command = fmt.Sprintf("ym item answer '%s' %s", n.Item.Key(), shellQuote(n.Item.Rec))
+		}
+	case n.PR != nil:
+		v.Link, v.LinkText = n.PR.URL, "open on GitHub"
+	case n.Review != nil:
+		v.Link, v.LinkText = n.Review.URL, "open on GitHub"
+	case n.Doc != nil:
+		v.Link, v.LinkText = n.Doc.URL, "open document"
+	}
+	return v
+}
+
+// latest is the serve loop's board; before its first one it reads one.
+func (s *briefSite) latest() (core.Board, error) {
+	s.mu.Lock()
+	b := s.board
+	s.mu.Unlock()
+	if b != nil {
+		return *b, nil
+	}
+	return s.core.Board()
+}
+
+// token is this serve's form token, made on first use.
+func (s *briefSite) token() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.secret == "" {
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			return "", err
+		}
+		s.secret = hex.EncodeToString(raw)
+	}
+	return s.secret, nil
+}
+
+// unacted drops the rows an action already took; the board shows it a cycle later.
+func (s *briefSite) unacted(ns []core.Need) []core.Need {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.DeleteFunc(slices.Clone(ns), func(n core.Need) bool { return s.acted[n.RowID()] })
+}
+
+func (s *briefSite) queue() (queueView, error) {
+	b, err := s.latest()
+	if err != nil {
+		return queueView{}, err
+	}
+	token, err := s.token()
+	if err != nil {
+		return queueView{}, err
+	}
+	now, needs, later := time.Now(), s.unacted(b.Needs), s.unacted(b.Later)
+	v := queueView{Header: core.QueueHeader(needs, len(later))}
+	for i, label := range core.RankLabels(len(needs)) {
+		v.Rows = append(v.Rows, queueRow(needs[i], label, token, now))
+	}
+	for _, n := range later {
+		v.Later = append(v.Later, queueRow(n, core.LaterLabel, token, now))
+	}
+	return v, nil
+}
+
+// sameOrigin reports whether the browser says the form came from this site.
+func (s *briefSite) sameOrigin(r *http.Request) bool {
+	u, err := url.Parse(r.Header.Get("Origin"))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host) || s.publicHost(u.Host)
+}
+
+// serveDo carries out what the row named id says, through the path the board's check mark takes. id binds the row's words and head,
+// so a page older than the queue acts on the same row as it read or on nothing.
+func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "post only", http.StatusMethodNotAllowed)
+		return
+	}
+	token, err := s.token()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !s.sameOrigin(r) || subtle.ConstantTimeCompare([]byte(r.PostFormValue("token")), []byte(token)) != 1 {
+		http.Error(w, "this page is out of date or not from this site; reload it", http.StatusForbidden)
+		return
+	}
+	b, err := s.latest()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var need *core.Need
+	for _, ns := range [][]core.Need{s.unacted(b.Needs), s.unacted(b.Later)} {
+		for i := range ns {
+			if ns[i].RowID() == id && ns[i].Accept() != core.CheckNone {
+				need = &ns[i]
+			}
+		}
+	}
+	if need == nil {
+		http.Error(w, "this row changed since you read it, so nothing was done; go back and reload", http.StatusConflict)
+		return
+	}
+	if _, err := s.core.DoCheck(b, *need); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.mu.Lock()
+	if s.acted == nil {
+		s.acted = map[string]bool{}
+	}
+	s.acted[id] = true
+	s.mu.Unlock()
+	http.Redirect(w, r, s.prefix()+"/", http.StatusSeeOther)
 }
 
 func (n briefNode) Age(t time.Time) string {
@@ -154,6 +318,10 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if path == "/site.js" {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		fmt.Fprint(w, siteScript)
+		return
+	}
+	if id, ok := strings.CutPrefix(path, "/do/"); ok {
+		s.serveDo(w, r, id)
 		return
 	}
 	o, err := s.core.LoadOrg()
@@ -210,11 +378,12 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var d indexData
 		seen := map[string]bool{}
 		for _, m := range o.Ordered() {
-			if o.Active(m) && (m.ParentID == "" || !o.Active(o.Managers[m.ParentID])) {
+			parent, here := o.Managers[m.ParentID]
+			if o.Active(m) && (!here || !o.Active(parent)) {
 				d.Roots = append(d.Roots, build(m, 64, seen))
 			}
 		}
-		if d.Items, err = s.items(func(it core.Item) bool { return it.State == core.ItemOpen && it.Recipient == core.Owner }); err != nil {
+		if d.Queue, err = s.queue(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -416,12 +585,15 @@ a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacin
 .sec{white-space:pre-wrap;margin:0}.plan{white-space:pre-wrap;border-left:3px solid var(--line);padding-left:12px}
 .copy{user-select:none;-webkit-user-select:none;font-size:12px;font-weight:normal;letter-spacing:0;color:var(--dim);background:none;border:1px solid var(--line);border-radius:6px;padding:0 8px;margin-left:8px;cursor:pointer;vertical-align:middle}
 .copy:hover{color:var(--fg)}
+.q{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px}.q .line{white-space:pre}.q summary{list-style:none;cursor:pointer;white-space:pre;overflow:hidden}.q summary::-webkit-details-marker{display:none}
+.q .side{display:none;color:var(--dim)}@media (min-width:800px){.q .side{display:inline}}.q .open{border-left:3px solid var(--line);padding-left:8px;margin:2px 0 8px;color:var(--dim);white-space:normal}.q .open div{margin:2px 0}
+.q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;padding:2px 10px;margin:4px 0;cursor:pointer}
 ul{padding-left:18px}li{margin:6px 0}
 </style>
 <script src="{{at "/site.js"}}"></script>`
 
-// siteScript carries the copy buttons, and reloads the page every 30 seconds only while no text is selected, so a reload never
-// drops a selection the owner is copying. It is a file of its own, which a proxy's same-origin script policy lets run.
+// siteScript carries the copy buttons, and reloads the page every 30 seconds only while no text is selected and no queue row is
+// open, so a reload never drops what the owner is reading or copying. It is a file of its own, which a proxy's same-origin script policy lets run.
 const siteScript = `document.addEventListener("click", e => {
 	const b = e.target.closest("[data-copy]");
 	if (!b) return;
@@ -436,7 +608,7 @@ const siteScript = `document.addEventListener("click", e => {
 		done();
 	});
 });
-setInterval(() => { if (getSelection().isCollapsed) location.reload() }, 30000);
+setInterval(() => { if (getSelection().isCollapsed && !document.querySelector(".q details[open]")) location.reload() }, 30000);
 `
 
 type copyButton struct{ Label, Text string }
@@ -448,10 +620,13 @@ const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.
 	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.ID}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p></div>{{end}}{{end}}`
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
-<h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected.</p>
+<h1>Needs you</h1>
+{{define "queuerow"}}<details name="queue"><summary><span class="line">{{.Line}}</span>{{if .Check}}<button class="check" type="submit" form="do-{{.ID}}" aria-label="{{.Act}}">{{.Mark}}</button>{{else}}<span class="line">{{.Mark}}</span>{{end}}<span class="side">{{.Side}}</span></summary><div class="open">{{range .Detail}}<div>{{.}}</div>{{end}}{{if .Act}}<form id="do-{{.ID}}" method="post" action="{{at "/do/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">{{.Act}}</button></form>{{end}}{{if .Command}}<div><code>{{.Command}}</code>{{template "copy" (copy "command" .Command)}}</div>{{end}}{{if .Link}}<div><a href="{{if eq (slice .Link 0 1) "/"}}{{at .Link}}{{else}}{{.Link}}{{end}}">{{.LinkText}}</a></div>{{end}}</div></details>{{end}}
+<div class="q"><div class="line">{{.Queue.Header}}</div>{{range .Queue.Rows}}{{template "queuerow" .}}{{end}}
+{{if .Queue.Later}}<details><summary>later {{len .Queue.Later}} ▾</summary>{{range .Queue.Later}}{{template "queuerow" .}}{{end}}</details>{{end}}</div>
+<h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected and no row is open.</p>
 {{define "tree"}}<ul>{{range .}}<li><a href="{{at "/b/"}}{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}{{end}}</b></a> {{if ne .Kind "chief"}}{{.Title}}{{end}}<br>{{template "tags" .}}{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}<div class="meta">{{.Fresh.Brief.Assessment}}</div>{{end}}{{if .Reports}}{{template "tree" .Reports}}{{end}}</li>{{end}}</ul>{{end}}
 {{if .Roots}}{{template "tree" .Roots}}{{else}}<p>No goals. Start one with <code>ym goal "&lt;ask&gt;"</code>.</p>{{end}}
-{{if .Items}}<h2>Open items for you</h2>{{template "items" .Items}}{{end}}
 </body></html>`))
 
 var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>item {{.ID}}</title>` + siteStyle + `</head><body>

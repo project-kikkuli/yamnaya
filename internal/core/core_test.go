@@ -239,7 +239,7 @@ func TestDuplicateProcessesOnOneSessionAreFlagged(t *testing.T) {
 	}
 }
 
-func TestNeedsListPermissionPromptsThenItemsByBlocks(t *testing.T) {
+func TestNeedsRankWhatBlocksMostOverAQuickPrompt(t *testing.T) {
 	w := newWorld(t)
 	w.run(10, 1, "/dev/t1", "claude", "a", Waiting)
 	w.claude.sessions[10] = Session{ID: "a", Status: Waiting, WaitingFor: "permission prompt"}
@@ -267,12 +267,12 @@ func TestNeedsListPermissionPromptsThenItemsByBlocks(t *testing.T) {
 			got = append(got, n.Session.Prompt.Tool)
 		}
 	}
-	want := []string{"Bash: ls", "Shell: rm", "high", "gone session", "low"}
+	want := []string{"high", "Bash: ls", "Shell: rm", "gone session", "low"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("needs = %v, want %v", got, want)
 	}
-	if len(b.Stale) != 0 {
-		t.Errorf("open owner requests must not be hidden as stale: %+v", b.Stale)
+	if len(b.Later) != 0 {
+		t.Errorf("open owner requests must not be hidden as stale: %+v", b.Later)
 	}
 	if _, ok := b.Project("ended"); !ok {
 		t.Error("an open item from an ended session should keep its project on the board")

@@ -152,14 +152,14 @@ func nextNum(tx *sql.Tx, scope string) (int64, error) {
 
 func idFor(kind string, num int64) string { return kindPrefix[kind] + strconv.FormatInt(num, 10) }
 
-const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier, preparer, goal_owner`
+const itemCols = `seq, scope, id, alias, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, answer, reason, answered_at, delivered_at, held_at, action, recipient, evidence, tried, dossier, preparer, goal_owner, do_line, impact, minutes, pin, pin_owner, snooze_until`
 
 func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 	var it Item
 	var opts, evidence, dossier string
-	var created, answered, delivered, held sql.NullString
+	var created, answered, delivered, held, snoozeUntil sql.NullString
 	if err := row.Scan(&it.Seq, &it.Scope, &it.ID, &it.Alias, &it.Kind, &it.Question, &it.Rec, &opts, &it.Assumption, &it.Blocks, &it.Session, &it.Harness,
-		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier, &it.Preparer, &it.GoalOwner); err != nil {
+		&created, &it.State, &it.Answer, &it.Reason, &answered, &delivered, &held, &it.Action, &it.Recipient, &evidence, &it.Tried, &dossier, &it.Preparer, &it.GoalOwner, &it.DoLine, &it.Impact, &it.Minutes, &it.Pin, &it.PinOwner, &snoozeUntil); err != nil {
 		return it, err
 	}
 	if err := json.Unmarshal([]byte(opts), &it.Options); err != nil {
@@ -174,6 +174,7 @@ func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 		}
 	}
 	it.CreatedAt, it.AnsweredAt, it.Delivered, it.Held = parseTime(created), parseTime(answered), parseTime(delivered), parseTime(held)
+	it.SnoozeUntil = parseTime(snoozeUntil)
 	return it, nil
 }
 
@@ -194,6 +195,9 @@ func (s *Store) addItem(it Item) (Item, error) {
 	}
 	if it.Session == "" {
 		return it, errors.New("item needs a source session")
+	}
+	if err := checkQueueFields(it.DoLine, it.Impact, it.Minutes); err != nil {
+		return it, err
 	}
 	if it.Options == nil {
 		it.Options = []Option{}
@@ -234,10 +238,10 @@ func (s *Store) addItem(it Item) (Item, error) {
 		return it, err
 	}
 	it.ID, it.State, it.CreatedAt = idFor(it.Kind, num), ItemOpen, time.Now().UTC()
-	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient, evidence, tried, dossier, goal_owner)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
+	err = tx.QueryRow(`INSERT INTO ym_items (scope, num, id, kind, question, rec, options, assumption, blocks, session, harness, created_at, state, action, recipient, evidence, tried, dossier, goal_owner, do_line, impact, minutes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq`,
 		it.Scope, num, it.ID, it.Kind, it.Question, it.Rec, string(opts), it.Assumption, it.Blocks, it.Session, it.Harness,
-		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient, string(evidence), it.Tried, dossier, it.GoalOwner).Scan(&it.Seq)
+		it.CreatedAt.Format(time.RFC3339Nano), it.State, it.Action, it.Recipient, string(evidence), it.Tried, dossier, it.GoalOwner, it.DoLine, it.Impact, it.Minutes).Scan(&it.Seq)
 	if err != nil {
 		return it, err
 	}
@@ -413,7 +417,7 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL, held_at = NULL WHERE seq = ? AND state = ?`,
+	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL, held_at = NULL, snooze_until = NULL WHERE seq = ? AND state = ?`,
 		to, answer, reason, answeredAt, it.Seq, it.State)
 	if err != nil {
 		return it, err

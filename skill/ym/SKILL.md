@@ -39,7 +39,8 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
   --rec "<what you recommend>" \
   --option "<label>=<effect>" --option "<label>=<effect>" \
   --evidence "<PR, CI run, commit or file>" --tried "<what you tried>" \
-  --assumption "<what you assume meanwhile>" --blocks <n>
+  --assumption "<what you assume meanwhile>" --blocks <n> \
+  --do "<imperative, at most 28 characters>" --impact prod|clinical|agents|routine --minutes <n>
 ```
 
 - `decision`: you need a choice before continuing.
@@ -47,6 +48,9 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
 - `chore`: an action only a human can take (login, approval, payment).
 - `go`: you wait on the owner's go-ahead to build; see above.
 - `--blocks`: how many pieces of your work wait on the answer.
+- `--do`: the words of the owner's queue row, stating the rec as an action ("fix QA-51 in qa-hub"). The check mark on a decision does what these words say, by answering with `--rec`, so a decision without `--do` shows the question cut to fit and no check mark. `ym item prepare` takes `--do`, `--impact` and `--minutes` too.
+- `--impact`: `prod` or `clinical` puts the row at the head of the queue; set it when that is true. `--minutes`: what the owner's part takes, when the kind's default (go 1, decision 3) is wrong.
+- A manager or chief can pin a row with `ym item rank '<#key>' top|up|down`; the owner's own rank or snooze stands over it.
 
 Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. Cite what the call rests on with one `--evidence` per pull request, CI run, commit or file, and say what you already tried with `--tried`.
 

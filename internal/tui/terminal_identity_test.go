@@ -37,7 +37,7 @@ func TestTerminalOpenKeepsSelectedHostThroughEveryView(t *testing.T) {
 							}
 						}
 						r := &terminalRemotes{remotes: remotes{boards: []core.RemoteBoard{{Host: "box", At: time.Now(),
-							Items: []core.Item{{Host: "box", Seq: 77, ID: "D77", Session: "twin", State: core.ItemOpen, Question: "Remote question"}},
+							Items: []core.Item{{Host: "box", Seq: 77, ID: "D77", Kind: core.KindDecision, Minutes: 1, Session: "twin", State: core.ItemOpen, Question: "Remote question"}},
 						}}}}
 						for i := range copies {
 							r.boards[0].Sessions = append(r.boards[0].Sessions, core.Live{Session: core.Session{
