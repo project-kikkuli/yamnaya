@@ -316,9 +316,10 @@ func (o Org) lookup(ref string) (Manager, error) {
 			}
 		}
 	}
+	host, rest, qualified := SplitRemote(ref)
 	var named []Manager
 	for _, m := range o.Managers {
-		if strings.EqualFold(m.Name, ref) {
+		if strings.EqualFold(m.Name, ref) || qualified && m.Host == host && strings.EqualFold(m.Name, rest) {
 			named = append(named, m)
 		}
 	}

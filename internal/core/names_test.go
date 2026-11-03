@@ -164,7 +164,16 @@ func TestAnotherHostsGoalIsRenamedOnItsHostAndShowsByTheNameItsHostReports(t *te
 				Managers: []Manager{{ID: "mgr3", Role: RoleManager, Name: "make-login-faster", GoalID: "goal2"}},
 				Goals:    []Goal{{ID: "goal2", Name: "make-login-faster", Ask: "make login faster", ManagerID: "mgr3"}}}}}
 			w.core.Remotes, w.core.ShowRemotes = r, true
-			n := node(t, w.board(t), "box/mgr3")
+			w.core.Namer = func(string) string { return "make-login-faster" }
+			w.goal(t, "make login faster here too", "/repo/august")
+			b := w.board(t)
+			o := b.Org
+			for ref, want := range map[string]string{"box/make-login-faster": "box/mgr3", "make-login-faster": "mgr1"} {
+				if got, err := o.Lookup(ref); err != nil || got.ID != want {
+					t.Fatalf("Lookup(%q) = %s, %v; want %s", ref, got.ID, err, want)
+				}
+			}
+			n := node(t, b, "box/mgr3")
 			if n.Goal.Ref() != "box/make-login-faster" || n.Manager.Ref() != "box/make-login-faster" {
 				t.Fatalf("another host's goal shows as %q, its manager %q; want both box/make-login-faster", n.Goal.Ref(), n.Manager.Ref())
 			}
