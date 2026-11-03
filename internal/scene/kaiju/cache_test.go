@@ -18,8 +18,9 @@ func TestWeatherFollowsTheCurrentSnapshot(t *testing.T) {
 	scene.Colors = scene.TrueColor
 	t.Cleanup(func() { scene.Colors = old })
 	for _, weather := range []scene.Weather{scene.Clouds, scene.Storm, scene.Eruption} {
-		for _, change := range []string{"progress", "resize", "weather", "selection", "remove", "daylight", "nested", "kill", "reappearance"} {
+		for _, change := range []string{"progress", "resize", "weather", "selection", "remove", "daylight", "nested", "kill", "reappearance", "colors"} {
 			t.Run(strconv.Itoa(int(weather))+"/"+change, func(t *testing.T) {
+				scene.Colors = scene.TrueColor
 				s := lone(func(p *scene.Peak) { p.Weather = weather })
 				w, h := 160, 48
 				Kaiju{}.Paint(s, w, h, 5, scene.Rect{})
@@ -44,6 +45,8 @@ func TestWeatherFollowsTheCurrentSnapshot(t *testing.T) {
 					s.Ranges[0].Peaks[1].Dying = .5
 					Kaiju{}.Paint(s, w, h, 7, scene.Rect{})
 					s.Ranges[0].Peaks[1].Dying = 0
+				case "colors":
+					scene.Colors = scene.ANSI256
 				}
 				warm := Kaiju{}.Paint(s, w, h, 9, scene.Rect{}).Draw("")
 				backdrops.Lock()

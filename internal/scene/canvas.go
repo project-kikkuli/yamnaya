@@ -3,6 +3,7 @@ package scene
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -29,12 +30,30 @@ func inkOf(fg, bg RGB) ink { return inkColor | ink(Code(fg))<<24 | ink(Code(bg))
 
 // Blank is a canvas of empty cells, where a scene rises from nothing.
 func Blank(width, height int) *Canvas {
-	c := &Canvas{w: width, h: height, ink: make([]ink, width*height), glyph: make([]string, width*height)}
+	c := sized(width, height)
+	clear(c.ink)
 	for i := range c.glyph {
 		c.glyph[i] = " "
 	}
 	return c
 }
+
+var recycled sync.Pool
+
+// sized is a canvas of width x height whose cells hold whatever they held; the caller overwrites them all.
+func sized(width, height int) *Canvas {
+	n := width * height
+	c, _ := recycled.Get().(*Canvas)
+	if c == nil || cap(c.ink) < n {
+		return &Canvas{w: width, h: height, ink: make([]ink, n), glyph: make([]string, n)}
+	}
+	c.w, c.h, c.box = width, height, Rect{}
+	c.ink, c.glyph = c.ink[:n], c.glyph[:n]
+	return c
+}
+
+// Recycle hands c's cells to a later canvas; c is not read after.
+func (c *Canvas) Recycle() { recycled.Put(c) }
 
 // NewCanvas is a blank canvas a theme paints, with the table to float over box; cells under box are never shown.
 func NewCanvas(width, height int, box Rect) *Canvas {
@@ -47,6 +66,13 @@ func NewCanvas(width, height int, box Rect) *Canvas {
 func (c *Canvas) Set(x, y int, fg, bg RGB, glyph string) {
 	if x >= 0 && y >= 0 && x < c.w && y < c.h {
 		c.ink[y*c.w+x], c.glyph[y*c.w+x] = inkOf(fg, bg), glyph
+	}
+}
+
+// SetCode is Set for colors already turned into their Code.
+func (c *Canvas) SetCode(x, y, fg, bg int, glyph string) {
+	if x >= 0 && y >= 0 && x < c.w && y < c.h {
+		c.ink[y*c.w+x], c.glyph[y*c.w+x] = inkColor|ink(fg)<<24|ink(bg), glyph
 	}
 }
 
@@ -81,7 +107,10 @@ func (c *Canvas) Toward(goal *Canvas, n int) (*Canvas, int) {
 	if !c.Fits(goal.w, goal.h) {
 		c = Blank(goal.w, goal.h)
 	}
-	out := &Canvas{w: c.w, h: c.h, box: goal.box, ink: append([]ink(nil), c.ink...), glyph: append([]string(nil), c.glyph...)}
+	out := sized(c.w, c.h)
+	out.box = goal.box
+	copy(out.ink, c.ink)
+	copy(out.glyph, c.glyph)
 	left := 0
 	for y := c.h - 1; y >= 0; y-- {
 		for x := 0; x < c.w; x++ {

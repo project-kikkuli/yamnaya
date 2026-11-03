@@ -119,6 +119,7 @@ func shape(width, height int, dark bool, now time.Time, l layout) string {
 	b = strconv.AppendInt(b, int64(width), 10)
 	b = strconv.AppendInt(append(b, ' '), int64(height), 10)
 	b = strconv.AppendBool(append(b, ' '), dark)
+	b = strconv.AppendInt(append(b, ' '), int64(scene.Colors), 10)
 	b = now.AppendFormat(append(b, ' '), time.TimeOnly)
 	for _, d := range l.districts {
 		b = strconv.AppendUint(append(b, '|'), d.seed, 16)

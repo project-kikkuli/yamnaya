@@ -32,6 +32,8 @@ type mountains struct {
 	quiet time.Time
 	// screen is the mountains as sent to the terminal, which follow the scene a frame's worth of bytes at a time.
 	screen *onScreen
+	// built is the board's ranges as last drawn.
+	built *builtRanges
 	// theme names the theme drawn; themeSeq counts L presses, so a board read from before one keeps it.
 	theme    string
 	themeSeq int
@@ -40,10 +42,20 @@ type mountains struct {
 }
 
 type onScreen struct {
-	c       *scene.Canvas
+	c *scene.Canvas
+	// goal is the scene last painted, which c follows.
+	goal    *scene.Canvas
 	pending bool
 	// left is how many cells still differ from the scene; ver counts changes to c.
 	left, ver int
+}
+
+// builtRanges holds a board's ranges for as long as its generation and minute last. A falling unit is drawn into a
+// scene's ranges, so scenes with falls neither use nor keep them.
+type builtRanges struct {
+	gen    uint64
+	minute time.Time
+	ranges []scene.Range
 }
 
 // cellBytes is about what one changed cell of mountains costs on the wire, colors and cursor moves included.
@@ -52,7 +64,7 @@ const cellBytes = 40
 type mountainFrame struct{}
 
 func newMountains() mountains {
-	return mountains{hidden: true, kills: map[string]fall{}, dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}}
+	return mountains{hidden: true, kills: map[string]fall{}, dark: lipgloss.HasDarkBackground(os.Stdin, os.Stdout), start: time.Now(), screen: &onScreen{}, built: &builtRanges{}}
 }
 
 // settle moves the mountains on screen toward the scene: by what the terminal takes in a frame when step is
@@ -81,7 +93,10 @@ func (m *Model) settle(step bool) {
 		page = &prepared
 	}
 	goal := scene.Paint(m.sceneOf(), m.width, m.height, m.peaks.frame, tableText(*page))
-	sc.pending = false
+	if sc.goal != nil && sc.goal != goal {
+		sc.goal.Recycle()
+	}
+	sc.goal, sc.pending = goal, false
 	n := 0
 	switch {
 	case scene.ReducedMotion:
@@ -91,6 +106,7 @@ func (m *Model) settle(step bool) {
 	}
 	c, left := sc.c.Toward(goal, n)
 	if left != sc.left || n > 0 {
+		sc.c.Recycle()
 		sc.c, sc.left = c, left
 		sc.ver++
 	}
@@ -158,6 +174,12 @@ func (m Model) sceneOf() scene.Scene { return m.falling(m.boardScene(), time.Now
 func (m Model) boardScene() scene.Scene {
 	b := m.board
 	s := scene.Scene{Theme: m.peaks.theme, Dark: m.peaks.dark, Selected: m.peakOf(), Now: time.Now().Truncate(time.Minute)}
+	built := m.peaks.built
+	keep := built != nil && b.Gen != 0 && len(m.peaks.kills) == 0
+	if keep && built.gen == b.Gen && built.minute.Equal(s.Now) {
+		s.Ranges = built.ranges
+		return s
+	}
 	waiting := needs(b)
 	repos := map[string]*scene.Range{}
 	var order []string
@@ -192,6 +214,9 @@ func (m Model) boardScene() scene.Scene {
 	}
 	for _, name := range order {
 		s.Ranges = append(s.Ranges, *repos[name])
+	}
+	if keep {
+		*built = builtRanges{gen: b.Gen, minute: s.Now, ranges: s.Ranges}
 	}
 	return s
 }

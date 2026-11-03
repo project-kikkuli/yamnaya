@@ -9,11 +9,14 @@ import (
 // backdrop is the set as it holds still, in greys before the film prints them: the night sky and moon, the far
 // city, each district's low blocks, pagodas and pylons, the tower, the quay and the bay. Frames add what moves.
 type backdrop struct {
-	pal  palette
-	ink  *[256]rgb
-	w, p int
-	l    layout
-	lum  []float32
+	pal palette
+	ink *[256]rgb
+	// inkCode is each of ink's colors as the terminal sees it, and blackCode the bars'.
+	inkCode   *[256]int
+	blackCode int
+	w, p      int
+	l         layout
+	lum       []float32
 	// vig is how much the lens darkens each pixel toward the corners; the letterbox is 0.
 	vig []float32
 	// phase is each water pixel's place in the swell, 0..31; dry pixels are noSwell.
@@ -30,8 +33,11 @@ const noSwell = 255
 
 func build(pal palette, l layout, w, rows int) *backdrop {
 	p := rows * 2
-	b := &backdrop{pal: pal, ink: pal.print(), w: w, p: p, l: l, lum: make([]float32, w*p), vig: make([]float32, w*p),
+	b := &backdrop{pal: pal, ink: pal.print(), inkCode: new([256]int), blackCode: scene.Code(scene.Black), w: w, p: p, l: l, lum: make([]float32, w*p), vig: make([]float32, w*p),
 		phase: make([]uint8, w*p), solid: make([]bool, w*p)}
+	for i, c := range b.ink {
+		b.inkCode[i] = scene.Code(c)
+	}
 	for k := range b.phase {
 		b.phase[k] = noSwell
 	}
