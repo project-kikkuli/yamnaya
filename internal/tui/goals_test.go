@@ -820,3 +820,127 @@ func TestANeedsYouRowLeadsWithTheGoalsNameAndEndsWithItsKey(t *testing.T) {
 		})
 	}
 }
+
+func TestABoardRowShowsTheWholeNameWhenTheWidthHasRoomForIt(t *testing.T) {
+	const long = "teach-the-board-to-scroll-its-long-rows"
+	for _, tc := range []struct {
+		name  string
+		width int
+		whole bool
+	}{
+		{"a wide board", 180, true},
+		{"a board of a hundred columns", 100, true},
+		{"a narrow board", 60, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "short ask")
+			if _, err := c.Rename(ms[0].ID, long); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			for _, i := range []int{-1, 0} {
+				m.cursor = 0
+				line, _, _ := strings.Cut(ansi.Strip(m.nodeLines(i, m.board.Tree[0], 0)), "\n")
+				if got := strings.Contains(line, long); got != tc.whole {
+					t.Fatalf("whole name shown %v, want %v, at %d columns:\n%s", got, tc.whole, tc.width, line)
+				}
+				if ansi.StringWidth(line) > tc.width {
+					t.Fatalf("row is %d wide, past %d columns:\n%s", ansi.StringWidth(line), tc.width, line)
+				}
+			}
+		})
+	}
+}
+
+func TestShortNamesLeaveTheBoardColumnNoWiderThanTheLongest(t *testing.T) {
+	m, c, ms := goalSetup(t, "one", "two")
+	for i, name := range []string{"a-name-of-twenty-char", "short-one"} {
+		if _, err := c.Rename(ms[i].ID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = refresh(t, m)
+	m.width = 180
+	if got, want := m.nameColumn(0), len("a-name-of-twenty-char"); got != want {
+		t.Fatalf("name column is %d wide, want %d", got, want)
+	}
+}
+
+// renameRemotes is a host that answers a rename the way ym there does.
+type renameRemotes struct {
+	remotes
+	refuse error
+}
+
+func (r *renameRemotes) Run(host string, args ...string) (string, error) {
+	r.ran = append(r.ran, append([]string{host}, args...))
+	return "", r.refuse
+}
+
+func TestNOnAnotherHostsGoalRenamesItThereAndARefusalKeepsTheInputOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		open  bool
+		shows string
+	}{
+		{name: "the host renames it", shows: "login-box is now login-b2"},
+		{name: "the name is taken there", err: fmt.Errorf("ym goal rename login-box login-b2 on %s: login-b2 already names a goal or chief here", box), open: true, shows: "login-b2 already names a goal or chief here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, _ := setup(t)
+			r := &renameRemotes{refuse: tc.err}
+			r.boards = []core.RemoteBoard{{Host: box, At: time.Now(),
+				Managers: []core.Manager{{ID: "mgr1", Role: core.RoleManager, Name: "login-box", GoalID: "goal1"}},
+				Goals:    []core.Goal{{ID: "goal1", Name: "login-box", Ask: "faster login", ManagerID: "mgr1"}}}}
+			c.Remotes, c.ShowRemotes = r, true
+			m.width, m.peaks.hidden = 140, true
+			m = refresh(t, m)
+			m = press(t, to(t, m, isNode(core.RemoteKey(box, "mgr1"))), "N")
+			m = press(t, m, strings.Split("login-b2", "")...)
+			m = press(t, m, "enter")
+			if want := []string{box, "goal", "rename", "login-box", "login-b2"}; len(r.ran) != 1 || !slices.Equal(r.ran[0], want) {
+				t.Fatalf("ran %v, want %v", r.ran, want)
+			}
+			if open := m.mode == modeInput && m.inKind == inName; open != tc.open {
+				t.Fatalf("input open %v, want %v", open, tc.open)
+			}
+			view := ansi.Strip(m.View().Content)
+			if !strings.Contains(view, tc.shows) {
+				t.Fatalf("view does not say %q:\n%s", tc.shows, view)
+			}
+			if strings.Contains(view, "mgr1") {
+				t.Fatalf("view shows the id:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestNOnAGoalsAgentRowStartsANewGoalAsTheHelpSays(t *testing.T) {
+	m, _, ms := goalSetup(t, "make login faster")
+	m = press(t, to(t, m, isNode(ms[0].ID)), "enter")
+	if m.mode != modeGoal {
+		t.Fatalf("enter went to mode %v, want the goal's page", m.mode)
+	}
+	m.board.Tree[0].Agents = []core.Live{{Session: core.Session{Harness: "claude", ID: "agent1", Title: "an agent", Repo: "/src/app"}}}
+	m = press(t, to(t, m, isSession("agent1")), "N")
+	if m.mode != modeInput || m.inKind != inGoal {
+		t.Fatalf("N on an agent row went to mode %v input %v, want a new goal's ask:\n%s", m.mode, m.inKind, m.View().Content)
+	}
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "goal in ") {
+		t.Fatalf("the prompt does not say it starts a goal:\n%s", v)
+	}
+}
+
+func TestAnItemsEvidenceLineNamesItsGoal(t *testing.T) {
+	m, c, ms := goalSetup(t, "make login faster")
+	if _, err := c.Rename(ms[0].ID, "faster-login"); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	line := evidenceLine(m.board.Org, core.Item{Dossier: core.Dossier{Goal: ms[0].GoalID}})
+	if !strings.Contains(line, "faster-login") || strings.Contains(line, ms[0].GoalID) {
+		t.Fatalf("evidence line %q, want the goal's name and not its id", line)
+	}
+}

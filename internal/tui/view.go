@@ -740,7 +740,9 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 func (m Model) needLines(i int, n core.Need) string {
 	where := m.projectName(n.Project)
 	if n.Item != nil {
-		where = m.board.Org.ItemLead(*n.Item)
+		if lead := m.board.Org.ItemName(*n.Item); lead != "" {
+			where = lead
+		}
 	}
 	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
@@ -793,7 +795,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		if line := m.unprepared(*it); line != "" {
 			b.WriteString(pal.yellow.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
 		}
-		if line := evidenceLine(*it); line != "" {
+		if line := evidenceLine(m.board.Org, *it); line != "" {
 			b.WriteString(pal.dim.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
 		}
 		b.WriteString(pal.dim.Render("         "+keys) + "\n")
@@ -1046,7 +1048,7 @@ func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
 		line = pal.dim.Render(line)
 	}
 	out := line + "\n"
-	if ev := evidenceLine(it); ev != "" && i == m.cursor {
+	if ev := evidenceLine(m.board.Org, it); ev != "" && i == m.cursor {
 		out += pal.dim.Render("         "+ansi.Truncate(ev, max(10, m.width-10), "…")) + "\n"
 	}
 	if it.Answer != "" {
@@ -1367,11 +1369,11 @@ func (m Model) unprepared(it core.Item) string {
 }
 
 // evidenceLine sums up an item's evidence in one line: its goal, pull requests with CI, and what changed since the owner looked.
-func evidenceLine(it core.Item) string {
+func evidenceLine(o core.Org, it core.Item) string {
 	var parts []string
 	d := it.Dossier
 	if d.Goal != "" {
-		parts = append(parts, d.Goal)
+		parts = append(parts, o.ItemLead(it))
 	}
 	if len(it.Evidence) > 0 {
 		parts = append(parts, fmt.Sprintf("%d cited", len(it.Evidence)))

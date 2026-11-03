@@ -77,7 +77,7 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 					return err
 				}
 				if text == "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "%s unchanged at revision %d\n", m.ID, rev)
+					fmt.Fprintf(cmd.OutOrStdout(), "%s unchanged at revision %d\n", m.Shown(), rev)
 					return nil
 				}
 			}
@@ -97,10 +97,10 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				return err
 			}
 			if st.Pending != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.ID, st.Pending, author, author)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.Shown(), st.Pending, author, author)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s steered to revision %d; it shows unadopted until its manager runs ym goal adopt %s --revision %d\n", m.ID, st.Revision, m.ID, st.Revision)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s steered to revision %d; it shows unadopted until its manager runs ym goal adopt %s --revision %d\n", m.Shown(), st.Revision, m.Shown(), st.Revision)
 			return nil
 		}),
 	}
@@ -131,7 +131,11 @@ func goalAdoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s adopted revision %d\n", st.Manager, st.Revision)
+			o, err := e.core.LoadOrg()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s adopted revision %d\n", o.ShownOf(st.Manager), st.Revision)
 			return nil
 		}),
 	}
@@ -161,7 +165,11 @@ func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if !all && len(steers) > 0 {
 				steers = steers[len(steers)-1:]
 			}
-			writeContext(cmd.OutOrStdout(), m.ID, text, steers)
+			o, err := e.core.LoadOrg()
+			if err != nil {
+				return err
+			}
+			writeContext(cmd.OutOrStdout(), o, m.Shown(), text, steers)
 			return nil
 		}),
 	}
@@ -171,7 +179,7 @@ func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 }
 
 // writeContext prints id's context revisions, or the ask it started with when it has none.
-func writeContext(w io.Writer, id, ask string, steers []core.Steer) {
+func writeContext(w io.Writer, o core.Org, id, ask string, steers []core.Steer) {
 	if len(steers) == 0 {
 		fmt.Fprintf(w, "%s revision 0, the ask it started with:\n\n%s\n", id, ask)
 		return
@@ -180,7 +188,7 @@ func writeContext(w io.Writer, id, ask string, steers []core.Steer) {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
-		fmt.Fprintf(w, "%s revision %d by %s at %s, %s:\n\n%s\n", id, st.Revision, st.By(), st.CreatedAt.Local().Format(time.DateTime), adoption(st), st.Text)
+		fmt.Fprintf(w, "%s revision %d by %s at %s, %s:\n\n%s\n", id, st.Revision, o.SteerBy(st), st.CreatedAt.Local().Format(time.DateTime), adoption(st), st.Text)
 	}
 }
 
@@ -207,7 +215,12 @@ func goalBriefCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s brief v%d recorded; %s\n", b.Manager, b.Version, e.core.BriefURL(b.Manager))
+			o, err := e.core.LoadOrg()
+			if err != nil {
+				return err
+			}
+			shown := o.ShownOf(b.Manager)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s brief v%d recorded; %s\n", shown, b.Version, e.core.BriefURL(shown))
 			return nil
 		}),
 	}

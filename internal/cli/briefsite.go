@@ -263,7 +263,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if n.Ask = o.Ask(m); len(n.Context) > 0 || n.Ask != "" {
 		var sb strings.Builder
-		writeContext(&sb, m.ID, n.Ask, n.Context)
+		writeContext(&sb, o, m.Shown(), n.Ask, n.Context)
 		n.ContextText = clipboard.Clean(sb.String())
 	}
 	slices.Reverse(n.Context)

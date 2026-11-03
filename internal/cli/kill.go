@@ -58,7 +58,7 @@ func kill(c *core.Core, ref string, yes, stop, tty bool, in io.Reader, out io.Wr
 		if err != nil {
 			return err
 		}
-		what := "goal " + m.GoalID + " with its manager, agents and verifier: " + c.Weigh(targets).String()
+		what := "goal " + m.Shown() + " with its manager, agents and verifier: " + c.Weigh(targets).String()
 		if m.GoalID == "" {
 			what = "chief " + m.Label() + " (retires it; its reports report one level up)"
 		}

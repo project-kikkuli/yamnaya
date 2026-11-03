@@ -125,7 +125,7 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 					t.Fatal("the verifier is the manager's own session")
 				}
 				prompt := w.launches.starts[len(w.launches.starts)-1].Prompt
-				for _, want := range []string{w.goal.Ask, "importer reads CSV", "ym goal verdict " + w.goal.ID} {
+				for _, want := range []string{w.goal.Ask, "importer reads CSV", "ym goal verdict " + w.goal.Name} {
 					if !strings.Contains(prompt, want) {
 						t.Fatalf("verifier prompt lacks %q:\n%s", want, prompt)
 					}

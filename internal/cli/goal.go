@@ -77,11 +77,11 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
-	cmd.Flags().StringVar(&name, "name", "", "the goal's name, kebab-case (default: a short name made from the ask)")
+	cmd.Flags().StringVar(&name, "name", "", "the goal's name, kebab-case, with a numeric suffix if it is in use (default: a short name made from the ask)")
 	cmd.Flags().StringVar(&host, "host", "", "start the goal on this host, by name or @nickname, in the repository --repo names there; one ym reaches only through relays gets it when it next syncs")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
-		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts), goalRenameCmd(with))
+		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts), goalRenameCmd(hosts))
 	return cmd
 }
 
@@ -502,7 +502,7 @@ func goalDoneCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s verifying (attempt %d): ym checks its pull requests, then a fresh verifier session checks the work; its findings come back here\n", g.ID, v.Attempt)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s verifying (attempt %d): ym checks its pull requests, then a fresh verifier session checks the work; its findings come back here\n", g.Shown(), v.Attempt)
 			return nil
 		}),
 	}
@@ -602,10 +602,10 @@ func goalRelaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 				return err
 			}
 			if m.Host != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched on %s\n", m.ID, m.Host)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched on %s\n", m.Shown(), m.Host)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched as %s\n", m.ID, core.Short(m.Session))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched as %s\n", m.Shown(), core.Short(m.Session))
 			return nil
 		}),
 	}
@@ -762,10 +762,10 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 				return err
 			}
 			if m.LastError != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but it did not start: %s; ym serve retries with backoff\n", m.ID, m.LastError)
+				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but it did not start: %s; ym serve retries with backoff\n", m.Shown(), m.LastError)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "chief %s runs as %s\nbrief: %s\n", m.ID, core.Short(m.Session), m.BriefPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "chief %s runs as %s\nbrief: %s\n", m.Shown(), core.Short(m.Session), m.BriefPath)
 			return nil
 		}),
 	}

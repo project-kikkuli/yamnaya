@@ -93,7 +93,11 @@ func ambiguousItems(ref string, found []Item) error {
 	return Final(fmt.Errorf("item %s is ambiguous across hosts: %s; name it with its host, as %s", ref, strings.Join(names, ", "), names[len(names)-1]))
 }
 
+// Ref is the item's trailing reference, which ym item answer and the other item commands take: never a goal's or chief's id.
 func (it Item) Ref() string {
+	if idShaped.MatchString(ScopeName(it.Scope)) {
+		return it.Key()
+	}
 	if it.Host != "" {
 		return RemoteKey(it.Host, it.Qualified())
 	}

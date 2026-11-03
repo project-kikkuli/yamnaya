@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -42,11 +41,7 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 		out, err := c.RunOrRelay(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
 		return Goal{Name: name, Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
 	}
-	o, err := c.LoadOrg()
-	if err != nil {
-		return Goal{}, Manager{}, err
-	}
-	if name, err = c.goalName(o, name, ask); err != nil {
+	if name, err = c.goalName(name, ask); err != nil {
 		return Goal{}, Manager{}, err
 	}
 	g, err := c.Store.AddGoal(Goal{Name: name, Ask: ask, Repo: repo, CreatedAt: c.now()})
@@ -54,6 +49,7 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 		return g, Manager{}, err
 	}
 	g.BriefPath = filepath.Join(c.StateDir, "goals", g.ID, "brief.md")
+	name = g.Name
 	if err := writeBrief(g.BriefPath, "# "+name+": "+shortName(ask)+"\n\nNot started yet: the manager writes this brief.\n"+askSection(ask)); err != nil {
 		return g, Manager{}, err
 	}
@@ -70,7 +66,8 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 		return g, m, err
 	}
 	b, _ := c.Board()
-	if o, err = c.LoadOrg(); err != nil {
+	o, err := c.LoadOrg()
+	if err != nil {
 		return g, m, err
 	}
 	m = c.launch(b, o, m)
@@ -176,23 +173,18 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
 		return Manager{Role: RoleChief, Name: name, Remit: remit, Repo: repo, Host: host}, err
 	}
-	o, err := c.LoadOrg()
-	if err != nil {
-		return Manager{}, err
-	}
 	if CheckName(name) != nil {
 		if name = Slug(name, 6); name == "" {
 			name = "chief"
 		}
 	}
-	name = unique(name, o.taken(""))
 	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Remit: remit, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}
 	m.BriefPath = filepath.Join(c.StateDir, "chiefs", m.ID, "brief.md")
 	m.Directory = filepath.Join(c.StateDir, "chiefs", m.ID, "workspace")
-	if err := writeBrief(m.BriefPath, "# "+name+"\n\n"+remit+"\n"); err != nil {
+	if err := writeBrief(m.BriefPath, "# "+m.Name+"\n\n"+remit+"\n"); err != nil {
 		return m, err
 	}
 	if err := c.Store.SaveManager(m); err != nil {
@@ -204,7 +196,8 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		}
 	}
 	b, _ := c.Board()
-	if o, err = c.LoadOrg(); err != nil {
+	o, err := c.LoadOrg()
+	if err != nil {
 		return m, err
 	}
 	return c.launch(b, o, m), nil
@@ -513,7 +506,7 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 			return resumed
 		}
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.ID + "-" + slugWords(m.Name),
+	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.Shown(),
 		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()
@@ -528,16 +521,6 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 	m.Profile, m.ConfigRoot = st.Profile, st.ConfigRoot
 	c.Store.SaveManager(m)
 	return m
-}
-
-var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugWords(s string) string {
-	words := strings.Fields(nonWord.ReplaceAllString(strings.ToLower(s), " "))
-	if len(words) > 4 {
-		words = words[:4]
-	}
-	return strings.Join(words, "-")
 }
 
 func shortName(ask string) string {

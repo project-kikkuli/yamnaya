@@ -88,7 +88,7 @@ func TestAChiefHearsWhenAManagerUnderItIsAdrift(t *testing.T) {
 		t.Fatalf("goal events %q, want the manager's evidence once", events)
 	}
 	chief, _ := w.core.Store.Manager(c.ID)
-	if heard := digests(w.handedTo(chief.Session)); len(heard) != 1 || !strings.Contains(heard[0], g.ID+": agent-adrift #") {
+	if heard := digests(w.handedTo(chief.Session)); len(heard) != 1 || !strings.Contains(heard[0], g.Name+": agent-adrift #") {
 		t.Fatalf("chief heard %q, want one line for the adrift manager", w.handedTo(chief.Session))
 	}
 }

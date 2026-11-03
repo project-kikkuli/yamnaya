@@ -81,7 +81,7 @@ func (c *Core) Supervise(b Board) error {
 			continue
 		}
 		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
+			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
 	if o, err = c.LoadOrg(); err != nil {

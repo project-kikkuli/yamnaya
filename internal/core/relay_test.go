@@ -735,7 +735,7 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 			var heard []string
 			for _, h := range f.b.handedTo(chief.Session) {
 				for _, line := range strings.Split(h, "\n") {
-					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.ID) {
+					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.Name) {
 						_, rest, _ := strings.Cut(kind, " ")
 						heard = append(heard, rest)
 					}

@@ -433,7 +433,7 @@ func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoe
 		f.sync(t)
 	}
 	if !slices.ContainsFunc(f.a.handedTo(chief.Session), func(s string) bool {
-		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.ID)+",")
+		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")
 	}) {
 		t.Fatalf("chief on a heard %q, want that its steer of %s went unadopted", f.a.handedTo(chief.Session), mgr.ID)
 	}
@@ -517,7 +517,7 @@ func TestAChiefTwoHostsUpSteersAGoalThroughTheChiefBetweenThemAndAStrangerIsTold
 		f.sync(t)
 	}
 	if !slices.ContainsFunc(f.c.handedTo(top.Session), func(s string) bool {
-		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.ID)+",")
+		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")
 	}) {
 		t.Fatalf("top chief on c heard %q, want that its steer of %s went unadopted", f.c.handedTo(top.Session), mgr.ID)
 	}

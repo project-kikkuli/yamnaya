@@ -227,11 +227,33 @@ func (s *Store) AddGoal(g Goal) (Goal, error) {
 	if g.State == "" {
 		g.State = GoalActive
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return g, err
+	}
+	defer tx.Rollback()
+	if g.Name, err = freeName(tx, g.Name); err != nil {
+		return g, err
+	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_goals (name, ask, repo, state, brief_path, last_moved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING num`,
-		g.Name, g.Ask, g.Repo, g.State, g.BriefPath, stamp(g.CreatedAt), stamp(g.CreatedAt)).Scan(&num)
+	if err = tx.QueryRow(`INSERT INTO ym_goals (name, ask, repo, state, brief_path, last_moved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		g.Name, g.Ask, g.Repo, g.State, g.BriefPath, stamp(g.CreatedAt), stamp(g.CreatedAt)).Scan(&num); err != nil {
+		return g, err
+	}
 	g.ID, g.LastMovedAt = goalID(num), g.CreatedAt
-	return g, err
+	return g, tx.Commit()
+}
+
+// freeName is name, or name with the first numeric suffix no goal or chief here uses; a goal's manager shares its goal's name.
+func freeName(tx *sql.Tx, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	taken, err := namesInUse(tx, "", "")
+	if err != nil {
+		return "", err
+	}
+	return unique(name, taken), nil
 }
 
 func (s *Store) SaveGoal(g Goal) error {
@@ -245,8 +267,8 @@ func (s *Store) SaveGoal(g Goal) error {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_goals SET version=version+1, name=?, ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=? AND version=?`,
-		g.Name, g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num, g.Version)
+	res, err := tx.Exec(`UPDATE ym_goals SET version=version+1, ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=? AND version=?`,
+		g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num, g.Version)
 	if err = changed(res, err); err != nil {
 		return err
 	}
@@ -314,11 +336,23 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 	if m.Harness == "" {
 		m.Harness = "claude"
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return m, err
+	}
+	defer tx.Rollback()
+	if m.Role == RoleChief {
+		if m.Name, err = freeName(tx, m.Name); err != nil {
+			return m, err
+		}
+	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_managers (role, name, remit, parent_id, goal_id, harness, repo, brief_path, launched_at, profile, config_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
-		m.Role, m.Name, m.Remit, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt), m.Profile, m.ConfigRoot).Scan(&num)
+	if err = tx.QueryRow(`INSERT INTO ym_managers (role, name, remit, parent_id, goal_id, harness, repo, brief_path, launched_at, profile, config_root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		m.Role, m.Name, m.Remit, m.ParentID, m.GoalID, m.Harness, m.Repo, m.BriefPath, stamp(m.LaunchedAt), m.Profile, m.ConfigRoot).Scan(&num); err != nil {
+		return m, err
+	}
 	m.ID = managerID(num)
-	return m, err
+	return m, tx.Commit()
 }
 
 func (s *Store) SaveManager(m Manager) error {
@@ -332,9 +366,9 @@ func (s *Store) SaveManager(m Manager) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, name=?, remit=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
+	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, remit=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
 		retired=?, launched_at=?, failures=?, next_attempt=?, last_error=?, nudges=?, nudged_at=?, profile=?, config_root=? WHERE num=?`,
-		m.Role, m.Name, m.Remit, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,
+		m.Role, m.Remit, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,
 		m.Retired, stamp(m.LaunchedAt), m.Failures, stamp(m.NextAttempt), m.LastError, m.Nudges, stamp(m.NudgedAt), m.Profile, m.ConfigRoot, num); err != nil {
 		return err
 	}

@@ -237,7 +237,7 @@ func (c *Core) Wake(b Board) error {
 			err = c.wakeChief(b, o, m)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
+			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
 	return errors.Join(append(errs, c.wakeRemoteChiefs(o))...)
@@ -269,7 +269,7 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 // it cannot take a message now, or one already reached the turn it is taking.
 func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
 	var pending int
-	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ?`, m.Session, MsgPending, "ym: goal "+g.ID+" %").Scan(&pending); err != nil || pending > 0 {
+	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ?`, m.Session, MsgPending, "ym: goal "+g.Shown()+" %").Scan(&pending); err != nil || pending > 0 {
 		return pending > 0, err
 	}
 	s, ok := b.Session(m.Session)
@@ -345,9 +345,6 @@ func chiefText(o Org, events []GoalEvent) string {
 		g, ok := o.Goals[e.Goal]
 		if !ok {
 			return "your agent"
-		}
-		if host != "" && g.Host == "" {
-			return RemoteKey(host, g.Shown())
 		}
 		return g.Ref()
 	})

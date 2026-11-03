@@ -57,13 +57,6 @@ type Steer struct {
 func (s Steer) Adopted() bool { return !s.AdoptedAt.IsZero() }
 
 // By names who steered, for messages.
-func (s Steer) By() string {
-	if s.Author == Owner {
-		return "the owner"
-	}
-	return "chief " + s.Author
-}
-
 func (s *Store) addSteer(manager, text, author string, at time.Time) (Steer, error) {
 	defer s.invalidate()
 	st := Steer{Manager: manager, Text: text, Author: author, CreatedAt: at}
@@ -299,7 +292,7 @@ func steerText(o Org, m Manager, st Steer) string {
 		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."
 	}
 	return fmt.Sprintf("%s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
-		st.By(), subject(o, m), reopened, st.Revision, st.Text, m.ID, st.Revision)
+		o.SteerBy(st), subject(o, m), reopened, st.Revision, st.Text, m.Shown(), st.Revision)
 }
 
 // Adopt records that the calling manager or chief took revision of its own plan on; only its newest revision can be adopted.
@@ -341,7 +334,7 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return st, err
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
-		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.Shown(), Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.Shown(), st.Revision),
+		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.Shown(), st.Revision),
 			Key: fmt.Sprintf("%s:adopt:%d", g.ID, st.Revision), Created: st.AdoptedAt, Delivered: st.AdoptedAt})
 	}
 	return st, err
@@ -370,7 +363,7 @@ func (c *Core) watchSteers(b Board, o Org) error {
 		}
 		if st.Nudges < Nudges {
 			text := fmt.Sprintf("ym: you have not adopted revision %d of %s, which %s sent %s ago. Read it with ym goal context %s, rework your plan to fit, then run ym goal adopt %s --revision %d.",
-				st.Revision, subject(o, m), st.By(), now.Sub(st.CreatedAt).Round(time.Minute), m.ID, m.ID, st.Revision)
+				st.Revision, subject(o, m), o.SteerBy(st), now.Sub(st.CreatedAt).Round(time.Minute), m.Shown(), m.Shown(), st.Revision)
 			if err := c.tell(b, m.Session, text, false); err != nil {
 				errs = append(errs, err)
 				continue
@@ -380,16 +373,16 @@ func (c *Core) watchSteers(b Board, o Org) error {
 			continue
 		}
 		if up := raisedTo(o, st); up != Owner {
-			shown, about := m, subject(o, m)
+			shown, about := m.Shown(), subject(o, m)
 			if _, _, remote := SplitRemote(up); remote {
-				shown.ID = RemoteKey(c.SelfName(), m.ID)
-				about = "chief " + shown.ID
+				shown = RemoteKey(c.SelfName(), m.Shown())
+				about = "chief " + shown
 				if g, ok := o.Goals[m.GoalID]; ok {
 					about = "goal " + RemoteKey(c.SelfName(), g.Shown())
 				}
 			}
 			text := fmt.Sprintf("ym: %s has not adopted revision %d of %s, which %s sent, after %d nudges. Open it, relaunch it with ym goal relaunch %s, or steer again.",
-				shown.Label(), st.Revision, about, st.By(), st.Nudges, shown.ID)
+				m.Role+" "+shown, st.Revision, about, o.SteerBy(st), st.Nudges, shown)
 			if err := c.tellManager(b, o, up, text); err != nil {
 				errs = append(errs, err)
 				continue

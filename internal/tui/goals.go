@@ -125,7 +125,10 @@ func (m Model) treeMatches(ns []core.Node) bool {
 
 // minAsk is how much of a goal row its ask keeps before its numbers give way; a chief row's remit gives way first.
 const (
-	minAsk   = 56
+	minAsk = 56
+	// minNames and minRow are the least a goal or chief row's first column shows, and the least it leaves its vibe and text.
+	minNames = 12
+	minRow   = 24
 	minRemit = 10
 )
 
@@ -324,11 +327,12 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	var head, what string
 	host := n.Manager.Host
 	keep := minAsk
+	names := m.nameColumn(depth)
 	if n.Goal != nil {
-		head = pad(ansi.Truncate(n.Goal.Shown(), chiefName, "…"), chiefName)
+		head = pad(ansi.Truncate(n.Goal.Shown(), names, "…"), names)
 		what = m.tagged(host, n.Goal.Ask)
 	} else {
-		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Name, chiefName, "…"), chiefName))
+		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Shown(), names, "…"), names))
 		fold := ""
 		if expandable(n) {
 			fold = "▾ "
@@ -409,8 +413,24 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	return b
 }
 
-// chiefName is how much of a chief's name its row's first column holds.
-const chiefName = 12
+// nameColumn is the width of a goal or chief row's first column: the longest name on the board, as far as the row leaves room.
+func (m Model) nameColumn(depth int) int {
+	longest := 0
+	var walk func([]core.Node)
+	walk = func(ns []core.Node) {
+		for i := range ns {
+			name := ns[i].Manager.Shown()
+			if ns[i].Goal != nil {
+				name = ns[i].Goal.Shown()
+			}
+			longest = max(longest, ansi.StringWidth(name))
+			walk(ns[i].Children)
+		}
+	}
+	walk(m.board.Tree)
+	const rest = 2 + 1 + 7 + 1 + 11 + 1 + minRow
+	return max(minNames, min(longest, m.width-rest-2*depth))
+}
 
 // remit is what a chief is about: its latest steer, else its brief's assessment.
 func remit(n core.Node) string {
@@ -458,7 +478,7 @@ func briefMeta(at time.Time, n core.Node) string {
 	return fmt.Sprintf("brief v%d %s", f.Brief.Version, age(at, f.Brief.CreatedAt))
 }
 
-func planField(n core.Node) string {
+func (m Model) planField(n core.Node) string {
 	st := n.Steer
 	if st == nil {
 		return ""
@@ -467,7 +487,7 @@ func planField(n core.Node) string {
 	if !st.Adopted() {
 		state = pal.yellow.Render("not adopted")
 	}
-	return fmt.Sprintf("r%d by %s, %s: %s", st.Revision, st.By(), state, oneLine(st.Text))
+	return fmt.Sprintf("r%d by %s, %s: %s", st.Revision, m.board.Org.SteerBy(*st), state, oneLine(st.Text))
 }
 
 func (m Model) artifact(n core.Node) (string, bool) {
@@ -591,7 +611,7 @@ func (m Model) goalView() viewPage {
 	b.WriteString(fmt.Sprintf(" %s  %s  %s  %s\n", pal.bold.Render("GOAL "+g.Shown()), standStyle[n.Standing](n.Standing), filepath.Base(g.Repo), pal.dim.Render("moved "+age(m.board.At, g.LastMovedAt))))
 	b.WriteString(" " + ansi.Wrap(g.Ask, max(20, m.width-2), " ") + "\n")
 	m.field(&b, "manager", managerState(m.board, n))
-	m.field(&b, "plan", planField(n))
+	m.field(&b, "plan", m.planField(n))
 	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.Ref())+pal.dim.Render("  b shows it, W opens the page"))
 	if url, ok := m.artifact(n); ok {
 		m.field(&b, "artifact", url+pal.dim.Render("  V opens it"))
@@ -680,7 +700,7 @@ func (m Model) chiefView() viewPage {
 	b := viewPage{}
 	b.WriteString(fmt.Sprintf(" %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Shown()), standStyle[n.Standing](n.Standing)))
 	m.field(&b, "session", managerState(m.board, n))
-	m.field(&b, "plan", planField(n))
+	m.field(&b, "plan", m.planField(n))
 	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.Ref())+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" REPORTS (%d)", len(n.Children))) + "\n")
 	if len(n.Children) == 0 {
@@ -1098,7 +1118,7 @@ func relayWhat(r core.Relay) string {
 func (m *Model) dropPR(n core.Node) {
 	prs := append(append([]string(nil), n.Feed.PRs...), n.Feed.Touched...)
 	if len(prs) == 0 {
-		m.message = n.Goal.ID + " has no pull requests tied to it"
+		m.message = n.Goal.Shown() + " has no pull requests tied to it"
 		return
 	}
 	goal := n.Goal.ID

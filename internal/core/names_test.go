@@ -1,16 +1,30 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAGoalIsNamedByItsNamerElseByItsAsksFirstWords(t *testing.T) {
 	for _, tc := range []struct {
 		name, ask, namer, want string
 	}{
-		{name: "the namer's slug", ask: "make the export endpoint stream", namer: "Stream-Export Endpoint\n", want: "stream-export-endpoint"},
+		{name: "the namer's slug", ask: "make the export endpoint stream", namer: "stream-export-endpoint\n", want: "stream-export-endpoint"},
+		{name: "a namer reply that talks", ask: "make the export endpoint stream", namer: "Sure! Here is the name: fix-export-streaming", want: "make-the-export-endpoint"},
+		{name: "a namer reply of several words", ask: "make the export endpoint stream", namer: "Stream-Export Endpoint", want: "make-the-export-endpoint"},
+		{name: "a namer reply of one word", ask: "make the export endpoint stream", namer: "export", want: "make-the-export-endpoint"},
+		{name: "a namer reply of five words", ask: "make the export endpoint stream", namer: "a-b-c-d-e", want: "make-the-export-endpoint"},
 		{name: "no namer reply", ask: "Make the export endpoint stream instead of buffering", want: "make-the-export-endpoint"},
+		{name: "the standing preamble", ask: "Fix forward. Diagnose before acting. No reverts, guards, retries, or safety steps without evidence they're needed. Never block on a wait without first checking why it's slow.\n\nTeach the board to scroll", want: "teach-the-board-to"},
+		{name: "a you-are opening", ask: "You are the implementer of this goal.\nTeach the board to scroll", want: "teach-the-board-to"},
+		{name: "a preamble, a hard rule and how it came", ask: "Fix forward. Diagnose before acting.\n\nHARD RULE from the owner: no agent writes on any PR not authored by them.\n\nOwner approved (item mgr10:G10, PLEASE GO IMPLEMENT THIS): readable names for goals", want: "readable-names-for-goals"},
+		{name: "a design-only opening", ask: "Fix forward.\n\nDESIGN ONLY. No implementation, no commits, until the owner says go.\n\nOwner ask: closer action queue", want: "closer-action-queue"},
+		{name: "an urgent opening", ask: "URGENT, owner-reported, fix first: rows went missing", want: "rows-went-missing"},
+		{name: "nothing but boilerplate", ask: "Fix forward. Diagnose before acting.", want: "fix-forward-diagnose-before"},
 		{name: "a namer reply with nothing usable", ask: "fix the board's flicker", namer: "¯\\_(ツ)_/¯", want: "fix-the-board-s"},
 		{name: "an ask with nothing usable", ask: "¿¡…!?", want: "goal"},
 		{name: "a namer reply shaped like an id", ask: "ship it now", namer: "goal7", want: "ship-it-now"},
@@ -38,8 +52,150 @@ func TestANameAlreadyUsedHereGetsTheFirstFreeNumericSuffix(t *testing.T) {
 	if want := "fix-export fix-export-3 fix-export-4"; strings.Join(got, " ") != want {
 		t.Fatalf("names %q, want %q", got, want)
 	}
-	if _, _, err := w.core.NewGoalNamed("fix-export-3", "again", "/repo/august", "", ""); err == nil {
-		t.Fatal("a --name already in use was accepted")
+	g, m, err := w.core.NewGoalNamed("fix-export-3", "again", "/repo/august", "", "")
+	if err != nil || g.Name != "fix-export-3-2" || m.Name != "fix-export-3-2" {
+		t.Fatalf("a --name in use named goal %q, manager %q, %v; want both fix-export-3-2", g.Name, m.Name, err)
+	}
+	if _, _, err := w.core.NewGoalNamed("Not A Slug", "again", "/repo/august", "", ""); err == nil {
+		t.Fatal("an invalid --name was accepted")
+	}
+}
+
+func TestANameTakenWhileTheNamerThinksStillGivesEachItsOwn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		other func(*Store) (string, error)
+	}{
+		{"another goal", func(s *Store) (string, error) {
+			g, err := s.AddGoal(Goal{Name: "shared-name", Ask: "x"})
+			return g.Name, err
+		}},
+		{"another chief", func(s *Store) (string, error) {
+			m, err := s.AddManager(Manager{Role: RoleChief, Name: "shared-name"})
+			return m.Name, err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string {
+				if name, err := tc.other(w.core.Store); err != nil || name != "shared-name" {
+					t.Fatalf("the other one got %q, %v", name, err)
+				}
+				return "shared-name"
+			}
+			g, m := w.goal(t, "anything", "/repo/august")
+			if g.Name != "shared-name-2" || m.Name != "shared-name-2" {
+				t.Fatalf("goal %q, manager %q, want both shared-name-2", g.Name, m.Name)
+			}
+		})
+	}
+}
+
+func TestARenameSettlesAgainstTheNamesInUseAndAStaleSaveLeavesItAlone(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "before-name" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	boss := w.chief(t, "old-chief")
+	o, _ := w.core.LoadOrg()
+	staleG, staleM, staleBoss := o.Goals[g.ID], o.Managers[m.ID], o.Managers[boss.ID]
+	if _, err := w.core.Rename(g.ID, "after-name"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Rename(boss.ID, "new-chief"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.SaveGoal(staleG); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.SaveManager(staleM); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.SaveManager(staleBoss); err != nil {
+		t.Fatal(err)
+	}
+	o, _ = w.core.LoadOrg()
+	if o.Goals[g.ID].Name != "after-name" || o.Managers[m.ID].Name != "after-name" || o.Managers[boss.ID].Name != "new-chief" {
+		t.Fatalf("goal %q, manager %q, chief %q after stale saves", o.Goals[g.ID].Name, o.Managers[m.ID].Name, o.Managers[boss.ID].Name)
+	}
+}
+
+func TestARenameRetitlesTheBriefPageAtOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func(*orgWorld, *testing.T) (ref, path string)
+		want string
+		keep string
+	}{
+		{"a goal not started", func(w *orgWorld, t *testing.T) (string, string) {
+			_, m := w.goal(t, "make the export stream", "/repo/august")
+			return m.ID, m.BriefPath
+		}, "# new-name: make the export stream", "Not started yet"},
+		{"a goal with a brief", func(w *orgWorld, t *testing.T) (string, string) {
+			_, m := w.goal(t, "make the export stream", "/repo/august")
+			if _, err := w.core.WriteBrief(m.Session, Brief{Assessment: "halfway there", Changed: "a", Uncertainty: "b", Next: "c", WaitingOn: "d"}); err != nil {
+				t.Fatal(err)
+			}
+			return m.ID, m.BriefPath
+		}, "# new-name: make the export stream", "halfway there"},
+		{"a chief", func(w *orgWorld, t *testing.T) (string, string) {
+			m := w.chief(t, "old-chief")
+			o, _ := w.core.LoadOrg()
+			return m.ID, o.Managers[m.ID].BriefPath
+		}, "# new-name", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			ref, path := tc.make(w, t)
+			if _, err := w.core.Rename(ref, "new-name"); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, rest, _ := strings.Cut(string(raw), "\n")
+			if first != tc.want || !strings.Contains(rest, tc.keep) {
+				t.Fatalf("brief page opens %q, want %q, keeping %q:\n%s", first, tc.want, tc.keep, raw)
+			}
+		})
+	}
+}
+
+func TestHaikuNameRunsFromADirectoryThatSaysNothing(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "claude")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s' \"$PWD\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Chdir(t.TempDir())
+	if got := HaikuName("anything"); got != "/" {
+		t.Fatalf("claude ran in %q, want /", got)
+	}
+}
+
+func TestEventsAndTheWakeHoldFindAGoalByWhatTheyAreStoredUnder(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "named-goal" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	if _, err := w.core.SteerContext(w.board(t), m.ID, "new plan", Owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Adopt(m.Session, "", 1); err != nil {
+		t.Fatal(err)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(events, func(e GoalEvent) bool { return e.Kind == EventAdopted }) {
+		t.Fatalf("goal %s's feed lacks its adoption: %+v", g.ID, events)
+	}
+	if _, err := w.core.Store.AddMessage(m.Session, wakeText(g, nil), MsgPending); err != nil {
+		t.Fatal(err)
+	}
+	if hold, err := w.core.holdWake(w.board(t), m, g); err != nil || !hold {
+		t.Fatalf("holdWake = %v, %v with a wake of the goal pending, want it held", hold, err)
 	}
 }
 
@@ -121,16 +277,9 @@ func TestNamingUnnamedGoalsAndChiefsLeavesNamedOnesAlone(t *testing.T) {
 	w.core.Namer = func(string) string { return "kept-name" }
 	kept, _ := w.goal(t, "already named", "/repo/august")
 	old, oldM := w.goal(t, "Fix flaky CI on main", "/repo/august")
-	old.Name, oldM.Name = "", "Fix flaky CI on main"
-	if err := w.core.Store.SaveGoal(old); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.core.Store.SaveManager(oldM); err != nil {
-		t.Fatal(err)
-	}
+	unname(t, w, old.ID, oldM.ID, "Fix flaky CI on main")
 	boss := w.chief(t, "yamnaya-manager")
-	boss.Name = "Yamnaya Manager"
-	if err := w.core.Store.SaveManager(boss); err != nil {
+	if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET name='Yamnaya Manager' WHERE 'mgr'||num=?`, boss.ID); err != nil {
 		t.Fatal(err)
 	}
 	w.core.Namer = func(string) string { return "" }
@@ -349,5 +498,108 @@ func TestARenameOnAnotherHostReachesAnItemWaitingOnAManagerHere(t *testing.T) {
 	}
 	if lead := b.Org.ItemLead(got); lead != "box/quicker-login" || got.Lead() != "box/quicker-login" {
 		t.Fatalf("leads with %q, saved copy %q; want box/quicker-login", lead, got.Lead())
+	}
+}
+
+// unname puts a goal and its manager back as they were before goals had names.
+func unname(t *testing.T, w *orgWorld, goal, manager, old string) {
+	t.Helper()
+	if _, err := w.core.Store.db.Exec(`UPDATE ym_goals SET name='' WHERE 'goal'||num=?`, goal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET name=? WHERE 'mgr'||num=?`, old, manager); err != nil {
+		t.Fatal(err)
+	}
+	w.core.Store.invalidate()
+}
+
+func TestTheBackfillKeepsGoingAndKeepsWhatChangesWhileItRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		act   func(*testing.T, *orgWorld, Goal, Manager)
+		check func(*testing.T, Org, Goal, Manager)
+		want  string
+	}{
+		{"its goal's work moved on", func(t *testing.T, w *orgWorld, g Goal, _ Manager) {
+			o, _ := w.core.LoadOrg()
+			now := o.Goals[g.ID]
+			now.Summary = "written mid-backfill"
+			if err := w.core.Store.SaveGoal(now); err != nil {
+				t.Fatal(err)
+			}
+		}, func(t *testing.T, o Org, g Goal, _ Manager) {
+			if o.Goals[g.ID].Summary != "written mid-backfill" {
+				t.Errorf("summary %q was reverted", o.Goals[g.ID].Summary)
+			}
+		}, "slow-name"},
+		{"its manager was relaunched", func(t *testing.T, w *orgWorld, _ Goal, m Manager) {
+			o, _ := w.core.LoadOrg()
+			now := o.Managers[m.ID]
+			now.Session, now.Nudges, now.LastError = "relaunched", 7, "written mid-backfill"
+			if err := w.core.Store.SaveManager(now); err != nil {
+				t.Fatal(err)
+			}
+		}, func(t *testing.T, o Org, _ Goal, m Manager) {
+			if got := o.Managers[m.ID]; got.Session != "relaunched" || got.Nudges != 7 || got.LastError != "written mid-backfill" {
+				t.Errorf("manager row reverted: %+v", got)
+			}
+		}, "slow-name"},
+		{"the owner named it first", func(t *testing.T, w *orgWorld, g Goal, _ Manager) {
+			if _, err := w.core.Rename(g.ID, "owners-name"); err != nil {
+				t.Fatal(err)
+			}
+		}, func(*testing.T, Org, Goal, Manager) {}, "owners-name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			first, firstM := w.goal(t, "first", "/repo/august")
+			second, secondM := w.goal(t, "second", "/repo/august")
+			unname(t, w, first.ID, firstM.ID, "first")
+			unname(t, w, second.ID, secondM.ID, "second")
+			acted := false
+			w.core.Namer = func(ask string) string {
+				if !acted {
+					acted = true
+					tc.act(t, w, first, firstM)
+				}
+				return map[string]string{"first": "slow-name", "second": "next-name"}[ask]
+			}
+			if _, err := w.core.NameUnnamed(); err != nil {
+				t.Fatalf("the backfill stopped: %v", err)
+			}
+			o, _ := w.core.LoadOrg()
+			tc.check(t, o, first, firstM)
+			if o.Goals[first.ID].Name != tc.want || o.Managers[firstM.ID].Name != tc.want {
+				t.Errorf("first goal %q, manager %q, want both %q", o.Goals[first.ID].Name, o.Managers[firstM.ID].Name, tc.want)
+			}
+			if o.Goals[second.ID].Name != "next-name" || o.Managers[secondM.ID].Name != "next-name" {
+				t.Errorf("second goal %q, manager %q, want both next-name", o.Goals[second.ID].Name, o.Managers[secondM.ID].Name)
+			}
+		})
+	}
+}
+
+func TestWhatAManagerIsToldNamesItWithoutItsId(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "named-goal" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	boss := w.chief(t, "named-chief", m.ID)
+	w.steer(t, m.ID, "new plan", boss.ID)
+	w.clock = w.clock.Add(AdoptAfter + time.Minute)
+	w.supervise(t)
+	o, _ := w.core.LoadOrg()
+	var prompt strings.Builder
+	w.core.managerPrompt(&prompt, o, o.Managers[m.ID])
+	w.core.chiefPrompt(&prompt, o, o.Managers[boss.ID])
+	texts := map[string]string{"prompts": prompt.String(), "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
+	for what, text := range texts {
+		if !strings.Contains(text, "named-") {
+			t.Errorf("%s do not name it:\n%s", what, text)
+		}
+		for _, id := range []string{m.ID + " ", g.ID + " ", boss.ID + " ", "/" + m.ID} {
+			if strings.Contains(text, id) {
+				t.Errorf("%s show id %q:\n%s", what, id, text)
+			}
+		}
 	}
 }

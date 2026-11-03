@@ -319,9 +319,9 @@ func chiefLabel(o Org, host string) func(GoalEvent) string {
 			return ownAgents
 		}
 		if host != "" {
-			return RemoteKey(host, g.ID)
+			return RemoteKey(host, g.Shown())
 		}
-		return g.ID
+		return g.Ref()
 	}
 }
 
@@ -510,7 +510,7 @@ func (c *Core) chiefChanges(session string, force bool) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		return quietRollup(events, func(GoalEvent) string { return g.ID }).lines(), nil
+		return quietRollup(events, func(GoalEvent) string { return g.Shown() }).lines(), nil
 	}
 	if m.Role != RoleChief {
 		return nil, nil

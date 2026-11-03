@@ -166,7 +166,7 @@ func (m Model) ownerName(id string) string {
 	case n.Goal != nil:
 		return m.goalName(*n.Goal)
 	}
-	return "chief " + n.Manager.Name
+	return "chief " + n.Manager.Shown()
 }
 
 func (m Model) ownerNames(ids []string) string {
@@ -285,7 +285,7 @@ func (m Model) optLabel(o pickOpt) string {
 	}
 	stand := standStyle[n.Standing](n.Standing)
 	if n.Goal == nil {
-		return "chief " + pal.bold.Render(n.Manager.Name) + "  " + stand + pal.dim.Render(fmt.Sprintf("  %s  %d goals", n.Manager.ID, n.Count()))
+		return "chief " + pal.bold.Render(n.Manager.Shown()) + "  " + stand + pal.dim.Render(fmt.Sprintf("  %d goals", n.Count()))
 	}
 	return m.goalName(*n.Goal) + "  " + stand + "  " + oneLine(n.Goal.Ask)
 }
