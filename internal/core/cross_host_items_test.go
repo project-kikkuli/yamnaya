@@ -172,7 +172,7 @@ func TestItemRefsKeepHostLocalSequencesDistinct(t *testing.T) {
 			}
 		})
 	}
-	for _, missing := range []string{"#99999", "#0", "#-1", "#bad", "c/#0"} {
+	for _, missing := range []string{"#99999", "#0", "#-1", "#bad", "c/#0", "mgr1:", "c/mgr1:"} {
 		if it, err := f.b.core.FindItem("", missing); err == nil {
 			t.Fatalf("invalid or missing sequence %s resolved as %+v", missing, it)
 		}

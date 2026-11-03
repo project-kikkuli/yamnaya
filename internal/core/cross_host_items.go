@@ -43,7 +43,7 @@ func (r ItemRef) Matches(it Item) bool {
 	if r.Seq != 0 {
 		return it.Seq == r.Seq
 	}
-	if !strings.EqualFold(it.ID, r.ID) && !strings.EqualFold(it.Alias, r.ID) {
+	if r.ID == "" || !strings.EqualFold(it.ID, r.ID) && !strings.EqualFold(it.Alias, r.ID) {
 		return false
 	}
 	return r.Project == "" || strings.EqualFold(ScopeName(it.Scope), r.Project) || it.Scope == r.Project
