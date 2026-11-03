@@ -18,35 +18,36 @@ import (
 )
 
 type sessionJSON struct {
-	Parent       string   `json:"parent,omitempty"`
-	ConfigRoot   string   `json:"config_root,omitempty"`
-	Profile      string   `json:"profile,omitempty"`
-	ProfileLabel string   `json:"profile_label,omitempty"`
-	Account      string   `json:"account,omitempty"`
-	Ref          string   `json:"ref,omitempty"`
-	Harness      string   `json:"harness"`
-	ID           string   `json:"id"`
-	PID          int      `json:"pid"`
-	TTY          string   `json:"tty"`
-	Cwd          string   `json:"cwd"`
-	Repo         string   `json:"repo"`
-	RepoKey      string   `json:"repo_key,omitempty"`
-	RepoID       string   `json:"repo_id,omitempty"`
-	Worktree     string   `json:"worktree,omitempty"`
-	Branch       string   `json:"branch"`
-	Title        string   `json:"title"`
-	Status       string   `json:"status"`
-	WaitingFor   string   `json:"waiting_for,omitempty"`
-	Since        string   `json:"since,omitempty"`
-	Background   bool     `json:"background,omitempty"`
-	Prompt       string   `json:"prompt,omitempty"`
-	Host         string   `json:"host"`
-	Remote       string   `json:"remote,omitempty"`
-	Project      string   `json:"project"`
-	Crew         int      `json:"crew"`
-	Copies       int      `json:"copies"`
-	CopyPIDs     []int    `json:"copy_pids,omitempty"`
-	Resume       []string `json:"resume,omitempty"`
+	Parent       string          `json:"parent,omitempty"`
+	ConfigRoot   string          `json:"config_root,omitempty"`
+	Profile      string          `json:"profile,omitempty"`
+	ProfileLabel string          `json:"profile_label,omitempty"`
+	Account      string          `json:"account,omitempty"`
+	Ref          string          `json:"ref,omitempty"`
+	Harness      string          `json:"harness"`
+	ID           string          `json:"id"`
+	PID          int             `json:"pid"`
+	TTY          string          `json:"tty"`
+	Cwd          string          `json:"cwd"`
+	Repo         string          `json:"repo"`
+	RepoKey      string          `json:"repo_key,omitempty"`
+	RepoID       string          `json:"repo_id,omitempty"`
+	Worktree     string          `json:"worktree,omitempty"`
+	Branch       string          `json:"branch"`
+	Title        string          `json:"title"`
+	Status       string          `json:"status"`
+	WaitingFor   string          `json:"waiting_for,omitempty"`
+	Since        string          `json:"since,omitempty"`
+	Background   bool            `json:"background,omitempty"`
+	Prompt       string          `json:"prompt,omitempty"`
+	Switching    *core.Switching `json:"switching,omitempty"`
+	Host         string          `json:"host"`
+	Remote       string          `json:"remote,omitempty"`
+	Project      string          `json:"project"`
+	Crew         int             `json:"crew"`
+	Copies       int             `json:"copies"`
+	CopyPIDs     []int           `json:"copy_pids,omitempty"`
+	Resume       []string        `json:"resume,omitempty"`
 	// Adrift are the signs that the session, or a crew member of it, is busy going nowhere.
 	Adrift []string `json:"adrift,omitempty"`
 	// Last is the last line of the session's latest reply, written at LastAt.
@@ -85,10 +86,18 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				if j.Prompt != "" {
 					line += "  [" + j.Prompt + "]"
 				}
+				if j.Switching != nil {
+					line += "  [" + j.Switching.String() + "]"
+				}
 				for _, d := range j.Adrift {
 					line += "  [adrift " + d + "]"
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
+			for _, n := range b.Launched {
+				if _, live := b.Session(n.Session); n.Switching != nil && !live {
+					fmt.Fprintf(cmd.OutOrStdout(), "%-6s %-8s %-8s %-22s [%s]\n", profileDisplay(n.Harness, n.Profile), core.Short(n.Session), n.State, "", n.Switching)
+				}
 			}
 			for _, r := range b.Remotes {
 				if r.Err != nil || r.At.IsZero() {
@@ -112,6 +121,7 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 		if s.Prompt != nil {
 			j.Prompt = s.Prompt.String()
 		}
+		j.Switching = s.Switching
 		for _, cp := range s.Copies {
 			j.CopyPIDs = append(j.CopyPIDs, cp.PID)
 		}
@@ -134,8 +144,8 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 }
 
 func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var to, selected string
-	var relaunch bool
+	var to, selected, reason string
+	var relaunch, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "switch <session> --profile ID | --to claude|codex [--profile ID] [--relaunch]",
 		Short: "Port an idle session to the other harness with cs; --relaunch also ends it and starts the port on ym's server",
@@ -146,11 +156,17 @@ func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 				if !ok {
 					return fmt.Errorf("launcher unavailable")
 				}
-				msg, err := l.SwitchProfile(args[0], selected)
+				if reason == "" {
+					reason = ownerSwitchReason
+				}
+				out, err := l.QueueProfileSwitch(args[0], selected, reason)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), msg)
+				if asJSON {
+					return writeJSON(cmd.OutOrStdout(), out)
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), out.Message)
 				return nil
 			}
 			return switchSessionProfile(e.core, args[0], to, selected, relaunch, cmd.OutOrStdout())
@@ -158,7 +174,9 @@ func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	}
 	cmd.Flags().StringVar(&to, "to", "", "claude or codex")
 	cmd.Flags().BoolVar(&relaunch, "relaunch", false, "end the session and resume the port on ym's server in the same directory")
-	cmd.Flags().StringVar(&selected, "profile", "", "switch an idle or exited session to this login and resume it")
+	cmd.Flags().StringVar(&selected, "profile", "", "switch the session to this login and resume it, at once when idle or exited, otherwise when it ends its turn")
+	cmd.Flags().StringVar(&reason, "reason", "", "why, for the note the resumed session reads")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the --profile outcome as JSON")
 	return cmd
 }
 

@@ -18,6 +18,7 @@ type FailoverState struct {
 	Profile string    `json:"profile"`
 	Account string    `json:"account"`
 	Status  string    `json:"status"`
+	Target  string    `json:"target,omitempty"`
 	Reason  string    `json:"reason"`
 	Reset   time.Time `json:"reset"`
 }

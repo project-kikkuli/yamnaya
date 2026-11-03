@@ -166,6 +166,137 @@ func TestRepeatedNamedProfileSwitchRebindsExactConversation(t *testing.T) {
 	}
 }
 
+func TestAQueuedSwitchKeepsThePanelOnTheCurrentLoginUntilItApplies(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		then []string
+		want string
+	}{
+		{name: "replaced by another login", then: []string{"claude/three"}, want: "claude:one@same-id three"},
+		{name: "cancelled by the current login", then: []string{"claude/one"}, want: "claude:one@same-id one"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, sw := panelBoard(t)
+			sw.queued = true
+			for _, id := range []string{"one", "two", "three"} {
+				m.board.Profiles = append(m.board.Profiles, core.LoginProfile{Harness: "claude", ID: id, Root: "/root/" + id})
+			}
+			ps := slices.Clone(m.board.Profiles)
+			m.core.ProfileList = func() []core.LoginProfile { return ps }
+			s := core.Live{Session: core.Session{ID: "same-id", Harness: "claude", Profile: "one", ConfigRoot: "/root/one"}}
+			next, _ := m.openPanel(panelProfiles, row{session: &s})
+			m = next.(Model)
+			m = press(t, toPanelRow(t, m, "claude/two"), "enter")
+			if m.pn.target.profile != "one" || m.pn.target.root != "/root/one" || m.pn.target.ref != "claude:one@same-id" {
+				t.Fatalf("queued switch rebound the panel: %+v", m.pn.target)
+			}
+			if view := ansi.Strip(m.panelView().String()); !strings.Contains(view, "current: claude/one") {
+				t.Fatalf("panel names the wrong current login: %s", view)
+			}
+			m = press(t, toPanelRow(t, m, c.then[0]), "enter")
+			if got := sw.switched[len(sw.switched)-1]; got != c.want {
+				t.Fatalf("second switch = %q, want %q", got, c.want)
+			}
+		})
+	}
+	t.Run("follows the session once applied", func(t *testing.T) {
+		m, _, sw := panelBoard(t)
+		sw.queued = true
+		m.board.Profiles = append(m.board.Profiles, core.LoginProfile{Harness: "claude", ID: "one", Root: "/root/one"}, core.LoginProfile{Harness: "claude", ID: "two", Root: "/root/two"})
+		ps := slices.Clone(m.board.Profiles)
+		m.core.ProfileList = func() []core.LoginProfile { return ps }
+		s := core.Live{Session: core.Session{ID: "same-id", Harness: "claude", Profile: "one", ConfigRoot: "/root/one"}}
+		next, _ := m.openPanel(panelProfiles, row{session: &s})
+		m = next.(Model)
+		m = press(t, toPanelRow(t, m, "claude/two"), "enter")
+		b := m.board
+		s.Profile, s.ConfigRoot = "two", "/root/two"
+		b.Sessions = []core.Live{s}
+		next, _ = m.Update(boardMsg{board: b})
+		m = next.(Model)
+		if m.pn.target.profile != "two" || m.pn.target.ref != "claude:two@same-id" {
+			t.Fatalf("panel did not follow the applied switch: %+v", m.pn.target)
+		}
+	})
+}
+
+func TestAPendingSwitchShowsOnEveryRowItsSessionHas(t *testing.T) {
+	long := &core.Switching{To: "work", Blocked: strings.Repeat("external lifecycle ", 40)}
+	for _, c := range []struct {
+		name    string
+		tag     *core.Switching
+		want    string
+		maxWide int
+	}{
+		{name: "pending", tag: &core.Switching{To: "work"}, want: "switch pending -> work"},
+		{name: "blocked and cut to the row", tag: long, want: "switch -> work blocked: external", maxWide: 60},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, _ := panelBoard(t)
+			m.width = 120
+			m.board.Launched = []core.Launched{{Key: "stopped", Session: "conversation", Harness: "claude", State: "gone", Switching: c.tag}}
+			got := ansi.Strip(m.switchTag(c.tag))
+			if !strings.Contains(got, c.want) || c.maxWide > 0 && ansi.StringWidth(got) > c.maxWide {
+				t.Fatalf("tag = %q", got)
+			}
+			if tag := nodeSwitch(m.board, core.Node{Manager: core.Manager{Session: "conversation"}}); tag != c.tag {
+				t.Fatalf("a stopped chief's row lost its switch: %+v", tag)
+			}
+		})
+	}
+}
+
+func TestSessionRowShowsItsPendingSwitch(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		tag    *core.Switching
+		want   string
+		absent string
+	}{
+		{name: "queued", tag: &core.Switching{To: "work"}, want: "switch pending -> work"},
+		{name: "blocked", tag: &core.Switching{To: "work", Blocked: "shared owner"}, want: "switch -> work blocked: shared owner"},
+		{name: "applied", absent: "switch"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, _ := setup(t)
+			m = press(t, m, "down", "down", "down")
+			for i := range m.board.Projects {
+				for j := range m.board.Projects[i].Sessions {
+					m.board.Projects[i].Sessions[j].Switching = c.tag
+				}
+			}
+			b := m.board
+			b.Gen++
+			next, _ := m.Update(boardMsg{board: b})
+			m = next.(Model)
+			view := ansi.Strip(m.View().Content)
+			if c.want != "" && !strings.Contains(view, c.want) {
+				t.Fatalf("row lacks %q:\n%s", c.want, view)
+			}
+			if c.absent != "" && strings.Contains(view, c.absent) {
+				t.Fatalf("row still says %q:\n%s", c.absent, view)
+			}
+		})
+	}
+}
+
+func TestASelectedRowsMetaLineFitsTheWidth(t *testing.T) {
+	for _, width := range []int{80, 120, 200} {
+		for _, tag := range []*core.Switching{nil, {To: "work"}, {To: "work", Blocked: strings.Repeat("external lifecycle ", 40)}} {
+			m, _, _ := setup(t)
+			m.width, m.cursor = width, 0
+			n := core.Node{Manager: core.Manager{ID: "mgr-0123456789", Session: "s", LastError: "launch refused"}, Live: &core.Live{Switching: tag}, Goal: &core.Goal{ID: "g1", Ask: strings.Repeat("make the importer handle CSV ", 10)}, Standing: core.StandMoving}
+			lines := strings.Split(m.nodeLines(0, n, 0), "\n")
+			if len(lines) < 2 || ansi.StringWidth(lines[0]) > width || ansi.StringWidth(lines[1]) > width {
+				t.Fatalf("width %d, switch %+v: row is %d wide, meta line %d wide:\n%s", width, tag, ansi.StringWidth(lines[0]), ansi.StringWidth(lines[1]), ansi.Strip(strings.Join(lines[:2], "\n")))
+			}
+			if !strings.Contains(ansi.Strip(lines[1]), "launch: launch refused") {
+				t.Fatalf("width %d, switch %+v: the blocker hid the launch error: %q", width, tag, ansi.Strip(lines[1]))
+			}
+		}
+	}
+}
+
 func TestStoppedLaunchesOpenContextualProfiles(t *testing.T) {
 	for _, state := range []string{"exited 1", "sigterm", "sigkill", "gone", "running", "unknown"} {
 		t.Run(state, func(t *testing.T) {

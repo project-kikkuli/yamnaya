@@ -973,6 +973,14 @@ func adriftText(b core.Board) string {
 	return "adrift now (ym health drift lists past episodes)\n" + strings.Join(lines, "\n") + "\n\n"
 }
 
+// switchTag is a row's pending login switch, cut to a width that leaves the row its other columns; the session page has it whole.
+func (m Model) switchTag(s *core.Switching) string {
+	if s == nil {
+		return ""
+	}
+	return "  " + pal.yellow.Render(ansi.Truncate(s.String(), max(30, m.width/3), "…"))
+}
+
 // stateWord is how a session's row reads: adrift when it shows a sign of going nowhere, else its status.
 func stateWord(s core.Live) string {
 	if s.Off {
@@ -1042,6 +1050,9 @@ func (m Model) sessionView() viewPage {
 		status += " (" + s.WaitingFor + ")"
 	}
 	m.field(&b, "status", status)
+	if s.Switching != nil {
+		m.field(&b, "login", s.Switching.String())
+	}
 	m.field(&b, "adrift", signLines(s.Drift))
 	m.field(&b, "where", s.Location())
 	m.field(&b, "repo", strings.TrimSpace(s.Repo+" "+s.Branch))

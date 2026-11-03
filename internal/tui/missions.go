@@ -134,6 +134,8 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		switch {
 		case p.Duplicated():
 			cells = append(cells, pal.red.Render(pad(copiesWhere(p), c.doing)))
+		case projectSwitch(p) != nil:
+			cells = append(cells, pal.yellow.Render(pad(projectSwitch(p).String(), c.doing)))
 		case p.Manager == "" && len(p.Sessions) > 0 && p.Sessions[0].Status == core.Idle && p.Sessions[0].LastLine() != "":
 			cells = append(cells, idleCell(p.Sessions[0], c.doing))
 		case len(p.Sessions) > 0:
@@ -141,6 +143,16 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		}
 	}
 	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+}
+
+// projectSwitch is the login switch pending for one of p's sessions.
+func projectSwitch(p core.Project) *core.Switching {
+	for _, s := range p.Sessions {
+		if s.Switching != nil {
+			return s.Switching
+		}
+	}
+	return nil
 }
 
 // hue is the project's color on this board, apart from every other project's while there are colors to spare.

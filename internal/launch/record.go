@@ -26,6 +26,7 @@ type Record struct {
 	SQLiteEnv        string    `json:"sqlite_env,omitempty"`
 	SQLiteEnvSet     bool      `json:"sqlite_env_set,omitempty"`
 	Handoff          string    `json:"handoff,omitempty"`
+	HandoffFrom      int       `json:"handoff_from,omitempty"`
 	AttachedAt       time.Time `json:"attached_at,omitzero"`
 	Account          string    `json:"account,omitempty"`
 	NativePID        int       `json:"native_pid,omitempty"`

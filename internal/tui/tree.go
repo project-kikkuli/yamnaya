@@ -640,6 +640,7 @@ func (m Model) treeRowText(i int, r row, ids map[string]string, labels map[*core
 		if s.Prompt != nil {
 			line += "  " + pal.yellow.Render(s.Prompt.String())
 		}
+		line += m.switchTag(s.Switching)
 		if len(s.Copies) > 1 {
 			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
@@ -656,7 +657,7 @@ func (m Model) treeRowText(i int, r row, ids map[string]string, labels map[*core
 		if r.verifier {
 			return m.mark(i) + pal.dim.Render("verifier  ") + pad(d.Title, m.nameWidth()) + " " + pal.dim.Render(d.State) + "\n"
 		}
-		return withNote(m.mark(i)+pad(d.Title, m.nameWidth())+" "+d.Harness+" "+d.State+" "+d.Key+" "+d.Branch+"  enter revive\n", m.note(d.Key))
+		return withNote(m.mark(i)+pad(d.Title, m.nameWidth())+" "+d.Harness+" "+d.State+" "+d.Key+" "+d.Branch+m.switchTag(d.Switching)+"  enter revive\n", m.note(d.Key))
 	case r.item != nil:
 		if m.listMode() == modeList {
 			return m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)})

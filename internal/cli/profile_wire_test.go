@@ -29,7 +29,7 @@ func TestRemoteSwitchResolvesProfileOnOwningHost(t *testing.T) {
 		if _, err := l.SwitchProfile("user@owner-host/"+ref, "personal"); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"user@owner-host", "switch", ref, "--profile", "personal"}
+		want := []string{"user@owner-host", "switch", ref, "--profile", "personal", "--json", "--reason", ownerSwitchReason}
 		if !reflect.DeepEqual(r.calls, want) {
 			t.Fatalf("remote control lost scope or forwarded a root: %q", r.calls)
 		}

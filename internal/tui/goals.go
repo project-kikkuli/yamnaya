@@ -275,8 +275,12 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		news = pal.yellow.Render(fmt.Sprintf("%d new ", u))
 	}
 	tags := planTags(n)
+	pending := nodeSwitch(m.board, n)
+	if pending != nil {
+		tags += m.switchTag(pending) + " "
+	}
 	line += m.statCells(st, m.width-ansi.StringWidth(line+news+tags)-keep) + news + tags
-	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
+	b := ansi.Truncate(line+ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…"), max(20, m.width), "…") + "\n"
 	if i != m.cursor {
 		return b
 	}
@@ -308,6 +312,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	if state := m.hostState(host); state != "" {
 		meta = append(meta, m.hostTag(host)+" "+state)
 	}
+	if pending != nil {
+		meta = append(meta, pal.yellow.Render(pending.String()))
+	}
 	keys := "enter open · r reply · b brief · B login · c chief · S steer plan · R relaunch · W brief page · o session · space select"
 	if len(n.Children)+len(n.Agents) > 0 || n.Live != nil {
 		keys += " · ← collapse · → expand"
@@ -324,7 +331,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		keys += " · V artifact"
 	}
 	under := "         " + indent
-	b += pal.dim.Render(under+strings.Join(meta, " | ")) + "\n"
+	b += pal.dim.Render(ansi.Truncate(under+strings.Join(meta, " | "), max(20, m.width), "…")) + "\n"
 	for _, l := range wrapHints(under, keys, m.width) {
 		b += pal.dim.Render(l) + "\n"
 	}
@@ -568,6 +575,22 @@ func (m Model) goalView() viewPage {
 	}
 	b.WriteString(m.treePage().String())
 	return b
+}
+
+// nodeSwitch is the login switch pending for n's session, live or stopped.
+func nodeSwitch(b core.Board, n core.Node) *core.Switching {
+	if n.Live != nil {
+		return n.Live.Switching
+	}
+	if n.Manager.Session == "" {
+		return nil
+	}
+	for _, l := range b.Launched {
+		if l.Session == n.Manager.Session {
+			return l.Switching
+		}
+	}
+	return nil
 }
 
 func managerState(b core.Board, n core.Node) string {

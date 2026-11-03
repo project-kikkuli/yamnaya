@@ -26,14 +26,18 @@ type switching struct {
 	*launches
 	switched []string
 	err      error
+	queued   bool
 }
 
-func (s *switching) SwitchProfile(ref, id string) (string, error) {
+func (s *switching) QueueProfileSwitch(ref, id, _ string) (core.SwitchOutcome, error) {
 	s.switched = append(s.switched, ref+" "+id)
 	if s.err != nil {
-		return "", s.err
+		return core.SwitchOutcome{}, s.err
 	}
-	return "switched", nil
+	if s.queued {
+		return core.SwitchOutcome{Message: "queued", Queued: true}, nil
+	}
+	return core.SwitchOutcome{Message: "switched"}, nil
 }
 
 // panelBoard is the fixture board with a profile and a remote host, its ym commands recorded instead of run.
