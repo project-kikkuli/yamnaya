@@ -9,7 +9,7 @@ import (
 // ItemText is it with its history as plain text, as ym item show prints it.
 func (c *Core) ItemText(it Item) string {
 	var w strings.Builder
-	id := it.Qualified()
+	id := it.Ref()
 	if it.Alias != "" && it.Alias != it.ID {
 		id += " (was " + it.Alias + ")"
 	}

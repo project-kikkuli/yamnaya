@@ -2,10 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +16,7 @@ import (
 
 func itemCmd(with, withHosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "item", Short: "File and manage open items"}
-	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemConsolidateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(withHosts), itemInboxCmd(with), itemPrepareCmd(withHosts))
+	cmd.AddCommand(itemAddCmd(with), itemReviewCmd(with), itemEscalateCmd(withHosts), itemConsolidateCmd(withHosts), itemListCmd(withHosts), itemShowCmd(withHosts), itemInboxCmd(withHosts), itemPrepareCmd(withHosts))
 	with = withHosts
 	cmd.AddCommand(&cobra.Command{
 		Use:   "answer <id> <text>",
@@ -270,25 +270,9 @@ func itemListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				if !ok {
 					return fmt.Errorf("session %s is not a manager or chief", core.Short(c.Session))
 				}
-				items, err := e.core.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
+				mine, err := e.core.ToMe(b, m)
 				if err != nil {
 					return err
-				}
-				mine := []core.Item{}
-				for _, it := range items {
-					if it.Recipient == m.ID {
-						mine = append(mine, it)
-					}
-				}
-				if e.core.Remotes != nil {
-					me := core.RemoteKey(e.core.SelfName(), m.ID)
-					for _, r := range e.core.Remotes.Boards() {
-						for _, it := range r.Items {
-							if it.State == core.ItemOpen && it.Recipient == me {
-								mine = append(mine, it)
-							}
-						}
-					}
 				}
 				return printItems(e.textOut(cmd.OutOrStdout(), asJSON), mine, asJSON)
 			}
@@ -327,6 +311,10 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
+			asks, err := e.core.NewAsks(c.Session)
+			if err != nil {
+				return err
+			}
 			nudge, err := e.core.VibeNudge(c)
 			if err != nil {
 				return err
@@ -334,10 +322,14 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if asJSON {
 				out := struct {
 					Items []itemJSON `json:"items"`
+					Asks  []itemJSON `json:"asks,omitempty"`
 					Vibe  string     `json:"vibe,omitempty"`
 				}{Items: []itemJSON{}, Vibe: nudge}
 				for _, it := range items {
 					out.Items = append(out.Items, toJSON(it))
+				}
+				for _, it := range asks {
+					out.Asks = append(out.Asks, toJSON(it))
 				}
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
@@ -348,6 +340,9 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				} else {
 					fmt.Fprintf(out, "re %s: dismissed: %s\n", it.Spoken(), it.Reason)
 				}
+			}
+			for _, it := range asks {
+				fmt.Fprintf(out, "ask: %s: %s\n", it.Ref(), it.Question)
 			}
 			msgs, err := e.core.TakeMessages(c.Session)
 			for _, m := range msgs {
@@ -374,26 +369,41 @@ func itemShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
-			if host, rest, ok, err := e.remoteItemRef(args[0]); err != nil {
+			host, rest, remote, err := e.remoteItemRef(args[0])
+			if err != nil {
 				return err
-			} else if ok {
-				if !e.reaches(host) {
-					return fmt.Errorf("item %s: %s is reached only through relays; ym item show needs it as a direct ssh remote (ym remote %s)", args[0], host, host)
-				}
-				remote := []string{"item", "show", rest}
-				if asJSON {
-					remote = append(remote, "--json")
-				}
-				out, err := e.core.RunRemote(host, remote...)
+			}
+			var it core.Item
+			if !remote || !e.reaches(host) {
+				it, err = e.item(b, args[0])
 				if err != nil {
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), out)
-				return nil
+				host, rest = it.Host, "#"+fmt.Sprint(it.Seq)
 			}
-			it, err := e.item(b, args[0])
-			if err != nil {
-				return err
+			if host != "" && e.reaches(host) {
+				remoteArgs := []string{"item", "show", rest}
+				if asJSON {
+					remoteArgs = append(remoteArgs, "--json")
+				}
+				out := ""
+				err = e.core.Silent(host)
+				if err == nil {
+					out, err = e.core.RunRemote(host, remoteArgs...)
+				}
+				if err == nil {
+					fmt.Fprintln(cmd.OutOrStdout(), out)
+					return nil
+				}
+				if !errors.Is(err, core.ErrUnreachable) {
+					return err
+				}
+			}
+			if it.ID == "" {
+				it, err = e.item(b, args[0])
+				if err != nil {
+					return err
+				}
 			}
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), toJSON(it))
@@ -433,6 +443,7 @@ type itemJSON struct {
 	AnsweredAt string        `json:"answered_at,omitempty"`
 	Received   bool          `json:"received"`
 	Recipient  string        `json:"recipient"`
+	Path       []string      `json:"path,omitempty"`
 	Host       string        `json:"host,omitempty"`
 	History    []core.Event  `json:"history,omitempty"`
 }
@@ -453,7 +464,7 @@ func toJSON(it core.Item) itemJSON {
 	if ev == nil {
 		ev = []string{}
 	}
-	return itemJSON{Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
+	return itemJSON{Path: it.Path, Missing: core.Unprepared(it), Preparer: it.Preparer, Evidence: ev, Tried: it.Tried, Dossier: d, Seq: it.Seq, Recipient: it.Recipient, Host: it.Host, Action: it.Action, ID: it.ID, Project: core.ScopeName(it.Scope), Scope: it.Scope, Alias: it.Alias, Kind: it.Kind, State: it.State, Question: it.Question, Rec: it.Rec, Options: it.Options,
 		Assumption: it.Assumption, Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, Answer: it.Answer,
 		Reason: it.Reason, CreatedAt: ts(it.CreatedAt), AnsweredAt: ts(it.AnsweredAt), Received: !it.Delivered.IsZero(), History: it.History}
 }
@@ -498,24 +509,10 @@ func writeJSON(w io.Writer, v any) error {
 
 // item resolves an item ID within the scope of -p, else of the calling session; from outside any session, within no scope.
 func (e *env) item(b core.Board, ref string) (core.Item, error) {
-	host, rest, ok, err := e.remoteItemRef(ref)
-	if err != nil {
+	if _, _, _, err := e.remoteItemRef(ref); err != nil {
 		return core.Item{}, err
 	}
-	if ok {
-		if !e.reaches(host) {
-			return core.Item{}, notRemote(ref, host)
-		}
-		for _, r := range e.core.Remotes.Boards() {
-			for _, it := range r.Items {
-				if r.Host == host && (rest == "#"+strconv.FormatInt(it.Seq, 10) || rest == it.ID || rest == it.Qualified()) {
-					return it, nil
-				}
-			}
-		}
-		return core.Item{}, fmt.Errorf("item %s: not found on %s", rest, host)
-	}
-	return e.core.Store.Find(e.itemScope(b), ref)
+	return e.core.FindItem(e.itemScope(b), ref)
 }
 
 // itemKey is the key core acts on: another host's ref as given, which core carries to that host, else the local item's key.
@@ -523,12 +520,15 @@ func (e *env) itemKey(b core.Board, ref string) (string, error) {
 	if _, _, ok, err := e.remoteItemRef(ref); ok || err != nil {
 		return ref, err
 	}
-	it, err := e.core.Store.Find(e.itemScope(b), ref)
+	it, err := e.core.FindItem(e.itemScope(b), ref)
 	return it.Key(), err
 }
 
 // remoteItemRef splits a ref naming another host's item; an @nickname no host answers to is an error.
 func (e *env) remoteItemRef(ref string) (host, rest string, ok bool, err error) {
+	if strings.HasPrefix(ref, e.core.SelfName()+"/") {
+		return "", "", false, nil
+	}
 	if host, rest, ok := e.core.RemoteRef(ref); ok {
 		return host, rest, true, nil
 	}

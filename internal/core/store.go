@@ -79,6 +79,7 @@ type Item struct {
 	Held time.Time
 	// Recipient is who the item waits on: Owner, or the id of the manager or chief it was routed to.
 	Recipient string
+	Path      []string
 	History   []Event
 	// Host is the host whose ym holds the item when that is not this one.
 	Host string

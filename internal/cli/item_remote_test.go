@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -18,13 +19,48 @@ import (
 type itemRemote struct {
 	board core.RemoteBoard
 	ran   [][]string
+	err   error
 }
 
 func (r *itemRemote) Hosts() []string            { return []string{r.board.Host} }
 func (r *itemRemote) Boards() []core.RemoteBoard { return []core.RemoteBoard{r.board} }
 func (r *itemRemote) Run(host string, args ...string) (string, error) {
 	r.ran = append(r.ran, append([]string{host}, args...))
-	return "ran on " + host, nil
+	return "ran on " + host, r.err
+}
+
+func TestItemShowUsesSnapshotsWhenAConfiguredHostIsUnreachable(t *testing.T) {
+	for _, ref := range []string{"box/#788", "box/D2", "mgr51:D2"} {
+		for _, failure := range []error{core.ErrUnreachable, errors.New("command refused")} {
+			t.Run(ref+"/"+failure.Error(), func(t *testing.T) {
+				st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { st.Close() })
+				k := &core.Core{Store: st, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+				r := boxBoard(k)
+				r.err = failure
+				r.board.Items[0].Scope = "box//chiefs/mgr51"
+				with := func(run runFunc) func(*cobra.Command, []string) error {
+					return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+				}
+				cmd := itemCmd(with, with)
+				var out bytes.Buffer
+				cmd.SetOut(&out)
+				cmd.SetErr(&out)
+				cmd.SetArgs([]string{"show", ref})
+				err = cmd.Execute()
+				if errors.Is(failure, core.ErrUnreachable) {
+					if err != nil || !strings.Contains(out.String(), "merge?") {
+						t.Fatalf("snapshot unavailable: %v, %s", err, out.String())
+					}
+				} else if !errors.Is(err, failure) {
+					t.Fatalf("command failure hidden: %v", err)
+				}
+			})
+		}
+	}
 }
 func (r *itemRemote) Attach(string, ...string) *exec.Cmd { return nil }
 
@@ -94,8 +130,8 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 						t.Fatalf("refused ref queued relays: %+v", pending)
 					}
 				case s.relay && c.name == "show":
-					if err == nil || !strings.Contains(err.Error(), "box is reached only through relays; ym item show needs it as a direct ssh remote") {
-						t.Fatalf("show through relays only: %v", err)
+					if err == nil || !strings.Contains(err.Error(), "not found on box") {
+						t.Fatalf("show before receiving a snapshot: %v", err)
 					}
 				case s.relay:
 					if err != nil {
@@ -126,6 +162,67 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 				}
 				if items, err := st.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
 					t.Fatalf("another host's item touched this host's store: %+v, %v", items, err)
+				}
+			})
+		}
+	}
+}
+
+func TestChiefListsAndReadsRemoteEscalationsInItsInbox(t *testing.T) {
+	for _, recipient := range []string{"laptop/mgr1", core.Owner, "box/mgr2"} {
+		for _, format := range []string{"text", "json"} {
+			t.Run(recipient+"/"+format, func(t *testing.T) {
+				st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { st.Close() })
+				k := &core.Core{Store: st, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+				chief, err := st.AddManager(core.Manager{Role: core.RoleChief, Name: "parent"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				chief.Session = "chief-session"
+				if err := st.SaveManager(chief); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := k.ServeSync(core.RelaySync{As: "laptop", From: "box"}); err != nil {
+					t.Fatal(err)
+				}
+				k.Remotes = &itemRemote{board: core.RemoteBoard{Host: "box", Items: []core.Item{{
+					Seq: 94, ID: "C6", Host: "box", Scope: "box//srv/chiefs/mgr11", Session: "report-session",
+					Kind: core.KindChore, State: core.ItemOpen, Question: "report escalation?", Recipient: recipient,
+					Path: []string{"laptop/mgr1"},
+				}}}}
+				with := func(run runFunc) func(*cobra.Command, []string) error {
+					return func(cmd *cobra.Command, args []string) error {
+						return run(&env{core: k, session: chief.Session}, cmd, args)
+					}
+				}
+				run := func(args ...string) string {
+					t.Helper()
+					cmd := itemCmd(with, with)
+					var out bytes.Buffer
+					cmd.SetOut(&out)
+					cmd.SetErr(&out)
+					if format == "json" {
+						args = append(args, "--json")
+					}
+					cmd.SetArgs(args)
+					if err := cmd.Execute(); err != nil {
+						t.Fatalf("%q: %v, output %s", args, err, out.String())
+					}
+					return out.String()
+				}
+				want := recipient != "box/mgr2"
+				for _, args := range [][]string{{"list", "--to-me"}, {"inbox"}} {
+					out := run(args...)
+					if strings.Contains(out, "report escalation?") != want {
+						t.Fatalf("%q returned %q, want escalation present=%v", args, out, want)
+					}
+				}
+				if out := run("inbox"); strings.Contains(out, "report escalation?") {
+					t.Fatalf("inbox repeated ask: %s", out)
 				}
 			})
 		}

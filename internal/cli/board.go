@@ -164,7 +164,15 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	if out.Closed, err = closedItems(c); err != nil {
 		return out, err
 	}
+	path, err := c.PathOf(b)
+	if err != nil {
+		return out, err
+	}
 	for _, it := range items {
+		it.Path, err = path(it)
+		if err != nil {
+			return out, err
+		}
 		out.Items = append(out.Items, withHistory(c, it))
 	}
 	for _, l := range b.Launched {
@@ -276,7 +284,12 @@ func parseTS(s string) time.Time {
 
 // fromJSON is an item another host printed, its scope qualified with that host.
 func fromJSON(host string, qualify func(string) string, it itemJSON) core.Item {
-	return core.Item{Seq: it.Seq, Scope: qualify(it.Scope), ID: it.ID, Alias: it.Alias, Kind: it.Kind, Action: it.Action,
+	var dossier core.Dossier
+	if it.Dossier != nil {
+		dossier = *it.Dossier
+	}
+
+	return core.Item{Dossier: dossier, Path: it.Path, Preparer: it.Preparer, Seq: it.Seq, Scope: qualify(it.Scope), ID: it.ID, Alias: it.Alias, Kind: it.Kind, Action: it.Action,
 		Question: it.Question, Rec: it.Rec, Options: it.Options, Assumption: it.Assumption, Evidence: it.Evidence, Tried: it.Tried,
 		Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, CreatedAt: parseTS(it.CreatedAt), State: it.State, Answer: it.Answer,
 		Reason: it.Reason, AnsweredAt: parseTS(it.AnsweredAt), Recipient: it.Recipient, Host: host, History: it.History}
@@ -298,6 +311,10 @@ func closedItems(c *core.Core) ([]itemJSON, error) {
 	if err != nil {
 		return nil, err
 	}
+	path, err := c.PathOf(core.Board{})
+	if err != nil {
+		return nil, err
+	}
 	out := []itemJSON{}
 	for _, it := range all {
 		at := it.AnsweredAt
@@ -305,6 +322,10 @@ func closedItems(c *core.Core) ([]itemJSON, error) {
 			at = it.CreatedAt
 		}
 		if it.State != core.ItemOpen && time.Since(at) < closedWindow {
+			it.Path, err = path(it)
+			if err != nil {
+				return nil, err
+			}
 			out = append(out, withHistory(c, it))
 		}
 	}

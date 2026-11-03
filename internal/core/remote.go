@@ -28,10 +28,11 @@ type RemoteBoard struct {
 	Usage    *Fleet
 	Host     string
 	// At is when the host last answered; zero while the first read is still running.
-	At       time.Time
-	Err      error
-	Sessions []Live
-	Items    []Item
+	At          time.Time
+	Err         error
+	Sessions    []Live
+	Items       []Item
+	ItemParents map[string]string
 	// Closed are its items answered or dismissed lately, with their history.
 	Closed   []Item
 	Launched []Launched
@@ -135,10 +136,32 @@ func (c *Core) shownRemotes() []RemoteBoard {
 }
 
 func (c *Core) remoteBoards() []RemoteBoard {
-	if c.Remotes == nil {
-		return nil
+	var boards []RemoteBoard
+	if c.Remotes != nil {
+		boards = c.Remotes.Boards()
 	}
-	return c.Remotes.Boards()
+	if c.Store == nil {
+		return boards
+	}
+	snapshots, _ := c.itemBoards()
+	for _, snap := range snapshots {
+		found := false
+		for i := range boards {
+			if boards[i].Host != snap.Host {
+				continue
+			}
+			found = true
+			if !snap.At.Before(boards[i].At) {
+				boards[i].Items, boards[i].Closed = snap.Items, snap.Closed
+				boards[i].ItemParents = snap.ItemParents
+			}
+			break
+		}
+		if !found {
+			boards = append(boards, snap)
+		}
+	}
+	return boards
 }
 
 // RemoteRef splits a host-qualified key into its host and the ref that host knows it by, reading no host.
@@ -340,17 +363,11 @@ func (c *Core) remoteItem(id string, args ...string) (Item, Delivery, bool, erro
 	if !ok {
 		return Item{}, Queued, false, nil
 	}
-	var it Item
-	for _, r := range c.remoteBoards() {
-		for _, x := range r.Items {
-			if x.Key() == id || r.Host == host && (rest == x.ID || rest == x.Qualified()) {
-				it = x
-			}
-		}
-	}
-	if it.ID == "" {
+	it, err := c.FindItem("", id)
+	if err != nil {
 		it = Item{ID: id, Host: host}
 	}
+
 	out, err := c.RunOrRelay(host, append([]string{"item", args[0], rest}, args[1:]...)...)
 	if err != nil {
 		return it, Queued, true, err
