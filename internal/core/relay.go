@@ -138,6 +138,11 @@ type RelayRef struct {
 	// Output is what a ym command printed where it ran; Goal is the goal there whose feed recorded how it turned out, if any.
 	Output string `json:"output,omitempty"`
 	Goal   string `json:"goal,omitempty"`
+	// Chief is the first chief above Goal on another host, as the host that ran it names it; that chief hears the goal's feed.
+	Chief string `json:"chief,omitempty"`
+	// Holder and HolderSeq are the host carrying a relay on and its row there, once the origin no longer holds it.
+	Holder    string `json:"holder,omitempty"`
+	HolderSeq int64  `json:"holder_seq,omitempty"`
 }
 
 func (r Relay) ref() RelayRef { return RelayRef{Origin: r.Origin, OriginSeq: r.OriginSeq} }
@@ -254,9 +259,17 @@ func unmarshal(body string, v any) error {
 	return nil
 }
 
-// firstSight records that the relay origin numbered seq arrived; false when it arrived before.
-func (s *Store) firstSight(origin string, seq int64, at time.Time) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO ym_relay_seen (origin, origin_seq, at) VALUES (?, ?, ?)`, origin, seq, at.UnixNano())
+// firstSight records that the relay origin numbered seq arrived and how it ended here; false when it arrived before.
+func (s *Store) firstSight(origin string, seq int64, at time.Time, outcome *RelayRef) (bool, error) {
+	stored := ""
+	if outcome != nil {
+		raw, err := json.Marshal(outcome)
+		if err != nil {
+			return false, err
+		}
+		stored = string(raw)
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO ym_relay_seen (origin, origin_seq, at, outcome) VALUES (?, ?, ?, ?)`, origin, seq, at.UnixNano(), stored)
 	if err != nil {
 		return false, err
 	}
@@ -264,8 +277,29 @@ func (s *Store) firstSight(origin string, seq int64, at time.Time) (bool, error)
 	return n == 1, err
 }
 
-// relayErrors adds the columns holding why a relay was last refused, how often and since when.
+// seenOutcome is how the relay origin numbered seq ended here, if it was a ym command that ended.
+func (s *Store) seenOutcome(origin string, seq int64) (RelayRef, bool, error) {
+	var stored string
+	err := s.db.QueryRow(`SELECT outcome FROM ym_relay_seen WHERE origin = ? AND origin_seq = ?`, origin, seq).Scan(&stored)
+	if err != nil || stored == "" {
+		return RelayRef{}, false, err
+	}
+	var ref RelayRef
+	err = json.Unmarshal([]byte(stored), &ref)
+	return ref, err == nil, err
+}
+
+// relayErrors adds the columns holding why a relay was last refused, how often and since when, and how each one acted on ended.
 func relayErrors(db *sql.DB) error {
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_relay_seen') WHERE name = 'outcome'`).Scan(&has); err != nil {
+		return err
+	}
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE ym_relay_seen ADD COLUMN outcome TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	for _, col := range []struct{ name, def string }{
 		{"last_error", "TEXT NOT NULL DEFAULT ''"}, {"refusals", "INTEGER NOT NULL DEFAULT 0"}, {"refused_since", "INTEGER"},
 	} {
@@ -575,6 +609,16 @@ func (c *Core) Receive(entries []Relay) (failed, done []RelayRef, err error) {
 			continue
 		}
 		if seen {
+			// Its sender still holds it, so the answer that said how it ended was lost; say it again.
+			ref, ok, err := c.Store.seenOutcome(r.Origin, r.OriginSeq)
+			switch {
+			case err != nil:
+				errs = append(errs, err)
+			case ok && ref.Final:
+				failed = append(failed, ref)
+			case ok:
+				done = append(done, ref)
+			}
 			continue
 		}
 		if !loaded {
@@ -582,18 +626,19 @@ func (c *Core) Receive(entries []Relay) (failed, done []RelayRef, err error) {
 			loaded = true
 		}
 		out, err := c.act(b, berr, r)
-		goal, nerr := c.noteRelayed(r, out, err)
-		if nerr != nil {
+		ref := r.ref()
+		if nerr := c.noteRelayed(r, out, err, &ref); nerr != nil {
 			errs = append(errs, nerr)
 		}
+		var ended *RelayRef
 		if err != nil {
 			errs = append(errs, fmt.Errorf("relay %s %s from %s: %w", r.Kind, r.Body, r.Origin, err))
-			ref := refused(r, err)
-			ref.Goal = goal
+			ref.Error = err.Error()
 			switch {
 			case errors.Is(err, ErrFinal):
 				ref.Final = true
 				failed = append(failed, ref)
+				ended = &ref
 				if err := c.noteFinal(r, err); err != nil {
 					errs = append(errs, err)
 				}
@@ -602,11 +647,11 @@ func (c *Core) Receive(entries []Relay) (failed, done []RelayRef, err error) {
 				continue
 			}
 		} else if r.Kind == RelayYM {
-			ref := r.ref()
-			ref.Output, ref.Goal = out, goal
+			ref.Output = out
 			done = append(done, ref)
+			ended = &ref
 		}
-		if _, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now()); err != nil {
+		if _, err := c.Store.firstSight(r.Origin, r.OriginSeq, c.now(), ended); err != nil {
 			errs, failed = append(errs, err), append(failed, refused(r, err))
 		}
 	}

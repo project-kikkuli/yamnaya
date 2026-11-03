@@ -206,10 +206,17 @@ func (c *Core) Repos() ([]string, error) {
 }
 
 // ResolveRepo turns a repository name, or any part of it, into its main checkout; a path is taken as it is. Clones of
-// one repository count as one, the most recently picked first. A name that matches none, or several, is refused for good.
+// one repository count as one, the most recently picked first. A name that matches none, or several, or a path neither here nor on
+// a host ym reads, is refused for good.
 func (c *Core) ResolveRepo(ref string) (string, error) {
 	if IsRepoPath(ref) {
-		return ExpandHome(ref), nil
+		path := ExpandHome(ref)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			if _, held := c.RepoHost(path); !held {
+				return "", Final(fmt.Errorf("%s does not exist on this host", path))
+			}
+		}
+		return path, nil
 	}
 	repos, err := c.Repos()
 	if err != nil {

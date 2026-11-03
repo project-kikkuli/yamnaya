@@ -16,17 +16,23 @@ type hostNet struct {
 	down  map[string]bool
 	// loseAcks drops that many round trips that confirm relays, as a link that fails mid-cycle does.
 	loseAcks int
+	// loseReplies drops the answer to that many round trips that carry relays, after the host called acted on them.
+	loseReplies int
 }
 
 func (n *hostNet) Sync(host string, req RelaySync) (RelayReply, error) {
 	if n.down[host] {
 		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
 	}
-	if len(req.Ack) > 0 && n.loseAcks > 0 {
+	if len(req.Ack)+len(req.Refused)+len(req.Done) > 0 && n.loseAcks > 0 {
 		n.loseAcks--
 		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
 	}
 	reply, err := n.hosts[host].core.ServeSync(req)
+	if len(req.Entries) > 0 && n.loseReplies > 0 {
+		n.loseReplies--
+		return RelayReply{}, fmt.Errorf("ssh %s: %w", host, ErrUnreachable)
+	}
 	// ym relay sync prints a failed act on stderr and still answers, as here.
 	if reply.Entries != nil {
 		return reply, nil
@@ -767,8 +773,7 @@ func TestARelayedCommandThatNamesNoGoalTellsItsRequesterHowItWent(t *testing.T) 
 	}{
 		{name: "ran on the host that pulls", dest: "a", told: "msg: ym: ym item answer #3 yes on a: answered #3"},
 		{name: "ran on a host the puller reaches", dest: "c", told: "msg: ym: ym item answer #3 yes on c: answered #3"},
-		{name: "failed twice, then ran", dest: "a", fails: 2,
-			told: "msg: ym: ym item answer #3 yes on a: answered #3", asked: "ym item answer #3 yes on a failed: database is locked"},
+		{name: "failed twice, then ran", dest: "a", fails: 2, told: "msg: ym: ym item answer #3 yes on a: answered #3"},
 		{name: "refused for good past the puller", dest: "c", fails: 1, final: true,
 			asked: "ym item answer #3 yes on c was refused for good: database is locked"},
 	} {

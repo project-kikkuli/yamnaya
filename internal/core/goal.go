@@ -75,6 +75,9 @@ func (c *Core) NewGoalOn(host, ask, repo, harness, under, requester string, sele
 	if repo == "" {
 		return Goal{}, fmt.Errorf("a goal on %s needs --repo naming the repository there", host)
 	}
+	if IsRepoPath(repo) && !filepath.IsAbs(repo) && !strings.HasPrefix(repo, "~") {
+		return Goal{}, fmt.Errorf("--repo %s is relative to this directory, which %s does not share; name the repository, or give its full path there", repo, host)
+	}
 	harness, err := managerHarness(harness)
 	if err != nil {
 		return Goal{}, err
