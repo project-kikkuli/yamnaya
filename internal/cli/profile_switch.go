@@ -20,12 +20,34 @@ func (l launcher) SwitchProfile(ref, id string) (string, error) {
 	return out.Message, err
 }
 
+// switchedOntoWall is when the login the owner chose comes back, zero while it has usage left.
+func (l launcher) switchedOntoWall(ref, id string) time.Time {
+	rec, ok := l.records.Find(ref)
+	if !ok {
+		return time.Time{}
+	}
+	ps, err := profile.Load(filepath.Dir(l.records.Dir))
+	if err != nil {
+		return time.Time{}
+	}
+	p, err := profile.Find(ps, rec.Harness, id)
+	if err != nil {
+		return time.Time{}
+	}
+	return l.loginOut(p)
+}
+
 // QueueProfileSwitch moves the session ref names to login id, keeping its conversation: at once when the session sits between
 // turns, otherwise saved for ym serve to apply at its next turn end. reason goes into the note the resumed session reads.
 func (l launcher) QueueProfileSwitch(ref, id, reason string) (core.SwitchOutcome, error) {
 	out, err := l.switchProfile(ref, id, reason)
 	if err != nil && !errors.Is(err, profile.ErrOperationBusy) {
 		l.blockSwitch(ref, id, err)
+	}
+	if err == nil && id != "auto" {
+		if until := l.switchedOntoWall(ref, id); !until.IsZero() {
+			out.Message += fmt.Sprintf("; login %s is out of its subscription limit until %s", id, until.UTC().Format(time.RFC3339))
+		}
 	}
 	return out, err
 }

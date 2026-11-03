@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,9 +23,14 @@ type quotaNotice struct {
 	Item    string    `json:"item"`
 }
 
-func quotaNoticePath(dir, harness, account string, reset time.Time) string {
-	sum := sha256.Sum256([]byte(harness + "\x00" + account + "\x00" + reset.UTC().Format(time.RFC3339)))
+func quotaNoticePath(dir, harness, account string) string {
+	sum := sha256.Sum256([]byte(harness + "\x00" + account))
 	return filepath.Join(dir, "quota-items", harness+"-"+hex.EncodeToString(sum[:12])+".json")
+}
+
+// sameQuotaWindow allows for providers reporting one window's reset a second or so apart; a new window starts hours later.
+func sameQuotaWindow(a, b time.Time) bool {
+	return a.Sub(b).Abs() < time.Hour
 }
 
 // fileQuotaItem tells the owner once per login and reset window that the login ran out, with how its work can continue.
@@ -32,9 +38,19 @@ func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaust
 	if l.core == nil {
 		return nil
 	}
-	path := quotaNoticePath(dir, e.Harness, e.Account, reset)
-	if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+	path := quotaNoticePath(dir, e.Harness, e.Account)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	var filed quotaNotice
+	if err == nil {
+		if err = json.Unmarshal(raw, &filed); err != nil {
+			return err
+		}
+		if sameQuotaWindow(filed.Reset, reset) {
+			return nil
+		}
 	}
 	added, err := l.core.AddOwnerItem(quotaItem(ps, e, reset, limits, now))
 	if err != nil {
@@ -91,23 +107,6 @@ func quotaItem(ps []profile.Profile, e core.Exhaustion, reset time.Time, limits 
 	return it
 }
 
-// exhaustedUntil is the reset of the login's latest used-up window, zero while it has usage left.
-func exhaustedUntil(limits []core.Limit, harness, id, account string, now time.Time) time.Time {
-	var reset time.Time
-	for _, w := range limits {
-		if w.Harness != harness || w.Used < 100 || !w.ResetsAt.After(now) {
-			continue
-		}
-		if w.Account != "" && w.Account != account || w.Account == "" && profile.ID(w.Profile) != profile.ID(id) {
-			continue
-		}
-		if w.ResetsAt.After(reset) {
-			reset = w.ResetsAt
-		}
-	}
-	return reset
-}
-
 func (l launcher) limits() []core.Limit {
 	if l.core != nil && l.core.Meter != nil {
 		return l.core.Meter.Fleet(time.Now()).Limits
@@ -115,39 +114,82 @@ func (l launcher) limits() []core.Limit {
 	return profileLimits(filepath.Dir(l.records.Dir))
 }
 
-// offWall keeps ym from resuming rec onto a login whose subscription is used up: it moves the conversation to a usable login of
-// its harness with note as its next message, or refuses until the login resets. moved is false when rec's login has usage left, or
-// when a pending switch already decides where it goes: restart applies that one.
-func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg string, err error) {
-	if rec.Session == "" || l.operation == rec.Session {
-		return false, "", nil
-	}
+// wall reports whether rec's login is used up and, if so, its reset and where the conversation can go instead; target is empty when
+// nothing is usable.
+func (l launcher) wall(rec launch.Record) (reset time.Time, target profile.Profile, ps []profile.Profile, account string, err error) {
 	dir := filepath.Dir(l.records.Dir)
-	ps, err := profile.Load(dir)
-	if err != nil {
-		return false, "", err
+	if ps, err = profile.Load(dir); err != nil {
+		return
 	}
-	account := rec.Account
-	if p, err := profile.Find(ps, rec.Harness, rec.Profile); err == nil && p.Account != "" {
+	account = rec.Account
+	if p, findErr := profile.Find(ps, rec.Harness, rec.Profile); findErr == nil && p.Account != "" {
 		account = p.Account
 	}
 	now, limits := time.Now(), l.limits()
-	reset := exhaustedUntil(limits, rec.Harness, rec.Profile, account, now)
-	if reset.IsZero() {
-		return false, "", nil
-	}
-	if m, err := loadMigration(dir, rec.Harness, rec.Session); err != nil {
-		return true, "", err
-	} else if m.Version != 0 && m.State != "running" {
-		return false, "", nil
+	if reset = exhaustedUntil(limits, rec.Harness, rec.Profile, account, now); reset.IsZero() {
+		return
 	}
 	a, err := loadFailover(dir, rec.Harness, rec.Session)
 	if err != nil {
+		return
+	}
+	target, _ = failoverDestination(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
+	return
+}
+
+// refusal is the error for a resume onto rec's used-up login, or nil when it has usage left or another login can take the session.
+func (l launcher) refusal(rec launch.Record) error {
+	reset, target, _, _, err := l.wall(rec)
+	if err != nil || reset.IsZero() || target.ID != "" {
+		return err
+	}
+	return &core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}
+}
+
+// noteWall makes sure the owner has the used-up login's one item, whichever path found it.
+func (l launcher) noteWall(rec launch.Record, ps []profile.Profile, account string, reset time.Time) error {
+	source := rec.Session
+	if source == "" {
+		source = rec.Key
+	}
+	e := core.Exhaustion{Harness: rec.Harness, Profile: rec.Profile, Account: account, Session: source}
+	return l.fileQuotaItem(filepath.Dir(l.records.Dir), ps, e, reset, l.limits(), time.Now())
+}
+
+// loginOut is when dest, the login a queued switch waits to land on, comes back, zero while it has usage left.
+func (l launcher) loginOut(dest profile.Profile) time.Time {
+	return exhaustedUntil(l.limits(), dest.Harness, dest.ID, dest.Account, time.Now())
+}
+
+// offWall keeps ym from resuming rec onto a login whose subscription is used up: it moves the conversation to a usable login, of its
+// harness first, with note as its next message, or refuses until the login resets. moved is false when rec's login has usage left,
+// or when a pending switch already decides where it goes: restart applies that one, unless it waits on a used-up login itself.
+func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg string, err error) {
+	if rec.Session == "" || l.operation == rec.Session || l.anyway {
+		return false, "", nil
+	}
+	m, err := loadMigration(filepath.Dir(l.records.Dir), rec.Harness, rec.Session)
+	if err != nil {
 		return true, "", err
 	}
-	target, err := failoverDestination(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
+	if m.Version != 0 && m.State != "running" && (m.State != "queued" || l.loginOut(m.Destination).IsZero()) {
+		return false, "", nil
+	}
+	reset, target, ps, account, err := l.wall(rec)
 	if err != nil {
-		return true, "", fmt.Errorf("%s login %s is out of its subscription limit until %s and no other usable login of any harness is configured; ym resumes nothing onto it before then, or ym switch %s --profile <id> moves it", rec.Harness, profile.ID(rec.Profile), reset.UTC().Format(time.RFC3339), rec.Key)
+		return true, "", err
+	}
+	if reset.IsZero() {
+		return false, "", nil
+	}
+	notice := l.noteWall(rec, ps, account, reset)
+	if target.ID == "" {
+		return true, "", errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
+	}
+	dir := filepath.Dir(l.records.Dir)
+	a, err := loadFailover(dir, rec.Harness, rec.Session)
+	if err != nil {
+		return true, "", err
 	}
 	if a.State.Status == "blocked" {
 		a.State.Target = target.ID
@@ -157,4 +199,27 @@ func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg strin
 	}
 	out, err := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", rec.Harness, profile.ID(rec.Profile), reset.UTC().Format(time.RFC3339)))
 	return true, out.Message, err
+}
+
+// freshLogin picks the login a session with no conversation to carry starts on: its own unless that is used up, else another of its
+// harness. A new start under another harness would lose what links to this session, so it waits for the reset instead.
+func (l launcher) freshLogin(rec launch.Record) (launch.Record, error) {
+	if l.anyway {
+		return rec, nil
+	}
+	reset, _, ps, account, err := l.wall(rec)
+	if err != nil || reset.IsZero() {
+		return rec, err
+	}
+	notice := l.noteWall(rec, ps, account, reset)
+	a, err := loadFailover(filepath.Dir(l.records.Dir), rec.Harness, rec.Session)
+	if err != nil {
+		return rec, err
+	}
+	target, err := failoverTarget(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, l.limits(), a.Pools, time.Now(), rec.Worktree.Path)
+	if err != nil {
+		return rec, errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
+	}
+	setRecordProfile(&rec, target)
+	return rec, l.records.Save(rec)
 }

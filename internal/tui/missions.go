@@ -15,7 +15,7 @@ import (
 // A width of 0 drops the column: host when every mission runs here, phase and bar when no mission has one, spend before usage is read,
 // work when no mission has any, doing when the screen is too narrow.
 type cols struct {
-	indent, name, host, phase, state, bar, vibe, spend, doing int
+	indent, name, host, phase, state, login, bar, vibe, spend, doing int
 	// work is the running crew, open pull requests and failing ones, each its own fixed width.
 	work [3]int
 }
@@ -33,6 +33,9 @@ func (m Model) missionCols(indent int) cols {
 	dollars := 0
 	for _, p := range m.board.Projects {
 		c.name = max(c.name, ansi.StringWidth(p.Name))
+		if name := m.missionLogin(p); name != "" {
+			c.login = max(c.login, ansi.StringWidth(name))
+		}
 		c.host = max(c.host, ansi.StringWidth(m.hostTag(m.projectHost(p))))
 		if len(p.Phases.Names) > 0 {
 			c.phase = phaseName + 1 + phaseDots
@@ -66,6 +69,9 @@ func (m Model) missionCols(indent int) cols {
 		c.name = max(minName, c.name-over)
 	}
 	if c.fixed() > room {
+		c.login = 0
+	}
+	if c.fixed() > room {
 		c.work = [3]int{}
 	}
 	return c
@@ -74,7 +80,7 @@ func (m Model) missionCols(indent int) cols {
 // fixed is every cell but doing's own width: the cursor mark, indent, columns and the space after each.
 func (c cols) fixed() int {
 	w := 3 + c.indent + c.name
-	for _, n := range []int{c.host, c.phase, c.state, c.bar, c.vibe, c.spend, c.workWidth()} {
+	for _, n := range []int{c.host, c.phase, c.state, c.login, c.bar, c.vibe, c.spend, c.workWidth()} {
 		if n > 0 {
 			w += 1 + n
 		}
@@ -120,6 +126,9 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		st = pal.red.Render(pad(copiesText(p), c.state))
 	}
 	cells = append(cells, st)
+	if c.login > 0 {
+		cells = append(cells, pal.dim.Render(pad(m.missionLogin(p), c.login)))
+	}
 	if c.bar > 0 {
 		cells = append(cells, barCell(p, c.bar))
 	}
@@ -143,6 +152,18 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 		}
 	}
 	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+}
+
+// missionLogin is the login the mission's lead runs on, empty when the host has only the one its harness implies.
+func (m Model) missionLogin(p core.Project) string {
+	if len(p.Sessions) == 0 {
+		return ""
+	}
+	name := m.loginName(p.Sessions[0].Harness, p.Sessions[0].Profile)
+	if name == p.Sessions[0].Harness {
+		return ""
+	}
+	return name
 }
 
 // projectSwitch is the login switch pending for one of p's sessions.

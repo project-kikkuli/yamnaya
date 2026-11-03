@@ -137,6 +137,9 @@ type Live struct {
 	Switching *Switching
 }
 
+// ThrottleHolds reports whether the owner's throttle keeps session stopped.
+func (b Board) ThrottleHolds(session string) bool { return b.throttle.Holds(session) }
+
 // Location names where the session runs, for display.
 func (l Live) Location() string {
 	if l.Remote != "" {

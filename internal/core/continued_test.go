@@ -1,8 +1,10 @@
 package core
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAContinuedSessionCarriesWhatWaitsOnItsOldID(t *testing.T) {
@@ -105,6 +107,77 @@ func TestAResumedManagerKeepsTheHarnessAndLoginItsSessionMovedTo(t *testing.T) {
 			saved, err := w.core.Store.Manager(m.ID)
 			if err != nil || saved.Session != next || saved.Harness != "codex" {
 				t.Fatalf("saved manager %+v, %v", saved, err)
+			}
+		})
+	}
+}
+
+func TestASessionRefusedForItsLoginIsAskedAgainWithoutCostingPaceOrFailures(t *testing.T) {
+	wait := func(session string) error {
+		return fmt.Errorf("resume %s: %w", session, &QuotaWait{Harness: "claude", Login: "default", Key: session, Until: time.Now().Add(time.Hour)})
+	}
+	for _, c := range []struct {
+		name    string
+		manager bool
+	}{
+		{name: "goal agent"},
+		{name: "manager", manager: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			w.supervise(t)
+			refused := "agent-refused"
+			if c.manager {
+				refused = m.Session
+			} else {
+				r.state(m.Session, "running")
+				r.launched = append(r.launched, Launched{Key: "wt-refused", Session: refused, State: "gone", Parent: m.Session}, Launched{Key: "wt-ok", Session: "agent-ok", State: "gone", Parent: m.Session})
+				r.fail[refused] = wait(refused)
+			}
+			if c.manager {
+				w.restart(r)
+				r.fail[refused] = wait(refused)
+			}
+			w.clock = w.clock.Add(StartGrace + time.Minute)
+			for range 30 {
+				w.clock = w.clock.Add(5 * time.Second)
+				w.loop(t, 1)
+			}
+			resumedCalls := func(session string) int {
+				n := 0
+				for _, call := range r.resumed {
+					if call.session == session {
+						n++
+					}
+				}
+				return n
+			}
+			if resumedCalls(refused) != 0 {
+				t.Fatalf("a refused session resumed: %+v", r.resumed)
+			}
+			if !c.manager && resumedCalls("agent-ok") != 1 {
+				t.Fatalf("a refused session starved another's resume: %+v", r.resumed)
+			}
+			saved, err := w.core.Store.Manager(m.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if saved.Stuck() {
+				t.Fatalf("waiting on a login counted as failing to launch: %+v", saved)
+			}
+			goal, err := w.core.Store.Goal(g.ID)
+			if err != nil || goal.State == GoalStuck {
+				t.Fatalf("goal marked stuck while waiting on a login: %+v, %v", goal, err)
+			}
+			delete(r.fail, refused)
+			w.clock = w.clock.Add(QuotaRecheck + time.Second)
+			for range 6 {
+				w.clock = w.clock.Add(ResumePace)
+				w.loop(t, 1)
+			}
+			if resumedCalls(refused) != 1 {
+				t.Fatalf("a session refused before the reset never came back: %+v", r.resumed)
 			}
 		})
 	}

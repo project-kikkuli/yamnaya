@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ type failoverAttempt struct {
 	State core.FailoverState   `json:"state"`
 	Pools map[string]time.Time `json:"attempted_pools"`
 	Event string               `json:"event"`
+	// NextTry holds back a retry after a switch that failed to apply.
+	NextTry time.Time `json:"next_try,omitzero"`
 }
 
 func failoverPath(dir, harness, session string) string {
@@ -45,48 +48,89 @@ func saveFailover(dir, h string, a failoverAttempt) error {
 	}
 	return profile.Write(failoverPath(dir, h, a.State.Session), b)
 }
+
+// loginWindow reports whether w, a window that stops the whole login rather than one model, is used up on the login.
+func loginWindow(w core.Limit, harness, id, account string, now time.Time) bool {
+	if w.Harness != harness || w.Used < 100 || !w.ResetsAt.After(now) {
+		return false
+	}
+	if harness == "codex" && !strings.HasPrefix(w.Name, "codex ") || harness == "claude" && w.Name != "5h" && w.Name != "7d" {
+		return false
+	}
+	if w.Account == "" {
+		return profile.ID(w.Profile) == profile.ID(id)
+	}
+	return w.Account == account
+}
+
+// exhaustedUntil is the reset of the login's latest used-up window, zero while it has usage left.
+func exhaustedUntil(limits []core.Limit, harness, id, account string, now time.Time) time.Time {
+	var reset time.Time
+	for _, w := range limits {
+		if loginWindow(w, harness, id, account, now) && w.ResetsAt.After(reset) {
+			reset = w.ResetsAt
+		}
+	}
+	return reset
+}
 func trueExhaustion(e core.Exhaustion, windows []core.Limit, now time.Time) (time.Time, bool) {
 	if e.Recovered || e.Account == "" || e.Seen.IsZero() {
 		return time.Time{}, false
 	}
-	if e.Harness == "codex" && e.Reason != "usage_limit_exceeded" || e.Harness == "claude" && e.Reason != "subscription_rate_limit" {
+	if e.Harness != "codex" && e.Harness != "claude" || e.Reason != quotaReason(e.Harness) {
 		return time.Time{}, false
 	}
 	var reset time.Time
 	for _, w := range windows {
-		if w.Harness != e.Harness || w.Account != e.Account || w.Used < 100 || !w.ResetsAt.After(now) || w.Seen.Before(e.Seen.Add(-time.Minute)) {
-			continue
-		}
-		if e.Harness == "codex" && !strings.HasPrefix(w.Name, "codex ") {
-			continue
-		}
-		if e.Harness == "claude" && w.Name != "5h" && w.Name != "7d" {
-			continue
-		}
-		if w.ResetsAt.After(reset) {
+		if w.Account == e.Account && loginWindow(w, e.Harness, e.Profile, e.Account, now) && w.ResetsAt.After(reset) {
 			reset = w.ResetsAt
 		}
 	}
 	return reset, !reset.IsZero()
 }
+func quotaReason(harness string) string {
+	if harness == "codex" {
+		return "usage_limit_exceeded"
+	}
+	return "subscription_rate_limit"
+}
+
+// quotaEvents adds to the ledger's events one for each live session on a used-up login that has none, as a limit reached with no
+// stopped turn yet still stops the next one. A turn that recovered after the limit row was read shows the row is stale.
+func quotaEvents(b core.Board) []core.Exhaustion {
+	out := slices.Clone(b.Fleet.Exhaustions)
+	for _, s := range b.Sessions {
+		if s.Remote != "" || s.ID == "" || s.Account == "" {
+			continue
+		}
+		reset := exhaustedUntil(b.Fleet.Limits, s.Harness, s.Profile, s.Account, b.At)
+		if reset.IsZero() {
+			continue
+		}
+		var seen time.Time
+		for _, w := range b.Fleet.Limits {
+			if loginWindow(w, s.Harness, s.Profile, s.Account, b.At) && w.Seen.After(seen) {
+				seen = w.Seen
+			}
+		}
+		if !slices.ContainsFunc(b.Fleet.Exhaustions, func(e core.Exhaustion) bool {
+			return e.Session == s.ID && e.Account == s.Account && (!e.Recovered || e.Seen.After(seen))
+		}) {
+			out = append(out, core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("limit-%d", reset.Unix()), Seen: b.At})
+		}
+	}
+	return out
+}
 func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, pools map[string]time.Time, now time.Time, cwds ...string) (profile.Profile, error) {
-	exhausted := map[string]bool{e.Account: true}
-	for account, until := range pools {
-		if until.After(now) {
-			exhausted[account] = true
-		}
-	}
-	for _, l := range limits {
-		if l.Used >= 100 && l.ResetsAt.After(now) && l.Account != "" {
-			exhausted[l.Account] = true
-		}
-	}
 	cwd := ""
 	if len(cwds) > 0 {
 		cwd = cwds[0]
 	}
 	for _, p := range ps {
-		if p.Harness == e.Harness && p.Account != "" && !exhausted[p.Account] && p.SubscriptionSafe(cwd) {
+		if p.Harness != e.Harness || p.Account == "" || p.Account == e.Account || pools[p.Account].After(now) || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero() {
+			continue
+		}
+		if p.SubscriptionSafe(cwd) {
 			return p, nil
 		}
 	}
@@ -114,15 +158,32 @@ func (l launcher) Failover(b core.Board) error {
 	if err := l.settleBlocked(dir); err != nil {
 		return err
 	}
+	killed := map[string]bool{}
+	if l.core != nil {
+		kills, err := l.core.Store.Kills(time.Time{})
+		if err != nil {
+			return err
+		}
+		for session := range kills {
+			killed[session] = true
+		}
+	}
 	var notices []error
-	for _, e := range b.Fleet.Exhaustions {
+	for _, e := range quotaEvents(b) {
 		reset, actual := trueExhaustion(e, b.Fleet.Limits, b.At)
 		if !actual {
 			continue
 		}
 		notices = append(notices, l.fileQuotaItem(dir, ps, e, reset, b.Fleet.Limits, b.At))
+		s, alive := b.Session(e.Session)
+		if !alive || s.Remote != "" {
+			continue
+		}
 		rec, ok := l.records.Find(e.Session)
-		if !ok || profile.ID(rec.Profile) != profile.ID(e.Profile) || rec.IsLanded() || !rec.Killed.IsZero() {
+		if !ok || profile.ID(rec.Profile) != profile.ID(e.Profile) || rec.IsLanded() || !rec.Killed.IsZero() || killed[e.Session] {
+			continue
+		}
+		if l.core != nil && (l.core.Off(e.Session) || b.ThrottleHolds(e.Session)) {
 			continue
 		}
 		selected, err := profile.Find(ps, e.Harness, e.Profile)
@@ -141,13 +202,11 @@ func (l launcher) Failover(b core.Board) error {
 			continue
 		}
 		target, chooseErr := failoverDestination(ps, e, b.Fleet.Limits, a.Pools, b.At, rec.Worktree.Path)
-		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
+		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && (chooseErr != nil || b.At.Before(a.NextTry))) {
 			continue
 		}
-		if s, alive := b.Session(e.Session); alive {
-			if err := switchIdentity(s, rec); err != nil {
-				continue
-			}
+		if err := switchIdentity(s, rec); err != nil {
+			continue
 		}
 		a.Event = e.Event
 		a.Pools[e.Account] = reset
@@ -160,7 +219,9 @@ func (l launcher) Failover(b core.Board) error {
 			}
 			continue
 		}
-		a.Pools[target.Account] = reset
+		if l.core != nil && !l.core.CanResume() {
+			continue
+		}
 		a.State.Target = target.ID
 		if err = saveFailover(dir, e.Harness, a); err != nil {
 			return err
@@ -170,20 +231,24 @@ func (l launcher) Failover(b core.Board) error {
 		out, switchErr := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", e.Harness, profile.ID(e.Profile), until))
 		switch {
 		case errors.Is(switchErr, profile.ErrOperationBusy):
-			delete(a.Pools, target.Account)
 			a.State.Status = "blocked"
 			a.State.Target = ""
 			a.State.Reason = switchErr.Error()
 		case switchErr != nil:
 			a.State.Status = "blocked"
 			a.State.Reason = switchErr.Error()
+			a.NextTry = b.At.Add(core.QuotaRecheck)
 		case out.Queued:
 			a.State.Status = "queued"
 			a.State.Reason = out.Message
 		default:
+			a.Pools[target.Account] = reset
 			a.State.Status = "switched"
 			a.State.Profile = target.ID
 			a.State.Account = target.Account
+			if l.core != nil {
+				l.core.ResumedNow()
+			}
 		}
 		if err = saveFailover(dir, e.Harness, a); err != nil {
 			return err

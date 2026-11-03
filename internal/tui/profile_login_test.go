@@ -367,3 +367,69 @@ func TestLateRegistrationAndLoginCannotTakeOverAnotherPanel(t *testing.T) {
 		t.Fatalf("old flow took over: calls=%+v cursor=%s", *calls, rows[m.pn.cur].key)
 	}
 }
+
+func TestASessionShowsTheLoginItRunsOnWhenTheHarnessHasMoreThanOne(t *testing.T) {
+	logins := func(n int) []core.LoginProfile {
+		out := []core.LoginProfile{{Harness: "claude", ID: "default"}}
+		for i := 1; i < n; i++ {
+			out = append(out, core.LoginProfile{Harness: "claude", ID: "claude-work"})
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name    string
+		logins  int
+		profile string
+		want    string
+		mission string
+	}{
+		{name: "the only login needs no name", logins: 1, want: "claude"},
+		{name: "the native login among others", logins: 2, want: "claude/default", mission: "claude/default"},
+		{name: "a named login in full", logins: 2, profile: "claude-work", want: "claude/claude-work", mission: "claude/claude-work"},
+		{name: "a named login of the only one", logins: 1, profile: "claude-work", want: "claude/claude-work", mission: "claude/claude-work"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, _ := setup(t)
+			m.width = 220
+			m.board.Profiles = logins(c.logins)
+			for i := range m.board.Projects {
+				for j := range m.board.Projects[i].Sessions {
+					m.board.Projects[i].Sessions[j].Harness = "claude"
+					m.board.Projects[i].Sessions[j].Profile = c.profile
+				}
+			}
+			var p core.Project
+			for _, candidate := range m.board.Projects {
+				if len(candidate.Sessions) > 0 {
+					p = candidate
+					break
+				}
+			}
+			if got := m.loginName("claude", c.profile); got != c.want {
+				t.Fatalf("login %q, want %q", got, c.want)
+			}
+			row := ansi.Strip(m.missionLine(0, p, m.missionCols(2)))
+			if c.mission != "" && !strings.Contains(row, c.mission) {
+				t.Fatalf("mission row lacks %q:\n%s", c.mission, row)
+			}
+			if c.mission == "" && strings.Contains(row, "claude/") {
+				t.Fatalf("mission row names a login needlessly:\n%s", row)
+			}
+			m.detail = p.Key
+			page := func(v viewPage) string {
+				var lines []string
+				for _, l := range v.lines {
+					lines = append(lines, ansi.Strip(l.text))
+				}
+				return strings.Join(lines, "\n")
+			}
+			if got := page(m.detailView()); !strings.Contains(got, c.want+" ") || strings.Contains(got, "claude…") {
+				t.Fatalf("session rows lack %q:\n%s", c.want, got)
+			}
+			m.sess = sessionKey(p.Sessions[0])
+			if got := page(m.sessionView()); !strings.Contains(got, c.want+" ") {
+				t.Fatalf("session page lacks %q:\n%s", c.want, got)
+			}
+		})
+	}
+}

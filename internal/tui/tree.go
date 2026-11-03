@@ -627,10 +627,14 @@ func (m Model) treeRowText(i int, r row, ids map[string]string, labels map[*core
 			label = pal.dim.Render("manager  ")
 		}
 		where := m.where(s)
+		login := max(7, ansi.StringWidth(m.loginName(s.Harness, s.Profile))+1)
 		if r.project != nil {
 			where = pad(where, m.whereWidth(r.project.Sessions))
+			for _, o := range r.project.Sessions {
+				login = max(login, ansi.StringWidth(m.loginName(o.Harness, o.Profile))+1)
+			}
 		}
-		line := m.mark(i) + label + pad(titleOf(s), m.nameWidth()) + " " + pad(profileDisplay(s.Harness, s.Profile), 7) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + where
+		line := m.mark(i) + label + pad(titleOf(s), m.nameWidth()) + " " + pad(m.loginName(s.Harness, s.Profile), login) + pal.state(stateWord(s)).Render(pad(stateWord(s), 9)) + where
 		if s.Branch != "" {
 			line += " " + s.Branch
 		}

@@ -33,6 +33,8 @@ type launcher struct {
 	operation  string
 	// queuedTo makes a switch apply only while the login it names is still the one queued for the session.
 	queuedTo string
+	// anyway resumes onto a login whose recorded limit has not reset yet: the owner knows it reset early.
+	anyway bool
 	// toHarness is the harness a switch moves to, the session's own when empty.
 	toHarness      string
 	core           *core.Core
@@ -793,6 +795,12 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
+	if rec.Session == "" {
+		var err error
+		if rec, err = l.freshLogin(rec); err != nil {
+			return "", err
+		}
+	}
 	if moved, msg, err := l.offWall(rec, l.resumeNote); moved || err != nil {
 		return msg, err
 	}
@@ -822,8 +830,15 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	if !resumed && rec.Profile != "" && rec.Profile != "default" {
 		return "", false, fmt.Errorf("profile %s conversation is unavailable; refusing to replace it with a new session", rec.Profile)
 	}
-	if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
-		return l.runsAs(rec.Key, session), resumed, err
+	if resumed {
+		if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
+			return l.runsAs(rec.Key, session), resumed, err
+		}
+	} else {
+		var err error
+		if rec, err = l.freshLogin(rec); err != nil {
+			return "", false, err
+		}
 	}
 	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
@@ -1131,6 +1146,7 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var selected string
+	var anyway bool
 	cmd := &cobra.Command{
 		Use: "revive <key|session>",
 		Short: ("Resume an exited or landed session, or one ym saw running elsewhere, in its directory, recreating the worktree and branch " +
@@ -1142,6 +1158,7 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 				return err
 			}
 			l.core = e.core
+			l.anyway = anyway
 			var msg string
 			if selected != "" {
 				msg, err = l.ReviveProfile(args[0], selected)
@@ -1156,6 +1173,7 @@ func reviveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 		}),
 	}
 	cmd.Flags().StringVar(&selected, "profile", "", "resume using this subscription profile")
+	cmd.Flags().BoolVar(&anyway, "anyway", false, "resume onto a login ym records as out of its subscription limit, when it reset early")
 	return cmd
 }
 

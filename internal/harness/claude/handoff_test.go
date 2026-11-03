@@ -230,3 +230,53 @@ func TestQuotaHandoffRejectsUnknownIdentityPathsAndNativeDescendants(t *testing.
 		})
 	}
 }
+
+func TestQuotaHandoffCountsASubagentKilledWithItsProcessAsOver(t *testing.T) {
+	const (
+		prompt = `{"type":"user","sessionId":"quota-session","agentId":"af89","isSidechain":true,"timestamp":"2026-11-03T22:40:35.719Z","message":{"role":"user","content":"Run this exact Bash command in the foreground"}}`
+		tool   = `{"type":"assistant","sessionId":"quota-session","agentId":"af89","isSidechain":true,"timestamp":"2026-11-03T22:40:39.033Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"toolu_okAwKD","name":"Bash","input":{"command":"until [ -f x ]; do sleep 2; done"}}]}}`
+		killed = `{"type":"user","sessionId":"quota-session","agentId":"af89","isSidechain":true,"timestamp":"2026-11-03T22:41:42.877Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_okAwKD","is_error":true,"content":"Exit code 137"}]},"toolUseResult":"Error: Exit code 137"}`
+		attach = `{"type":"attachment","sessionId":"quota-session","agentId":"af89","isSidechain":true,"timestamp":"2026-11-03T22:41:42.930Z"}`
+	)
+	for _, c := range []struct {
+		name  string
+		lines []string
+		// wrote is how long ago the transcript was last written, running how long ago the process started; zero has no process to read.
+		wrote, running time.Duration
+		want           bool
+	}{
+		{name: "the shape the drill left: tool result 137, no stop", lines: []string{prompt, tool, killed, attach}, wrote: time.Hour, running: time.Minute, want: true},
+		{name: "killed before its tool result was written", lines: []string{prompt, tool}, wrote: time.Hour, running: time.Minute, want: true},
+		{name: "written by this process, tool still running", lines: []string{prompt, tool}, wrote: time.Minute, running: time.Hour},
+		{name: "written by this process, tool just returned", lines: []string{prompt, tool, killed, attach}, wrote: time.Minute, running: time.Hour},
+		{name: "no process to tell by", lines: []string{prompt, tool, killed, attach}, wrote: time.Hour},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "projects", "-work", "quota-session.jsonl")
+			child := filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents", "agent-af89.jsonl")
+			if err := os.MkdirAll(filepath.Dir(child), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(quotaUser+"\n"+quotaLine+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(child, []byte(strings.Join(c.lines, "\n")+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now().Add(-c.wrote)
+			if err := os.Chtimes(child, at, at); err != nil {
+				t.Fatal(err)
+			}
+			writeState(t, root, 42, map[string]any{"pid": 42, "sessionId": "quota-session", "cwd": "/work", "status": "waiting", "statusUpdatedAt": 1793000000000})
+			var ps []proc.Proc
+			if c.running > 0 {
+				ps = []proc.Proc{{PID: 42, Elapsed: c.running, Args: []string{"claude"}}}
+			}
+			a := &Adapter{Dir: root, Now: time.Now, Procs: func() ([]proc.Proc, error) { return ps, nil }}
+			if _, err := a.InspectHandoff(core.Session{ID: "quota-session", PID: 42, Cwd: "/work"}); (err == nil) != c.want {
+				t.Fatalf("err=%v want ok=%v", err, c.want)
+			}
+		})
+	}
+}

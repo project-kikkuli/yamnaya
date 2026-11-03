@@ -45,6 +45,9 @@ func (l launcher) Adopt(s core.Live, say func(string)) (core.Target, error) {
 		Grace:  3 * time.Second,
 		Say:    say,
 	}
+	if err := l.refusal(launch.Adopted(s, time.Now())); err != nil {
+		return core.Target{}, err
+	}
 	last, err := st.Stop(s)
 	if err != nil {
 		return core.Target{}, err

@@ -69,7 +69,9 @@ func stoppedChild(sc scan) bool {
 	return sc.HandedBack || sc.LastType == "assistant" && sc.Stopped && !sc.UserAt.After(sc.LastAt) && (sc.LastStop == "end_turn" || sc.LastStop == "stop_sequence" && !sc.QuotaAt.IsZero())
 }
 
-func (a *Adapter) stoppedChildren(path, parent string) (map[string]bool, error) {
+// stoppedChildren proves every subagent of the transcript at path has stopped. An in-process subagent dies with its process, so one
+// whose transcript was last written before run, when the running process started, is over however it ended.
+func (a *Adapter) stoppedChildren(path, parent string, run time.Time) (map[string]bool, error) {
 	dir := strings.TrimSuffix(path, ".jsonl") + "/subagents"
 	children := map[string]bool{}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -92,15 +94,22 @@ func (a *Adapter) stoppedChildren(path, parent string) (map[string]bool, error) 
 		if !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
-		child, err := a.handoffScan(path)
+		info, err := d.Info()
 		if err != nil {
+			return err
+		}
+		over := info.ModTime().Before(run)
+		var child scan
+		if over {
+			child = a.scan(path)
+		} else if child, err = a.handoffScan(path); err != nil {
 			return err
 		}
 		id := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(path), ".jsonl"), "agent-")
 		if child.SessionID == "" || child.SessionID != parent && child.SessionID != id || child.AgentID != "" && child.AgentID != id {
 			return fmt.Errorf("native child transcript identity mismatch")
 		}
-		if !stoppedChild(child) {
+		if !over && !stoppedChild(child) {
 			return fmt.Errorf("child native turn is active or unknown")
 		}
 		children[id] = true
@@ -128,10 +137,6 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 	if sc.SessionID != s.ID || sc.QuotaAt.IsZero() || sc.QuotaSidechain || !sc.Stopped || sc.LastStop != "stop_sequence" || sc.LastType != "assistant" || sc.UserAt.After(sc.QuotaAt) {
 		return time.Time{}, fmt.Errorf("main turn has no matching terminal subscription quota error")
 	}
-	children, err := a.stoppedChildren(path, s.ID)
-	if err != nil {
-		return time.Time{}, err
-	}
 	list := a.Procs
 	if list == nil {
 		list = proc.List
@@ -141,6 +146,18 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 		return time.Time{}, err
 	}
 	table := proc.Index(ps)
+	var run time.Time
+	if p, ok := table[s.PID]; ok {
+		now := time.Now
+		if a.Now != nil {
+			now = a.Now
+		}
+		run = p.Started(now())
+	}
+	children, err := a.stoppedChildren(path, s.ID, run)
+	if err != nil {
+		return time.Time{}, err
+	}
 	rootOf := a.RootOf
 	if rootOf == nil {
 		rootOf = proc.ConfigRoot
@@ -183,7 +200,7 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 			if err != nil || own.SessionID != native.SessionID || !stoppedChild(own) {
 				return time.Time{}, fmt.Errorf("native child pid %d has no proven completed turn", p.PID)
 			}
-			nested, err := a.stoppedChildren(ownPath, native.SessionID)
+			nested, err := a.stoppedChildren(ownPath, native.SessionID, time.Time{})
 			if err != nil {
 				return time.Time{}, err
 			}

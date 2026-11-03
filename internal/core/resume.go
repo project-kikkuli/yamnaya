@@ -33,6 +33,9 @@ type recovery struct {
 	mu    sync.Mutex
 	last  time.Time
 	tried map[string]bool
+	// before is last as it was until the latest slot; recheck says when a session refused for its exhausted login is asked again.
+	before  time.Time
+	recheck map[string]time.Time
 	// cold is set from the cycle that finds every launched session gone until that recovery is reported.
 	cold, reported bool
 	notes          []resumeNote
@@ -62,7 +65,7 @@ func (c *Core) slot() bool {
 	if !r.last.IsZero() && !now.Before(r.last) && now.Sub(r.last) < ResumePace {
 		return false
 	}
-	r.last = now
+	r.before, r.last = r.last, now
 	return true
 }
 
@@ -107,6 +110,11 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 	}
 	who := managerWho(m)
 	if err != nil {
+		var wait *QuotaWait
+		if errors.As(err, &wait) {
+			c.retryQuota(m.Session, err)
+			m.Failures, m.NextAttempt = max(m.Failures-1, 0), c.now().Add(QuotaRecheck)
+		}
 		m.LastError = "resume failed: " + err.Error()
 		c.Store.SaveManager(m)
 		c.note(resumeNote{who: who, session: m.Session, failure: err.Error(), settled: true})
@@ -197,11 +205,13 @@ func (c *Core) ReviveWork(b Board) error {
 			who := "session " + Short(l.Session) + " (" + l.Key + ")"
 			_, resumed, err := r.Resume(l.Session, workResumeText, "")
 			c.noteResult(who, l.Session, resumed, err)
+			c.retryQuota(l.Session, err)
 			continue
 		}
 		who := "agent " + Short(l.Session) + " (" + l.Key + ")"
 		_, resumed, err := r.Resume(l.Session, workResumeText, "")
 		c.noteResult(who, l.Session, resumed, err)
+		c.retryQuota(l.Session, err)
 		if err != nil {
 			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,
 				fmt.Sprintf("%s's pane went and ym could not resume it: %v. Its worktree %s keeps what it wrote; ym revive %s tries again.", who, err, l.Path, l.Key),
@@ -224,6 +234,7 @@ func (c *Core) ReviveWork(b Board) error {
 		}
 		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Profile: o.Profile, ConfigRoot: o.ConfigRoot, Cwd: o.Cwd}}, workResumeText)
 		c.noteResult("session "+Short(o.ID)+" in "+o.Cwd, o.ID, true, err)
+		c.retryQuota(o.ID, err)
 	}
 	return errors.Join(errs...)
 }
@@ -232,6 +243,10 @@ func (c *Core) ReviveWork(b Board) error {
 func (c *Core) take(session string) bool {
 	c.recovery.mu.Lock()
 	tried := c.recovery.tried[session]
+	if at, waiting := c.recovery.recheck[session]; waiting && !c.now().Before(at) {
+		delete(c.recovery.recheck, session)
+		tried = false
+	}
 	c.recovery.mu.Unlock()
 	if tried || !c.slot() {
 		return false

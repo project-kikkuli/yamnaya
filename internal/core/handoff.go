@@ -30,5 +30,16 @@ func (c *Core) InspectHandoff(s Session) (time.Time, error) {
 	if _, prompt := h.ParsePrompt(screen); prompt || !i.QuotaDialog(screen) {
 		return time.Time{}, fmt.Errorf("native screen is not a stopped quota dialog")
 	}
-	return i.InspectHandoff(s)
+	at, err := i.InspectHandoff(s)
+	if err != nil {
+		return at, &QuotaStopUnproven{err}
+	}
+	return at, nil
 }
+
+// QuotaStopUnproven is a session at the quota dialog whose turn ym cannot prove over. It never ends the turn by itself, so whoever
+// waits on it needs telling, unlike a session waiting for any other reason.
+type QuotaStopUnproven struct{ Cause error }
+
+func (e *QuotaStopUnproven) Error() string { return e.Cause.Error() }
+func (e *QuotaStopUnproven) Unwrap() error { return e.Cause }

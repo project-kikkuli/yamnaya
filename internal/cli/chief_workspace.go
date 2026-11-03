@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,6 +69,13 @@ func (l launcher) ChiefWorkspaces(b core.Board) error {
 		dir := filepath.Join(l.core.StateDir, "chiefs", m.ID, "workspace")
 		if rec.Worktree.Path == dir && m.Directory == dir {
 			continue
+		}
+		if err := l.refusal(rec); err != nil {
+			var wait *core.QuotaWait
+			if errors.As(err, &wait) {
+				continue
+			}
+			return fmt.Errorf("workspace for %s: %w", m.ID, err)
 		}
 		if s, alive := b.Session(m.Session); alive {
 			if !s.Settled() {

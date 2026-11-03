@@ -17,6 +17,8 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
+const waitingBlocker = "the session waits at the quota dialog: "
+
 type migration struct {
 	ResumeNote  string          `json:"resume_note,omitempty"`
 	Reason      string          `json:"reason,omitempty"`
@@ -166,6 +168,9 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 			return rec, fmt.Errorf("profile handoff waits for the source to be idle and stopped; ym switch %s --profile %s", rec.Key, m.Destination.ID)
 		}
 	}
+	if m.State == "queued" && !l.loginOut(m.Destination).IsZero() {
+		return rec, nil
+	}
 	if m.Destination.Harness != rec.Harness {
 		return l.portRecord(rec, core.Live{}, m)
 	}
@@ -254,7 +259,18 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if !live && (landed || killed || m.State == "queued") {
 			continue
 		}
-		if s, ok := b.Session(m.Source.Session); ok && l.turnEnded(s, nil) != nil {
+		if s, ok := b.Session(m.Source.Session); ok {
+			if err := l.turnEnded(s, nil); err != nil {
+				if err = l.showWaiting(m, s, err); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if m.State == "queued" && !l.loginOut(m.Destination).IsZero() {
+			if err = l.reroute(m, rec); err != nil {
+				return err
+			}
 			continue
 		}
 		fingerprint, err := l.migrationFingerprint(m)
@@ -286,6 +302,70 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		}
 	}
 	return nil
+}
+
+// reroute handles a queued switch whose login ran out while it waited: ym's own failover moves on to another usable login, and any
+// other waits, showing why, until that login resets. Neither lands on the used-up login.
+func (l launcher) reroute(m migration, rec launch.Record) error {
+	dir := filepath.Dir(l.records.Dir)
+	out := l.loginOut(m.Destination)
+	block := func() error {
+		return l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
+			if latest.Destination.ID != m.Destination.ID {
+				return false
+			}
+			latest.Blocked, latest.Fingerprint = fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, out.UTC().Format(time.RFC3339)), ""
+			return true
+		})
+	}
+	a, err := loadFailover(dir, m.Source.Harness, m.Source.Session)
+	if err != nil {
+		return err
+	}
+	if !failoverPending(a) {
+		return block()
+	}
+	ps, err := profile.Load(dir)
+	if err != nil {
+		return err
+	}
+	target, err := failoverDestination(ps, core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, l.limits(), a.Pools, time.Now(), m.Source.Worktree.Path)
+	if err != nil {
+		return block()
+	}
+	next := l
+	next.toHarness = target.Harness
+	ref := m.Source.Key
+	if rec.Key == "" {
+		ref = m.Source.Session
+	}
+	_, err = next.QueueProfileSwitch(ref, target.ID, m.Reason)
+	if err != nil && !errors.Is(err, profile.ErrOperationBusy) {
+		return block()
+	}
+	return nil
+}
+
+// showWaiting says on the row why a switch cannot apply to a session stopped at the quota dialog, which never ends its turn by itself;
+// one working or waiting for anything else simply has not ended its turn, and any such blocker from earlier no longer holds.
+func (l launcher) showWaiting(m migration, s core.Live, why error) error {
+	blocker := ""
+	var stuck *core.QuotaStopUnproven
+	if errors.As(why, &stuck) {
+		blocker = why.Error()
+	} else if !strings.HasPrefix(m.Blocked, waitingBlocker) {
+		return nil
+	}
+	if blocker != "" {
+		blocker = waitingBlocker + blocker
+	}
+	return l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
+		if latest.Blocked == blocker || latest.Destination.ID != m.Destination.ID {
+			return false
+		}
+		latest.Blocked, latest.Fingerprint = blocker, ""
+		return true
+	})
 }
 
 // closeQueued removes the session's pending switch, and says why on any failover that was waiting on it.
