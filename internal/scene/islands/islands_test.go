@@ -36,3 +36,30 @@ func TestAnIslandKeepsItsPlaceWhateverHappensOnIt(t *testing.T) {
 		}
 	}
 }
+
+func TestTheSwellRollsWithoutRedrawingTheSea(t *testing.T) {
+	old := scene.Colors
+	scene.Colors = scene.TrueColor
+	t.Cleanup(func() { scene.Colors = old })
+	s := scene.Scene{Ranges: []scene.Range{{ID: "repo:r", Name: "repo", Peaks: []scene.Peak{{ID: "u", Name: "the unit"}}}}}
+	w, h := 160, 48
+	for frame := 1; frame <= 32; frame++ {
+		a, b := Islands{}.Paint(s, w, h, frame-1, scene.Rect{}), Islands{}.Paint(s, w, h, frame, scene.Rect{})
+		n := 0
+		for y := range h {
+			for x := range w {
+				as, _ := a.Cell(x, y)
+				bs, _ := b.Cell(x, y)
+				if as != bs {
+					n++
+				}
+			}
+		}
+		if n == 0 {
+			t.Fatalf("frame %d: the sea stood still", frame)
+		}
+		if n > w*h/2 {
+			t.Fatalf("frame %d: %d of %d cells redrew", frame, n, w*h)
+		}
+	}
+}

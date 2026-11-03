@@ -135,8 +135,8 @@ const grainMask = len(grain) - 1
 // The grain and the light's flicker hold for grainBeat frames, and between them one pixel in grainCrawl rolls, so
 // the print crawls without redrawing the whole screen each frame.
 const (
-	grainBeat  = 8
-	grainCrawl = 60
+	grainBeat  = 32
+	grainCrawl = 240
 )
 
 // film prints the frame's greys: the lens darkens the corners, the light flickers, grain crawls, a scratch or a

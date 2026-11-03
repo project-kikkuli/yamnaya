@@ -44,10 +44,14 @@ type frameBufs struct {
 
 var scratch sync.Pool
 
-// swell is how a wave's pass lifts the water's light, over the 32 steps of its phase.
+// swell is how a wave's pass lifts the water's light, over the 32 steps of its phase: a crest on flat water, so only
+// the crest's edges redraw as it rolls.
 var swell = func() (out [32]float64) {
 	for i := range out {
-		out[i] = 1 + .06*math.Sin(2*math.Pi*float64(i)/32)
+		out[i] = 1
+		if math.Sin(2*math.Pi*float64(i)/32) > .7 {
+			out[i] = 1.06
+		}
 	}
 	return out
 }()

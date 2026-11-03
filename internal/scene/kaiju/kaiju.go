@@ -72,10 +72,14 @@ func (p *painter) draw() {
 	p.sprites()
 }
 
-// swell is how a wave's pass lifts the bay's light, over the 32 steps of its phase.
+// swell is how a wave's pass lifts the bay's light, over the 32 steps of its phase: a crest on flat water, so only
+// the crest's edges redraw as it rolls.
 var swell = func() (out [32]float32) {
 	for i := range out {
-		out[i] = float32(1 + .14*math.Sin(2*math.Pi*float64(i)/32))
+		out[i] = 1
+		if math.Sin(2*math.Pi*float64(i)/32) > .7 {
+			out[i] = 1.14
+		}
 	}
 	return out
 }()
