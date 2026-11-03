@@ -605,7 +605,7 @@ Native command contracts were inspected on Claude 2.1.296 and Codex 0.162.1. Cla
 A drill by hand, such as running a scratch build of ym, keeps out of your own ym this way:
 
 1. Make a drill root and mark it: `mkdir -p ~/tmp/arbiter-work/drill && touch ~/tmp/arbiter-work/drill/.ym-rehearsal`. Keep the drill's repositories, worktrees and state under it.
-2. Export `YAMNAYA_STATE_DIR=<root>/state`, `YAMNAYA_YM_SOCKET=<name>` and `YAMNAYA_TMUX_SOCKET=<name>` (private tmux server names), plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` under the root for any claude or codex it starts.
+2. Export `YAMNAYA_STATE_DIR=<root>/state`, `YAMNAYA_YM_SOCKET=<name>` and `YAMNAYA_TMUX_SOCKET=<name>` (private tmux server names), plus `HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` under the root for any claude or codex it starts. A `--chrome` start writes the browser's native-host manifests under `HOME` and points them into `CLAUDE_CONFIG_DIR`, so a real `HOME` is left pointing into the root you remove. `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a real config root keeps that root's login.
 3. When done, run `tmux -L <name> kill-server` for both names and remove the root.
 
 A scratch build run without `YAMNAYA_STATE_DIR` acts on your own state directory. It still never takes over your `ym serve`: only the `ym` on your `PATH` writes the default state directory's LaunchAgent, so a build run by its path cannot point launchd at itself.
