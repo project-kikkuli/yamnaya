@@ -244,7 +244,9 @@ func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 	a.kept = next
 	pending := !a.onboarded()
 	for i := range out {
-		out[i].CheckScreen = pending
+		// A session with no state file yet may sit on a modal that comes before it writes one.
+		_, stated := a.state(out[i].PID)
+		out[i].CheckScreen = pending || !stated
 	}
 	return out
 }

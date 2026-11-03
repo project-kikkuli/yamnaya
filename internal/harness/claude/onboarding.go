@@ -19,6 +19,7 @@ var onboardingSteps = []struct {
 	{"login", []string{"Select login method:", "Claude account with subscription"}},
 	{"security notes", []string{"Security notes:", "Press Enter to continue"}},
 	{"terminal setup", []string{"Use Claude Code's terminal setup?", "No, maybe later with /terminal-setup"}},
+	{"chrome", []string{"Requires the Chrome extension.", "Enter to confirm · Esc to cancel"}},
 }
 
 // Onboarding reports the first-run onboarding step the screen shows, which hides the input box until the owner finishes it.

@@ -201,6 +201,11 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if strings.Contains(got[6], "--chrome") != (harness == "claude") {
 					t.Fatalf("switched %s session's Chrome flag: %q", harness, got[6])
 				}
+				if harness == "claude" {
+					if data, err := os.ReadFile(filepath.Join(b.Root, ".claude.json")); err != nil || !strings.Contains(string(data), `"hasCompletedClaudeInChromeOnboarding": true`) {
+						t.Fatalf("switched onto a root without Chrome onboarding seeded: %s %v", data, err)
+					}
+				}
 				if harness == "claude" && (got[1] != b.Root || got[2] != b.Root) {
 					t.Fatalf("Claude storage mismatch: %q", got)
 				}

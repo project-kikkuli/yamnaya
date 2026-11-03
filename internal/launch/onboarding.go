@@ -31,18 +31,21 @@ func ClaudeConfigFile(root string, explicit bool) (string, error) {
 	return path, nil
 }
 
-// EnsureOnboardingComplete records Claude Code's first-run onboarding as done in config root's .claude.json, as finishing it
-// does, so a session started there opens at its prompt instead of the theme picker and security notes.
+// EnsureOnboardingComplete records Claude Code's first-run and Chrome onboarding as done in config root's .claude.json, as finishing
+// them does, so a session started there opens at its prompt instead of the theme picker, security notes or Chrome modal.
 func EnsureOnboardingComplete(root string, explicit bool) error {
 	path, err := ClaudeConfigFile(root, explicit)
 	if err != nil {
 		return err
 	}
 	return updateClaudeConfig(path, func(config map[string]json.RawMessage) (bool, error) {
-		if string(config["hasCompletedOnboarding"]) == "true" {
-			return false, nil
+		changed := false
+		for _, key := range []string{"hasCompletedOnboarding", "hasCompletedClaudeInChromeOnboarding"} {
+			if string(config[key]) != "true" {
+				config[key] = json.RawMessage("true")
+				changed = true
+			}
 		}
-		config["hasCompletedOnboarding"] = json.RawMessage("true")
-		return true, nil
+		return changed, nil
 	})
 }

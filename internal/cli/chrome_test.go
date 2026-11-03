@@ -33,27 +33,28 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name       string
+		launches   bool
 		claudeOnly bool
 		argv       func(*testing.T, path) []string
 	}{
-		{"start argv", false, func(t *testing.T, p path) []string {
+		{"start argv", false, false, func(t *testing.T, p path) []string {
 			argv, err := startArgv(p.rec)
 			if err != nil {
 				t.Fatal(err)
 			}
 			return argv
 		}},
-		{"resume argv", false, func(t *testing.T, p path) []string {
+		{"resume argv", false, false, func(t *testing.T, p path) []string {
 			argv, err := resumeArgv(p.rec, "carry on")
 			if err != nil {
 				t.Fatal(err)
 			}
 			return argv
 		}},
-		{"hand resume after a failed switch", false, func(t *testing.T, p path) []string {
+		{"hand resume after a failed switch", false, false, func(t *testing.T, p path) []string {
 			return strings.Fields(profileResume(p.rec))
 		}},
-		{"resume command of a session with no terminal", false, func(t *testing.T, p path) []string {
+		{"resume command of a session with no terminal", false, false, func(t *testing.T, p path) []string {
 			c := core.Core{Harnesses: []core.Harness{&profileHarness{name: p.harness, dir: p.base}}}
 			ts := c.Targets(core.Board{}, p.rec.Session, p.harness)
 			if len(ts) != 1 {
@@ -61,10 +62,10 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 			}
 			return ts[0].Resume
 		}},
-		{"resume command under a named profile", false, func(t *testing.T, p path) []string {
+		{"resume command under a named profile", false, false, func(t *testing.T, p path) []string {
 			return (&profileHarness{name: p.harness, dir: p.base}).ResumeProfile(p.rec.Session, "default")
 		}},
-		{"worktree launch", false, func(t *testing.T, p path) []string {
+		{"worktree launch", true, false, func(t *testing.T, p path) []string {
 			repo := filepath.Join(p.base, "repo")
 			git(t, p.base, "init", "-q", "--bare", "-b", "main", "origin.git")
 			git(t, p.base, "clone", "-q", filepath.Join(p.base, "origin.git"), "repo")
@@ -75,19 +76,19 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 			}
 			return ran(t, p)
 		}},
-		{"chief workspace launch", false, func(t *testing.T, p path) []string {
+		{"chief workspace launch", true, false, func(t *testing.T, p path) []string {
 			if _, err := p.l.Start(core.NewLaunch{Harness: p.harness, Directory: filepath.Join(p.base, "chief"), Slug: "chief", Prompt: "go", Repo: filepath.Join(p.base, "reference")}); err != nil {
 				t.Fatal(err)
 			}
 			return ran(t, p)
 		}},
-		{"revive", false, func(t *testing.T, p path) []string {
+		{"revive", true, false, func(t *testing.T, p path) []string {
 			if _, err := p.l.Revive(p.rec.Key); err != nil {
 				t.Fatal(err)
 			}
 			return ran(t, p)
 		}},
-		{"revive before any conversation", false, func(t *testing.T, p path) []string {
+		{"revive before any conversation", true, false, func(t *testing.T, p path) []string {
 			p.rec.Session = ""
 			if err := p.l.records.Save(p.rec); err != nil {
 				t.Fatal(err)
@@ -97,13 +98,13 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 			}
 			return ran(t, p)
 		}},
-		{"goal resume", false, func(t *testing.T, p path) []string {
+		{"goal resume", true, false, func(t *testing.T, p path) []string {
 			if _, _, err := p.l.Resume(p.rec.Session, "you stopped", "start over"); err != nil {
 				t.Fatal(err)
 			}
 			return ran(t, p)
 		}},
-		{"goal start over when the transcript is gone", true, func(t *testing.T, p path) []string {
+		{"goal start over when the transcript is gone", true, true, func(t *testing.T, p path) []string {
 			if err := os.RemoveAll(filepath.Join(p.base, "config", "projects")); err != nil {
 				t.Fatal(err)
 			}
@@ -112,19 +113,19 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 			}
 			return ran(t, p)
 		}},
-		{"bring onto ym's server", false, func(t *testing.T, p path) []string {
+		{"bring onto ym's server", true, false, func(t *testing.T, p path) []string {
 			if err := p.l.Bring(live(p), "come over"); err != nil {
 				t.Fatal(err)
 			}
 			return ran(t, p)
 		}},
-		{"relaunch", false, func(t *testing.T, p path) []string {
+		{"relaunch", true, false, func(t *testing.T, p path) []string {
 			if _, err := p.l.Relaunch(live(p), p.harness, p.rec.Session); err != nil {
 				t.Fatal(err)
 			}
 			return ran(t, p)
 		}},
-		{"restart past a lost trust dialog", true, func(t *testing.T, p path) []string {
+		{"restart past a lost trust dialog", true, true, func(t *testing.T, p path) []string {
 			p.rec.Started = time.Now()
 			if err := p.l.records.Save(p.rec); err != nil {
 				t.Fatal(err)
@@ -187,6 +188,11 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 				}
 				if got, want := slices.Contains(argv, "--chrome"), harness == "claude"; got != want {
 					t.Fatalf("argv %q: --chrome %v, want %v", argv, got, want)
+				}
+				if c.launches && harness == "claude" {
+					if data, err := os.ReadFile(filepath.Join(config, ".claude.json")); err != nil || !strings.Contains(string(data), `"hasCompletedClaudeInChromeOnboarding": true`) {
+						t.Fatalf("started on a root without Chrome onboarding seeded: %s %v", data, err)
+					}
 				}
 			})
 		}

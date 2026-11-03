@@ -310,6 +310,7 @@ func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
 		{"claude-onboarding-login", "login", false},
 		{"claude-onboarding-security", "security notes", false},
 		{"claude-onboarding-terminal-setup", "terminal setup", false},
+		{"claude-onboarding-chrome", "chrome", false},
 		{"claude-idle", "", false},
 		{"claude-busy-pasted", "", false},
 		{"claude-bash", "", true},
@@ -335,12 +336,14 @@ func TestSessionsOnAProfileNotOnboardedAskForAScreenCheck(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		config string
+		pid    int
 		check  bool
 	}{
-		{"absent", "", true},
-		{"theme null and no flag", `{"theme":null}`, true},
-		{"reset by a login change", `{"hasCompletedOnboarding":false}`, true},
-		{"done", `{"hasCompletedOnboarding":true}`, false},
+		{"absent", "", 102, true},
+		{"theme null and no flag", `{"theme":null}`, 102, true},
+		{"reset by a login change", `{"hasCompletedOnboarding":false}`, 102, true},
+		{"done", `{"hasCompletedOnboarding":true}`, 102, false},
+		{"done but no state file, as behind the Chrome modal", `{"hasCompletedOnboarding":true}`, 4242, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a := fixture(t)
@@ -348,7 +351,7 @@ func TestSessionsOnAProfileNotOnboardedAskForAScreenCheck(t *testing.T) {
 			if c.config != "" {
 				must(t, os.WriteFile(a.Config, []byte(c.config), 0o600))
 			}
-			ss := a.Discover([]proc.Proc{p(4242, "claude", "--session-id", "s1")})
+			ss := a.Discover([]proc.Proc{p(c.pid, "claude", "--session-id", "s1")})
 			if len(ss) != 1 || ss[0].CheckScreen != c.check {
 				t.Fatalf("Discover = %+v; want CheckScreen %v", ss, c.check)
 			}

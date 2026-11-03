@@ -66,7 +66,7 @@ func TestPreparingARecordFinishesOnboardingAndKeepsTheRestOfTheConfig(t *testing
 				if err := json.Unmarshal(data, &got); err != nil {
 					t.Fatal(err)
 				}
-				if got["hasCompletedOnboarding"] != true {
+				if got["hasCompletedOnboarding"] != true || got["hasCompletedClaudeInChromeOnboarding"] != true {
 					t.Fatalf("onboarding not done: %s", data)
 				}
 				want := map[string]any{}
@@ -76,6 +76,7 @@ func TestPreparingARecordFinishesOnboardingAndKeepsTheRestOfTheConfig(t *testing
 					}
 				}
 				delete(got, "hasCompletedOnboarding")
+				delete(got, "hasCompletedClaudeInChromeOnboarding")
 				delete(got, "projects")
 				delete(want, "hasCompletedOnboarding")
 				if !reflect.DeepEqual(got, want) {
