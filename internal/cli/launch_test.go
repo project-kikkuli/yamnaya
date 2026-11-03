@@ -64,6 +64,9 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 			if !slices.Contains(argv, flag) {
 				t.Fatalf("argv %q must bypass permission prompts with %s", argv, flag)
 			}
+			if c.rec.Harness == "codex" && c.writes && !slices.Contains(argv, "--no-daemon") {
+				t.Fatalf("argv %q must run a dedicated Codex conversation without the shared daemon", argv)
+			}
 			dirs := map[string]bool{}
 			for i, a := range argv {
 				if a == "--add-dir" && i+1 < len(argv) {

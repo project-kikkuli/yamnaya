@@ -175,10 +175,7 @@ func transcript(rec launch.Record) string {
 // codexDirs lets Codex's sandbox write ym's state, so ym item works, and what a commit in its worktree writes of the repository's git dir.
 // The state dir, tmux server and serve choice set in ym's environment are passed to Codex's shells, which drop most of the environment.
 func codexDirs(rec launch.Record) []string {
-	args := accessArgs(rec)
-	if rec.ConfigRoot != "" {
-		args = append(args, "--no-daemon")
-	}
+	args := append(accessArgs(rec), "--no-daemon")
 	if rec.Profile != "" && rec.Profile != "default" {
 		args = append(args, "-c", "sqlite_home="+strconv.Quote(rec.ConfigRoot))
 	}
