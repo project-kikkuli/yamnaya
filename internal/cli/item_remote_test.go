@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -82,11 +83,12 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 		{"answer", []string{"answer", "yes"}, []string{"item", "answer", "#788", "yes"}},
 	}
 	setups := []struct {
-		name  string
-		ref   string
-		wire  func(*core.Core) *itemRemote
-		fail  string
-		relay bool
+		name   string
+		ref    string
+		wire   func(*core.Core) *itemRemote
+		fail   string
+		relay  bool
+		cached bool
 	}{
 		{name: "unknown nickname", ref: "@dm6tyx3m6c/#788", wire: func(*core.Core) *itemRemote { return nil }, fail: "host dm6tyx3m6c is not a configured remote"},
 		{name: "relay peer without remotes", ref: "box/#788", wire: func(k *core.Core) *itemRemote {
@@ -95,6 +97,8 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 			}
 			return nil
 		}, relay: true},
+		{name: "relay snapshot", ref: "box/#788", wire: itemSnapshotPeer, relay: true, cached: true},
+		{name: "relay snapshot by name", ref: "mgr51:D2", wire: itemSnapshotPeer, relay: true, cached: true},
 		{name: "remote board", ref: "box/#788", wire: boxBoard},
 		{name: "remote board by id", ref: "box/D2", wire: boxBoard},
 	}
@@ -128,6 +132,10 @@ func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
 					}
 					if len(pending) != 0 {
 						t.Fatalf("refused ref queued relays: %+v", pending)
+					}
+				case s.relay && c.name == "show" && s.cached:
+					if err != nil || !strings.Contains(out.String(), "merge?") {
+						t.Fatalf("cached show: %v, %s", err, out.String())
 					}
 				case s.relay && c.name == "show":
 					if err == nil || !strings.Contains(err.Error(), "not found on box") {
@@ -227,4 +235,14 @@ func TestChiefListsAndReadsRemoteEscalationsInItsInbox(t *testing.T) {
 			})
 		}
 	}
+}
+
+func itemSnapshotPeer(k *core.Core) *itemRemote {
+	_, err := k.ServeSync(core.RelaySync{As: "here", From: "box", ItemSnapshots: map[string]core.ItemSnapshot{
+		"box": {At: time.Now(), Items: []core.Item{{Seq: 788, ID: "D2", Scope: "/chiefs/mgr51", Kind: core.KindDecision, State: core.ItemOpen, Question: "merge?"}}},
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return nil
 }

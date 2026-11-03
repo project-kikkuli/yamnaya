@@ -107,7 +107,8 @@ type RelaySync struct {
 	// Refused names the called host's entries the caller could not act on yet, with why; the called host keeps them.
 	Refused []RelayRef `json:"refused,omitempty"`
 	// Done names the called host's ym commands the caller ran, with what they printed.
-	Done []RelayRef `json:"done,omitempty"`
+	Done          []RelayRef              `json:"done,omitempty"`
+	ItemSnapshots map[string]ItemSnapshot `json:"item_snapshots,omitempty"`
 }
 
 // RelayReply is what the called host still has to carry, by its own seq.
@@ -119,7 +120,8 @@ type RelayReply struct {
 	// Refused names the caller's entries this host could not act on or keep yet; the caller keeps them and sends them again.
 	Refused []RelayRef `json:"refused,omitempty"`
 	// Done names the caller's ym commands this host ran, with what they printed.
-	Done []RelayRef `json:"done,omitempty"`
+	Done          []RelayRef              `json:"done,omitempty"`
+	ItemSnapshots map[string]ItemSnapshot `json:"item_snapshots,omitempty"`
 }
 
 // RelayRef names a relay on every host it passes through.
@@ -419,6 +421,9 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 			return RelayReply{}, err
 		}
 	}
+	if err := c.keepItemSnapshots(req.ItemSnapshots); err != nil {
+		return RelayReply{}, err
+	}
 	if req.Start != nil {
 		if err := c.StartWork(*req.Start); err != nil {
 			return RelayReply{StartError: err.Error(), StartFinal: errors.Is(err, ErrFinal)}, err
@@ -442,7 +447,8 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 		out = []Relay{}
 	}
 	launches, launchErr := c.Store.pendingLaunches()
-	return RelayReply{Entries: out, Refused: refused, Done: done, Launches: launches}, errors.Join(recvErr, err, launchErr)
+	snapshots, snapshotErr := c.itemSnapshots()
+	return RelayReply{Entries: out, Refused: refused, Done: done, Launches: launches, ItemSnapshots: snapshots}, errors.Join(recvErr, err, launchErr, snapshotErr)
 }
 
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
@@ -478,10 +484,17 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 				peers = append(peers, p)
 			}
 		}
-		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}})
+		snapshots, err := c.itemSnapshots()
+		if err != nil {
+			return err
+		}
+		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}, ItemSnapshots: snapshots})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
+		}
+		if err := c.keepItemSnapshots(reply.ItemSnapshots); err != nil {
+			return err
 		}
 		if err := c.noteRefused(reply.Refused); err != nil {
 			return err
@@ -524,7 +537,11 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 				ack = append(ack, r.Seq)
 			}
 		}
-		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack, Refused: failed, Done: done}); err != nil {
+		snapshots, err = c.itemSnapshots()
+		if err != nil {
+			return err
+		}
+		if _, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: []Relay{}, Ack: ack, Refused: failed, Done: done, ItemSnapshots: snapshots}); err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 		}
 	}
