@@ -105,7 +105,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, want := resumed(t, ran), wt+" --dangerously-skip-permissions --resume s1"; got != want {
+			if got, want := resumed(t, ran), wt+" --chrome --dangerously-skip-permissions --resume s1"; got != want {
 				t.Fatalf("agent ran as %q, want %q", got, want)
 			}
 			if env := regexp.MustCompile(`\b[A-Z][A-Z0-9_]*=\S*`).FindString(msg); env != "" || strings.Contains(msg, "--resume") || !strings.Contains(msg, " in "+wt+";") || !strings.HasSuffix(msg, "; open: ym open "+rec.Key) {
@@ -175,7 +175,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 			if _, err := l.Revive("s2"); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := resumed(t, ran), dir+" --dangerously-skip-permissions --resume s2"; got != want {
+			if got, want := resumed(t, ran), dir+" --chrome --dangerously-skip-permissions --resume s2"; got != want {
 				t.Fatalf("agent ran as %q, want %q", got, want)
 			}
 			if back, _ := l.records.Find("s2"); !back.Seen.IsZero() {

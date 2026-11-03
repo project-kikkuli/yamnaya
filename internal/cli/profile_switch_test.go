@@ -198,6 +198,9 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if len(got) != 7 || got[0] != "b" || got[5] != "" || !strings.Contains(got[6], profileConversation) {
 					t.Fatalf("wrong resume/environment: %q", got)
 				}
+				if strings.Contains(got[6], "--chrome") != (harness == "claude") {
+					t.Fatalf("switched %s session's Chrome flag: %q", harness, got[6])
+				}
 				if harness == "claude" && (got[1] != b.Root || got[2] != b.Root) {
 					t.Fatalf("Claude storage mismatch: %q", got)
 				}

@@ -92,7 +92,7 @@ func startArgv(rec launch.Record) ([]string, error) {
 	prompt := rec.Prompt + slotNote
 	model := envModel(rec.Harness)
 	if rec.Harness == claude.Name {
-		argv := []string{b, "--dangerously-skip-permissions", "--session-id", rec.Session}
+		argv := claude.Argv(b, "--session-id", rec.Session)
 		if model != "" {
 			argv = append(argv, "--model", model)
 		}
@@ -141,7 +141,7 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	}
 	var argv []string
 	if rec.Harness == claude.Name {
-		argv = []string{b, "--dangerously-skip-permissions", "--resume", rec.Session}
+		argv = claude.Argv(b, "--resume", rec.Session)
 	} else {
 		argv = append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session)
 	}

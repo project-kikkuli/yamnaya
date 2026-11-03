@@ -188,7 +188,12 @@ func (a *Adapter) SessionID(p proc.Proc) string {
 }
 
 func (a *Adapter) Resume(id string) []string {
-	return []string{a.Bin, "--dangerously-skip-permissions", "--resume", id}
+	return Argv(a.Bin, "--resume", id)
+}
+
+// Argv is the command line of a Claude Code session on bin, args following the flags every session runs with.
+func Argv(bin string, args ...string) []string {
+	return append([]string{bin, "--chrome", "--dangerously-skip-permissions"}, args...)
 }
 
 // discoverRecheck is how long a read of unchanged files stands, for what changes with time alone.
