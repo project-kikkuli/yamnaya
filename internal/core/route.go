@@ -12,8 +12,8 @@ const stuckFailures = 3
 // Stuck reports whether ym gave up waiting for the manager to come up and told the owner.
 func (m Manager) Stuck() bool { return m.Failures >= stuckFailures }
 
-// Label names the manager for messages: its role, name and id.
-func (m Manager) Label() string { return fmt.Sprintf("%s %s (%s)", m.Role, m.Name, m.ID) }
+// Label names the manager for messages: its role and name.
+func (m Manager) Label() string { return m.Role + " " + m.Shown() }
 
 // Org is every manager and chief, every goal, and which manager each session ever ran as.
 type Org struct {
@@ -218,6 +218,9 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 			to := "the owner"
 			if added.Recipient != Owner {
 				to = added.Recipient
+				if r, ok := o.Managers[added.Recipient]; ok {
+					to = r.Shown()
+				}
 			}
 			woken = added.Recipient == m.ID
 			e := GoalEvent{Goal: g.ID, Kind: EventAsked, Created: c.now(),
@@ -246,7 +249,7 @@ func (c *Core) askManager(b Board, o Org, it Item) error {
 
 func askerOf(o Org, session string) string {
 	if m, ok := o.ManagerOf(session); ok {
-		return "manager " + m.ID
+		return "manager " + m.Shown()
 	}
 	return "agent " + Short(session)
 }
@@ -257,7 +260,7 @@ func askText(b Board, o Org, it Item) string {
 	if m, ok := o.ManagerOf(it.Session); ok {
 		from = m.Label()
 		if g, ok := o.Goals[m.GoalID]; ok {
-			from += " on goal " + g.ID
+			from += " on goal " + g.Shown()
 		}
 	}
 	return fmt.Sprintf("ym: %s ask from %s: %s", it.Key(), from, clip(oneLine(it.Question), lineMax))

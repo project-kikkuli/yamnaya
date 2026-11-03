@@ -74,8 +74,11 @@ func repoDir(p string) string {
 }
 
 // goalArgs is the ym command that starts a goal for ask in repo on another host.
-func goalArgs(ask, repo, harness, profile, under string) []string {
+func goalArgs(name, ask, repo, harness, profile, under string) []string {
 	args := []string{"goal", "--repo", repo}
+	if name != "" {
+		args = append(args, "--name", name)
+	}
 	if harness == "codex" {
 		args = append(args, "--codex")
 	}
@@ -120,7 +123,7 @@ func (c *Core) handOff(o Org, m Manager, host string) Manager {
 	g, hasGoal := o.Goals[m.GoalID]
 	var args []string
 	if hasGoal {
-		args = goalArgs(g.Ask, m.Repo, m.Harness, "", c.parentOn(host, m.ParentID))
+		args = goalArgs(g.Name, g.Ask, m.Repo, m.Harness, "", c.parentOn(host, m.ParentID))
 	} else {
 		remit := m.Remit
 		if body, err := os.ReadFile(m.BriefPath); err == nil && remit == "" {

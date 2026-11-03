@@ -227,7 +227,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
-			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.ID, author))
+			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), author))
 		}
 	}
 	return c.applySteer(b, o, m, text, author)
@@ -238,7 +238,7 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer
 	if latest, err := c.Store.LatestSteers(); err != nil {
 		return Steer{}, err
 	} else if st, ok := latest[m.ID]; ok && st.Text == text {
-		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.ID, st.Revision))
+		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.Shown(), st.Revision))
 	}
 	st, err := c.Store.addSteer(m.ID, text, author, c.now())
 	if err != nil {
@@ -288,9 +288,9 @@ func climb(o Org, chief, id string) (reports bool, via string) {
 
 func subject(o Org, m Manager) string {
 	if g, ok := o.Goals[m.GoalID]; ok {
-		return "goal " + g.ID
+		return "goal " + g.Shown()
 	}
-	return "chief " + m.ID
+	return "chief " + m.Shown()
 }
 
 func steerText(o Org, m Manager, st Steer) string {
@@ -319,7 +319,7 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 			return Steer{}, err
 		}
 		if m.ID != me.ID {
-			return Steer{}, fmt.Errorf("%s runs %s, not %s; only the one steered adopts its steer", Short(session), me.ID, m.ID)
+			return Steer{}, fmt.Errorf("%s runs %s, not %s; only the one steered adopts its steer", Short(session), me.Shown(), m.Shown())
 		}
 	}
 	all, err := c.Store.Steers(m.ID)
@@ -327,11 +327,11 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return Steer{}, err
 	}
 	if len(all) == 0 {
-		return Steer{}, fmt.Errorf("%s has never been steered: %w", m.ID, ErrNotFound)
+		return Steer{}, fmt.Errorf("%s has never been steered: %w", m.Shown(), ErrNotFound)
 	}
 	st := all[len(all)-1]
 	if revision != st.Revision {
-		return st, fmt.Errorf("revision %d is not %s's newest; adopt revision %d, which replaces it", revision, m.ID, st.Revision)
+		return st, fmt.Errorf("revision %d is not %s's newest; adopt revision %d, which replaces it", revision, m.Shown(), st.Revision)
 	}
 	if st.Adopted() {
 		return st, nil
@@ -341,7 +341,7 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return st, err
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
-		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.ID, st.Revision),
+		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.Shown(), Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.Shown(), st.Revision),
 			Key: fmt.Sprintf("%s:adopt:%d", g.ID, st.Revision), Created: st.AdoptedAt, Delivered: st.AdoptedAt})
 	}
 	return st, err
@@ -385,7 +385,7 @@ func (c *Core) watchSteers(b Board, o Org) error {
 				shown.ID = RemoteKey(c.SelfName(), m.ID)
 				about = "chief " + shown.ID
 				if g, ok := o.Goals[m.GoalID]; ok {
-					about = "goal " + RemoteKey(c.SelfName(), g.ID)
+					about = "goal " + RemoteKey(c.SelfName(), g.Shown())
 				}
 			}
 			text := fmt.Sprintf("ym: %s has not adopted revision %d of %s, which %s sent, after %d nudges. Open it, relaunch it with ym goal relaunch %s, or steer again.",

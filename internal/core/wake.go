@@ -70,7 +70,7 @@ func (c *Core) Notice(b Board) error {
 		}
 		who := "agent " + Short(s.Key())
 		if s.Key() == m.Session {
-			who = "manager " + m.ID
+			who = "manager " + m.Shown()
 		} else if s.Title != "" {
 			who += " (" + oneLine(s.Title) + ")"
 		}
@@ -282,7 +282,7 @@ func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
 
 // wakeText lists a goal's new events for its manager, one line each, those that need it first.
 func wakeText(g Goal, events []GoalEvent) string {
-	return inboxText(fmt.Sprintf("goal %s %q", g.ID, shortName(g.Ask)), events, "", nil)
+	return inboxText(fmt.Sprintf("goal %s %q", g.Shown(), shortName(g.Ask)), events, "", nil)
 }
 
 func (c *Core) chiefEvents(o Org, m Manager) ([]GoalEvent, error) {
@@ -346,7 +346,7 @@ func chiefText(o Org, events []GoalEvent) string {
 		if !ok {
 			return "your agent"
 		}
-		return g.ID + " (" + g.ManagerID + ")"
+		return g.Shown()
 	})
 }
 
@@ -565,7 +565,7 @@ func (c *Core) NotifyOwner() error {
 			errs = append(errs, err)
 			continue
 		}
-		if err := c.notify(fmt.Sprintf("ym: %s %s", g.ID, e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
+		if err := c.notify(fmt.Sprintf("ym: %s %s", g.Shown(), e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
 			errs = append(errs, err)
 			continue
 		}

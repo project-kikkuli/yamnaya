@@ -61,7 +61,7 @@ func (c *Core) FinishGoal(session, summary string, evidence []string) (Goal, Ver
 		return g, Verification{}, err
 	}
 	if g.Ended() {
-		return g, Verification{}, fmt.Errorf("%s is %s already", g.ID, g.State)
+		return g, Verification{}, fmt.Errorf("%s is %s already", g.Shown(), g.State)
 	}
 	var lines []string
 	for _, e := range evidence {
@@ -148,7 +148,7 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 		if s.Status != Idle || s.Prompt != nil || !v.NudgedAt.IsZero() || starting {
 			return nil
 		}
-		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict %s --pass or --fail with a --finding for each concrete gap.", g.ID, g.ID)
+		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict %s --pass or --fail with a --finding for each concrete gap.", g.Shown(), g.Shown())
 		if err := c.tell(b, v.Session, text, false); err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 
 // RecordVerdict takes the verdict of goal's verifier, which only the verifier session itself may give.
 func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (Verification, error) {
-	g, err := c.Store.Goal(goal)
+	g, err := c.GoalByRef(goal)
 	if err != nil {
 		return Verification{}, err
 	}
@@ -213,7 +213,7 @@ func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (
 		return v, err
 	}
 	if session == "" || (session != v.Session && c.Resolve(session) != v.Session) {
-		return v, fmt.Errorf("only %s's verifier session %s may record its verdict", g.ID, Short(v.Session))
+		return v, fmt.Errorf("only %s's verifier session %s may record its verdict", g.Shown(), Short(v.Session))
 	}
 	var lines []string
 	for _, f := range findings {
@@ -284,7 +284,7 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 	}
 	if verdict == VerdictPass {
 		if m, ok := o.Managers[current.ManagerID]; ok && m.Session != "" {
-			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.ID, v.Attempt), false)
+			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.Shown(), v.Attempt), false)
 		}
 	}
 	return nil

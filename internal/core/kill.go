@@ -247,9 +247,9 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 			}
 		}
 	}
-	what, id := "retired chief "+m.ID, m.ID
+	what, id := "retired chief "+m.Shown(), m.ID
 	if isGoal {
-		what, id = "killed "+g.ID, g.ID
+		what, id = "killed "+g.Shown(), g.ID
 	}
 	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), errors.Join(errs...)
 }
@@ -345,7 +345,7 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
 		if g.State != GoalKilled {
-			return m, fmt.Errorf("%s is %s, not killed", g.ID, g.State)
+			return m, fmt.Errorf("%s is %s, not killed", g.Shown(), g.State)
 		}
 		g.State, g.DoneAt, g.AckedAt, g.LastMovedAt = GoalActive, timeZero, timeZero, c.now()
 		if err := c.Store.SaveGoal(g); err != nil {

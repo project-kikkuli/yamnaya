@@ -375,7 +375,7 @@ func (c *Core) RouteDocs(b Board) error {
 func docText(o Org, to string, asks []DocAsk) string {
 	about := ""
 	if g, ok := o.Goals[o.Managers[to].GoalID]; ok {
-		about = " about goal " + g.ID
+		about = " about goal " + g.Shown()
 	}
 	a := asks[0]
 	var sb strings.Builder

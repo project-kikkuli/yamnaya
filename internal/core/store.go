@@ -302,6 +302,10 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate doc pages: %w", err)
 	}
+	if err := addColumns(db, `ym_goals name TEXT NOT NULL DEFAULT ''`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate goal names: %w", err)
+	}
 	if err := addColumns(db, `ym_review_requests title TEXT NOT NULL DEFAULT ''`, `ym_review_requests author TEXT NOT NULL DEFAULT ''`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate review requests: %w", err)

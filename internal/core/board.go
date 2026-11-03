@@ -74,6 +74,8 @@ type Core struct {
 	Woke time.Time
 	// Pace is how long a wake waits for followers and the rest wait for a digest; nil means WakeDebounce and DigestEvery.
 	Pace *WakePace
+	// Namer suggests a short name for a goal's ask; nil names it from the ask's first words.
+	Namer func(ask string) string
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.

@@ -154,7 +154,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		return nil
 	}
 	if m.Stuck() {
-		evidence := fmt.Sprintf("manager %s did not stay up after %d launches in a row", m.ID, m.Failures)
+		evidence := fmt.Sprintf("manager %s did not stay up after %d launches in a row", m.Shown(), m.Failures)
 		if m.LastError != "" {
 			evidence += "; last launch failed: " + m.LastError
 		}

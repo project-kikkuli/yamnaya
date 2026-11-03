@@ -30,9 +30,9 @@ func (c *Core) DropGoalPR(session, ref, url, why string) (e GoalEvent, tied bool
 		}
 		m, ok := o.ManagerOf(c.Resolve(session))
 		if !ok || m.GoalID != g.ID {
-			return e, false, fmt.Errorf("only %s's manager %s or the owner may drop its pull requests", g.ID, g.ManagerID)
+			return e, false, fmt.Errorf("only %s's manager or the owner may drop its pull requests", g.Shown())
 		}
-		who = "manager " + m.ID
+		who = "manager " + m.Shown()
 	}
 	owned, err := c.Store.GoalPRs()
 	if err != nil {
