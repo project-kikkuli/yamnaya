@@ -1,6 +1,7 @@
 package intake
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -60,6 +61,22 @@ func (f Fetcher) Authored(ctx context.Context) ([]Request, error) {
 	return found, nil
 }
 
+// searchPage is one page of GitHub's issue search; gh api --paginate prints each page after the last.
+type searchPage struct {
+	Total      int  `json:"total_count"`
+	Incomplete bool `json:"incomplete_results"`
+	Items      []struct {
+		Updated string `json:"updated_at"`
+		Title   string `json:"title"`
+		User    struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Pull struct {
+			URL string `json:"html_url"`
+		} `json:"pull_request"`
+	}
+}
+
 // search lists the open pull requests whose qualifier names the owner, with the owner's login.
 func (f Fetcher) search(ctx context.Context, qualifier string) (string, []Request, error) {
 	user, err := f.Run(ctx, "gh", "api", "user", "--jq", ".login")
@@ -71,26 +88,17 @@ func (f Fetcher) search(ctx context.Context, qualifier string) (string, []Reques
 		return "", nil, fmt.Errorf("GitHub did not identify the owner")
 	}
 	endpoint := "/search/issues?q=" + url.QueryEscape("is:pr is:open "+qualifier+":"+login) + "&per_page=100"
-	raw, err := f.Run(ctx, "gh", "api", "--paginate", "--slurp", endpoint)
+	raw, err := f.Run(ctx, "gh", "api", "--paginate", endpoint)
 	if err != nil {
 		return "", nil, err
 	}
-	var pages []struct {
-		Total      int  `json:"total_count"`
-		Incomplete bool `json:"incomplete_results"`
-		Items      []struct {
-			Updated string `json:"updated_at"`
-			Title   string `json:"title"`
-			User    struct {
-				Login string `json:"login"`
-			} `json:"user"`
-			Pull struct {
-				URL string `json:"html_url"`
-			} `json:"pull_request"`
+	var pages []searchPage
+	for d := json.NewDecoder(bytes.NewReader(raw)); d.More(); {
+		var page searchPage
+		if err = d.Decode(&page); err != nil {
+			return "", nil, err
 		}
-	}
-	if err = json.Unmarshal(raw, &pages); err != nil {
-		return "", nil, err
+		pages = append(pages, page)
 	}
 	var out []Request
 	count := 0
