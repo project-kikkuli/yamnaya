@@ -46,34 +46,36 @@ type boardJSON struct {
 }
 
 type launchedJSON struct {
-	Profile string `json:"profile,omitempty"`
-	Account string `json:"account,omitempty"`
-	Key     string `json:"key"`
-	Harness string `json:"harness"`
-	Session string `json:"session"`
-	State   string `json:"state"`
-	Path    string `json:"path"`
-	Landed  string `json:"landed,omitempty"`
-	Killed  string `json:"killed,omitempty"`
+	Switching *core.Switching `json:"switching,omitempty"`
+	Profile   string          `json:"profile,omitempty"`
+	Account   string          `json:"account,omitempty"`
+	Key       string          `json:"key"`
+	Harness   string          `json:"harness"`
+	Session   string          `json:"session"`
+	State     string          `json:"state"`
+	Path      string          `json:"path"`
+	Landed    string          `json:"landed,omitempty"`
+	Killed    string          `json:"killed,omitempty"`
 	// Recovered marks a landed launch whose work ym bundled before removing its worktree.
 	Recovered bool `json:"recovered,omitempty"`
 }
 
 type dormantJSON struct {
-	ConfigRoot string `json:"config_root,omitempty"`
-	Profile    string `json:"profile,omitempty"`
-	Account    string `json:"account,omitempty"`
-	Key        string `json:"key"`
-	Harness    string `json:"harness"`
-	Session    string `json:"session"`
-	Parent     string `json:"parent,omitempty"`
-	Cwd        string `json:"cwd"`
-	RepoKey    string `json:"repo_key,omitempty"`
-	RepoID     string `json:"repo_id,omitempty"`
-	Branch     string `json:"branch,omitempty"`
-	Title      string `json:"title"`
-	State      string `json:"state"`
-	Started    string `json:"started,omitempty"`
+	Switching  *core.Switching `json:"switching,omitempty"`
+	ConfigRoot string          `json:"config_root,omitempty"`
+	Profile    string          `json:"profile,omitempty"`
+	Account    string          `json:"account,omitempty"`
+	Key        string          `json:"key"`
+	Harness    string          `json:"harness"`
+	Session    string          `json:"session"`
+	Parent     string          `json:"parent,omitempty"`
+	Cwd        string          `json:"cwd"`
+	RepoKey    string          `json:"repo_key,omitempty"`
+	RepoID     string          `json:"repo_id,omitempty"`
+	Branch     string          `json:"branch,omitempty"`
+	Title      string          `json:"title"`
+	State      string          `json:"state"`
+	Started    string          `json:"started,omitempty"`
 }
 
 func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -176,12 +178,12 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 		out.Items = append(out.Items, withHistory(c, it))
 	}
 	for _, l := range b.Launched {
-		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed), Killed: ts(l.Killed), Recovered: l.Recovered})
+		out.Launched = append(out.Launched, launchedJSON{Key: l.Key, Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: ts(l.Landed), Killed: ts(l.Killed), Recovered: l.Recovered, Switching: l.Switching})
 	}
 	for _, p := range b.Projects {
 		for _, d := range p.Dormant {
 			out.Dormant = append(out.Dormant, dormantJSON{ConfigRoot: d.ConfigRoot, Key: d.Key, Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
-				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started)})
+				RepoKey: d.RepoKey, RepoID: core.RepoID(d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: ts(d.Started), Switching: d.Switching})
 		}
 	}
 	out.VerifierSessions = b.VerifierSessions
@@ -252,6 +254,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		if s.Prompt != "" {
 			l.Prompt = &core.Prompt{Tool: s.Prompt}
 		}
+		l.Switching = s.Switching
 		r.Sessions = append(r.Sessions, l)
 	}
 	for _, it := range j.Items {
@@ -262,11 +265,11 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 	}
 	for _, l := range j.Launched {
 		r.Launched = append(r.Launched, core.Launched{Key: qualify(l.Key), Profile: l.Profile, Account: l.Account, Harness: l.Harness, Session: l.Session, State: l.State, Path: l.Path, Landed: parseTS(l.Landed),
-			Killed: parseTS(l.Killed), Recovered: l.Recovered})
+			Killed: parseTS(l.Killed), Recovered: l.Recovered, Switching: l.Switching})
 	}
 	for _, d := range j.Dormant {
 		r.Dormant = append(r.Dormant, core.Dormant{Remote: host, ConfigRoot: d.ConfigRoot, Key: qualify(d.Key), Profile: d.Profile, Account: d.Account, Harness: d.Harness, Session: d.Session, Parent: d.Parent, Cwd: d.Cwd,
-			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started)})
+			RepoKey: qualify(d.RepoKey), RepoID: repoID(d.RepoID, d.RepoKey), Branch: d.Branch, Title: d.Title, State: d.State, Started: parseTS(d.Started), Switching: d.Switching})
 	}
 	for _, w := range j.Waiting {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})

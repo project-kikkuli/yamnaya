@@ -283,7 +283,7 @@ func (m Model) panelView() viewPage {
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   enter switches "+m.tagged(t.host, t.label)+" to the login under the cursor") + "\n")
-		b.WriteString(pal.dim.Render("   current: "+t.harness+"/"+profile.ID(t.profile)+m.onHost(t.host)+"; a adds a login here, then native authentication; enter switches only this conversation when idle, stopped, or at a verified quota stop") + "\n")
+		b.WriteString(pal.dim.Render("   current: "+t.harness+"/"+profile.ID(t.profile)+m.onHost(t.host)+"; a adds a login here, then native authentication; enter switches only this conversation, at once when idle, stopped, or at a verified quota stop, otherwise when it ends its turn") + "\n")
 	} else if m.pn.kind == panelProfiles {
 		b.WriteString(pal.dim.Render("   a adds a login and starts native authentication; select a session and press B to switch it") + "\n")
 	}
@@ -468,7 +468,7 @@ func (m Model) switchProfile(ref, id string) (tea.Model, tea.Cmd) {
 		}
 	}
 	switcher, ok := m.core.Launches.(interface {
-		SwitchProfile(string, string) (string, error)
+		QueueProfileSwitch(string, string, string) (core.SwitchOutcome, error)
 	})
 	if !ok || switcher == nil {
 		m.message = "error: ym's launcher is unavailable"
@@ -482,8 +482,8 @@ func (m Model) switchProfile(ref, id string) (tea.Model, tea.Cmd) {
 	key := "panel:switch:" + ref
 	m.acts[key] = act{doing: "switching", what: "switch", at: time.Now()}
 	return m, func() tea.Msg {
-		out, err := switcher.SwitchProfile(ref, id)
-		return profileSwitchedMsg{actMsg: actMsg{key, out, err}, epoch: epoch, target: target, id: id}
+		out, err := switcher.QueueProfileSwitch(ref, id, "the owner asked for it")
+		return profileSwitchedMsg{actMsg: actMsg{key, out.Message, err}, epoch: epoch, target: target, id: id, queued: out.Queued}
 	}
 }
 
@@ -825,7 +825,7 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		text := pad(m.hostTag(host), 6) + " " + pad(l.Harness, 6) + " " + pad(shown, 30) + " "
 		key := "panel:launch:" + l.Key
 		if l.Landed.IsZero() {
-			r := prow{text: text + pad(l.State, 10) + pal.dim.Render(" "+l.Path), key: key}
+			r := prow{text: text + pad(l.State, 10) + pal.dim.Render(" "+l.Path) + m.switchTag(l.Switching), key: key}
 			if strings.HasPrefix(l.State, "exited") || strings.HasPrefix(l.State, "sig") || l.State == "gone" {
 				r.target = &panelTarget{ref: qual(host, shown), label: shown, host: host, harness: l.Harness, profile: l.Profile, cwd: l.Path, session: l.Session}
 				r.does = []pdo{revive(host, "", l.Key), {"B", "logins / switch", nil}}
@@ -841,7 +841,7 @@ func (m Model) launchRows() ([]prow, []pdo) {
 		if l.Recovered {
 			how += ", work bundled"
 		}
-		ended = append(ended, prow{text: text + pad(how, 30) + pal.dim.Render(" "+l.Path), key: key, target: &panelTarget{ref: qual(host, shown), label: shown, host: host, harness: l.Harness, profile: l.Profile, cwd: l.Path, session: l.Session}, does: []pdo{revive(host, "", l.Key), {"B", "logins / switch", nil}}})
+		ended = append(ended, prow{text: text + pad(how, 30) + pal.dim.Render(" "+l.Path) + m.switchTag(l.Switching), key: key, target: &panelTarget{ref: qual(host, shown), label: shown, host: host, harness: l.Harness, profile: l.Profile, cwd: l.Path, session: l.Session}, does: []pdo{revive(host, "", l.Key), {"B", "logins / switch", nil}}})
 	}
 	rows := []prow{{text: pal.bold.Render("running and exited")}}
 	if len(running) == 0 {

@@ -3,11 +3,15 @@ package profile
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
 )
+
+// ErrOperationBusy is the transient refusal of Operation while another holds the conversation.
+var ErrOperationBusy = errors.New("another session operation owns this conversation")
 
 func Operation(dir, harness, session string) (func(), error) {
 	sum := sha256.Sum256([]byte(harness + "/" + session))
@@ -21,7 +25,7 @@ func Operation(dir, harness, session string) (func(), error) {
 	}
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("another session operation owns this conversation: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrOperationBusy, err)
 	}
 	return func() { f.Close() }, nil
 }

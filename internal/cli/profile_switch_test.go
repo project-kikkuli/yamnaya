@@ -38,7 +38,7 @@ func (h switchingHarness) Resume(id string) []string              { return []str
 func (h switchingHarness) ParsePrompt(string) (core.Prompt, bool) { return core.Prompt{}, false }
 func (h switchingHarness) Composer(string) (string, bool)         { return "", false }
 
-func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *testing.T) {
+func TestProfileSwitchResumesIdleAndExitedAndQueuesForBusySessions(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -183,8 +183,11 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 					t.Fatalf("chief switch changed its report: %+v, %v", savedReport, loadErr)
 				}
 				if !allowed {
-					if err == nil || signals != 0 {
+					if (err == nil) != (status == "busy") || signals != 0 {
 						t.Fatalf("busy action interrupted: %v signals=%d", err, signals)
+					}
+					if m, _ := loadMigration(state, harness, rec.Session); (m.State == "queued") != (status == "busy") {
+						t.Fatalf("queued state %q for %s", m.State, status)
 					}
 					if _, err = os.Stat(filepath.Join(b.Root, rel)); !os.IsNotExist(err) {
 						t.Fatal("busy switch published artifacts")

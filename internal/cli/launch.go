@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -21,14 +22,17 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/nativefile"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/tui"
 )
 
 type launcher struct {
-	rootOf         func(int, string) string
-	resumeNote     string
-	operation      string
+	rootOf     func(int, string) string
+	resumeNote string
+	operation  string
+	// queuedTo makes a switch apply only while the login it names is still the one queued for the session.
+	queuedTo       string
 	core           *core.Core
 	bindAssignment func(string, string, string) error
 	srv            *tmux.Host
@@ -215,13 +219,9 @@ func commitDirs(w launch.Worktree) []string {
 
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
 func (l launcher) settle(rec launch.Record) (launch.Record, error) {
-	if rec.Handoff != "" && l.core != nil {
-		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, "The prior turn stopped because") {
-			rec.Handoff = ""
-			if err := l.records.Save(rec); err != nil {
-				return rec, err
-			}
-		}
+	rec, err := l.dropReadHandoff(rec)
+	if err != nil {
+		return rec, err
 	}
 	if rec.Session == "" && rec.Harness == codex.Name {
 		if id := recordCodex(rec).LatestIn(rec.Worktree.Path, rec.Started); id != "" {
@@ -244,6 +244,26 @@ func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 		}
 	}
 	return rec, nil
+}
+
+// dropReadHandoff clears rec's handoff note once the transcript past the switch shows the session got it, so a later revive does not repeat it.
+func (l launcher) dropReadHandoff(rec launch.Record) (launch.Record, error) {
+	if rec.Handoff == "" {
+		return rec, nil
+	}
+	data, err := nativefile.ReadFile(transcript(rec))
+	if err != nil || !bytes.Contains(data[min(rec.HandoffFrom, len(data)):], []byte(handoffMark(rec.Handoff))) {
+		return rec, nil
+	}
+	rec.Handoff, rec.HandoffFrom = "", 0
+	return rec, l.records.Save(rec)
+}
+
+// handoffMark is the first sentence of a handoff note, which identifies it in the transcript.
+func handoffMark(note string) string {
+	note = strings.Join(strings.Fields(note), " ")
+	first, _, _ := strings.Cut(note, ". ")
+	return first
 }
 
 func (l launcher) find(ref string) (launch.Record, error) {

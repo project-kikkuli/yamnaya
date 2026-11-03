@@ -23,6 +23,8 @@ type Dormant struct {
 	RepoID string
 	Branch string
 	Title  string
+	// Switching is the login switch still pending for it.
+	Switching *Switching
 	// State is how its pane stands, such as "exited 1" or "gone", or why landing it after a clean exit failed.
 	State   string
 	Started time.Time
@@ -132,6 +134,8 @@ type Launched struct {
 	Revive bool
 	// Recovered is set when ym bundled work out of its worktree before removing it, so ym revive puts that work back.
 	Recovered bool
+	// Switching is the login switch still pending for it, shown here when the session has no live row.
+	Switching *Switching
 }
 
 func (l Launched) String() string {

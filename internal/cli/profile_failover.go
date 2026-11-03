@@ -118,7 +118,7 @@ func (l launcher) Failover(b core.Board) error {
 		if err != nil {
 			return err
 		}
-		if a.Event == e.Event && (a.State.Status == "blocked" || a.State.Status == "switched") {
+		if a.Event == e.Event && (a.State.Status == "blocked" || a.State.Status == "switched" || a.State.Status == "queued" || a.State.Status == "closed") {
 			continue
 		}
 		a.Event = e.Event
@@ -134,16 +134,21 @@ func (l launcher) Failover(b core.Board) error {
 			continue
 		}
 		a.Pools[target.Account] = reset
+		a.State.Target = target.ID
 		if err = saveFailover(dir, e.Harness, a); err != nil {
 			return err
 		}
 		next := l
 		next.resumeNote = fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window. ym moved this same conversation from profile %s to profile %s. Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded.", e.Harness, e.Profile, target.ID)
-		_, switchErr := next.SwitchProfile(e.Session, target.ID)
-		if switchErr != nil {
+		out, switchErr := next.QueueProfileSwitch(e.Session, target.ID, fmt.Sprintf("the %s subscription on profile %s exhausted its usage window", e.Harness, e.Profile))
+		switch {
+		case switchErr != nil:
 			a.State.Status = "blocked"
 			a.State.Reason = switchErr.Error()
-		} else {
+		case out.Queued:
+			a.State.Status = "queued"
+			a.State.Reason = "switch to " + target.ID + " waits for the turn end"
+		default:
 			a.State.Status = "switched"
 			a.State.Profile = target.ID
 			a.State.Account = target.Account
@@ -153,6 +158,50 @@ func (l launcher) Failover(b core.Board) error {
 		}
 	}
 	return nil
+}
+
+// failoverPending reports whether a is a failover still waiting on its chosen login's switch.
+func failoverPending(a failoverAttempt) bool {
+	if a.State.Status == "queued" {
+		return true
+	}
+	if a.State.Status != "blocked" {
+		return false
+	}
+	return a.State.Target != ""
+}
+
+// settleFailover records that the failover switch of session has now applied.
+func settleFailover(dir, harness, session string, dest profile.Profile) error {
+	a, err := loadFailover(dir, harness, session)
+	if err != nil || !failoverPending(a) {
+		return err
+	}
+	a.State.Status, a.State.Profile, a.State.Account, a.State.Reason = "switched", dest.ID, dest.Account, "switched to "+dest.ID
+	return saveFailover(dir, harness, a)
+}
+
+// retargetFailover names the login a replaced queued switch now moves to on the failover waiting on it.
+func retargetFailover(dir, harness, session string, prior migration, dest profile.Profile) error {
+	if prior.State != "queued" || prior.Destination.ID == dest.ID {
+		return nil
+	}
+	a, err := loadFailover(dir, harness, session)
+	if err != nil || !failoverPending(a) {
+		return err
+	}
+	a.State.Target, a.State.Status, a.State.Reason = dest.ID, "queued", "switch to "+dest.ID+" waits for the turn end"
+	return saveFailover(dir, harness, a)
+}
+
+// closeFailover records that the failover switch of session will not apply, and why.
+func closeFailover(dir, harness, session, why string) error {
+	a, err := loadFailover(dir, harness, session)
+	if err != nil || !failoverPending(a) {
+		return err
+	}
+	a.State.Status, a.State.Reason = "closed", why
+	return saveFailover(dir, harness, a)
 }
 func failoverStates(dir string) []core.FailoverState {
 	files, _ := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
