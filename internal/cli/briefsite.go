@@ -292,7 +292,7 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 	}
 	st := s.core.Store
 	hosts := newRemoteHosts([]string{host}, remoteRead, func(h string, at time.Time, raw []byte) { st.KeepBoard(h, at, raw) })
-	hosts.timeout = remoteRead
+	hosts.timeout, hosts.stored = remoteRead, keptBoardOf(st)
 	if at, raw, ok, _ := st.KeptBoard(host); ok {
 		hosts.keep(host, at, raw)
 	}
