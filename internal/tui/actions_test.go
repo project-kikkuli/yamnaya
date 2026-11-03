@@ -178,7 +178,7 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 			return ""
 		}},
 		{"U shows spend and limits", nil, []string{"U"}, func(t *testing.T, f fixture) string {
-			if v := f.m.View().Content; f.m.mode != modeScreen || !strings.Contains(v, "spend on") || !strings.Contains(v, "limit: claude") {
+			if v := f.m.View().Content; f.m.mode != modeScreen || !strings.Contains(v, "spend on") || !strings.Contains(v, "limit: local claude") {
 				return "usage view:\n" + v
 			}
 			return ""

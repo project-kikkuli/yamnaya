@@ -25,6 +25,14 @@ func (p *viewPage) WriteString(text string) (int, error) {
 	return len(text), nil
 }
 
+// selectNext marks the line the next write starts as the selected row, for rows drawn without a " >".
+func (p *viewPage) selectNext() {
+	if len(p.lines) == 0 {
+		p.lines = append(p.lines, viewLine{place: p.place})
+	}
+	p.lines[len(p.lines)-1].selected = true
+}
+
 func (p viewPage) String() string {
 	var b strings.Builder
 	for i, line := range p.lines {

@@ -594,7 +594,7 @@ func (c *Core) Board() (Board, error) {
 		}
 	}
 	if c.Meter != nil {
-		b.Fleet = MergeFleet(c.Meter.Fleet(b.At), b.Remotes)
+		b.Fleet = c.mergedFleet(b.At, b.Remotes)
 		for i := range b.Projects {
 			b.Projects[i].Spend = projectSpend(b.Projects[i], b.Fleet)
 		}

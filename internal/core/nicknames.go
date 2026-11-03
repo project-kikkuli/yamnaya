@@ -111,12 +111,45 @@ func (s *Store) HostNicknames() (map[string]string, error) {
 	return Nicknames(hosts, set), nil
 }
 
+// ShownNicknames names every host the board shows, those that only relay their usage here included.
+func (s *Store) ShownNicknames() (map[string]string, error) {
+	known, err := s.KnownHosts()
+	if err != nil {
+		return nil, err
+	}
+	set, err := s.SetNicknames()
+	if err != nil {
+		return nil, err
+	}
+	hosts, err := s.relayedUsageHosts()
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range known {
+		hosts = append(hosts, h.Name)
+	}
+	return Nicknames(hosts, set), nil
+}
+
 // ResolveHost is the remembered host ref names, by its full name or its nickname with or without its @.
 func (s *Store) ResolveHost(ref string) (string, error) {
 	nicks, err := s.HostNicknames()
 	if err != nil {
 		return "", err
 	}
+	return resolveHost(ref, nicks)
+}
+
+// ResolveShownHost is ResolveHost among the hosts the board shows.
+func (s *Store) ResolveShownHost(ref string) (string, error) {
+	nicks, err := s.ShownNicknames()
+	if err != nil {
+		return "", err
+	}
+	return resolveHost(ref, nicks)
+}
+
+func resolveHost(ref string, nicks map[string]string) (string, error) {
 	if _, ok := nicks[ref]; ok {
 		return ref, nil
 	}
@@ -134,7 +167,7 @@ func (s *Store) RenameHost(host, nick string) (string, error) {
 	if strings.ContainsAny(nick, " \t/@") {
 		return "", fmt.Errorf("a nickname has no spaces, / or @: %q", nick)
 	}
-	nicks, err := s.HostNicknames()
+	nicks, err := s.ShownNicknames()
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +183,7 @@ func (s *Store) RenameHost(host, nick string) (string, error) {
 		if _, err := s.db.Exec(`DELETE FROM ym_host_nicknames WHERE host=?`, host); err != nil {
 			return "", err
 		}
-		nicks, err = s.HostNicknames()
+		nicks, err = s.ShownNicknames()
 		return nicks[host], err
 	}
 	_, err = s.db.Exec(`INSERT INTO ym_host_nicknames(host,nick) VALUES(?,?) ON CONFLICT(host) DO UPDATE SET nick=excluded.nick`, host, nick)

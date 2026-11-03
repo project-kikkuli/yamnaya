@@ -103,7 +103,7 @@ func (r *boardReuse) renumber(b *Board) {
 func (c *Core) again(b Board, now time.Time) Board {
 	b.At = now
 	if c.Meter != nil {
-		fleet := MergeFleet(c.Meter.Fleet(now), b.Remotes)
+		fleet := c.mergedFleet(now, b.Remotes)
 		if reflect.DeepEqual(fleet, b.Fleet) {
 			return b
 		}

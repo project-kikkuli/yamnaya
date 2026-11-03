@@ -26,7 +26,9 @@ type Remotes interface {
 type RemoteBoard struct {
 	Profiles []LoginProfile
 	Usage    *Fleet
-	Host     string
+	// UsageOnly marks limits and spend a host relayed here: a host ym cannot read, whose reports join the topline and nothing else.
+	UsageOnly bool
+	Host      string
 	// At is when the host last answered; zero while the first read is still running.
 	At          time.Time
 	Err         error

@@ -166,6 +166,8 @@ A repository is its `origin` remote, so every clone of it, under any directory n
 
 The board's header shows how many sessions run and in what state, how many goals there are, how many rows need you, each Claude and Codex limit window, and today's and this week's spend at API prices across every host. A spend above zero but under a cent shows as `<$0.01`. Slots, load and cores are on the health screen (`h`); the header keeps only warnings: throttling, overload and processes holding too much memory.
 
+The usage rows list each login on each host: `local` for this host, `@nickname` for another, this host first, then the others by name. One account logged in on two hosts shows two rows, each with that host's number and age, so they can differ while one report is old. Rows wrap to the width and keep their numbers on screen; `U` lists the same rows.
+
 ## Machine slots
 
 Agents share one machine, so ym limits heavy commands to one slot per two available cores and one per 4 GiB of available memory, using whichever gives fewer slots. It first reserves two cores and a quarter of memory (at least 4 GiB) for the host. A 12-core, 24 GiB Mac has 4. `ym slot -- <command> [args...]` waits for a free slot, runs the command at niceness 10 (`--nice N` changes it) in its own process group, and gives the slot back once the command and anything it left running in that group have ended; an interrupt or termination passes to the whole group, and the command's exit status is ym's. Every agent ym starts is told to run test suites, builds and long jobs this way. The slots are the lock files in `~/.local/state/agent-slot` (`$XDG_STATE_HOME/agent-slot`) that the `agent-slot` script also takes, so both draw from one pool; a slot the script holds shows as `agent-slot (no details)`.
@@ -396,6 +398,7 @@ Hosts talk through relays:
 - Each host keeps every ask, message and command bound for another host until the receiving host acts on it. This host's `ym serve` trades relays with each remembered host every cycle in one ssh round trip, passing on what is bound for a third.
 - A relay that fails where it lands (a command that hit a locked database, say) stays with its sender and is sent again every cycle. `ym relay` lists what this host still has to carry, a refused one with `refused there: <why>`; `ym relay drop <seq>` stops carrying one another host keeps refusing.
 - A host that cannot be reached keeps working on its own and keeps its relays. The board shows it unreachable with its last known sessions and goals, and what it held takes effect once when it is back.
+- Each round trip also carries the calling host's limits and spend. A host that cannot reach the caller shows them on its usage rows and spend total, and nowhere else: ym does not ssh to it, launch on it or list it under `H`, and failover ignores its rows. `ym remote rename` names it and `ym remote forget` removes it. Where a host is read too, the read wins until it stops answering.
 
 ## Background service
 

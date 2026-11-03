@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS ym_host_items (
 	at INTEGER NOT NULL,
 	items BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_relayed_usage (
+	host TEXT PRIMARY KEY,
+	body TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ym_launch_target (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	host TEXT NOT NULL
@@ -64,8 +68,16 @@ func (s *Store) ForgetHost(host string) (bool, error) {
 	if _, err := s.db.Exec(`DELETE FROM ym_host_nicknames WHERE host=?`, host); err != nil {
 		return false, err
 	}
+	relayed, err := s.db.Exec(`DELETE FROM ym_relayed_usage WHERE host=?`, host)
+	if err != nil {
+		return false, err
+	}
 	n, err := res.RowsAffected()
-	return n > 0, err
+	if err != nil {
+		return false, err
+	}
+	m, err := relayed.RowsAffected()
+	return n+m > 0, err
 }
 
 // KnownHosts lists the remembered hosts, first used first.

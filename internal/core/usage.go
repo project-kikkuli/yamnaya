@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -139,7 +140,7 @@ func (l Limit) IdentityLabel() string {
 		}
 	}
 	if l.Host != "" {
-		label = l.Host + "/" + label
+		label = l.Host + " " + label
 	}
 	return label
 }
@@ -154,9 +155,11 @@ type Fleet struct {
 	Ready       bool
 	At          time.Time
 	Limits      []Limit
-	Today       Spend
-	Week        Spend
-	Sessions    map[string]SessionSpend
+	// PerHost is each host's own report of each limit, in board order; Limits folds one account's reports into the newest.
+	PerHost  []Limit
+	Today    Spend
+	Week     Spend
+	Sessions map[string]SessionSpend
 	// Agents is each Claude subagent's own spend, keyed "<session>/<agent id>".
 	Agents map[string]Spend
 	// Windows is the start of each limit window that Spend.Share measured, keyed by Limit.Key.
@@ -296,11 +299,15 @@ func MergeFleet(local Fleet, remotes []RemoteBoard) Fleet {
 			}
 			out.Sessions[RemoteKey(r.Host, k)] = v
 		}
+		if r.UsageOnly {
+			continue
+		}
 		for _, l := range r.Usage.Limits {
 			l.Host = r.Host
 			out.Limits = append(out.Limits, l)
 		}
 	}
+	out.PerHost = perHost(local.Limits, remotes)
 	newest := map[string]Limit{}
 	for _, l := range out.Limits {
 		if old, ok := newest[l.Key()]; !ok || old.Seen.Before(l.Seen) {
@@ -312,5 +319,34 @@ func MergeFleet(local Fleet, remotes []RemoteBoard) Fleet {
 		out.Limits = append(out.Limits, l)
 	}
 	sort.Slice(out.Limits, func(i, j int) bool { return out.Limits[i].Key() < out.Limits[j].Key() })
+	return out
+}
+
+// perHost lists every host's limits without folding accounts: this host first, then the others by name, each by harness and profile.
+func perHost(local []Limit, remotes []RemoteBoard) []Limit {
+	out := slices.Clone(local)
+	seen := map[string]bool{}
+	for _, r := range remotes {
+		origin := r.Self
+		if origin == "" {
+			origin = r.Host
+		}
+		if seen[origin] || r.Usage == nil {
+			continue
+		}
+		seen[origin] = true
+		for _, l := range r.Usage.Limits {
+			l.Host = r.Host
+			out = append(out, l)
+		}
+	}
+	rank := func(l Limit) string {
+		id := profile.ID(l.Profile)
+		if id == "default" {
+			id = ""
+		}
+		return l.Host + "\x00" + l.Harness + "\x00" + id + "\x00" + l.Name
+	}
+	sort.SliceStable(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
 	return out
 }

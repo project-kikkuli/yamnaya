@@ -26,12 +26,23 @@ func (m Model) hostNames() []string {
 	return hosts
 }
 
+// shownHosts are hostNames and the hosts whose usage alone reaches this board.
+func (m Model) shownHosts() []string {
+	hosts := m.hostNames()
+	for _, l := range m.board.Fleet.PerHost {
+		if l.Host != "" && !slices.Contains(hosts, l.Host) {
+			hosts = append(hosts, l.Host)
+		}
+	}
+	return hosts
+}
+
 // hostTag marks a row from another host with that host's nickname; this host's rows carry none.
 func (m Model) hostTag(host string) string {
 	if host == "" {
 		return ""
 	}
-	if n := core.Nicknames(m.hostNames(), m.nicks)[host]; n != "" {
+	if n := core.Nicknames(m.shownHosts(), m.nicks)[host]; n != "" {
 		return "@" + n
 	}
 	return "@" + host

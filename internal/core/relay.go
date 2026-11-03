@@ -118,6 +118,8 @@ type RelaySync struct {
 	// Done names the called host's ym commands the caller ran, with what they printed.
 	Done          []RelayRef              `json:"done,omitempty"`
 	ItemSnapshots map[string]ItemSnapshot `json:"item_snapshots,omitempty"`
+	// Usage is the caller's own limits and spend, for the board of a host that cannot read the caller.
+	Usage *RelayUsage `json:"usage,omitempty"`
 }
 
 // RelayReply is what the called host still has to carry, by its own seq.
@@ -475,6 +477,11 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.drainLocalRevocations(); err != nil {
 		return RelayReply{}, err
 	}
+	if req.Usage != nil && req.From != "" {
+		if err := c.Store.keepRelayedUsage(req.From, *req.Usage); err != nil {
+			return RelayReply{}, err
+		}
+	}
 	if err := c.noteRefused(req.Refused); err != nil {
 		return RelayReply{}, err
 	}
@@ -504,6 +511,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		return nil
 	}
 	self := c.SelfName()
+	usage := c.ownUsage()
 	var errs []error
 	if work, ok := cr.(WorkCourier); ok {
 		if err := c.dispatchOwn(hosts, work); err != nil {
@@ -531,7 +539,7 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		if err != nil {
 			return err
 		}
-		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}, ItemSnapshots: snapshots})
+		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}, ItemSnapshots: snapshots, Usage: usage})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue

@@ -164,11 +164,11 @@ func (m Model) scroll(lines []viewLine, room, top int) []viewLine {
 	body, space := lines[top:], room-top
 	at := 0
 	for i, line := range body {
-		if strings.HasPrefix(ansi.Strip(line.text), " >") {
+		if line.selected || strings.HasPrefix(ansi.Strip(line.text), " >") {
 			at = i
 		}
 	}
-	start := max(0, min(at+4-space, len(body)-space))
+	start := min(at, max(0, min(at+4-space, len(body)-space)))
 	return append(lines[:top:top], body[start:start+space]...)
 }
 
@@ -507,6 +507,9 @@ func (m Model) listView() viewPage {
 		case r.node != nil:
 			b.WriteString(withNote(m.nodeLines(i, *r.node, r.depth), m.rowNote(r)))
 		case r.need != nil:
+			if i == m.cursor {
+				b.selectNext()
+			}
 			b.WriteString(withNote(m.queueRowLines(i, *r.need, labels[r.need]), m.rowNote(r)))
 		case r.item != nil:
 			b.WriteString(m.needLines(i, core.Need{Item: r.item, Project: m.board.ProjectOf(r.item.Session)}))

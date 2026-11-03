@@ -42,8 +42,9 @@ func (m Model) usageText() string {
 	if !f.Ready {
 		b.WriteString("reading transcripts; spend fills in once the first scan ends\n")
 	}
-	f.Limits = slices.Clone(f.Limits)
+	f.Limits = slices.Clone(f.PerHost)
 	for i, l := range f.Limits {
+		f.Limits[i].Host = localHost
 		if l.Host != "" {
 			f.Limits[i].Host = m.hostTag(l.Host)
 		}

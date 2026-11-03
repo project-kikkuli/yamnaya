@@ -313,7 +313,7 @@ func TestHeaderWrapsBetweenItemsToTheWidthAndNamesHostsByNickname(t *testing.T) 
 					}
 				}
 				items := []string{"hosts " + st.brief, "@alpha-runner ok", "@delta-runner ok", "claude 5h 3% ↻6h12m · 7d 55% ↻6h12m",
-					"@boxmachine/claude 7d 46% ↻6h12m (4h2m old)", "codex 7d 0% ↻6h12m", "spend today $0.00 · 7d $0.00"}
+					"@boxmachine claude 7d 46% ↻6h12m (4h2m old)", "codex 7d 0% ↻6h12m", "spend today $0.00 · 7d $0.00"}
 				for _, want := range items {
 					if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, want) }) {
 						t.Errorf("no line holds %q whole", want)

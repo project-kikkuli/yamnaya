@@ -119,7 +119,7 @@ func remoteRenameCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			host, err := st.ResolveHost(args[0])
+			host, err := st.ResolveShownHost(args[0])
 			if err != nil {
 				return err
 			}
