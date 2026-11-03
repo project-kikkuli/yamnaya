@@ -30,3 +30,35 @@ func TestAGoalRowNamesItsBriefWhereverTheGoalRuns(t *testing.T) {
 		})
 	}
 }
+
+func TestGoalListTitlesSkipStandingInstructionsAndKeepTheAskBehindAFlag(t *testing.T) {
+	standing := "Fix forward. Diagnose before acting.\n\n"
+	long := strings.Repeat("word ", 400)
+	rows := func() []goalRow {
+		return []goalRow{
+			{ID: "mgr1", Ask: standing + "Make the importer handle CSV. Then " + long},
+			{ID: "mgr2", Ask: standing + "Rotate the signing keys."},
+			{ID: "mgr3", Ask: standing + long},
+			{ID: "mgr4", Role: core.RoleChief, Name: "platform"},
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		full bool
+	}{{"by default", false}, {"with --full", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := titled(rows(), tc.full)
+			if got[0].Title != "Make the importer handle CSV" || got[1].Title != "Rotate the signing keys" {
+				t.Fatalf("titles %q, %q", got[0].Title, got[1].Title)
+			}
+			if n := len([]rune(got[2].Title)); n > titleMax || strings.Contains(got[2].Title, "\n") {
+				t.Fatalf("title of %d runes: %q", n, got[2].Title)
+			}
+			var sb strings.Builder
+			printGoalRow(&sb, got[0])
+			if has := strings.Contains(sb.String(), strings.TrimSpace(long)); has != tc.full {
+				t.Fatalf("whole ask printed: %v, want %v", has, tc.full)
+			}
+		})
+	}
+}

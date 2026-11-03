@@ -7,7 +7,7 @@ import (
 
 func prKind(kind string) bool {
 	switch kind {
-	case EventPROpened, EventPRTouched, EventCIRed, EventCIGreen, EventReview, EventMerged, EventClosed, EventConflict:
+	case EventPROpened, EventPRTouched, EventCIRed, EventCIGreen, EventPRReady, EventReview, EventMerged, EventClosed, EventConflict:
 		return true
 	}
 	return false

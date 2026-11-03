@@ -150,6 +150,9 @@ func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
 		out = append(out, GoalEvent{Kind: EventConflict, Key: "conflict:" + url + "@" + head,
 			Payload: title + " conflicts with its base branch; GitHub runs no CI on it until it is rebased"})
 	}
+	if st.ReadyToMerge() {
+		out = append(out, GoalEvent{Kind: EventPRReady, Key: "ready:" + url + "@" + head, Payload: title + " is green and ready to merge"})
+	}
 	if st.Threads > 0 {
 		out = append(out, GoalEvent{Kind: EventReview, Key: "threads:" + url + "#" + strconv.Itoa(st.Threads),
 			Payload: fmt.Sprintf("%s has %d review threads, %d unresolved", title, st.Threads, st.Unresolved)})
@@ -245,10 +248,36 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	if err != nil || !c.wakeDue(events) {
 		return err
 	}
+	if hold, err := c.holdWake(b, m, g); err != nil || hold {
+		return err
+	}
 	if err := c.tell(b, m.Session, wakeText(g, events), false); err != nil {
 		return err
 	}
-	return c.Store.markDelivered(events, c.now())
+	if err := c.Store.markDelivered(events, c.now()); err != nil {
+		return err
+	}
+	r, err := c.Store.digest(m.ID)
+	if err != nil {
+		return err
+	}
+	r.ToldAt = c.now()
+	return c.Store.saveDigest(m.ID, r)
+}
+
+// holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake of its goal is still pending,
+// it cannot take a message now, or one already reached the turn it is taking.
+func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
+	var pending int
+	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ?`, m.Session, MsgPending, "ym: goal "+g.ID+" %").Scan(&pending); err != nil || pending > 0 {
+		return pending > 0, err
+	}
+	s, ok := b.Session(m.Session)
+	if !ok {
+		return false, nil
+	}
+	r, err := c.Store.digest(m.ID)
+	return c.busyTold(s, r.ToldAt), err
 }
 
 // wakeText lists a goal's new events for its manager, one line each, those that need it first.
@@ -270,27 +299,65 @@ func (c *Core) chiefEvents(o Org, m Manager) ([]GoalEvent, error) {
 	return c.Store.chiefPending(m.ID, goals, since)
 }
 
+// wakeChief rolls up what is due for a chief and hands over anything that needs it. What needs nothing never starts a message.
 func (c *Core) wakeChief(b Board, o Org, m Manager) error {
 	events, err := c.chiefEvents(o, m)
-	if err != nil || !c.wakeDue(events) {
+	if err != nil {
 		return err
 	}
-	if err := c.tell(b, m.Session, chiefText(o, events, ""), false); err != nil {
+	if err := c.rollChief(m.ID, o, events, func(action, quiet Rollup) error { return c.Store.addDigest(m.ID, action, quiet) }, ""); err != nil {
 		return err
 	}
-	return c.Store.markHeard(m.ID, events, c.now())
+	return c.flushDigest(b, m)
 }
 
-// chiefText lists the changes under a chief, one line each naming its goal, those that need it first; host names this host to a
-// chief on another one.
-func chiefText(o Org, events []GoalEvent, host string) string {
-	return inboxText("changes under you", events, host, func(e GoalEvent) string {
+// rollChief hands deliver what of chief's events is due, split into what needs it and what does not, and marks those heard.
+func (c *Core) rollChief(chief string, o Org, events []GoalEvent, deliver func(action, quiet Rollup) error, host string) error {
+	split, err := c.sortChief(chief, events)
+	if err != nil {
+		return err
+	}
+	pace, now := c.pace(), c.now()
+	var heard []GoalEvent
+	action, quiet := Rollup{}, Rollup{}
+	if c.actionDue(split, chief) {
+		action = actionRollup(split.action, chiefLabel(o, host), host)
+		heard = append(heard, split.action...)
+	}
+	if split.quietDue(pace, now) {
+		quiet = quietRollup(split.quiet, chiefLabel(o, host))
+		heard = append(heard, split.quiet...)
+	}
+	if len(heard) == 0 {
+		return nil
+	}
+	if len(action) > 0 || len(quiet) > 0 {
+		if err := deliver(action, quiet); err != nil {
+			return err
+		}
+	}
+	return c.Store.markHeard(chief, heard, now)
+}
+
+// chiefText lists every change under a chief, one line each, for the prompt of a session restarted fresh.
+func chiefText(o Org, events []GoalEvent) string {
+	return inboxText("changes under you", events, "", func(e GoalEvent) string {
 		g, ok := o.Goals[e.Goal]
 		if !ok {
 			return "your agent"
 		}
 		return g.ID + " (" + g.ManagerID + ")"
 	})
+}
+
+// chiefDigest is a chief's events as one digest, those that need it first.
+func (c *Core) chiefDigest(o Org, m Manager, events []GoalEvent) string {
+	label := chiefLabel(o, "")
+	split, err := c.sortChief(m.ID, events)
+	if err != nil {
+		return quietRollup(events, label).text()
+	}
+	return actionRollup(split.action, label, "").merged(quietRollup(split.quiet, label)).text()
 }
 
 func plural(n int, what string) string {

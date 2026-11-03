@@ -17,9 +17,11 @@ const (
 	// EventPRTouched is a goal's agent working on someone else's pull request: context in the feed, never the goal's to land.
 	EventPRTouched = "pr-touched"
 	// EventPRDropped unties a pull request from the goal for good.
-	EventPRDropped        = "pr-dropped"
-	EventCIRed            = "ci-red"
-	EventCIGreen          = "ci-green"
+	EventPRDropped = "pr-dropped"
+	EventCIRed     = "ci-red"
+	EventCIGreen   = "ci-green"
+	// EventPRReady is a pull request GitHub shows green, unblocked and clean to merge on its current head.
+	EventPRReady          = "pr-ready"
 	EventReview           = "review"
 	EventMerged           = "merged"
 	EventClosed           = "closed"
@@ -56,7 +58,7 @@ var ownerKinds = map[string]bool{
 
 // chiefKinds are the state changes a chief hears from every goal below it.
 var chiefKinds = map[string]bool{
-	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
+	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventPRReady: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventResumed: true, EventResumeFailed: true,
 	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true,

@@ -86,8 +86,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 	fmt.Fprintf(sb, "- Change what a report is about with ym goal steer --file - <id> and the new plan on stdin: it becomes the report's next numbered revision, which it must adopt with ym goal adopt; ym nudges it and tells you if it does not.\n")
 	c.briefRules(sb, m)
 	c.steerRules(sb, m)
-	sb.WriteString("- ym hands you every state change of the goals below you, nested chiefs' included (pull requests, CI, reviews, merges, managers' updates, stuck, verification and done), and what your own agents do.\n")
-	sb.WriteString(wakeRules)
+	sb.WriteString(chiefWakeRules)
 	sb.WriteString("- Your reports keep working without you: step in only where a nudge or a decision unblocks one, and end your turn otherwise. ym goal wake <when> <why> has ym wake you at a time you choose.\n")
 	sb.WriteString("- Work never waits on you: your reports keep going without you. Spend your time where a nudge or a decision unblocks the most.\n")
 	fmt.Fprintf(sb, "- When you write to a human, prefix the message with your model name, like \"%s: ...\". Never speak as the owner.\n\n", modelName(m.Harness))
@@ -113,6 +112,10 @@ func newAgent(m Manager) string {
 const wakeRules = "- ym wakes you with one short ym: message, one line per event: #<n> <kind>: <its start>. ym goal event <n> prints an event whole, such as an agent's full reply or a verifier's findings. " +
 	"It wakes you only for what needs you: an ask, an agent stopped, hung, adrift, swollen or not resumed, CI red, a merge conflict, review comments, a steer, failed verification, a wake you set, or a turn you ended with nothing in flight, and waits a minute after the first so a burst arrives as one message. " +
 	"Everything else (agents' reports, pull requests opened, CI green, merges, resumes, verification passing) rides along with the next wake, or arrives as one digest at most every 30 minutes. An agent's reply that adds nothing (no new commit, no new ask, a repeat or a still-waiting note) is only counted; ym goal feed shows it. " +
+	"Never poll; act on what needs you, then end your turn.\n"
+
+const chiefWakeRules = "- ym wakes you only for what needs you: an ask or item routed to you, a goal below you that first fails verification for a cause, gets stuck (once until it moves again), is verified or done, a pull request green and ready to merge, an agent that died and did not come back, a relayed command's outcome, and your own agents finishing, or anything of theirs that would wake a manager (an ask, hung, adrift, CI red, a conflict, review comments). " +
+	"A wake is one line per goal, such as goal15: failed verify #812, PR #19 ready, 3 updates. ym goal event <n> prints an event whole. Everything else below you (updates, steers, reviews, CI, conflicts, resumes) never wakes you: ym digest prints it on demand, one line per goal, ym goal feed <goal> shows a goal's events, and it rides along at most every 30 minutes with a wake or with ym item inbox. A session mid-turn gets at most one message; the rest merges into the next. " +
 	"Never poll; act on what needs you, then end your turn.\n"
 
 const escalate = "- Only the owner can review their direction, approve shared publication, or perform owner-only account actions. File those directly with ym item add --to owner, or escalate the existing item with ym item escalate '<#key>'; use ym item prepare first if its recommendation or options are missing. Saying it is for the owner in chat does not route it.\n" +

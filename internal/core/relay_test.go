@@ -291,6 +291,9 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 		}
 		f.sync(t)
 		f.sync(t)
+		if err := f.a.core.Loop(f.a.board(t)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, _, err := f.b.core.RecordGoalEvent(g.ID, EventUpdate, "before the chief", ""); err != nil {
 		t.Fatal(err)
@@ -311,8 +314,8 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 				heard = append(heard, h)
 			}
 		}
-		if len(heard) != 1 || !strings.Contains(heard[0], "PR 7 merged") || strings.Contains(heard[0], "before the chief") {
-			t.Errorf("%s heard %q; want one batch with b's merge, naming b's goal, and nothing from before it was told", who.Name, heard)
+		if len(heard) != 1 || !strings.Contains(heard[0], "done #") || !strings.Contains(heard[0], "1 merged PR") || strings.Contains(heard[0], "update") {
+			t.Errorf("%s heard %q; want one line for b's goal, done with its merge counted, and nothing from before it was told", who.Name, heard)
 		}
 	}
 	if len(notified) != 1 || !strings.HasPrefix(notified[0], "ym: b "+g.ID+" done") {
@@ -705,6 +708,9 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 					t.Fatal(err)
 				}
 				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
+				if err := f.b.core.Loop(f.b.board(t)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			cycle()
 			fails := tc.fails

@@ -53,6 +53,9 @@ type Relay struct {
 type relayTell struct {
 	Manager string `json:"manager"`
 	Text    string `json:"text"`
+	// Action and Quiet carry a chief's digest, which its host merges into what already waits for it.
+	Action Rollup `json:"action,omitempty"`
+	Quiet  Rollup `json:"quiet,omitempty"`
 }
 
 type relayAsk struct {
@@ -720,6 +723,9 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		if err := unmarshal(r.Body, &t); err != nil {
 			return err
 		}
+		if len(t.Action) > 0 || len(t.Quiet) > 0 {
+			return c.digestChiefs(o, t)
+		}
 		return c.tellChiefs(b, o, t.Manager, t.Text)
 	case RelayVouch:
 		var v relayVouch
@@ -795,6 +801,28 @@ func (c *Core) tellChiefs(b Board, o Org, id, text string) error {
 	return nil
 }
 
+// digestChiefs merges a relayed digest into what waits for the chief it names, or the first one above it that can answer, and for
+// every chief above that one, here or through a relay to the host the next one runs on. ym serve hands it over from there.
+func (c *Core) digestChiefs(o Org, t relayTell) error {
+	seen := map[string]bool{}
+	for at := t.Manager; at != "" && !seen[at]; {
+		seen[at] = true
+		up := o.Above(at)
+		if up == Owner {
+			return nil
+		}
+		if host, rest, remote := SplitRemote(up); remote {
+			t.Manager = rest
+			return c.Relay(host, RelayEvents, t)
+		}
+		if err := c.Store.addDigest(up, t.Action, t.Quiet); err != nil {
+			return err
+		}
+		at = o.Managers[up].ParentID
+	}
+	return nil
+}
+
 // notify raises the owner's desktop notification here, or relays it to the host that carries this one's relays, where the owner sits.
 func (c *Core) notify(title, body string) error {
 	if r, err := c.Store.RelaySelf(); err == nil && r.Courier != "" {
@@ -830,23 +858,19 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 			errs = append(errs, err)
 			continue
 		}
-		if heard && !c.wakeDue(events) {
+		if !heard {
+			errs = append(errs, c.Store.markHeard(m.ParentID, events, c.now()))
 			continue
 		}
-		if heard {
-			shown := Org{Goals: map[string]Goal{}}
-			self := c.SelfName()
-			for id, g := range o.Goals {
-				g.ID, g.ManagerID = RemoteKey(self, g.ID), RemoteKey(self, g.ManagerID)
-				shown.Goals[id] = g
+		host, rest, _ := SplitRemote(m.ParentID)
+		self := c.SelfName()
+		errs = append(errs, c.rollChief(m.ParentID, o, events, func(action, quiet Rollup) error {
+			text := ""
+			if len(action) > 0 {
+				text = action.merged(quiet).text()
 			}
-			host, rest, _ := SplitRemote(m.ParentID)
-			if err := c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: chiefText(shown, events, self)}); err != nil {
-				errs = append(errs, err)
-				continue
-			}
-		}
-		errs = append(errs, c.Store.markHeard(m.ParentID, events, c.now()))
+			return c.Relay(host, RelayEvents, relayTell{Manager: rest, Text: text, Action: action, Quiet: quiet})
+		}, self))
 	}
 	return errors.Join(errs...)
 }

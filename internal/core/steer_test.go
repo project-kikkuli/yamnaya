@@ -346,7 +346,7 @@ func TestAFailedVerificationMakesTheBriefStaleAndAPassDoesNot(t *testing.T) {
 	}
 }
 
-func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWake(t *testing.T) {
+func TestASteerWakesTheManagerAndWaitsInItsChiefsDigestAndAGoalEventStalesTheBriefInTheSameWake(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
 	chief := w.chief(t, "data", m.ID)
@@ -358,8 +358,11 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "Revision 1") {
 		t.Fatalf("manager wakes %q, want one carrying the steer's revision", got)
 	}
-	if heard := strings.Join(wakes(w.handedTo(chief.Session)), "\n"); !strings.Contains(heard, "steered") {
-		t.Fatalf("chief did not hear its report was steered: %q", heard)
+	if heard := digests(w.handedTo(chief.Session)); len(heard) != 0 {
+		t.Fatalf("a steer below the chief started a message: %q", heard)
+	}
+	if lines, err := w.core.Digest(chief.Session); err != nil || len(lines) != 1 || !strings.Contains(lines[0], "1 steer") {
+		t.Fatalf("ym digest printed %q, err %v; want the steer counted", lines, err)
 	}
 	w.spawn("agent", m.Session)
 	w.pr(t, "agent", "https://github.com/acme/august/pull/7", PRStatus{State: "OPEN", Title: "TSV importer"})

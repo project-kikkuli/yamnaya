@@ -290,7 +290,7 @@ func TestParseWhenReadsDurationsClockTimesAndRFC3339(t *testing.T) {
 	}
 }
 
-func TestNestedChiefsHearEveryStateChangeBelowThemBatchedAndNeverGateWork(t *testing.T) {
+func TestNestedChiefsHearWhatNeedsThemWithTheRestCountedAndNeverGateWork(t *testing.T) {
 	w := newOrgWorld(t)
 	g1, m1 := w.goal(t, "rotate the signing keys", "/repo/auth-plane")
 	g2, m2 := w.goal(t, "make the importer handle CSV", "/repo/august")
@@ -304,6 +304,11 @@ func TestNestedChiefsHearEveryStateChangeBelowThemBatchedAndNeverGateWork(t *tes
 	if _, err := w.core.UpdateGoal(m2.Session, "parser half done, CI red on a flaky test"); err != nil {
 		t.Fatal(err)
 	}
+	for _, g := range []Goal{g1, g2} {
+		if _, _, err := w.core.RecordGoalEvent(g.ID, EventDone, "finished", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
 	w.loop(t, 3)
 
 	lowerGot := wakes(w.handedTo(lower.Session))
@@ -314,7 +319,7 @@ func TestNestedChiefsHearEveryStateChangeBelowThemBatchedAndNeverGateWork(t *tes
 	if len(upperGot) != 1 {
 		t.Fatalf("chief platform heard %d batches, want one: %q", len(upperGot), upperGot)
 	}
-	for _, want := range []string{g1.ID + " (" + m1.ID, "ci-green", g2.ID + " (" + m2.ID, "ci-red", "update: parser half done"} {
+	for _, want := range []string{g1.ID + ": done #", g2.ID + ": done #", "1 red CI run", "1 update"} {
 		if !strings.Contains(upperGot[0], want) {
 			t.Fatalf("chief platform's batch lacks %q:\n%s", want, upperGot[0])
 		}

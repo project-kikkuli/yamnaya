@@ -348,6 +348,11 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			for _, m := range msgs {
 				fmt.Fprintf(out, "msg: %s\n", m.Text)
 			}
+			changes, changesErr := e.core.ChangesDue(c.Session)
+			for _, line := range changes {
+				fmt.Fprintf(out, "changes: %s\n", line)
+			}
+			err = errors.Join(err, changesErr)
 			if nudge != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "vibe: %s\n", nudge)
 			}

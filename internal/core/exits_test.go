@@ -60,8 +60,10 @@ func TestAStoppedAgentReachesItsChiefAndTheFeedButNotTheOwnersUnread(t *testing.
 	w.stop("agent")
 	w.launches.launched = []Launched{{Key: "august-wt-csv", Harness: "claude", Session: "agent", State: "sig9", Path: "/repo/august-wt-csv"}}
 	w.loop(t, 3)
-	if got := wakes(w.handedTo(chief.Session)); len(got) != 1 || !strings.Contains(got[0], "agent-stopped: agent agent") {
-		t.Fatalf("chief heard %q, want one batch with the stopped agent", got)
+	w.clock = w.clock.Add(deathGrace)
+	w.loop(t, 1)
+	if got := wakes(w.handedTo(chief.Session)); len(got) != 1 || !strings.Contains(got[0], "agent died #") {
+		t.Fatalf("chief heard %q, want one batch with the agent that stayed down", got)
 	}
 	n, _ := w.board(t).Node(m.ID)
 	if len(n.Feed.Recent) == 0 || n.Feed.Recent[0].Kind != EventAgentStopped || n.Feed.Unread != 0 {

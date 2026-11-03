@@ -206,7 +206,7 @@ func TestAChiefsOwnAgentsReachItInItsInboxNotVerbatim(t *testing.T) {
 	w.set("helper", func(s *Session) { s.Result, s.ResultAt = long, w.clock })
 	w.loop(t, 2)
 	got := wakes(w.handedTo(chief.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "your agent #") || !strings.Contains(got[0], "agent-finished: agent helper") || strings.Contains(got[0], long) {
+	if len(got) != 1 || !strings.Contains(got[0], "your agents: agent finished #") || strings.Contains(got[0], long) {
 		t.Fatalf("chief heard %q, want one wake with a line for its agent's reply, not the reply whole", got)
 	}
 }

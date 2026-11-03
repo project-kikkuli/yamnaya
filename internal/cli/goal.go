@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -119,6 +120,7 @@ type goalRow struct {
 	Name     string `json:"name"`
 	Parent   string `json:"parent,omitempty"`
 	Goal     string `json:"goal,omitempty"`
+	Title    string `json:"title,omitempty"`
 	Ask      string `json:"ask,omitempty"`
 	State    string `json:"state"`
 	Session  string `json:"session"`
@@ -221,17 +223,17 @@ func treeRows(b core.Board, under string) []goalRow {
 
 func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var under string
-	var asJSON bool
+	var asJSON, full bool
 	cmd := &cobra.Command{
-		Use:   "list [--under CHIEF] [--json]",
-		Short: "List goals, managers and chiefs as a tree, with their state and brief",
+		Use:   "list [--under CHIEF] [--full] [--json]",
+		Short: "List goals, managers and chiefs as a tree, each goal under a one-line title, with their state and brief",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			b, err := e.core.Board()
 			if err != nil {
 				return err
 			}
-			rows := treeRows(b, under)
+			rows := titled(treeRows(b, under), full)
 			if asJSON {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
 			}
@@ -246,12 +248,62 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		}),
 	}
 	cmd.Flags().StringVar(&under, "under", "", "only the reports below this chief")
+	cmd.Flags().BoolVar(&full, "full", false, "print each goal's whole ask instead of its title")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	return cmd
 }
 
+// titled gives each row a one-line title from its ask: the first sentence no other two goals share, since standing instructions
+// open many asks. It keeps the ask itself only with full.
+func titled(rows []goalRow, full bool) []goalRow {
+	shared := map[string]int{}
+	for _, r := range rows {
+		seen := map[string]bool{}
+		for _, s := range askSentences(r.Ask) {
+			if !seen[s] {
+				seen[s] = true
+				shared[s]++
+			}
+		}
+	}
+	for i := range rows {
+		sentences := askSentences(rows[i].Ask)
+		for _, s := range sentences {
+			if shared[s] < 3 {
+				rows[i].Title = clip(s, titleMax)
+				break
+			}
+		}
+		if rows[i].Title == "" && len(sentences) > 0 {
+			rows[i].Title = clip(sentences[0], titleMax)
+		}
+		if !full {
+			rows[i].Ask = ""
+		}
+	}
+	return rows
+}
+
+// titleMax caps a goal's title in ym goal list.
+const titleMax = 80
+
+var sentenceEnd = regexp.MustCompile(`[.!?:;]\s+|\n+`)
+
+func askSentences(ask string) []string {
+	var out []string
+	for _, s := range sentenceEnd.Split(ask, -1) {
+		if s = strings.TrimRight(strings.Join(strings.Fields(s), " "), ".!?:;"); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func printGoalRow(w io.Writer, r goalRow) {
-	what := r.Ask
+	what := r.Title
+	if r.Ask != "" {
+		what = r.Ask
+	}
 	if r.Role == core.RoleChief {
 		what = "chief " + r.Name
 	}
@@ -886,4 +938,30 @@ func goalPRCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	drop.MarkFlagRequired("why")
 	cmd.AddCommand(drop)
 	return cmd
+}
+
+func digestCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "digest",
+		Short: "Print the changes that have not reached the calling chief or manager, one line per goal; a chief's are marked read",
+		Args:  cobra.NoArgs,
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			c, err := e.caller()
+			if err != nil {
+				return err
+			}
+			lines, err := e.core.Digest(c.Session)
+			if err != nil {
+				return err
+			}
+			if len(lines) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "no changes")
+			}
+			out := e.nicked(cmd.OutOrStdout())
+			for _, line := range lines {
+				fmt.Fprintln(out, line)
+			}
+			return nil
+		}),
+	}
 }

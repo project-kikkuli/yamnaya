@@ -461,7 +461,7 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 	case r != nil:
 		prompt = c.launchPrompt(m, o) + "\n\n" + c.restartText(b, o, m, *r, waiting, events)
 	case len(events) > 0 && m.Session != "":
-		prompt += "\n\nWhile you were down, " + wakeOrChief(o, m, events)
+		prompt += "\n\nWhile you were down, " + c.missedText(o, m, events)
 	}
 	if resume {
 		if resumed, ok := c.resumeManager(o, m, waiting, events, prompt); ok {
@@ -533,7 +533,15 @@ func wakeOrChief(o Org, m Manager, events []GoalEvent) string {
 	if g, ok := o.Goals[m.GoalID]; ok {
 		return strings.TrimPrefix(wakeText(g, events), "ym: ")
 	}
-	return strings.TrimPrefix(chiefText(o, events, ""), "ym: ")
+	return strings.TrimPrefix(chiefText(o, events), "ym: ")
+}
+
+// missedText is what a manager or chief coming back reads of what it missed: a chief's as one line per goal.
+func (c *Core) missedText(o Org, m Manager, events []GoalEvent) string {
+	if _, ok := o.Goals[m.GoalID]; ok {
+		return wakeOrChief(o, m, events)
+	}
+	return strings.TrimPrefix(c.chiefDigest(o, m, events), "ym: ")
 }
 
 // GoalByRef is the goal a goal, manager or manager name ref names.

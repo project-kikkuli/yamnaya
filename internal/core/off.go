@@ -265,7 +265,7 @@ func (c *Core) flush(b Board, session string) (bool, error) {
 				return false, err
 			}
 			if len(events) > 0 {
-				parts = append(parts, chiefText(o, events, ""))
+				parts = append(parts, c.chiefDigest(o, m, events))
 				done = append(done, func() error { return c.Store.markHeard(m.ID, events, c.now()) })
 			}
 		}

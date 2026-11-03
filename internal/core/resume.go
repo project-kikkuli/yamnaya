@@ -77,7 +77,7 @@ func (c *Core) note(n resumeNote) {
 }
 
 // resumeText is what a resumed manager or chief reads first: why it was stopped, then what it missed while down.
-func resumeText(o Org, m Manager, waiting []Message, events []GoalEvent) string {
+func (c *Core) resumeText(o Org, m Manager, waiting []Message, events []GoalEvent) string {
 	var sb strings.Builder
 	sb.WriteString("ym: this session stopped (its host restarted or its process died) and ym resumed it in the same conversation. Pick up where you left off; your brief is at " + m.BriefPath + ".")
 	if len(waiting) > 0 {
@@ -87,7 +87,7 @@ func resumeText(o Org, m Manager, waiting []Message, events []GoalEvent) string 
 		}
 	}
 	if len(events) > 0 {
-		sb.WriteString("\n\nWhile you were down, " + wakeOrChief(o, m, events))
+		sb.WriteString("\n\nWhile you were down, " + c.missedText(o, m, events))
 	}
 	return sb.String()
 }
@@ -101,7 +101,7 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 	if !can || m.Session == "" {
 		return m, false
 	}
-	now, resumed, err := r.Resume(m.Session, resumeText(o, m, waiting, events), start)
+	now, resumed, err := r.Resume(m.Session, c.resumeText(o, m, waiting, events), start)
 	if errors.Is(err, ErrNotFound) {
 		return m, false
 	}
