@@ -80,3 +80,43 @@ func TestEveryOpenCellShowsTheColorsOfItsPixels(t *testing.T) {
 		})
 	}
 }
+
+func changedCells(a, b *scene.Canvas, w, h int) int {
+	n := 0
+	for y := range h {
+		for x := range w {
+			as, ag := a.Cell(x, y)
+			bs, bg := b.Cell(x, y)
+			if as != bs || ag != bg {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func TestThePrintHoldsBetweenBeatsAndStillMoves(t *testing.T) {
+	old := scene.Colors
+	scene.Colors = scene.TrueColor
+	t.Cleanup(func() { scene.Colors = old })
+	s := lone(func(*scene.Peak) {})
+	w, h := 160, 48
+	paint := func(frame int) *scene.Canvas { return Kaiju{}.Paint(s, w, h, frame, scene.Rect{}) }
+	held, moved := 0, 0
+	for frame := 1; frame < grainBeat; frame++ {
+		n := changedCells(paint(frame-1), paint(frame), w, h)
+		held = max(held, n)
+		if n > 0 {
+			moved++
+		}
+	}
+	if moved < grainBeat-2 {
+		t.Fatalf("only %d of %d frames between beats moved: the film went still", moved, grainBeat-1)
+	}
+	if held > w*h/4 {
+		t.Fatalf("%d of %d cells redrew between beats", held, w*h)
+	}
+	if beat := changedCells(paint(grainBeat-1), paint(grainBeat), w, h); beat <= held {
+		t.Fatalf("the beat redrew %d cells, no more than the %d between beats", beat, held)
+	}
+}
