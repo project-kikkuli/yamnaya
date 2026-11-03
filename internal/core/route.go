@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -134,6 +135,9 @@ func (o Org) Managed(session string, parents map[string]string) (Manager, bool) 
 // Subtree lists id and every manager and chief below it, the reports of a retired chief included and the retired chief not.
 func (o Org) Subtree(id string) []Manager { return o.subtree(o.reports(), id) }
 
+// Below is Subtree with the retired chiefs in it.
+func (o Org) Below(id string) []Manager { return o.below(o.reports(), id) }
+
 // chiefOver is the chief m reports to, past any retired one on this host; "" when the climb runs out.
 func (o Org) chiefOver(m Manager) string {
 	seen := map[string]bool{m.ID: true}
@@ -170,6 +174,10 @@ func (o Org) reports() map[string][]string {
 }
 
 func (o Org) subtree(reports map[string][]string, id string) []Manager {
+	return slices.DeleteFunc(o.below(reports, id), func(m Manager) bool { return m.Retired })
+}
+
+func (o Org) below(reports map[string][]string, id string) []Manager {
 	var out []Manager
 	var walk func(string, map[string]bool)
 	walk = func(id string, seen map[string]bool) {
@@ -181,9 +189,7 @@ func (o Org) subtree(reports map[string][]string, id string) []Manager {
 		if !ok {
 			return
 		}
-		if !m.Retired {
-			out = append(out, m)
-		}
+		out = append(out, m)
 		for _, child := range reports[id] {
 			walk(child, seen)
 		}

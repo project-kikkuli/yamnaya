@@ -428,6 +428,120 @@ func TestAChiefAboveTheGoalHearsItsCloseOnce(t *testing.T) {
 	}
 }
 
+func TestOnlyTheClosingChiefSleepsThroughAClose(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		closer             func(low, top Manager) string
+		why                func(low, top Manager) string
+		lowHears, topHears bool
+	}{
+		{"the owner closes", func(_, _ Manager) string { return Owner }, func(_, _ Manager) string { return "stop" }, true, true},
+		{"the lower chief closes", func(l, _ Manager) string { return l.ID }, func(_, _ Manager) string { return "stop" }, false, true},
+		{"the top chief closes", func(_, u Manager) string { return u.ID }, func(_, _ Manager) string { return "stop" }, true, false},
+		{"the reason reads like a chief's name", func(_, _ Manager) string { return Owner }, func(l, _ Manager) string { return "replaced by chief " + l.ID + ": see goal9" }, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, mgr := w.goal(t, "ship", "/repo/app")
+			low := w.chief(t, "low", mgr.ID)
+			top := w.chief(t, "top", low.ID)
+			w.supervise(t)
+			w.clock = w.clock.Add(time.Minute)
+			if _, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: tc.why(low, top), Author: tc.closer(low, top)}); err != nil {
+				t.Fatal(err)
+			}
+			lowHad, topHad := len(w.handedTo(low.Session)), len(w.handedTo(top.Session))
+			for range 2 {
+				w.clock = w.clock.Add(2 * time.Minute)
+				w.loop(t, 1)
+			}
+			heard := func(got []string) bool {
+				return slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, EventGoalClosed) })
+			}
+			if got := w.handedTo(low.Session)[lowHad:]; heard(got) != tc.lowHears {
+				t.Errorf("low chief heard %q, want woken %v", got, tc.lowHears)
+			}
+			if got := w.handedTo(top.Session)[topHad:]; heard(got) != tc.topHears {
+				t.Errorf("top chief heard %q, want woken %v", got, tc.topHears)
+			}
+		})
+	}
+}
+
+func TestSubtreeSendReachesReportsOfARetiredChief(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		retired bool
+	}{{"chief between running", false}, {"chief between retired", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, mgr := w.goal(t, "local", "/repo/app")
+			mid := w.chief(t, "mid", mgr.ID)
+			boss := w.chief(t, "boss", mid.ID)
+			w.supervise(t)
+			r := &fakeRemotes{boards: []RemoteBoard{{Host: "box", At: w.clock, Self: "box",
+				Managers:        []Manager{{ID: "mgr1", Role: RoleManager, GoalID: "goal1", ParentID: RemoteKey(w.core.SelfName(), mid.ID), Session: "box-s"}},
+				Goals:           []Goal{{ID: "goal1", Ask: "ship", ManagerID: "mgr1", State: GoalActive, LastMovedAt: w.clock}},
+				ManagerSessions: map[string]string{"box-s": "mgr1"}, Standing: map[string]string{"mgr1": StandMoving}}}}
+			w.core.Remotes, w.core.ShowRemotes = r, true
+			if tc.retired {
+				if _, err := w.core.KillGoal(w.board(t), mid.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := w.core.Steer(w.board(t), []string{boss.ID}, true, true, "hello subtree"); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(r.ran, func(a []string) bool { return a[0] == "box" }) {
+				t.Errorf("the report on box was not reached: %q", r.ran)
+			}
+			if !slices.ContainsFunc(w.got(mgr.Session), func(s string) bool { return strings.Contains(s, "hello subtree") }) {
+				t.Errorf("the local report heard %q", w.got(mgr.Session))
+			}
+			told := slices.ContainsFunc(w.got(mid.Session), func(s string) bool { return strings.Contains(s, "hello subtree") })
+			if told == tc.retired {
+				t.Errorf("chief between told %v, retired %v", told, tc.retired)
+			}
+		})
+	}
+}
+
+func TestAChiefCannotAttachBelowItsOwnReportEvenARetiredOne(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		retire func(low, mid Manager) []string
+		under  func(low, mid Manager) string
+	}{
+		{"its running report", func(_, _ Manager) []string { return nil }, func(_, m Manager) string { return m.ID }},
+		{"its retired report", func(_, m Manager) []string { return []string{m.ID} }, func(_, m Manager) string { return m.ID }},
+		{"a report through a retired chief", func(_, m Manager) []string { return []string{m.ID} }, func(l, _ Manager) string { return l.ID }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			low := w.chief(t, "low")
+			mid := w.chief(t, "mid", low.ID)
+			boss := w.chief(t, "boss", mid.ID)
+			w.supervise(t)
+			for _, id := range tc.retire(low, mid) {
+				if _, err := w.core.KillGoal(w.board(t), id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := w.core.Attach(boss.ID, tc.under(low, mid)); err == nil {
+				t.Fatal("the attach made a loop")
+			}
+			for _, id := range tc.retire(low, mid) {
+				if _, err := w.core.ReopenGoal(id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, shown := w.board(t).Node(boss.ID); !shown {
+				t.Fatal("the chief left the board's tree")
+			}
+		})
+	}
+}
+
 func TestAnIDSharedAcrossHostsGrantsNothing(t *testing.T) {
 	acts := []struct {
 		name string

@@ -237,7 +237,7 @@ func (c *Core) Attach(child, chief string) error {
 		if boss.Role != RoleChief {
 			return fmt.Errorf("%s is a manager; only a chief has reports", boss.ID)
 		}
-		for _, below := range o.Subtree(m.ID) {
+		for _, below := range o.Below(m.ID) {
 			if below.ID == boss.ID {
 				return fmt.Errorf("%s is under %s already; a chief cannot report to its own report", boss.ID, m.ID)
 			}
@@ -336,7 +336,7 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 		}
 		targets := []Manager{m}
 		if subtree {
-			targets = o.Subtree(m.ID)
+			targets = o.Below(m.ID)
 		}
 		for _, t := range targets {
 			if subtree {
@@ -347,7 +347,7 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 					}
 				}
 			}
-			if sent[t.ID] || t.Session == "" {
+			if sent[t.ID] || t.Session == "" || subtree && t.Retired {
 				continue
 			}
 			sent[t.ID] = true
