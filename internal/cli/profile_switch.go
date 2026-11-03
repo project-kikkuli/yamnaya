@@ -150,7 +150,11 @@ func (l launcher) switchProfile(ref, id, reason string) (core.SwitchOutcome, err
 			return core.SwitchOutcome{Message: fmt.Sprintf("the switch of %s to %s was replaced or cancelled", core.Short(rec.Session), l.queuedTo)}, nil
 		}
 	}
-	dest, err := l.selectProfile(rec.Harness, id)
+	harness := rec.Harness
+	if l.toHarness != "" {
+		harness = l.toHarness
+	}
+	dest, err := l.selectProfile(harness, id)
 	if id == "auto" {
 		ps, e := profile.Load(filepath.Dir(l.records.Dir))
 		if e != nil {
@@ -207,6 +211,9 @@ func (l launcher) switchProfile(ref, id, reason string) (core.SwitchOutcome, err
 	_, state := l.state(rec)
 	if live.ID == "" && (state == "running" || state == core.LaunchUnknown) {
 		return none, fmt.Errorf("cannot prove session idle; source is unchanged")
+	}
+	if dest.Harness != rec.Harness {
+		return l.portSwitch(rec, live, dest, reason)
 	}
 	var expected string
 	if rec.Harness == "codex" {

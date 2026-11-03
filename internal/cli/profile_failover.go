@@ -92,6 +92,19 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit
 	}
 	return profile.Profile{}, fmt.Errorf("no different verified usable subscription pool")
 }
+
+// failoverDestination is a usable login of e's harness, which keeps the conversation's id, else of the other harness as the last resort.
+func failoverDestination(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, pools map[string]time.Time, now time.Time, cwd string) (profile.Profile, error) {
+	target, err := failoverTarget(ps, e, limits, pools, now, cwd)
+	if err == nil {
+		return target, nil
+	}
+	other, otherErr := failoverTarget(ps, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, limits, pools, now, cwd)
+	if otherErr != nil {
+		return profile.Profile{}, err
+	}
+	return other, nil
+}
 func (l launcher) Failover(b core.Board) error {
 	dir := filepath.Dir(l.records.Dir)
 	ps, err := profile.Load(dir)
@@ -127,7 +140,7 @@ func (l launcher) Failover(b core.Board) error {
 		if pending.Version != 0 && pending.State != "running" {
 			continue
 		}
-		target, chooseErr := failoverTarget(ps, e, b.Fleet.Limits, a.Pools, b.At, rec.Worktree.Path)
+		target, chooseErr := failoverDestination(ps, e, b.Fleet.Limits, a.Pools, b.At, rec.Worktree.Path)
 		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
 			continue
 		}
@@ -153,7 +166,7 @@ func (l launcher) Failover(b core.Board) error {
 			return err
 		}
 		until := reset.UTC().Format(time.RFC3339)
-		note := fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window, which resets %s. ym moved this same conversation from profile %s to profile %s. Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded.", e.Harness, until, e.Profile, target.ID)
+		note := fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window, which resets %s. ym moved this same conversation from profile %s to %s profile %s. Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded.", e.Harness, until, e.Profile, target.Harness, target.ID)
 		out, switchErr := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", e.Harness, profile.ID(e.Profile), until))
 		switch {
 		case errors.Is(switchErr, profile.ErrOperationBusy):
@@ -184,6 +197,7 @@ func (l launcher) Failover(b core.Board) error {
 func (l launcher) failoverSwitch(rec launch.Record, target profile.Profile, note, reason string) (core.SwitchOutcome, error) {
 	next := l
 	next.resumeNote = note
+	next.toHarness = target.Harness
 	out, err := next.QueueProfileSwitch(rec.Session, target.ID, reason)
 	if err != nil {
 		m, loadErr := loadMigration(filepath.Dir(l.records.Dir), rec.Harness, rec.Session)

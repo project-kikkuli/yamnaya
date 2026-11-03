@@ -377,6 +377,9 @@ func (s *Store) SaveManager(m Manager) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = currentManagerSession(tx, &m); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`UPDATE ym_managers SET role=?, remit=?, parent_id=?, goal_id=?, session=?, harness=?, repo=?, directory=?, brief_path=?, artifact_url=?,
 		retired=?, launched_at=?, failures=?, next_attempt=?, last_error=?, nudges=?, nudged_at=?, profile=?, config_root=? WHERE num=?`,
 		m.Role, m.Remit, m.ParentID, m.GoalID, m.Session, m.Harness, m.Repo, m.Directory, m.BriefPath, m.ArtifactURL,

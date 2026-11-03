@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -470,6 +471,365 @@ func TestBlockedFailoverRowsSettleFromWhereTheirSessionsNowAre(t *testing.T) {
 			}
 			if _, err := os.Stat(w.ran); !os.IsNotExist(err) {
 				t.Fatal("settling a record resumed its session")
+			}
+		})
+	}
+}
+
+// portWorld is queueWorld's session with every Claude login exhausted unless claudeLeft, and a usable Codex login, the port stubbed.
+func portWorld(t *testing.T, claudeLeft bool) (queueWorld, func(core.Exhaustion), profile.Profile) {
+	t.Helper()
+	const ported = "01a1b2c3-0000-7000-8000-000000000042"
+	w := newQueueWorld(t, "claude", "")
+	dir := filepath.Dir(strings.SplitN(os.Getenv("PATH"), ":", 2)[0] + "/x")
+	script, err := os.ReadFile(filepath.Join(dir, "claude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putProfileFile(t, filepath.Join(dir, "codex"), string(script))
+	if err = os.Chmod(filepath.Join(dir, "codex"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cx := profile.Profile{Harness: "codex", ID: "codex-main", Root: t.TempDir(), Explicit: true}
+	if err = profile.Add(w.state, cx); err != nil {
+		t.Fatal(err)
+	}
+	cx.Root = physicalProfileRoot(cx.Root)
+	subscriptionIdentity(t, &cx)
+	now := time.Now()
+	reset := now.Add(31 * time.Hour).Truncate(time.Second)
+	limits := []core.Limit{{Harness: "claude", Profile: "default", Account: w.def.Account, Name: "7d", Used: 100, Seen: now, ResetsAt: reset}}
+	if !claudeLeft {
+		limits = append(limits,
+			core.Limit{Harness: "claude", Profile: w.work.ID, Account: w.work.Account, Name: "7d", Used: 100, Seen: now, ResetsAt: reset},
+			core.Limit{Harness: "claude", Profile: "personal", Account: "claude/fixture-user/personal", Name: "7d", Used: 100, Seen: now, ResetsAt: reset})
+	}
+	db, err := sql.Open("sqlite", filepath.Join(w.state, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS ym_usage_limits(body TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, lim := range limits {
+		body, _ := json.Marshal(lim)
+		if _, err = db.Exec(`INSERT INTO ym_usage_limits VALUES(?)`, string(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seeded, _ := w.l.records.Find(w.rec.Key)
+	seeded.Model = "claude-opus-5-5"
+	if err = w.l.records.Save(seeded); err != nil {
+		t.Fatal(err)
+	}
+	w.l.core.PreparePort = func(s core.Session, to, id string) (core.PortPlan, error) {
+		return core.PortPlan{Target: core.Session{Harness: to, Profile: id, ConfigRoot: cx.Root, Cwd: s.Cwd}, Close: func() {}, Write: func() (string, error) { return ported, nil }}, nil
+	}
+	tick := func(e core.Exhaustion) {
+		t.Helper()
+		b, err := w.l.core.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.At, b.Fleet = now, core.Fleet{At: now, Exhaustions: []core.Exhaustion{e}, Limits: limits}
+		if err = w.l.RecoverProfiles(b); err != nil {
+			t.Fatal(err)
+		}
+		if err = w.l.Failover(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return w, tick, cx
+}
+
+func TestEveryClaudeLoginExhaustedFailsOverToCodexAtTheTurnEndAndKeepsItsLinks(t *testing.T) {
+	const ported = "01a1b2c3-0000-7000-8000-000000000042"
+	const parent, child = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
+	for _, c := range []struct {
+		name        string
+		claudeLeft  bool
+		status      core.Status
+		managed     bool
+		wantHarness string
+		queued      bool
+	}{
+		{name: "idle agent ports", status: core.Idle, wantHarness: "codex"},
+		{name: "idle manager ports and stays its goal's manager", status: core.Idle, managed: true, wantHarness: "codex"},
+		{name: "mid-turn session stays pending until its turn ends", status: core.Busy, wantHarness: "codex", queued: true},
+		{name: "mid-turn manager stays pending until its turn ends", status: core.Busy, managed: true, wantHarness: "codex", queued: true},
+		{name: "busy crew do not hold a session past its own turn end", status: core.Idle, wantHarness: "codex"},
+		{name: "a usable claude login is chosen first", claudeLeft: true, status: core.Idle, wantHarness: "claude"},
+		{name: "a usable claude login is chosen first mid-turn", claudeLeft: true, status: core.Busy, wantHarness: "claude", queued: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, tick, cx := portWorld(t, c.claudeLeft)
+			st := w.l.core.Store
+			w.session.Status = c.status
+			if strings.Contains(c.name, "crew") {
+				w.session.Crew = []core.Member{{ID: child, Name: "worker", Status: core.Busy}}
+			}
+			mgr := core.Manager{}
+			var err error
+			if c.managed {
+				if mgr, err = st.AddManager(core.Manager{Role: core.RoleManager, Harness: "claude", Profile: "default", ConfigRoot: w.def.Root}); err != nil {
+					t.Fatal(err)
+				}
+				mgr.Session = profileConversation
+				if err = st.SaveManager(mgr); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = st.Link(profileConversation, parent); err != nil {
+				t.Fatal(err)
+			}
+			if err = st.Link(child, profileConversation); err != nil {
+				t.Fatal(err)
+			}
+			pending, err := st.AddMessage(profileConversation, "instruction that waited", core.MsgPending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item, err := st.AddItem(core.Item{Kind: core.KindChore, Question: "an open ask", Session: profileConversation})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			hit := core.Exhaustion{Harness: "claude", Profile: "default", Account: w.def.Account, Session: profileConversation, Reason: "subscription_rate_limit", Event: "quota-1", Seen: now.Add(-25 * time.Hour)}
+			state := func() core.FailoverState {
+				t.Helper()
+				a, err := loadFailover(w.state, "claude", profileConversation)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return a.State
+			}
+			tick(hit)
+			if c.queued {
+				if got := state(); got.Status != "queued" {
+					t.Fatalf("mid-turn failover %+v, want queued", got)
+				}
+				if *w.signals != 0 {
+					t.Fatalf("a mid-turn session was stopped: %d signals", *w.signals)
+				}
+				if rec, _ := w.l.records.Find(w.rec.Key); rec.Session != profileConversation || rec.Harness != "claude" {
+					t.Fatalf("a mid-turn session moved: %+v", rec)
+				}
+				row, want := w.row(t), "switch pending -> codex/codex-main"
+				if c.claudeLeft {
+					want = "switch pending -> claude-work"
+				}
+				if row != want {
+					t.Fatalf("board row %q, want %q", row, want)
+				}
+				tick(hit)
+				if got := state(); got.Status != "queued" {
+					t.Fatalf("a later tick changed the queued record: %+v", got)
+				}
+				w.session.Status = core.Idle
+				tick(hit)
+			}
+			if got := state(); got.Status != "switched" {
+				t.Fatalf("failover %+v, want switched", got)
+			}
+			rec, ok := w.l.records.Find(w.rec.Key)
+			if !ok || rec.Harness != c.wantHarness {
+				t.Fatalf("record %+v, want harness %s", rec, c.wantHarness)
+			}
+			lines := strings.Split(resumed(t, w.ran), "\n")
+			quotaItems, err := st.Items(core.ItemFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, it := range quotaItems {
+				if strings.Contains(it.Question, "hit its subscription limit") && !slices.ContainsFunc(it.Options, func(o core.Option) bool { return o.Label == "move to codex/"+cx.ID }) {
+					t.Fatalf("owner item does not list the codex login: %+v", it.Options)
+				}
+			}
+			if c.wantHarness == "claude" {
+				if rec.Session != profileConversation || lines[0] != "claude-work" {
+					t.Fatalf("same-harness kept id %s, resumed %q", rec.Session, lines)
+				}
+				if got, _ := st.Continued(); len(got) != 0 {
+					t.Fatalf("same-harness recorded a continuation: %v", got)
+				}
+				return
+			}
+			if rec.Session != ported || rec.Profile != cx.ID || rec.ConfigRoot != cx.Root || rec.Model != "" {
+				t.Fatalf("record not on the port: %+v", rec)
+			}
+			if lines[0] != cx.ID || !strings.Contains(lines[1], ported) || !strings.Contains(lines[1], "exhausted its usage window") {
+				t.Fatalf("resumed without the port or its note: %q", lines)
+			}
+			if got := w.l.core.Resolve(profileConversation); got != ported {
+				t.Fatalf("old id resolves to %q", got)
+			}
+			lin, err := st.Lineage()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lin.Parent[ported] != parent || lin.Parent[child] != ported {
+				t.Fatalf("lineage %v", lin.Parent)
+			}
+			if got, err := st.Message(pending.Seq); err != nil || got.Session != ported {
+				t.Fatalf("waiting message %+v, %v", got, err)
+			}
+			if got, err := st.Item(item.Key()); err != nil || got.Session != profileConversation {
+				t.Fatalf("an item changes its filer: %+v, %v", got, err)
+			}
+			if c.managed {
+				saved, err := st.Manager(mgr.ID)
+				if err != nil || saved.Session != ported || saved.Harness != "codex" || saved.Profile != cx.ID || saved.ConfigRoot != cx.Root {
+					t.Fatalf("manager %+v, %v", saved, err)
+				}
+				o, err := w.l.core.LoadOrg()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, id := range []string{profileConversation, ported} {
+					if m, ok := o.ManagerOf(id); !ok || m.ID != mgr.ID {
+						t.Fatalf("session %s no longer belongs to manager %s: %+v", id, mgr.ID, m)
+					}
+				}
+				stale := mgr
+				stale.Nudges = 7
+				if err = st.SaveManager(stale); err != nil {
+					t.Fatal(err)
+				}
+				saved, err = st.Manager(mgr.ID)
+				if err != nil || saved.Session != ported || saved.Harness != "codex" || saved.Nudges != 7 {
+					t.Fatalf("a save from a stale copy undid the move: %+v, %v", saved, err)
+				}
+			}
+			items, err := st.Items(core.ItemFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			quota := 0
+			for _, it := range items {
+				if strings.Contains(it.Question, "hit its subscription limit") {
+					quota++
+					offered := false
+					for _, o := range it.Options {
+						offered = offered || o.Label == "move to codex/"+cx.ID
+					}
+					if !offered {
+						t.Fatalf("owner item does not list the codex login: %+v", it.Options)
+					}
+				}
+			}
+			if quota != 1 {
+				t.Fatalf("owner items %d, want 1", quota)
+			}
+		})
+	}
+}
+
+func TestRestartResumesAManagedSessionOnCodexWhenEveryClaudeLoginIsExhausted(t *testing.T) {
+	const ported = "01a1b2c3-0000-7000-8000-000000000042"
+	for _, c := range []struct {
+		name  string
+		left  bool
+		want  string
+		wantH string
+	}{
+		{name: "no claude login left", want: ported, wantH: "codex"},
+		{name: "claude login left", left: true, want: profileConversation, wantH: "claude"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, _, _ := portWorld(t, c.left)
+			*w.alive = false
+			now, resumedAs, err := w.l.Resume(profileConversation, workResumeTextFixture, "")
+			if err != nil || now != c.want || !resumedAs {
+				t.Fatalf("resume = %q %v %v, want %s", now, resumedAs, err, c.want)
+			}
+			rec, _ := w.l.records.Find(w.rec.Key)
+			if rec.Session != c.want || rec.Harness != c.wantH {
+				t.Fatalf("record %+v", rec)
+			}
+			if got := resumed(t, w.ran); !strings.Contains(got, workResumeTextFixture) || !strings.Contains(got, c.want) {
+				t.Fatalf("resumed without its message: %q", got)
+			}
+		})
+	}
+}
+
+func TestAPortAppliesOnceWhateverStopsItPartWay(t *testing.T) {
+	const ported = "01a1b2c3-0000-7000-8000-000000000042"
+	for _, c := range []struct {
+		name string
+		// head is a port a past attempt already wrote; failFirst fails the first write.
+		head       string
+		failFirst  bool
+		via        string
+		wantWrites int
+	}{
+		{name: "revive applies a queued port", via: "revive", wantWrites: 1},
+		{name: "revive finishes a port already written", head: ported, via: "revive", wantWrites: 0},
+		{name: "a failed write is tried again", failFirst: true, via: "tick", wantWrites: 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, tick, cx := portWorld(t, false)
+			writes := 0
+			prepare := w.l.core.PreparePort
+			w.l.core.PreparePort = func(s core.Session, to, id string) (core.PortPlan, error) {
+				plan, err := prepare(s, to, id)
+				write := plan.Write
+				plan.Write = func() (string, error) {
+					writes++
+					if c.failFirst && writes == 1 {
+						return "", fmt.Errorf("cs failed")
+					}
+					return write()
+				}
+				return plan, err
+			}
+			ps, err := profile.Load(w.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest, err := profile.Find(ps, "codex", cx.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hit := core.Exhaustion{Harness: "claude", Profile: "default", Account: w.def.Account, Session: profileConversation, Reason: "subscription_rate_limit", Event: "quota-1", Seen: time.Now().Add(-time.Hour)}
+			if c.via == "revive" {
+				*w.alive = false
+				state := "queued"
+				if c.head != "" {
+					state = "prepared"
+				}
+				rec, _ := w.l.records.Find(w.rec.Key)
+				if err = saveMigration(w.state, migration{Version: 1, ResumeNote: "note", Source: rec, Destination: dest, Head: c.head, State: state, Since: time.Now().Add(-time.Minute)}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = w.l.Revive(w.rec.Key); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				w.session.Status = core.Idle
+				tick(hit)
+				if a, _ := loadFailover(w.state, "claude", profileConversation); a.State.Status != "blocked" {
+					t.Fatalf("a failed port reads %+v, want blocked", a.State)
+				}
+				if got := w.l.core.Resolve(profileConversation); got != profileConversation {
+					t.Fatalf("a failed port moved the links to %s", got)
+				}
+				*w.alive = false
+				tick(hit)
+			}
+			rec, _ := w.l.records.Find(w.rec.Key)
+			if rec.Session != ported || rec.Harness != "codex" {
+				t.Fatalf("record %+v", rec)
+			}
+			if writes != c.wantWrites {
+				t.Fatalf("%d writes, want %d", writes, c.wantWrites)
+			}
+			if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != cx.ID || !strings.Contains(got[1], ported) {
+				t.Fatalf("resumed as %q", got)
+			}
+			if m, _ := loadMigration(w.state, "claude", profileConversation); m.State != "running" || m.Head != ported {
+				t.Fatalf("migration %+v", m)
 			}
 		})
 	}

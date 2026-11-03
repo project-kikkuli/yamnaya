@@ -117,6 +117,9 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 		return m, true
 	}
 	c.note(resumeNote{who: who, session: m.Session, fresh: !resumed})
+	if fresh, err := c.Store.Manager(m.ID); err == nil {
+		m = fresh
+	}
 	m.Session, m.LastError = now, ""
 	c.Store.SaveManager(m)
 	return m, true

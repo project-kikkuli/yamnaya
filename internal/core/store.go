@@ -217,7 +217,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema + workSchema + remoteWorkSchema + workDispatchSchema + digestSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + continuedSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema + workSchema + remoteWorkSchema + workDispatchSchema + digestSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}

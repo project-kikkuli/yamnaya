@@ -18,6 +18,11 @@ func (c *Core) resolve(id, near string) string {
 }
 
 func (c *Core) successor(id, near string) string {
+	if c.Store != nil {
+		if continued, err := c.Store.Continued(); err == nil && continued[id] != "" {
+			return continued[id]
+		}
+	}
 	for _, h := range c.Harnesses {
 		if ct, ok := h.(Continuer); ok {
 			if next := ct.Successor(id, near); next != "" {

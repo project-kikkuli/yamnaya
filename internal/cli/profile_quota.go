@@ -65,15 +65,27 @@ func quotaItem(ps []profile.Profile, e core.Exhaustion, reset time.Time, limits 
 		Tried:    "ym resumes nothing onto " + login + " before " + when + " and moves quota-stopped sessions to a usable login of the same harness when there is one"}
 	wait := core.Option{Label: "wait until " + when, Effect: "sessions on " + login + " stay stopped and ym resumes them after the reset"}
 	add := core.Option{Label: "add a login", Effect: "ym profiles add " + e.Harness + " <id> && ym profiles login " + e.Harness + " <id>; ym's next pass moves quota-stopped sessions to it"}
+	other := core.Other(e.Harness)
+	port := core.Option{}
+	if p, err := failoverTarget(ps, core.Exhaustion{Harness: other, Account: e.Account}, limits, nil, now); err == nil {
+		port = core.Option{Label: "move to " + other + "/" + p.ID, Effect: "with no " + e.Harness + " login left, ym ports each session to " + other + " login " + p.ID + " at its turn end, under a new session id, and keeps its manager and goal links"}
+	}
 	target, err := failoverTarget(ps, e, limits, nil, now)
 	if err != nil {
 		it.Options = []core.Option{wait, add}
 		it.Rec = "add a login if the work cannot wait until " + when + "; no other usable " + e.Harness + " login is configured on this host"
+		if port.Label != "" {
+			it.Options = []core.Option{port, wait, add}
+			it.Rec = port.Label + ": no other " + e.Harness + " login has usage, so work continues now instead of waiting until " + when
+		}
 		return it
 	}
 	it.Options = []core.Option{
 		{Label: "switch to " + target.ID, Effect: "ym moves quota-stopped sessions to profile " + target.ID + " by itself; ym profiles default " + e.Harness + " " + target.ID + " makes new launches use it too"},
 		wait, add,
+	}
+	if port.Label != "" {
+		it.Options = append(it.Options, port)
 	}
 	it.Rec = "switch to " + target.ID + ": it is a different login with usage left, so work continues now instead of waiting until " + when
 	return it
@@ -133,9 +145,9 @@ func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg strin
 	if err != nil {
 		return true, "", err
 	}
-	target, err := failoverTarget(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
+	target, err := failoverDestination(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
 	if err != nil {
-		return true, "", fmt.Errorf("%s login %s is out of its subscription limit until %s and no other usable login is configured; ym resumes nothing onto it before then, or ym switch %s --profile <id> moves it", rec.Harness, profile.ID(rec.Profile), reset.UTC().Format(time.RFC3339), rec.Key)
+		return true, "", fmt.Errorf("%s login %s is out of its subscription limit until %s and no other usable login of any harness is configured; ym resumes nothing onto it before then, or ym switch %s --profile <id> moves it", rec.Harness, profile.ID(rec.Profile), reset.UTC().Format(time.RFC3339), rec.Key)
 	}
 	if a.State.Status == "blocked" {
 		a.State.Target = target.ID

@@ -32,7 +32,9 @@ type launcher struct {
 	resumeNote string
 	operation  string
 	// queuedTo makes a switch apply only while the login it names is still the one queued for the session.
-	queuedTo       string
+	queuedTo string
+	// toHarness is the harness a switch moves to, the session's own when empty.
+	toHarness      string
 	core           *core.Core
 	bindAssignment func(string, string, string) error
 	srv            *tmux.Host
@@ -821,7 +823,7 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 		return "", false, fmt.Errorf("profile %s conversation is unavailable; refusing to replace it with a new session", rec.Profile)
 	}
 	if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
-		return session, resumed, err
+		return l.runsAs(rec.Key, session), resumed, err
 	}
 	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
@@ -842,7 +844,7 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 		return startArgv(fresh)
 	})
 	if err != nil || resumed || rec.Harness != codex.Name {
-		return session, resumed, err
+		return l.runsAs(rec.Key, session), resumed, err
 	}
 	rec, _ = l.records.Find(rec.Key)
 	rec, err = l.await(rec)

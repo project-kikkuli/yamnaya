@@ -166,6 +166,9 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 			return rec, fmt.Errorf("profile handoff waits for the source to be idle and stopped; ym switch %s --profile %s", rec.Key, m.Destination.ID)
 		}
 	}
+	if m.Destination.Harness != rec.Harness {
+		return l.portRecord(rec, core.Live{}, m)
+	}
 	source := rec
 	setRecordProfile(&source, recordProfile(m.Source))
 	source.Account = m.Source.Account
@@ -267,6 +270,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		}
 		next := l
 		next.queuedTo = m.Destination.ID
+		next.toHarness = m.Destination.Harness
 		_, attemptErr := next.QueueProfileSwitch(ref, m.Destination.ID, m.Reason)
 		if attemptErr != nil && !errors.Is(attemptErr, profile.ErrOperationBusy) {
 			err = l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
@@ -328,13 +332,18 @@ func (l launcher) PendingSwitches() map[string]core.Switching {
 				Session string `json:"session"`
 			} `json:"source"`
 			Destination struct {
-				ID string `json:"id"`
+				ID      string `json:"id"`
+				Harness string `json:"harness"`
 			} `json:"destination"`
 		}
 		if json.Unmarshal(raw, &m) != nil || m.Version != 1 || m.State == "running" {
 			continue
 		}
-		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: m.Destination.ID, Blocked: m.Blocked}
+		to := m.Destination.ID
+		if m.Destination.Harness != m.Source.Harness {
+			to = m.Destination.Harness + "/" + to
+		}
+		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: to, Blocked: m.Blocked}
 	}
 	return out
 }
