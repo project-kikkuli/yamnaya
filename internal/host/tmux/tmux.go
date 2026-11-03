@@ -242,9 +242,10 @@ func (h *Host) Split(hd core.Handle) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"split-window", "-h", "-t", h.Self, "-e", "TMUX=", "tmux", "-L", h.socketName(),
-		"new-session", "-t", "=" + session, `\;`, "set-option", "destroy-unattached", "on",
-		`\;`, "select-window", "-t", hd.ID, `\;`, "select-pane", "-t", hd.ID,
+	// tmux 3.4 can crash ending a grouped session through destroy-unattached, so the pane ends its session by name.
+	const attach = `trap : HUP; tmux -L "$1" new-session -t "=$2" -s "$3" \; select-window -t "$4" \; select-pane -t "$4"; tmux -L "$1" kill-session -t "=$3"`
+	split := fmt.Sprintf("ym-split-%d", time.Now().UnixNano())
+	args := []string{"split-window", "-h", "-t", h.Self, "-e", "TMUX=", "sh", "-c", attach, "ym-split", h.socketName(), session, split, hd.ID,
 		";", "set-option", "-p", "remain-on-exit", "off"}
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux split-window: %w: %s", err, strings.TrimSpace(string(out)))
