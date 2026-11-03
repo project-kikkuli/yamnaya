@@ -106,13 +106,13 @@ func (n briefNode) Markdown() string {
 
 // itemView is one item as the site lists it; Text is what ym copy item gives.
 type itemView struct {
-	Seq                  int64
-	Key, ID, Kind, State string
-	Question, Text       string
+	Seq                        int64
+	Key, ID, Lead, Kind, State string
+	Question, Text             string
 }
 
 func (s *briefSite) itemView(it core.Item) itemView {
-	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Qualified(), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
+	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Ref(), Lead: it.Lead(), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
 }
 
 // items lists the open and snoozed items keep matches, oldest first.
@@ -438,7 +438,7 @@ var siteFuncs = template.FuncMap{"copy": func(label, text string) copyButton { r
 
 const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.Text}}" aria-label="Copy {{.Label}}">copy</button>{{end}}` +
 	`{{define "tags"}}<span class="tag {{.Standing}}">{{.Standing}}</span>{{if .Fresh.Brief}}{{if .Fresh.Stale}}<span class="tag stale">brief v{{.Fresh.Brief.Version}} stale</span>{{else}}<span class="tag fresh">brief v{{.Fresh.Brief.Version}}, {{.Age .Fresh.Brief.CreatedAt}}</span>{{end}}{{else}}<span class="tag stale">no brief</span>{{end}}{{if .Plan}}{{if .Plan.Adopted}}<span class="tag">plan r{{.Plan.Revision}}</span>{{else}}<span class="tag unadopted">steer r{{.Plan.Revision}} not adopted</span>{{end}}{{end}}{{end}}` +
-	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.ID}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p></div>{{end}}{{end}}`
+	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.Lead}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p><p class="meta">{{.ID}}</p></div>{{end}}{{end}}`
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
 <h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected.</p>
@@ -447,10 +447,10 @@ var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags 
 {{if .Items}}<h2>Open items for you</h2>{{template "items" .Items}}{{end}}
 </body></html>`))
 
-var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>item {{.ID}}</title>` + siteStyle + `</head><body>
+var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>{{.Lead}} item</title>` + siteStyle + `</head><body>
 <p class="meta"><a href="{{at "/"}}">all briefs</a></p>
-<h1>Item {{.ID}}{{template "copy" (copy (print "item " .ID) .Text)}}</h1>
-<p class="meta">{{.Key}} · {{.Kind}} · {{.State}}</p>
+<h1>{{.Lead}}{{template "copy" (copy (print "item " .ID) .Text)}}</h1>
+<p class="meta">{{.ID}} · {{.Key}} · {{.Kind}} · {{.State}}</p>
 <div class="card"><p class="sec">{{.Text}}</p></div>
 </body></html>`))
 

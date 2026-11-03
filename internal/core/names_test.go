@@ -190,3 +190,91 @@ func TestAnotherHostsGoalIsRenamedOnItsHostAndShowsByTheNameItsHostReports(t *te
 		})
 	}
 }
+
+func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
+	picks := []Option{{Label: "a", Effect: "x"}, {Label: "b", Effect: "y"}}
+	for _, tc := range []struct {
+		name string
+		file func(t *testing.T, w *orgWorld) Item
+		lead string
+	}{
+		{"a manager's ask leads with its goal", func(t *testing.T, w *orgWorld) Item {
+			_, m := w.goal(t, "rotate the keys", "/repo/august")
+			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: m.Session, Recipient: Owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return it
+		}, "rotate-the-keys"},
+		{"an agent's ask leads with the goal it works for", func(t *testing.T, w *orgWorld) Item {
+			_, m := w.goal(t, "rotate the keys", "/repo/august")
+			w.spawn("agent-1", m.Session)
+			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: "agent-1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return it
+		}, "rotate-the-keys"},
+		{"a chief's ask leads with the chief, not its workspace", func(t *testing.T, w *orgWorld) Item {
+			c := w.chief(t, "arbitrator")
+			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: c.Session, Scope: "/state/chiefs/" + c.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return it
+		}, "arbitrator"},
+		{"an ask with no goal leads with its project", func(t *testing.T, w *orgWorld) Item {
+			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: "loose", Scope: "/repo/august/.git"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return it
+		}, "august"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			it := tc.file(t, w)
+			if got := it.Lead(); got != tc.lead {
+				t.Fatalf("Lead() = %q, want %q", got, tc.lead)
+			}
+			if got, err := w.core.Store.Item(it.Ref()); err != nil || got.Seq != it.Seq {
+				t.Fatalf("Ref %q resolves to #%d, %v; want #%d", it.Ref(), got.Seq, err, it.Seq)
+			}
+			if line := askText(w.board(t), w.board(t).Org, it); !strings.HasPrefix(line, "ym: "+tc.lead+" ask from ") || !strings.HasSuffix(line, "  "+it.Key()) {
+				t.Fatalf("wake line %q, want it to lead with %q and end with %s", line, tc.lead, it.Key())
+			}
+		})
+	}
+}
+
+func TestAnAsksWakeLineKeepsItsKeyHoweverLongTheQuestion(t *testing.T) {
+	it := Item{Seq: 12, Scope: "/repo/august/.git", ID: "D1", Question: strings.Repeat("word ", 200)}
+	it.Dossier.GoalName = "rotate-the-keys"
+	line := askLine(it, "agent abc to the owner", askEventRoom)
+	if n := len([]rune(line)); n > askEventRoom || !strings.HasPrefix(line, "rotate-the-keys ask from ") || !strings.HasSuffix(line, "  #12") {
+		t.Fatalf("%d runes, room %d: %q", n, askEventRoom, line)
+	}
+}
+
+func TestAnAskFromAnotherHostsGoalKeepsTheNameThatHostGaveItAcrossARefresh(t *testing.T) {
+	w := newOrgWorld(t)
+	r := &fakeRemotes{boards: []RemoteBoard{{Host: "box",
+		Managers: []Manager{{ID: "mgr3", Role: RoleManager, Name: "faster-login", GoalID: "goal2"}},
+		Goals:    []Goal{{ID: "goal2", Name: "faster-login", Ask: "make login faster", ManagerID: "mgr3"}}}}}
+	w.core.Remotes, w.core.ShowRemotes = r, true
+	b := w.board(t)
+	it := Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: []Option{{Label: "a", Effect: "x"}, {Label: "b", Effect: "y"}}, Session: "agent-9", Scope: "/repo/august/.git", Recipient: Owner}
+	it.Dossier.Goal = "box/goal2"
+	it.Dossier.GoalName = foreignGoalName(b.Org, it.Dossier)
+	added, err := w.core.Store.addItem(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Brief(b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.core.Store.Item(added.Key())
+	if err != nil || got.Lead() != "box/faster-login" {
+		t.Fatalf("Lead() = %q, %v; want box/faster-login", got.Lead(), err)
+	}
+}

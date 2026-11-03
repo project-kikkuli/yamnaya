@@ -3,7 +3,7 @@ package core
 import (
 	"database/sql"
 	"errors"
-	"fmt"
+	"unicode/utf8"
 )
 
 // stuckFailures is how many launches in a row may fail before a manager or chief counts as stuck.
@@ -207,6 +207,7 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 	}
 	if remoteErr == nil {
 		it.Dossier.Goal = RemoteKey(foreign.Origin, foreign.Goal)
+		it.Dossier.GoalName = foreignGoalName(o, it.Dossier)
 	}
 	added, err := c.Store.addItem(it)
 	if err != nil {
@@ -224,7 +225,7 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 			}
 			woken = added.Recipient == m.ID
 			e := GoalEvent{Goal: g.ID, Kind: EventAsked, Created: c.now(),
-				Payload: fmt.Sprintf("%s ask from %s to %s: %s", added.Key(), askerOf(o, it.Session), to, oneLine(added.Question))}
+				Payload: askLine(added, askerOf(o, it.Session)+" to "+to, askEventRoom)}
 			if !woken {
 				e.Delivered = e.Created
 			}
@@ -259,11 +260,17 @@ func askText(b Board, o Org, it Item) string {
 	from := "agent " + Short(it.Session)
 	if m, ok := o.ManagerOf(it.Session); ok {
 		from = m.Label()
-		if g, ok := o.Goals[m.GoalID]; ok {
-			from += " on goal " + g.Shown()
-		}
 	}
-	return fmt.Sprintf("ym: %s ask from %s: %s", it.Key(), from, clip(oneLine(it.Question), lineMax))
+	return "ym: " + askLine(it, from, lineMax)
+}
+
+// askEventRoom is what a goal event's ask line may take of a wake line, leaving room for the event's number and a chief's goal label.
+const askEventRoom = lineMax - 100
+
+// askLine is an ask as a wake says it: the item's lead, who asks, the question cut so the line fits room, and the key to answer it by.
+func askLine(it Item, from string, room int) string {
+	head, key := it.Lead()+" ask from "+from+": ", "  "+it.Key()
+	return head + clip(oneLine(it.Question), max(20, room-utf8.RuneCountInString(head+key))) + key
 }
 
 // tell hands text to the session: typed or sent when it runs on the board, else queued for its next inbox or relaunch.

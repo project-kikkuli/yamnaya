@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -790,6 +791,31 @@ func TestNOnAGoalOrChiefRenamesItInlineAndRejectsABadNameWithoutLeaving(t *testi
 			}
 			if m = refresh(t, m); !strings.Contains(m.View().Content, tc.want) {
 				t.Fatalf("the board does not show %q:\n%s", tc.want, m.View().Content)
+			}
+		})
+	}
+}
+
+func TestANeedsYouRowLeadsWithTheGoalsNameAndEndsWithItsKey(t *testing.T) {
+	for _, width := range []int{80, 120, 200} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
+			m, c, ms := goalSetup(t, "rotate the signing keys")
+			it, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: "which rotation?\n\n" + strings.Repeat("long detail ", 40), Rec: "a", Session: ms[0].Session, Recipient: core.Owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = width
+			var row string
+			for _, l := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+				if strings.Contains(l, "which rotation?") {
+					row = l
+				}
+			}
+			ref := it.Ref()
+			lead := strings.TrimLeft(row, " >")
+			if !strings.HasPrefix(lead, "rotate-the-signing") || !strings.HasSuffix(strings.TrimRight(row, " "), ref) || strings.Count(row, ref) != 1 {
+				t.Fatalf("row %q, want it to lead with the goal's name and end with %s", row, ref)
 			}
 		})
 	}

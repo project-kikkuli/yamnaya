@@ -133,7 +133,7 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 				}
 				return
 			}
-			if !strings.Contains(got, "drop the old API") || !strings.Contains(got, key+" ask from") {
+			if !strings.Contains(got, "drop the old API") || !strings.HasSuffix(got, "  "+key) || !strings.Contains(got, " ask from ") {
 				t.Errorf("chief on %s was handed %q; want the ask with its key %s as that host names it", tc.chiefOn, got, key)
 			}
 		})

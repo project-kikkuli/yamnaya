@@ -246,3 +246,22 @@ func (g Goal) Ref() string {
 	}
 	return g.Shown()
 }
+
+// Lead is how a row opens on the item: the goal or chief it comes from by name, else its project.
+func (it Item) Lead() string {
+	if it.Dossier.GoalName != "" {
+		return it.Dossier.GoalName
+	}
+	if n := ScopeName(it.Scope); n != "" && !idShaped.MatchString(n) {
+		return n
+	}
+	return it.Ref()
+}
+
+// Ref is the item's trailing reference, which ym item answer and the other item commands take.
+func (it Item) Ref() string {
+	if it.Host != "" || idShaped.MatchString(ScopeName(it.Scope)) {
+		return it.Key()
+	}
+	return it.Qualified()
+}

@@ -739,8 +739,8 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 
 func (m Model) needLines(i int, n core.Need) string {
 	where := m.projectName(n.Project)
-	if n.Item != nil && n.Item.Dossier.Goal != "" {
-		where = n.Item.Dossier.Goal + " " + oneLine(n.Item.Dossier.GoalAsk)
+	if n.Item != nil {
+		where = n.Item.Lead()
 	}
 	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
@@ -777,13 +777,15 @@ func (m Model) needLines(i int, n core.Need) string {
 		q += pal.dim.Render(fmt.Sprintf("  +%d more", more))
 		keys = "enter list all   " + strings.TrimPrefix(keys, "enter expand   ")
 	}
-	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + q + "\n")
+	head, ref := m.mark(i)+m.hue(n.Project).Render(name)+" ", m.itemID(*it)
+	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
+	b.WriteString(head + ansi.Truncate(oneLine(q), room, "…") + "  " + pal.dim.Render(ref) + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
 	}
 	if it.Dossier.Goal != "" {
-		meta = append(meta, "goal: "+it.Dossier.Goal)
+		meta = append(meta, "goal: "+oneLine(it.Dossier.GoalAsk))
 	}
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
@@ -802,7 +804,7 @@ func (m Model) needLines(i int, n core.Need) string {
 // itemID names an item, with its project where the needs list mixes projects.
 func (m Model) itemID(it core.Item) string {
 	if m.mixed() || it.Dossier.Goal != "" {
-		return it.Qualified()
+		return it.Ref()
 	}
 	return it.ID
 }
@@ -817,18 +819,6 @@ func (m Model) mixed() bool {
 		}
 	}
 	return len(scopes) > 1
-}
-
-func (m Model) idWidth() int {
-	w := 5
-	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
-		for _, n := range ns {
-			if n.Item != nil {
-				w = max(w, len(m.itemID(*n.Item)))
-			}
-		}
-	}
-	return min(w, 24)
 }
 
 func (m Model) sourceName(it core.Item) string {
@@ -1032,7 +1022,7 @@ func itemIDs(items []core.Item) map[string]string {
 	label := func(it core.Item) string { return it.ID }
 	for _, it := range items {
 		if it.Scope != items[0].Scope || it.Dossier.Goal != "" {
-			label = core.Item.Qualified
+			label = core.Item.Ref
 			break
 		}
 	}
@@ -1048,11 +1038,10 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	origin := ""
-	if it.Dossier.Goal != "" {
-		origin = "  " + it.Dossier.Goal
-	}
-	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " to " + m.recipientName(it) + origin + "  " + m.tagged(it.Host, it.Question)
+	head := m.mark(i) + pad(m.tagged(it.Host, it.Lead()), min(32, max(16, m.width/4))) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
+	ref := strings.TrimSpace(ids[it.Key()])
+	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
+	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)
 	}
@@ -1444,7 +1433,9 @@ func (m Model) whyView() string {
 	field("assumption", it.Assumption)
 	field("recipient", m.recipientName(*it))
 	field("repository", core.ScopeName(it.Scope))
-	field("goal", it.Dossier.Goal)
+	if it.Dossier.Goal != "" {
+		field("goal", it.Lead())
+	}
 	if it.State == core.ItemOpen && it.Recipient == core.Owner {
 		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))
 	}

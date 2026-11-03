@@ -203,7 +203,7 @@ func TestAgentAsksUnderAManagerReachTheManagerAndNeverTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, it := range items {
-		if !strings.Contains(handed[0], it.Key()+" ask from agent "+Short(it.Session)+" to "+m.Shown()+": "+it.Question) {
+		if !strings.Contains(handed[0], m.Shown()+" ask from agent "+Short(it.Session)+" to "+m.Shown()+": "+it.Question+" "+it.Key()) {
 			t.Fatalf("ask %s %q is not a line of the manager's wake:\n%s", it.Key(), it.Question, handed[0])
 		}
 	}
