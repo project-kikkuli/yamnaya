@@ -223,7 +223,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		reports, via := climb(o, author, m.ID)
 		if !reports && via != "" {
 			host, rest, _ := SplitRemote(via)
-			v := relayVouch{Chief: rest, Author: author, Target: RemoteKey(c.SelfName(), m.ID), Text: text}
+			v := relayVouch{Chief: rest, Author: c.fromHere(author), Target: RemoteKey(c.SelfName(), m.ID), Text: text}
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
@@ -263,6 +263,22 @@ func raisedTo(o Org, st Steer) string {
 		return Owner
 	}
 	return o.Above(st.Author)
+}
+
+// fromHere names author so another host cannot read it as its own manager of that id: a manager or chief here gets this host's name.
+func (c *Core) fromHere(author string) string {
+	if _, _, remote := SplitRemote(author); remote {
+		return author
+	}
+	return RemoteKey(c.SelfName(), author)
+}
+
+// hereFrom undoes fromHere on the host author runs on.
+func (c *Core) hereFrom(author string) string {
+	if h, rest, remote := SplitRemote(author); remote && h == c.SelfName() {
+		return rest
+	}
+	return author
 }
 
 // climb walks up from id's chief toward chief, past any retired chief, whose reports report one level up. It reports whether it

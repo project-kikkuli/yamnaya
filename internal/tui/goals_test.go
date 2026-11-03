@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func goalSetup(t *testing.T, asks ...string) (Model, *core.Core, []core.Manager) {
@@ -767,6 +768,39 @@ func TestDClosesAGoalWithAPickedDispositionAndReason(t *testing.T) {
 				if !strings.Contains(v, want) {
 					t.Errorf("E lacks %q:\n%s", want, v)
 				}
+			}
+		})
+	}
+}
+
+func TestDEndsWhatStartedWhileItsPromptWasOpen(t *testing.T) {
+	for _, late := range []string{"pick", "why"} {
+		t.Run("started at the "+late+" prompt", func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make the importer handle CSV")
+			sessions := map[int]core.Session{1: {ID: ms[0].Session, Status: core.Idle}}
+			procs := []proc.Proc{{PID: 1, TTY: "/dev/a", Args: []string{"claude"}}}
+			c.Harnesses = []core.Harness{harness{sessions}}
+			c.Procs = func() ([]proc.Proc, error) { return procs, nil }
+			signals(c, false)
+			start := func() {
+				sessions[2] = core.Session{ID: "late-worker", Status: core.Busy}
+				procs = append(procs, proc.Proc{PID: 2, TTY: "/dev/b", Args: []string{"claude"}})
+				if err := c.Store.Link("late-worker", ms[0].Session); err != nil {
+					t.Fatal(err)
+				}
+			}
+			next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 140, Height: 50})
+			m = press(t, to(t, next.(Model), isNode(ms[0].ID)), "d")
+			if late == "pick" {
+				start()
+			}
+			m = press(t, m, "3", "enter")
+			if late == "why" {
+				start()
+			}
+			press(t, m, append(typed("not needed"), "enter")...)
+			if ended := c.Launches.(*launches).landed; !slices.Contains(ended, "late-worker") {
+				t.Fatalf("close ended %v; the worker that started during the prompt survives it", ended)
 			}
 		})
 	}

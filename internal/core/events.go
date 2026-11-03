@@ -73,6 +73,9 @@ var chiefKinds = map[string]bool{
 	EventGoalClosed: true, EventGoalReopened: true, EventGoalArchived: true,
 }
 
+// endingKinds are what a chief still hears of a goal that ended, and hears even as the first thing a host reports to it.
+var endingKinds = map[string]bool{EventGoalClosed: true, EventGoalArchived: true}
+
 // notifyKinds are the only events that also raise a desktop notification.
 var notifyKinds = map[string]bool{EventDone: true, EventStuck: true}
 

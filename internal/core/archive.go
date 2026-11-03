@@ -79,7 +79,7 @@ func (s *Store) lastDirected(g Goal, m Manager) (time.Time, error) {
 }
 
 // archiveDone ends the sessions a verified done goal left behind, once DoneShown has passed since it finished and since anyone
-// last directed it. The goal stays done.
+// last directed it, and once only: a session revived after that stays up. The goal stays done.
 func (c *Core) archiveDone(b Board) error {
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -89,7 +89,7 @@ func (c *Core) archiveDone(b Board) error {
 	var errs []error
 	for _, g := range o.Goals {
 		m, ok := o.Managers[g.ManagerID]
-		if !ok || g.State != GoalDone || now.Sub(g.DoneAt) < DoneShown {
+		if !ok || g.State != GoalDone || g.Archived || now.Sub(g.DoneAt) < DoneShown {
 			continue
 		}
 		_, targets, err := c.KillTargets(b, m.ID)
@@ -108,7 +108,7 @@ func (c *Core) archiveDone(b Board) error {
 			continue
 		}
 		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalArchived, Created: now, Delivered: now,
-			Payload: fmt.Sprintf("%s done and quiet for %s, so its leftover sessions ended: %s; ym revive %s brings any session back by its key", g.ID, DoneShown, toll, g.ID)})
+			Payload: fmt.Sprintf("%s done and quiet for %s, so its leftover sessions ended: %s; ym revive %s reopens the goal with them, ym revive <key> brings back one session", g.ID, DoneShown, toll, g.ID)})
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

@@ -1119,10 +1119,9 @@ func relayWhat(r core.Relay) string {
 	return "a " + r.Kind + " relay"
 }
 
-// dropPR asks which of the goal's pull requests to untie, and why, then drops it on the host the goal runs on.
 // closeGoal asks how the goal ended and why, then closes it as the owner: a chief's ym goal close, from the board.
 func (m *Model) closeGoal(n core.Node) {
-	goal, board := n.Goal.ID, m.board
+	goal := n.Goal.ID
 	m.askLine("close "+goal+" as? 1 finished, 2 superseded, 3 abandoned, 4 finished past the verifier", "", false, func(m Model, pick string) (tea.Model, tea.Cmd) {
 		order := core.CloseOrder{Ref: goal, Author: core.Owner}
 		switch strings.TrimSpace(pick) {
@@ -1147,7 +1146,11 @@ func (m *Model) closeGoal(n core.Node) {
 			order.Why = why
 			c := m.core
 			return m, m.do(func() (string, error) {
-				closed, err := c.CloseGoal(board, order)
+				b, err := c.Board()
+				if err != nil {
+					return "", err
+				}
+				closed, err := c.CloseGoal(b, order)
 				return closed.String(), err
 			})
 		})
@@ -1155,6 +1158,7 @@ func (m *Model) closeGoal(n core.Node) {
 	})
 }
 
+// dropPR asks which of the goal's pull requests to untie, and why, then drops it on the host the goal runs on.
 func (m *Model) dropPR(n core.Node) {
 	prs := append(append([]string(nil), n.Feed.PRs...), n.Feed.Touched...)
 	if len(prs) == 0 {

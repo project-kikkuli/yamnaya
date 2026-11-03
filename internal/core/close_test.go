@@ -329,25 +329,314 @@ func TestAChiefOnAnotherHostClosesAGoalDirectlyOrThroughAVouch(t *testing.T) {
 }
 
 func TestAChiefOnAnotherHostHearsAGoalClosedBelowIt(t *testing.T) {
-	f := newFleet(t)
-	top := f.c.chief(t, "org")
-	g, mgr := f.b.goal(t, "ship the fix", "/repo/app")
-	if err := f.b.core.Attach(mgr.ID, RemoteKey("c", top.ID)); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name string
+		// heardBefore has the host report something to the chief first, so the close is not the first thing it hears.
+		heardBefore bool
+		// retiredBetween puts a retired chief on the goal's host between its manager and the chief on the other host.
+		retiredBetween bool
+	}{
+		{name: "after an earlier report", heardBefore: true},
+		{name: "as the first thing that host reports"},
+		{name: "past a retired chief between them", retiredBetween: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			top := f.c.chief(t, "org")
+			g, mgr := f.b.goal(t, "ship the fix", "/repo/app")
+			if tc.retiredBetween {
+				mid := f.b.chief(t, "mid", mgr.ID)
+				if err := f.b.core.Attach(mid.ID, RemoteKey("c", top.ID)); err != nil {
+					t.Fatal(err)
+				}
+				f.b.supervise(t)
+				if _, err := f.b.core.KillGoal(f.b.board(t), mid.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := f.b.core.Attach(mgr.ID, RemoteKey("c", top.ID)); err != nil {
+				t.Fatal(err)
+			}
+			if tc.heardBefore {
+				f.b.loop(t, 1)
+				f.sync(t)
+			}
+			if _, err := f.b.core.CloseGoal(f.b.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "owner stopped it"}); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				f.b.clock = f.b.clock.Add(31 * time.Minute)
+				f.b.loop(t, 1)
+				f.sync(t)
+				f.sync(t)
+				f.c.clock = f.c.clock.Add(31 * time.Minute)
+				f.c.loop(t, 1)
+			}
+			heard := 0
+			for _, s := range f.c.handedTo(top.Session) {
+				heard += strings.Count(s, EventGoalClosed)
+			}
+			if heard != 1 {
+				t.Fatalf("remote chief heard the close %d times: %q", heard, f.c.handedTo(top.Session))
+			}
+		})
 	}
-	f.b.loop(t, 1)
-	f.sync(t)
-	if _, err := f.b.core.CloseGoal(f.b.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "owner stopped it"}); err != nil {
-		t.Fatal(err)
+}
+
+func TestAChiefAboveTheGoalHearsItsCloseOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		midRetired bool
+		bossCloses bool
+		wantWoken  int
+	}{
+		{name: "direct chief, closed by the owner", wantWoken: 1},
+		{name: "above a retired chief, closed by the owner", midRetired: true, wantWoken: 1},
+		{name: "the closing chief is not woken by its own close", bossCloses: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, mgr := w.goal(t, "ship", "/repo/app")
+			mid := w.chief(t, "mid", mgr.ID)
+			boss := w.chief(t, "boss", mid.ID)
+			w.supervise(t)
+			w.clock = w.clock.Add(time.Minute)
+			if tc.midRetired {
+				if _, err := w.core.KillGoal(w.board(t), mid.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			author := Owner
+			if tc.bossCloses {
+				author = boss.ID
+			}
+			w.clock = w.clock.Add(time.Minute)
+			if _, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "stop it", Author: author}); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				w.clock = w.clock.Add(31 * time.Minute)
+				w.loop(t, 1)
+			}
+			woken := 0
+			for _, s := range w.handedTo(boss.Session) {
+				woken += strings.Count(s, EventGoalClosed)
+			}
+			if woken != tc.wantWoken {
+				t.Fatalf("boss heard the close %d times, want %d: %q", woken, tc.wantWoken, w.handedTo(boss.Session))
+			}
+		})
 	}
-	for range 3 {
-		f.b.clock = f.b.clock.Add(31 * time.Minute)
-		f.b.loop(t, 1)
-		f.sync(t)
-		f.sync(t)
+}
+
+func TestAnIDSharedAcrossHostsGrantsNothing(t *testing.T) {
+	acts := []struct {
+		name string
+		act  func(*orgWorld, Board, Goal, string) error
+	}{
+		{"close", func(w *orgWorld, b Board, g Goal, author string) error {
+			_, err := w.core.CloseGoal(b, CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "not mine", Author: author})
+			return err
+		}},
+		{"steer", func(w *orgWorld, b Board, g Goal, author string) error {
+			_, err := w.core.SteerContext(b, g.ID, "new plan", author)
+			return err
+		}},
 	}
-	if !slices.ContainsFunc(f.c.handedTo(top.Session), func(s string) bool { return strings.Contains(s, EventGoalClosed) }) {
-		t.Fatalf("remote chief heard %q, want the close", f.c.handedTo(top.Session))
+	for _, act := range acts {
+		for _, tc := range []struct {
+			name string
+			// reallyAbove makes the chief on the goal's host the one above the chief between, as against a namesake of the one that is.
+			reallyAbove bool
+		}{
+			{name: "a namesake of the chief above is told no"},
+			{name: "a chief truly above through another host acts", reallyAbove: true},
+		} {
+			t.Run(act.name+": "+tc.name, func(t *testing.T) {
+				f := newFleet(t)
+				top := f.a.chief(t, "top")
+				mid := f.a.chief(t, "mid")
+				local := f.b.chief(t, "local")
+				g, mgr := f.b.goal(t, "ship", "/repo/app")
+				if local.ID != top.ID {
+					t.Fatalf("ids %s and %s must collide for this test", local.ID, top.ID)
+				}
+				parent := top.ID
+				if tc.reallyAbove {
+					parent = RemoteKey("b", local.ID)
+				}
+				if err := f.a.core.Attach(mid.ID, parent); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.b.core.Attach(mgr.ID, RemoteKey("a", mid.ID)); err != nil {
+					t.Fatal(err)
+				}
+				if err := act.act(f.b, f.b.board(t), g, local.ID); err != nil {
+					t.Fatal(err)
+				}
+				for range 4 {
+					f.sync(t)
+				}
+				steers, err := f.b.core.Store.Steers(mgr.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				now, err := f.b.core.Store.Goal(g.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				acted := now.State == GoalDropped || len(steers) > 0
+				if acted != tc.reallyAbove {
+					t.Fatalf("state %s steers %+v; acted %v, want %v", now.State, steers, acted, tc.reallyAbove)
+				}
+				if tc.reallyAbove {
+					if cl := f.b.closure(t, g.ID); cl != nil && cl.Actor != "chief "+local.ID {
+						t.Fatalf("actor %q, want the chief named as this host names it", cl.Actor)
+					}
+					if len(steers) > 0 && steers[0].Author != local.ID {
+						t.Fatalf("steer author %q, want %q", steers[0].Author, local.ID)
+					}
+					return
+				}
+				if !slices.ContainsFunc(f.b.handedTo(local.Session), func(s string) bool { return strings.Contains(s, "was refused") }) {
+					t.Fatalf("the namesake heard %q, want the refusal", f.b.handedTo(local.Session))
+				}
+			})
+		}
+	}
+}
+
+func TestARelayedCloseThatCannotLandRunsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		ref     string
+		already bool
+	}{
+		{name: "unknown goal", ref: "goal999"},
+		{name: "already closed", already: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			g, _ := f.b.goal(t, "ship", "/repo/app")
+			if tc.already {
+				if _, err := f.b.core.CloseGoal(f.b.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "first"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref := tc.ref
+			if ref == "" {
+				ref = g.ID
+			}
+			runs := 0
+			inner := closeRunner(t, f.b)
+			f.b.core.RunSelf = func(args ...string) (string, error) {
+				runs++
+				return inner(args...)
+			}
+			if _, err := f.c.core.CloseGoal(f.c.board(t), CloseOrder{Ref: RemoteKey("b", ref), As: CloseAbandoned, Why: "typo"}); err != nil {
+				t.Fatal(err)
+			}
+			for range 5 {
+				f.sync(t)
+				f.b.clock = f.b.clock.Add(time.Hour)
+			}
+			if runs != 1 {
+				t.Fatalf("the relay ran the close %d times", runs)
+			}
+		})
+	}
+}
+
+func TestReviveAfterAutoEndStaysUp(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		revive func(*testing.T, *verifyWorld)
+		state  string
+	}{
+		{"ym revive by goal, as the event says", func(t *testing.T, w *verifyWorld) {
+			if _, err := w.core.ReopenGoal(w.goal.ID); err != nil {
+				t.Fatal(err)
+			}
+		}, GoalActive},
+		{"ym revive by a session's key", func(t *testing.T, w *verifyWorld) {
+			w.spawn(w.manager.Session, "")
+		}, GoalDone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			w.pass(t)
+			done, _ := w.core.Store.Goal(w.goal.ID)
+			w.clock = done.DoneAt.Add(DoneShown + time.Minute)
+			if err := w.core.archiveDone(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
+			if !w.board(t).ArchivedGoals()[0].Reopens {
+				t.Fatal("the archived view does not offer to reopen an auto-ended goal")
+			}
+			tc.revive(t, w)
+			ended := len(w.launches.forgot)
+			for range 3 {
+				w.clock = w.clock.Add(2 * DoneShown)
+				if err := w.core.archiveDone(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(w.launches.forgot) != ended {
+				t.Fatalf("auto-end ended %v after the revive", w.launches.forgot[ended:])
+			}
+			n := 0
+			for _, k := range w.kinds(t, w.goal.ID) {
+				if k == EventGoalArchived {
+					n++
+				}
+			}
+			now, _ := w.core.Store.Goal(w.goal.ID)
+			if n != 1 || now.State != tc.state {
+				t.Fatalf("%d goal-archived events, state %s; want 1, %s", n, now.State, tc.state)
+			}
+		})
+	}
+}
+
+func TestKillAfterAnArchiveLeavesTheGoalAsItIs(t *testing.T) {
+	closeIt := func(t *testing.T, w *verifyWorld) {
+		if _, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: w.goal.ID, As: CloseSuperseded, Why: "folded"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		end   func(*testing.T, *verifyWorld)
+		state string
+		holds bool
+	}{
+		{"closed done stays done", func(t *testing.T, w *verifyWorld) { w.pass(t); closeIt(t, w) }, GoalDone, true},
+		{"closed live stays dropped", closeIt, GoalDropped, true},
+		{"auto-ended done stays done", func(t *testing.T, w *verifyWorld) {
+			w.pass(t)
+			w.clock = w.clock.Add(DoneShown + time.Minute)
+			if err := w.core.archiveDone(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
+		}, GoalDone, true},
+		{"done with no close still takes the kill", func(t *testing.T, w *verifyWorld) { w.pass(t) }, GoalKilled, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			tc.end(t, w)
+			was, _ := w.core.Store.Goal(w.goal.ID)
+			w.clock = w.clock.Add(time.Minute)
+			if _, err := w.core.KillGoal(w.board(t), w.goal.ID); err != nil {
+				t.Fatal(err)
+			}
+			now, _ := w.core.Store.Goal(w.goal.ID)
+			if now.State != tc.state {
+				t.Fatalf("state %s, want %s", now.State, tc.state)
+			}
+			_, shown := w.board(t).Node(w.manager.ID)
+			if tc.holds && (shown || !now.DoneAt.Equal(was.DoneAt) || !now.AckedAt.Equal(was.AckedAt)) {
+				t.Fatalf("on tree %v, done %v was %v, acked %v was %v", shown, now.DoneAt, was.DoneAt, now.AckedAt, was.AckedAt)
+			}
+		})
 	}
 }
 

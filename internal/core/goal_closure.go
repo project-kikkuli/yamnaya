@@ -42,18 +42,38 @@ func parseClosure(e GoalEvent) GoalClosure {
 	return out
 }
 
-// goalClosures maps each goal to its standing closure: a goal-closed event no reopening or new work has followed.
+// standingEvents lists the goal events of kind no reopening or new work has followed, nor a newer one of kind.
+func (s *Store) standingEvents(kind string) ([]GoalEvent, error) {
+	return scanEvents(s.db.Query(`SELECT `+eventCols+` FROM ym_goal_events e WHERE kind = ? AND NOT EXISTS
+		(SELECT 1 FROM ym_goal_events later WHERE later.goal = e.goal AND later.seq > e.seq AND later.kind IN (?, ?, ?))`,
+		kind, kind, EventGoalReopened, EventWorkResumed))
+}
+
+// goalClosures maps each goal to its standing closure.
 func (s *Store) goalClosures() (map[string]GoalClosure, error) {
 	return remembered(s, "goal closures", cloneMap[string, GoalClosure], func() (map[string]GoalClosure, error) {
-		events, err := scanEvents(s.db.Query(`SELECT `+eventCols+` FROM ym_goal_events e WHERE kind = ? AND NOT EXISTS
-			(SELECT 1 FROM ym_goal_events later WHERE later.goal = e.goal AND later.seq > e.seq AND later.kind IN (?, ?, ?))`,
-			EventGoalClosed, EventGoalClosed, EventGoalReopened, EventWorkResumed))
+		events, err := s.standingEvents(EventGoalClosed)
 		if err != nil {
 			return nil, err
 		}
 		out := map[string]GoalClosure{}
 		for _, e := range events {
 			out[e.Goal] = parseClosure(e)
+		}
+		return out, nil
+	})
+}
+
+// goalsArchived are the goals whose goal-archived event stands.
+func (s *Store) goalsArchived() (map[string]bool, error) {
+	return remembered(s, "goals archived", cloneMap[string, bool], func() (map[string]bool, error) {
+		events, err := s.standingEvents(EventGoalArchived)
+		if err != nil {
+			return nil, err
+		}
+		out := map[string]bool{}
+		for _, e := range events {
+			out[e.Goal] = true
 		}
 		return out, nil
 	})

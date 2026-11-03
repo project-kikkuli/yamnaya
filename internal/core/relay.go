@@ -799,9 +799,9 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 			return fmt.Errorf("%w: %w", errUnusable, err)
 		}
 		if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
-			return c.tellManager(b, o, v.Author, fmt.Sprintf("ym: your steer of %s did not land: it has ended.", v.Target))
+			return c.tellManager(b, o, c.hereFrom(v.Author), fmt.Sprintf("ym: your steer of %s did not land: it has ended.", v.Target))
 		}
-		_, err = c.applySteer(b, o, m, v.Text, v.Author)
+		_, err = c.applySteer(b, o, m, v.Text, c.hereFrom(v.Author))
 		return err
 	case RelayNotify:
 		var n relayNotify
@@ -894,7 +894,8 @@ func (c *Core) notify(title, body string) error {
 func (c *Core) wakeRemoteChiefs(o Org) error {
 	var errs []error
 	for _, m := range o.Ordered() {
-		if _, _, remote := SplitRemote(m.ParentID); !remote {
+		chief := o.chiefOver(m)
+		if _, _, remote := SplitRemote(chief); !remote {
 			continue
 		}
 		ended := !o.Active(m)
@@ -904,26 +905,29 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 				goals = append(goals, g.ID)
 			}
 		}
-		heard, err := c.Store.heardAny(m.ParentID)
+		heard, err := c.Store.heardAny(chief)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		events, err := c.Store.chiefPending(m.ParentID, goals, time.Time{})
+		events, err := c.Store.chiefPending(chief, goals, time.Time{})
 		if ended {
-			events = slices.DeleteFunc(events, func(e GoalEvent) bool { return e.Kind != EventGoalClosed && e.Kind != EventGoalArchived })
+			events = slices.DeleteFunc(events, func(e GoalEvent) bool { return !endingKinds[e.Kind] })
 		}
 		if err != nil || len(events) == 0 && heard {
 			errs = append(errs, err)
 			continue
 		}
 		if !heard {
-			errs = append(errs, c.Store.markHeard(m.ParentID, events, c.now()))
-			continue
+			before := slices.DeleteFunc(slices.Clone(events), func(e GoalEvent) bool { return endingKinds[e.Kind] })
+			errs = append(errs, c.Store.markHeard(chief, before, c.now()))
+			if events = slices.DeleteFunc(events, func(e GoalEvent) bool { return !endingKinds[e.Kind] }); len(events) == 0 {
+				continue
+			}
 		}
-		host, rest, _ := SplitRemote(m.ParentID)
+		host, rest, _ := SplitRemote(chief)
 		self := c.SelfName()
-		errs = append(errs, c.rollChief(m.ParentID, o, events, func(action, quiet Rollup) error {
+		errs = append(errs, c.rollChief(chief, o, events, func(action, quiet Rollup) error {
 			text := ""
 			if len(action) > 0 {
 				text = action.merged(quiet).text()
@@ -937,11 +941,7 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 // vouch answers whether a steer's or close's author is the chief v names or above it: it lets the order land on the goal's host,
 // asks the next host up when the climb leaves this one, or tells the author the goal does not report to it.
 func (c *Core) vouch(b Board, o Org, v relayVouch) error {
-	self := c.SelfName()
-	author := v.Author
-	if h, rest, remote := SplitRemote(author); remote && h == self {
-		author = rest
-	}
+	author := c.hereFrom(v.Author)
 	reports, via := climb(o, author, v.Chief)
 	reports = reports || author == v.Chief
 	host, _, _ := SplitRemote(v.Target)

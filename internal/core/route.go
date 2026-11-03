@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // stuckFailures is how many launches in a row may fail before a manager or chief counts as stuck.
@@ -44,10 +45,15 @@ func (c *Core) LoadOrg() (Org, error) {
 	if err != nil {
 		return o, err
 	}
+	archived, err := c.Store.goalsArchived()
+	if err != nil {
+		return o, err
+	}
 	for _, g := range gs {
 		if cl, ok := closures[g.ID]; ok {
 			g.Closure = &cl
 		}
+		g.Archived = archived[g.ID]
 		o.Goals[g.ID] = g
 	}
 	o.Sessions, err = c.Store.ManagerSessions()
@@ -125,13 +131,38 @@ func (o Org) Managed(session string, parents map[string]string) (Manager, bool) 
 	return Manager{}, false
 }
 
-// Subtree lists id and every manager and chief below it.
+// Subtree lists id and every manager and chief below it, the reports of a retired chief included and the retired chief not.
 func (o Org) Subtree(id string) []Manager { return o.subtree(o.reports(), id) }
 
-// reports maps each manager or chief to the ones reporting to it, in order.
+// chiefOver is the chief m reports to, past any retired one on this host; "" when the climb runs out.
+func (o Org) chiefOver(m Manager) string {
+	seen := map[string]bool{m.ID: true}
+	for at := m.ParentID; at != "" && !seen[at]; {
+		seen[at] = true
+		up, ok := o.Managers[at]
+		if !ok || !up.Retired {
+			return at
+		}
+		at = up.ParentID
+	}
+	return ""
+}
+
+// reports maps each manager or chief to the ones reporting to it: the running in order, then the retired, whose reports still count.
 func (o Org) reports() map[string][]string {
 	reports := map[string][]string{}
 	for _, child := range o.order {
+		parent := o.Managers[child].ParentID
+		reports[parent] = append(reports[parent], child)
+	}
+	retired := make([]string, 0, len(o.Managers)-len(o.order))
+	for id, m := range o.Managers {
+		if m.Retired {
+			retired = append(retired, id)
+		}
+	}
+	sort.Strings(retired)
+	for _, child := range retired {
 		parent := o.Managers[child].ParentID
 		reports[parent] = append(reports[parent], child)
 	}
@@ -147,10 +178,12 @@ func (o Org) subtree(reports map[string][]string, id string) []Manager {
 		}
 		seen[id] = true
 		m, ok := o.Managers[id]
-		if !ok || m.Retired {
+		if !ok {
 			return
 		}
-		out = append(out, m)
+		if !m.Retired {
+			out = append(out, m)
+		}
 		for _, child := range reports[id] {
 			walk(child, seen)
 		}

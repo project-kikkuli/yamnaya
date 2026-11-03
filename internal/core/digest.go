@@ -146,7 +146,7 @@ func actionText(e GoalEvent, host string) string {
 		return "failed verify #" + id
 	case EventResumeFailed, EventAgentStopped:
 		return "agent died #" + id
-	case EventRelayFailed, EventRelayed:
+	case EventRelayFailed, EventRelayed, EventGoalClosed:
 		return eventLine(e, host)
 	case EventFinished:
 		return "agent finished #" + id
@@ -182,6 +182,13 @@ func (c *Core) sortChief(chief string, events []GoalEvent) (chiefSort, error) {
 			continue
 		case EventDone, EventVerified, EventPRReady, EventResumeFailed, EventRelayFailed, EventRelayed:
 			out.action = append(out.action, e)
+			continue
+		case EventGoalClosed:
+			if strings.Contains(e.Payload, " by chief "+chief+": ") {
+				out.quiet = append(out.quiet, e)
+			} else {
+				out.action = append(out.action, e)
+			}
 			continue
 		case EventStuck, EventFailedVerify, EventAgentStopped:
 		default:

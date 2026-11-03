@@ -50,6 +50,8 @@ type Goal struct {
 	Host string
 	// Closure is what its standing ym goal close recorded, nil when none stands.
 	Closure *GoalClosure `json:",omitempty"`
+	// Archived is set while ym's ending of the sessions it left behind as a done goal stands.
+	Archived bool `json:",omitempty"`
 }
 
 // Ended reports whether the goal is over: done, dropped or killed.

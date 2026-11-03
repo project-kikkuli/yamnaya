@@ -215,7 +215,7 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 		return "", err
 	}
 	g, isGoal := o.Goals[m.GoalID]
-	if isGoal {
+	if isGoal && !g.Archive() {
 		g.State, g.DoneAt, g.AckedAt = GoalKilled, c.now(), timeZero
 		if err := c.Store.SaveGoal(g); err != nil {
 			return "", err
@@ -235,6 +235,9 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 	what, id := "retired chief "+m.ID, m.ID
 	if isGoal {
 		what, id = "killed "+g.ID, g.ID
+		if g.Archive() {
+			what = g.ID + " stays " + g.State
+		}
 	}
 	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), err
 }
@@ -351,9 +354,14 @@ func (s Live) Label() string {
 	return label
 }
 
-// Reopenable reports whether ym revive brings the goal back: it ended by a kill or a close, not by moving host.
+// Archive reports whether a close or ym's ending of a done goal's leftovers holds the goal off the tree as it is.
+func (g Goal) Archive() bool {
+	return g.Ended() && (g.Closure != nil || g.Archived)
+}
+
+// Reopenable reports whether ym revive brings the goal back: it ended by a kill, close or auto-end, not by moving host.
 func (g Goal) Reopenable() bool {
-	return g.State == GoalKilled || g.Ended() && g.Closure != nil
+	return g.State == GoalKilled || g.Archive()
 }
 
 // ReopenGoal undoes a kill's or close's hold on the goal or chief ref names: a goal is active again, a chief no longer retired, so
@@ -371,14 +379,14 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 		if !g.Reopenable() {
 			return m, fmt.Errorf("%s is %s, not killed or closed", g.ID, g.State)
 		}
-		closed := g.Closure != nil
+		held := g.Archive()
 		g.State, g.DoneAt, g.AckedAt, g.LastMovedAt = GoalActive, timeZero, timeZero, c.now()
 		if err := c.Store.SaveGoal(g); err != nil {
 			return m, err
 		}
-		if closed {
+		if held {
 			now := c.now()
-			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.ID + " reopened; the items its close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
+			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.ID + " reopened; any items a close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
 				return m, err
 			}
 		}

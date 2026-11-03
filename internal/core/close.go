@@ -79,7 +79,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	}
 	m, err := o.lookup(order.Ref)
 	if err != nil {
-		return Closed{}, err
+		return Closed{}, Final(err)
 	}
 	g, isGoal := o.Goals[m.GoalID]
 	if !isGoal {
@@ -101,7 +101,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	if via != "" {
 		host, rest, _ := SplitRemote(via)
 		close := order
-		v := relayVouch{Chief: rest, Author: order.Author, Target: RemoteKey(c.SelfName(), m.ID), Close: &close}
+		v := relayVouch{Chief: rest, Author: c.fromHere(order.Author), Target: RemoteKey(c.SelfName(), m.ID), Close: &close}
 		return Closed{Goal: g.ID, Pending: via}, c.Relay(host, RelayVouchClose, v)
 	}
 	return c.applyClose(b, m, g, order)
@@ -229,10 +229,10 @@ func (c *Core) closeVouched(b Board, o Org, v relayVouch) error {
 		return fmt.Errorf("%w: %s is not a goal to close", errUnusable, id)
 	}
 	order := *v.Close
-	order.Author = v.Author
+	order.Author = c.hereFrom(v.Author)
 	if _, err := c.applyClose(b, m, g, order); err != nil {
 		if errors.Is(err, ErrFinal) {
-			return c.tellManager(b, o, v.Author, fmt.Sprintf("ym: your close of %s did not land: %s", v.Target, err))
+			return c.tellManager(b, o, order.Author, fmt.Sprintf("ym: your close of %s did not land: %s", v.Target, err))
 		}
 		return err
 	}
