@@ -49,6 +49,8 @@ const (
 	inAnswer inputKind = iota
 	inDismiss
 	inRename
+	// inName renames a goal or chief.
+	inName
 	inFilter
 	inDismissStale
 	inSend
@@ -1624,6 +1626,17 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				return fmt.Sprintf("dismissed %d stale items", len(ids)), nil
 			})
+		case inName:
+			if text == "" {
+				return m, nil
+			}
+			old, err := m.core.Rename(m.inItem, text)
+			if err != nil {
+				m.mode, m.pickErr = modeInput, err.Error()
+				return m, nil
+			}
+			m.message = old + " is now " + text
+			return m, nil
 		case inRename:
 			key := m.inProj
 			return m, m.projectAction(m.inHost, []string{"project", "rename", key, text}, func() (string, error) { return "renamed", m.core.Store.Rename(key, text) })

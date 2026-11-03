@@ -345,7 +345,7 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 	if len(l.started) != 1 || l.started[0].Repo != "/src/app" || !strings.Contains(l.started[0].Prompt, "make login faster") {
 		t.Fatalf("started %s, want one manager in /src/app on the goal", fmtLaunches(l.started))
 	}
-	if !strings.HasPrefix(m.message, "goal1 started") {
+	if !strings.HasPrefix(m.message, "make-login-faster started") {
 		t.Fatalf("message %q", m.message)
 	}
 	if m = refresh(t, m); !slices.ContainsFunc(m.rows(), func(r row) bool { return r.node != nil && r.node.Goal.Ask == "make login faster" }) {
@@ -750,6 +750,46 @@ func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
 			m = press(t, m, "enter")
 			if len(l.started) != before+1 || l.started[before].Repo != repo {
 				t.Fatalf("explicit repo lost: %s; %s", fmtLaunches(l.started), m.message)
+			}
+		})
+	}
+}
+
+func TestNOnAGoalOrChiefRenamesItInlineAndRejectsABadNameWithoutLeaving(t *testing.T) {
+	for _, tc := range []struct {
+		name, row, typed, want, err string
+	}{
+		{name: "a goal", row: "goal", typed: "faster-login", want: "faster-login"},
+		{name: "a chief", row: "chief", typed: "platform-lead", want: "platform-lead"},
+		{name: "a name another uses", row: "goal", typed: "platform", err: "already names"},
+		{name: "not kebab-case", row: "chief", typed: "Platform Lead", err: "kebab-case"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make login faster")
+			chief, err := c.NewChief("platform", "", t.TempDir(), "", []string{ms[0].ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := map[string]string{"goal": ms[0].ID, "chief": chief.ID}[tc.row]
+			m = to(t, refresh(t, m), isNode(id))
+			m = press(t, m, "N")
+			m = press(t, m, strings.Split(tc.typed, "")...)
+			m = press(t, m, "enter")
+			if tc.err != "" {
+				if m.mode != modeInput || !strings.Contains(m.View().Content, tc.err) {
+					t.Fatalf("mode %v, want the input kept open saying %q:\n%s", m.mode, tc.err, m.View().Content)
+				}
+				return
+			}
+			o, err := c.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := o.Lookup(tc.want); err != nil || got.ID != id {
+				t.Fatalf("%q names %s, %v; want %s", tc.want, got.ID, err, id)
+			}
+			if m = refresh(t, m); !strings.Contains(m.View().Content, tc.want) {
+				t.Fatalf("the board does not show %q:\n%s", tc.want, m.View().Content)
 			}
 		})
 	}
