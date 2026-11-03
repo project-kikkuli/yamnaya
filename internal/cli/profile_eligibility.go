@@ -38,9 +38,6 @@ func (l launcher) switchReady(s core.Live, rec launch.Record, fleet *core.Fleet)
 		if err != nil {
 			return fmt.Errorf("cannot switch waiting session: %w", err)
 		}
-		if mainAt.IsZero() || mainAt.Before(rec.AttachedAt) {
-			return fmt.Errorf("main quota event predates this native launch")
-		}
 		if fleet == nil {
 			dir := filepath.Dir(l.records.Dir)
 			events, err := usage.KnownExhaustions(dir)

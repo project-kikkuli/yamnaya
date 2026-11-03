@@ -134,7 +134,7 @@ func (h quotaHost) Enter(core.Handle) error            { return nil }
 func (h quotaHost) Screen(core.Handle) (string, error) { return h.text, h.err }
 
 func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
-	for _, name := range []string{"quota stopped", "later child ledger", "idle", "busy", "unknown", "prompt", "unreadable screen", "unknown screen", "active main", "active child", "active copy", "waiting secondary copy", "stale main", "stale ledger", "recovered", "wrong account", "missing account", "wrong profile", "wrong session", "wrong harness", "reset window", "not exhausted", "source root rebound", "source account changed", "copy profile changed", "copy account changed", "copy root changed", "copy harness changed", "copy session changed", "canonical source alias"} {
+	for _, name := range []string{"quota stopped", "later child ledger", "idle", "busy", "unknown", "prompt", "unreadable screen", "unknown screen", "active main", "active child", "active copy", "waiting secondary copy", "resumed into exhausted login", "stale ledger", "recovered", "wrong account", "missing account", "wrong profile", "wrong session", "wrong harness", "reset window", "not exhausted", "source root rebound", "source account changed", "copy profile changed", "copy account changed", "copy root changed", "copy harness changed", "copy session changed", "canonical source alias"} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Now()
 			at := now.Add(-time.Minute)
@@ -146,7 +146,7 @@ func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
 			host := quotaHost{text: "quota dialog"}
 			want := false
 			switch name {
-			case "quota stopped", "idle", "waiting secondary copy", "later child ledger", "canonical source alias":
+			case "quota stopped", "idle", "waiting secondary copy", "later child ledger", "canonical source alias", "resumed into exhausted login":
 				want = true
 			}
 			switch name {
@@ -175,8 +175,11 @@ func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
 			case "waiting secondary copy":
 				s.Copies = []core.Session{s.Session}
 				s.Status = core.Idle
-			case "stale main":
-				h.at = rec.AttachedAt.Add(-time.Second)
+			case "resumed into exhausted login":
+				h.at = now.Add(-25 * time.Hour)
+				e.Seen = h.at
+				rec.AttachedAt = now.Add(-11 * time.Hour)
+				window.ResetsAt = now.Add(32 * time.Hour)
 			case "stale ledger":
 				e.Seen = at.Add(-time.Second)
 			case "recovered":
