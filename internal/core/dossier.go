@@ -14,10 +14,12 @@ import (
 // last, and what changed in the goal since the owner last looked.
 type Dossier struct {
 	Goal string `json:"goal,omitempty"`
-	// GoalName is the name of the goal, or of the chief when it works for no goal, that the item comes from.
+	// GoalName is the name of the goal, or of the chief when it works for no goal, that the item comes from, as of its last refresh.
 	GoalName string `json:"goal_name,omitempty"`
-	GoalAsk  string `json:"goal_ask,omitempty"`
-	Repo     string `json:"repo,omitempty"`
+	// Chief is the chief the item comes from when it works for no goal.
+	Chief   string `json:"chief,omitempty"`
+	GoalAsk string `json:"goal_ask,omitempty"`
+	Repo    string `json:"repo,omitempty"`
 	// From names who filed the item and, for an agent, the manager it works for.
 	From     string         `json:"from,omitempty"`
 	PRs      []PRNote       `json:"prs,omitempty"`
@@ -272,7 +274,7 @@ func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 			d.GoalName = g.Ref()
 		}
 	} else if managed && validName.MatchString(m.Name) {
-		d.GoalName = m.Ref()
+		d.Chief, d.GoalName = m.ID, m.Ref()
 	}
 	seenPR := map[string]bool{}
 	for _, s := range sessions {
@@ -330,6 +332,15 @@ func (c *Core) Brief(b Board) error {
 		}
 	}
 	for _, it := range items {
+		if _, _, remote := SplitRemote(it.Dossier.Goal); remote && it.State == ItemOpen && it.Recipient != Owner {
+			if name := foreignGoalName(o, it.Dossier); name != it.Dossier.GoalName {
+				d := it.Dossier
+				d.GoalName = name
+				if err := c.Store.SaveDossier(it.Seq, d); err != nil {
+					return err
+				}
+			}
+		}
 		if it.State != ItemOpen || it.Recipient != Owner {
 			continue
 		}

@@ -112,7 +112,8 @@ type itemView struct {
 }
 
 func (s *briefSite) itemView(it core.Item) itemView {
-	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Ref(), Lead: it.Lead(), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
+	o, _ := s.core.LoadOrg()
+	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Ref(), Lead: o.ItemLead(it), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
 }
 
 // items lists the open and snoozed items keep matches, oldest first.

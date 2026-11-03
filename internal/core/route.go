@@ -225,7 +225,7 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 			}
 			woken = added.Recipient == m.ID
 			e := GoalEvent{Goal: g.ID, Kind: EventAsked, Created: c.now(),
-				Payload: askLine(added, askerOf(o, it.Session)+" to "+to, askEventRoom)}
+				Payload: askLine(o, added, askerOf(o, it.Session)+" to "+to, askEventRoom)}
 			if !woken {
 				e.Delivered = e.Created
 			}
@@ -261,15 +261,15 @@ func askText(b Board, o Org, it Item) string {
 	if m, ok := o.ManagerOf(it.Session); ok {
 		from = m.Label()
 	}
-	return "ym: " + askLine(it, from, lineMax)
+	return "ym: " + askLine(o, it, from, lineMax)
 }
 
 // askEventRoom is what a goal event's ask line may take of a wake line, leaving room for the event's number and a chief's goal label.
 const askEventRoom = lineMax - 100
 
 // askLine is an ask as a wake says it: the item's lead, who asks, the question cut so the line fits room, and the key to answer it by.
-func askLine(it Item, from string, room int) string {
-	head, key := it.Lead()+" ask from "+from+": ", "  "+it.Key()
+func askLine(o Org, it Item, from string, room int) string {
+	head, key := o.ItemLead(it)+" ask from "+from+": ", "  "+it.Key()
 	return head + clip(oneLine(it.Question), max(20, room-utf8.RuneCountInString(head+key))) + key
 }
 

@@ -172,11 +172,17 @@ func (c *Core) Rename(ref, name string) (string, error) {
 		if err := c.Store.SaveGoal(g); err != nil {
 			return "", err
 		}
+		if err := c.renameInItems(g.ID, name); err != nil {
+			return "", err
+		}
 	} else if m.Role != RoleChief {
 		return "", errors.New(m.ID + " is neither a goal's manager nor a chief")
 	}
 	m.Name = name
-	return old, c.Store.SaveManager(m)
+	if err := c.Store.SaveManager(m); err != nil {
+		return "", err
+	}
+	return old, c.renameInItems(m.ID, name)
 }
 
 // NameUnnamed names every goal here that has none, and its manager, as a new goal would be named; a chief keeps its own name
@@ -264,4 +270,49 @@ func (it Item) Ref() string {
 		return it.Key()
 	}
 	return it.Qualified()
+}
+
+// ItemLead is it.Lead by the names the org holds now, so a row follows a rename however old the item.
+func (o Org) ItemLead(it Item) string {
+	on := func(id string) string {
+		if _, _, remote := SplitRemote(id); it.Host == "" || remote {
+			return id
+		}
+		return RemoteKey(it.Host, id)
+	}
+	show := func(name, ref string) string {
+		if it.Host != "" {
+			return name
+		}
+		return ref
+	}
+	if g, ok := o.Goals[on(it.Dossier.Goal)]; ok && g.Name != "" {
+		return show(g.Name, g.Ref())
+	}
+	id := it.Dossier.Chief
+	if n := ScopeName(it.Scope); id == "" && idShaped.MatchString(n) {
+		id = n
+	}
+	if m, ok := o.Managers[on(id)]; ok && validName.MatchString(m.Name) {
+		return show(m.Name, m.Ref())
+	}
+	return it.Lead()
+}
+
+// renameInItems keeps the name saved with each item from the goal or chief id, which ym item show prints, in step with a rename.
+func (c *Core) renameInItems(id, name string) error {
+	items, err := c.Store.Items(ItemFilter{})
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if it.Dossier.Goal == id || it.Dossier.Chief == id {
+			d := it.Dossier
+			d.GoalName = name
+			if err := c.Store.SaveDossier(it.Seq, d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

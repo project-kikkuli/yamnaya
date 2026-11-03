@@ -740,7 +740,7 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 func (m Model) needLines(i int, n core.Need) string {
 	where := m.projectName(n.Project)
 	if n.Item != nil {
-		where = n.Item.Lead()
+		where = m.board.Org.ItemLead(*n.Item)
 	}
 	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
 	sel := i == m.cursor
@@ -1038,7 +1038,7 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	head := m.mark(i) + pad(m.tagged(it.Host, it.Lead()), min(32, max(16, m.width/4))) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
+	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), min(32, max(16, m.width/4))) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
 	ref := strings.TrimSpace(ids[it.Key()])
 	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
 	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)
@@ -1434,7 +1434,7 @@ func (m Model) whyView() string {
 	field("recipient", m.recipientName(*it))
 	field("repository", core.ScopeName(it.Scope))
 	if it.Dossier.Goal != "" {
-		field("goal", it.Lead())
+		field("goal", m.board.Org.ItemLead(*it))
 	}
 	if it.State == core.ItemOpen && it.Recipient == core.Owner {
 		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))

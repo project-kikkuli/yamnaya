@@ -250,7 +250,7 @@ func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
 func TestAnAsksWakeLineKeepsItsKeyHoweverLongTheQuestion(t *testing.T) {
 	it := Item{Seq: 12, Scope: "/repo/august/.git", ID: "D1", Question: strings.Repeat("word ", 200)}
 	it.Dossier.GoalName = "rotate-the-keys"
-	line := askLine(it, "agent abc to the owner", askEventRoom)
+	line := askLine(Org{}, it, "agent abc to the owner", askEventRoom)
 	if n := len([]rune(line)); n > askEventRoom || !strings.HasPrefix(line, "rotate-the-keys ask from ") || !strings.HasSuffix(line, "  #12") {
 		t.Fatalf("%d runes, room %d: %q", n, askEventRoom, line)
 	}
@@ -276,5 +276,78 @@ func TestAnAskFromAnotherHostsGoalKeepsTheNameThatHostGaveItAcrossARefresh(t *te
 	got, err := w.core.Store.Item(added.Key())
 	if err != nil || got.Lead() != "box/faster-login" {
 		t.Fatalf("Lead() = %q, %v; want box/faster-login", got.Lead(), err)
+	}
+}
+
+func TestARenameReachesEveryItemFromThatGoalOrChiefWhoeverItWaitsOn(t *testing.T) {
+	picks := []Option{{Label: "a", Effect: "x"}, {Label: "b", Effect: "y"}}
+	for _, tc := range []struct {
+		name    string
+		chief   bool
+		toOwner bool
+	}{
+		{name: "a goal's item waiting on the owner", toOwner: true},
+		{name: "a goal's item waiting on its manager"},
+		{name: "a chief's item waiting on the owner", chief: true, toOwner: true},
+		{name: "an item waiting on a chief", chief: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			var boss Manager
+			if tc.chief {
+				boss = w.chief(t, "arbitrator")
+			} else {
+				_, boss = w.goal(t, "rotate the keys", "/repo/august")
+			}
+			asker := boss.Session
+			if !tc.toOwner {
+				asker = "agent-1"
+				w.spawn(asker, boss.Session)
+			}
+			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: asker, Recipient: Owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.toOwner != (it.Recipient == Owner) {
+				t.Fatalf("item waits on %q", it.Recipient)
+			}
+			if _, err := w.core.Rename(boss.ID, "new-name"); err != nil {
+				t.Fatal(err)
+			}
+			got, err := w.core.Store.Item(it.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lead := w.board(t).Org.ItemLead(got); lead != "new-name" || got.Lead() != "new-name" {
+				t.Fatalf("leads with %q, saved copy %q; want new-name", lead, got.Lead())
+			}
+		})
+	}
+}
+
+func TestARenameOnAnotherHostReachesAnItemWaitingOnAManagerHere(t *testing.T) {
+	w := newOrgWorld(t)
+	board := RemoteBoard{Host: "box", Managers: []Manager{{ID: "mgr3", Role: RoleManager, Name: "faster-login", GoalID: "goal2"}},
+		Goals: []Goal{{ID: "goal2", Name: "faster-login", ManagerID: "mgr3"}}}
+	r := &fakeRemotes{boards: []RemoteBoard{board}}
+	w.core.Remotes, w.core.ShowRemotes = r, true
+	_, m := w.goal(t, "local work", "/repo/august")
+	it := Item{Kind: KindDecision, Question: "which?", Session: "agent-9", Scope: "/repo/august/.git", Recipient: m.ID}
+	it.Dossier.Goal, it.Dossier.GoalName = "box/goal2", "box/faster-login"
+	added, err := w.core.Store.addItem(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.boards[0].Managers[0].Name, r.boards[0].Goals[0].Name = "quicker-login", "quicker-login"
+	b := w.board(t)
+	if err := w.core.Brief(b); err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.core.Store.Item(added.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lead := b.Org.ItemLead(got); lead != "box/quicker-login" || got.Lead() != "box/quicker-login" {
+		t.Fatalf("leads with %q, saved copy %q; want box/quicker-login", lead, got.Lead())
 	}
 }
