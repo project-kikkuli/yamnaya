@@ -791,6 +791,9 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
+	if moved, msg, err := l.offWall(rec, l.resumeNote); moved || err != nil {
+		return msg, err
+	}
 	_, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if rec.Session != "" {
 			return resumeArgv(*rec, l.resumeNote)
@@ -816,6 +819,9 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	resumed := transcript(rec) != ""
 	if !resumed && rec.Profile != "" && rec.Profile != "default" {
 		return "", false, fmt.Errorf("profile %s conversation is unavailable; refusing to replace it with a new session", rec.Profile)
+	}
+	if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
+		return session, resumed, err
 	}
 	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
@@ -852,6 +858,9 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 	}
 	if transcript(rec) == "" {
 		return fmt.Errorf("its conversation's transcript is gone")
+	}
+	if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
+		return err
 	}
 	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, prompt) })
 	return err

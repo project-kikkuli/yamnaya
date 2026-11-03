@@ -228,12 +228,7 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 	if pref := profile.Preferred(dir)[harness]; pref != "" {
 		sort.SliceStable(ps, func(i, j int) bool { return ps[i].ID == pref && ps[j].ID != pref })
 	}
-	var limits []core.Limit
-	if l.core != nil && l.core.Meter != nil {
-		limits = l.core.Meter.Fleet(time.Now()).Limits
-	} else {
-		limits = profileLimits(dir)
-	}
+	limits := l.limits()
 	exhausted := map[string]bool{}
 	blocked := map[string]bool{}
 	for _, w := range limits {
