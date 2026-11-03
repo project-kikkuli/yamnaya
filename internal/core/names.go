@@ -229,3 +229,11 @@ func sortedGoalIDs(o Org) []string {
 	slices.SortFunc(ids, func(a, b string) int { return cmp.Compare(n(a), n(b)) })
 	return ids
 }
+
+// Ref names the manager or chief for a link or command: its name, qualified by its host when it runs on another one.
+func (m Manager) Ref() string {
+	if m.Host != "" && validName.MatchString(m.Name) {
+		return RemoteKey(m.Host, m.Name)
+	}
+	return m.Shown()
+}

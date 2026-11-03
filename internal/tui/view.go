@@ -301,13 +301,16 @@ func (m Model) footer() []string {
 	}
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
-		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
+		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inName: "rename " + m.inLabel + " to", inFilter: "filter",
 			inDismissStale: "dismiss every stale item because", inPanel: m.panelLabel(), inSend: "send " + m.inLabel, inBroadcast: "broadcast to " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
 			inRemit: "new " + m.newL.Harness + " chief " + m.chiefName + ", its remit in your words (empty: none)",
 			inSteer: "send to " + m.inLabel}[m.inKind]
+		if m.inKind == inName && m.pickErr != "" {
+			label += pal.red.Render(" (" + m.pickErr + ")")
+		}
 		if m.inKind == inSteer && m.steerHasChief() {
 			if m.subtree {
 				label += pal.dim.Render(" and everyone below [tab: just them]")
@@ -1557,7 +1560,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    u            reopen a snoozed item (detail)
 
    More
-   N            new goal in the selected row's repository
+   N            on a goal or chief: rename it inline (kebab-case, 2 to 40 characters, unused here; its id
+                still names it); on any other row: new goal in that row's repository
    +            new session in the selected row's repository, run by you, no manager: type the prompt;
                 the worktree is named from it
    n N + c n    tab switches claude and codex, shift-tab steps through every account, and each starts
