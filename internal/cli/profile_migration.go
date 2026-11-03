@@ -16,6 +16,7 @@ import (
 
 type migration struct {
 	ResumeNote  string          `json:"resume_note,omitempty"`
+	Reason      string          `json:"reason,omitempty"`
 	Version     int             `json:"version"`
 	Source      launch.Record   `json:"source"`
 	Destination profile.Profile `json:"destination"`
@@ -24,6 +25,19 @@ type migration struct {
 	State       string          `json:"state"`
 	Blocked     string          `json:"blocked,omitempty"`
 	Fingerprint string          `json:"fingerprint,omitempty"`
+}
+
+// inherit keeps the reason and note a queued switch to the same login was saved with when the attempt applying it brings none.
+func (m *migration) inherit(prior migration) {
+	if prior.State != "queued" || prior.Destination.ID != m.Destination.ID {
+		return
+	}
+	if m.Reason == "" {
+		m.Reason = prior.Reason
+	}
+	if m.ResumeNote == "" {
+		m.ResumeNote = prior.ResumeNote
+	}
 }
 
 func migrationPath(dir, harness, id string) string {
@@ -100,7 +114,7 @@ func (l launcher) finishMigration(m migration) (launch.Record, error) {
 		return rec, err
 	}
 	setRecordProfile(&rec, m.Destination)
-	rec.Handoff = m.ResumeNote
+	rec.Handoff = switchNote(m, backgroundTasks(rec))
 	if err = l.records.Save(rec); err != nil {
 		return rec, err
 	}
@@ -138,6 +152,11 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 	if l.core != nil {
 		if live, err := l.core.Find(rec.Session); err == nil && live.ConfigRoot == m.Source.ConfigRoot {
 			return rec, fmt.Errorf("profile handoff waits for the source to be idle and stopped; ym switch %s --profile %s", rec.Key, m.Destination.ID)
+		}
+	}
+	if m.State == "queued" && rec.Harness == "codex" {
+		if m.Expected, err = selectedRollout(sqliteRoot(m.Destination), rec.Session); err != nil {
+			return rec, err
 		}
 	}
 	return l.finishMigration(m)
@@ -197,10 +216,10 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if m.Blocked != "" && m.Fingerprint == fingerprint {
 			continue
 		}
-		if s, ok := b.Session(m.Source.Session); ok && !s.Settled() {
+		if s, ok := b.Session(m.Source.Session); ok && !s.TurnEnded() {
 			continue
 		}
-		_, attemptErr := l.SwitchProfile(m.Source.Key, m.Destination.ID)
+		_, attemptErr := l.QueueProfileSwitch(m.Source.Key, m.Destination.ID, m.Reason)
 		if attemptErr != nil {
 			latest, err := loadMigration(dir, m.Source.Harness, m.Source.Session)
 			if err != nil {
@@ -214,6 +233,35 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		}
 	}
 	return nil
+}
+
+// PendingSwitches are the login switches not yet running, by harness:session, for the board to show.
+func (l launcher) PendingSwitches() map[string]core.Switching {
+	files, _ := filepath.Glob(filepath.Join(filepath.Dir(l.records.Dir), "migrations", "*.json"))
+	out := map[string]core.Switching{}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var m struct {
+			Version int    `json:"version"`
+			State   string `json:"state"`
+			Blocked string `json:"blocked"`
+			Source  struct {
+				Harness string `json:"harness"`
+				Session string `json:"session"`
+			} `json:"source"`
+			Destination struct {
+				ID string `json:"id"`
+			} `json:"destination"`
+		}
+		if json.Unmarshal(raw, &m) != nil || m.Version != 1 || m.State == "running" {
+			continue
+		}
+		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: m.Destination.ID, Blocked: m.Blocked}
+	}
+	return out
 }
 func (l launcher) migrationFingerprint(m migration) (string, error) {
 	ps, err := proc.List()

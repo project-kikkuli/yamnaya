@@ -216,7 +216,7 @@ func commitDirs(w launch.Worktree) []string {
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
 func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 	if rec.Handoff != "" && l.core != nil {
-		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, "The prior turn stopped because") {
+		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, handoffMark(rec.Handoff)) {
 			rec.Handoff = ""
 			if err := l.records.Save(rec); err != nil {
 				return rec, err
@@ -244,6 +244,12 @@ func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 		}
 	}
 	return rec, nil
+}
+
+// handoffMark is how much of a handoff note shows that the session's latest prompt was that note.
+func handoffMark(note string) string {
+	note = strings.Join(strings.Fields(note), " ")
+	return note[:min(len(note), 40)]
 }
 
 func (l launcher) find(ref string) (launch.Record, error) {

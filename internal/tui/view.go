@@ -954,6 +954,9 @@ func (m Model) detailView() viewPage {
 		if s.Prompt != nil {
 			line += "  " + pal.yellow.Render(s.Prompt.String())
 		}
+		if s.Switching != nil {
+			line += "  " + pal.yellow.Render(s.Switching.String())
+		}
 		if len(s.Copies) > 1 {
 			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
@@ -1157,7 +1160,11 @@ func (m Model) sessionView() viewPage {
 	if title == "" {
 		title = core.Short(s.Key())
 	}
-	b.WriteString(pal.bold.Render(" "+title) + pal.dim.Render("  "+profileDisplay(s.Harness, s.Profile)+" "+s.Key()) + "\n\n")
+	b.WriteString(pal.bold.Render(" "+title) + pal.dim.Render("  "+profileDisplay(s.Harness, s.Profile)+" "+s.Key()))
+	if s.Switching != nil {
+		b.WriteString("  " + pal.yellow.Render(s.Switching.String()))
+	}
+	b.WriteString("\n\n")
 	status := s.Status.String()
 	if !s.Since.IsZero() {
 		status += " since " + age(m.board.At, s.Since)

@@ -101,8 +101,11 @@ func TestSwitchRevalidatesWaitingSecondaryCopyBeforeStoppingIdlePrimary(t *testi
 		t.Fatal(err)
 	}
 	_, err = l.SwitchProfile(rec.Key, "b")
-	if err == nil || signals != 0 {
+	if err != nil || signals != 0 {
 		t.Fatalf("resumed copy interrupted: %v signals=%d", err, signals)
+	}
+	if m, err := loadMigration(state, "claude", s.ID); err != nil || m.State != "queued" || m.Destination.ID != "b" {
+		t.Fatalf("busy copy did not leave the switch queued: %+v %v", m, err)
 	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("did not reach authentication between eligibility and revalidation")
@@ -134,7 +137,7 @@ func (h quotaHost) Enter(core.Handle) error            { return nil }
 func (h quotaHost) Screen(core.Handle) (string, error) { return h.text, h.err }
 
 func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
-	for _, name := range []string{"quota stopped", "later child ledger", "idle", "busy", "unknown", "prompt", "unreadable screen", "unknown screen", "active main", "active child", "active copy", "waiting secondary copy", "resumed into exhausted login", "stale ledger", "recovered", "wrong account", "missing account", "wrong profile", "wrong session", "wrong harness", "reset window", "not exhausted", "source root rebound", "source account changed", "copy profile changed", "copy account changed", "copy root changed", "copy harness changed", "copy session changed", "canonical source alias"} {
+	for _, name := range []string{"quota stopped", "later child ledger", "idle", "busy", "unknown", "prompt", "unreadable screen", "unknown screen", "active main", "background child", "active copy", "waiting secondary copy", "resumed into exhausted login", "stale ledger", "recovered", "wrong account", "missing account", "wrong profile", "wrong session", "wrong harness", "reset window", "not exhausted", "source root rebound", "source account changed", "copy profile changed", "copy account changed", "copy root changed", "copy harness changed", "copy session changed", "canonical source alias"} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Now()
 			at := now.Add(-time.Minute)
@@ -146,7 +149,7 @@ func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
 			host := quotaHost{text: "quota dialog"}
 			want := false
 			switch name {
-			case "quota stopped", "idle", "waiting secondary copy", "later child ledger", "canonical source alias", "resumed into exhausted login":
+			case "quota stopped", "idle", "background child", "waiting secondary copy", "later child ledger", "canonical source alias", "resumed into exhausted login":
 				want = true
 			}
 			switch name {
@@ -166,7 +169,7 @@ func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
 				host.text = "ordinary dialog"
 			case "active main":
 				h.problem = errors.New("outstanding tool")
-			case "active child":
+			case "background child":
 				s.Crew = []core.Member{{Status: core.Busy}}
 			case "active copy":
 				cp := s.Session

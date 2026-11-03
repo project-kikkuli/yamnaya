@@ -354,6 +354,9 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 		news = pal.yellow.Render(fmt.Sprintf("%d new ", u))
 	}
 	tags := planTags(n)
+	if n.Live != nil && n.Live.Switching != nil {
+		tags += pal.yellow.Render(n.Live.Switching.String() + " ")
+	}
 	line += m.statCells(st, m.width-ansi.StringWidth(line+news+tags)-keep) + news + tags
 	b := line + ansi.Truncate(oneLine(what), max(10, m.width-ansi.StringWidth(line)-1), "…") + "\n"
 	if i != m.cursor {

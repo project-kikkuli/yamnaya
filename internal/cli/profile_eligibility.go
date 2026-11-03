@@ -12,21 +12,29 @@ import (
 )
 
 func (l launcher) switchReady(s core.Live, rec launch.Record, fleet *core.Fleet) error {
-	copies := append([]core.Session{s.Session}, s.Copies...)
-	for _, cp := range copies {
+	if err := switchIdentity(s, rec); err != nil {
+		return err
+	}
+	return l.turnEnded(s, fleet)
+}
+
+func switchIdentity(s core.Live, rec launch.Record) error {
+	for _, cp := range append([]core.Session{s.Session}, s.Copies...) {
 		if cp.Harness != s.Harness || cp.ID != s.ID || profile.ID(cp.Profile) != profile.ID(s.Profile) || cp.Account != s.Account || physicalProfileRoot(cp.ConfigRoot) != physicalProfileRoot(s.ConfigRoot) {
 			return fmt.Errorf("session copies have inconsistent source identities")
 		}
 		if rec.Session != "" && (rec.Session != cp.ID || rec.Harness != cp.Harness || profile.ID(rec.Profile) != profile.ID(cp.Profile) || rec.ConfigRoot != "" && physicalProfileRoot(rec.ConfigRoot) != physicalProfileRoot(cp.ConfigRoot) || rec.Account != "" && rec.Account != cp.Account) {
 			return fmt.Errorf("native source identity changed; reopen its login panel")
 		}
+	}
+	return nil
+}
+
+// turnEnded fails while s is mid-turn, shows a dialog, or waits on anything but a verified subscription exhaustion; busy crew never block it.
+func (l launcher) turnEnded(s core.Live, fleet *core.Fleet) error {
+	for _, cp := range append([]core.Session{s.Session}, s.Copies...) {
 		if cp.Prompt != nil {
 			return fmt.Errorf("a native prompt is active; source is unchanged")
-		}
-		for _, child := range cp.Crew {
-			if child.Status == core.Busy {
-				return fmt.Errorf("a child is active; source is unchanged")
-			}
 		}
 		if cp.Status == core.Idle {
 			continue

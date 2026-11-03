@@ -139,7 +139,7 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		next := l
 		next.resumeNote = fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window. ym moved this same conversation from profile %s to profile %s. Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded.", e.Harness, e.Profile, target.ID)
-		_, switchErr := next.SwitchProfile(e.Session, target.ID)
+		_, switchErr := next.QueueProfileSwitch(e.Session, target.ID, fmt.Sprintf("the %s subscription on profile %s exhausted its usage window", e.Harness, e.Profile))
 		if switchErr != nil {
 			a.State.Status = "blocked"
 			a.State.Reason = switchErr.Error()

@@ -39,6 +39,8 @@ type sessionJSON struct {
 	Since        string   `json:"since,omitempty"`
 	Background   bool     `json:"background,omitempty"`
 	Prompt       string   `json:"prompt,omitempty"`
+	SwitchTo     string   `json:"switch_to,omitempty"`
+	SwitchBlock  string   `json:"switch_blocked,omitempty"`
 	Host         string   `json:"host"`
 	Remote       string   `json:"remote,omitempty"`
 	Project      string   `json:"project"`
@@ -110,6 +112,9 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies), Last: s.LastLine(), LastAt: ts(s.ResultAt)}
 		if s.Prompt != nil {
 			j.Prompt = s.Prompt.String()
+		}
+		if s.Switching != nil {
+			j.SwitchTo, j.SwitchBlock = s.Switching.To, s.Switching.Blocked
 		}
 		for _, cp := range s.Copies {
 			j.CopyPIDs = append(j.CopyPIDs, cp.PID)

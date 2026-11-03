@@ -244,6 +244,9 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		if s.Prompt != "" {
 			l.Prompt = &core.Prompt{Tool: s.Prompt}
 		}
+		if s.SwitchTo != "" {
+			l.Switching = &core.Switching{To: s.SwitchTo, Blocked: s.SwitchBlock}
+		}
 		r.Sessions = append(r.Sessions, l)
 	}
 	for _, it := range j.Items {

@@ -106,6 +106,11 @@ func (l Live) Settled() bool {
 	return true
 }
 
+// TurnEnded reports whether the session itself sits between turns: idle or stopped on a wait, no dialog on screen, whatever its crew does.
+func (l Live) TurnEnded() bool {
+	return l.Prompt == nil && (l.Status == Idle || l.Status == Waiting)
+}
+
 // Runs reports whether pid is alive and whether it still runs session id of harness.
 func (c *Core) Runs(pid int, harness, id string) (alive, same bool) {
 	procs, err := c.Procs()
