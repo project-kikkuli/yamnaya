@@ -1,0 +1,2 @@
+ usage local claude 7d 100% ↻1d5h (14h11m old)   local claude/claude-work 7d 10% ↻6d19h   local codex 7d 24% ↻21h19m
+       spend today $169 · 7d $675

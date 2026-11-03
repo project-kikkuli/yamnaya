@@ -1,0 +1,67 @@
+{
+ "at": "2026-11-03T21:05:41Z",
+ "self": "prod-forge-ws-rajat-mehndiratta-rajatsmachine.exe.xyz",
+ "today": 169.03347142000007,
+ "week": 674.6313344799995,
+ "limits": [
+  {
+   "Profile": "default",
+   "ProfileLabel": "default",
+   "Account": "claude/8caa585d-f35d-4979-bae7-1bc535c3ac97/425f8e79-b047-474f-958b-7631ea0859ab",
+   "Host": "",
+   "Harness": "claude",
+   "Name": "7d",
+   "Used": 100,
+   "Window": 604800000000000,
+   "ResetsAt": "2026-11-05T03:00:00Z",
+   "Plan": "",
+   "Seen": "2026-11-03T06:54:37Z"
+  },
+  {
+   "Profile": "claude-work",
+   "ProfileLabel": "claude-work",
+   "Account": "claude/c2200c74-8e22-4695-bf67-3846afac4c98/db52560d-756e-477f-83ae-aa596fc8d118",
+   "Host": "",
+   "Harness": "claude",
+   "Name": "7d",
+   "Used": 10,
+   "Window": 604800000000000,
+   "ResetsAt": "2026-11-10T17:00:00Z",
+   "Plan": "",
+   "Seen": "2026-11-03T21:05:36Z"
+  },
+  {
+   "Profile": "default",
+   "ProfileLabel": "default",
+   "Account": "codex/user-26RHfv5LHDXOtQAetLRLmYqT/4b5f1c7b-48fc-4040-a309-3a406cb8ecbf",
+   "Host": "",
+   "Harness": "codex",
+   "Name": "codex 7d",
+   "Used": 24,
+   "Window": 604800000000000,
+   "ResetsAt": "2026-11-04T18:24:46Z",
+   "Plan": "promax",
+   "Seen": "2026-11-03T21:05:25.315Z"
+  }
+ ],
+ "profiles": [
+  {
+   "harness": "claude",
+   "id": "default",
+   "account": "claude/8caa585d-f35d-4979-bae7-1bc535c3ac97/425f8e79-b047-474f-958b-7631ea0859ab",
+   "state": "exhausted until 2026-11-05T03:00:00Z"
+  },
+  {
+   "harness": "claude",
+   "id": "claude-work",
+   "account": "claude/c2200c74-8e22-4695-bf67-3846afac4c98/db52560d-756e-477f-83ae-aa596fc8d118",
+   "state": "7d 10%"
+  },
+  {
+   "harness": "codex",
+   "id": "default",
+   "account": "codex/user-26RHfv5LHDXOtQAetLRLmYqT/4b5f1c7b-48fc-4040-a309-3a406cb8ecbf",
+   "state": "7d 24%"
+  }
+ ]
+}

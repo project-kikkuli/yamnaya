@@ -19,66 +19,92 @@ func fleetLine(f core.Fleet, now time.Time, width int, tag func(string) string) 
 	if !f.Ready && len(f.Limits) == 0 {
 		return pal.dim.Render(" usage: reading transcripts…")
 	}
+	limits := f.PerHost
+	if limits == nil {
+		limits = f.Limits
+	}
 	var labels []string
 	byLabel := map[string][]core.Limit{}
-	for _, l := range f.Limits {
+	for _, l := range limits {
 		if byLabel[l.IdentityLabel()] == nil {
 			labels = append(labels, l.IdentityLabel())
 		}
 		byLabel[l.IdentityLabel()] = append(byLabel[l.IdentityLabel()], l)
 	}
-	var parts []string
+	var parts [][]string
 	for _, id := range labels {
 		ls := byLabel[id]
 		local := ls[0]
 		local.Host = ""
-		label := local.IdentityLabel()
+		host := "local"
 		if ls[0].Host != "" {
-			label = tag(ls[0].Host) + "/" + label
+			host = tag(ls[0].Host)
 		}
-		var ws []string
+		row := []string{pal.bold.Render(host + " " + local.IdentityLabel())}
 		var seen time.Time
-		for _, l := range ls {
+		for i, l := range ls {
 			w := fmt.Sprintf("%s %.0f%% ↻%s", l.Label(), l.Used, core.Span(l.ResetsAt.Sub(now)))
+			if i > 0 {
+				w = "· " + w
+			}
 			if l.Used >= 80 {
 				w = pal.red.Render(w)
 			}
-			ws = append(ws, w)
+			row = append(row, w)
 			if l.Seen.After(seen) {
 				seen = l.Seen
 			}
 		}
-		p := pal.bold.Render(label) + " " + strings.Join(ws, " · ")
 		if now.Sub(seen) > staleAfter {
-			p += pal.dim.Render(" (" + core.Span(now.Sub(seen)) + " old)")
+			row = append(row, pal.dim.Render("("+core.Span(now.Sub(seen))+" old)"))
 		}
-		parts = append(parts, p)
+		parts = append(parts, row)
 	}
 	if f.Ready {
-		parts = append(parts, "spend today "+f.Today.Dollars()+" · 7d "+f.Week.Dollars())
+		parts = append(parts, []string{"spend today " + f.Today.Dollars(), "· 7d " + f.Week.Dollars()})
 	} else {
-		parts = append(parts, pal.dim.Render("spend and codex limits: reading transcripts…"))
+		parts = append(parts, []string{pal.dim.Render("spend and codex limits: reading transcripts…")})
 	}
-	return wrapItems("usage", parts, width)
+	return wrapRows("usage", parts, width)
 }
 
 // wrapItems puts items after label on as many lines as width needs, breaking only between items and indenting each
 // continuation under the first item; width 0 keeps one line.
 func wrapItems(label string, items []string, width int) string {
+	rows := make([][]string, len(items))
+	for i, it := range items {
+		rows[i] = []string{it}
+	}
+	return wrapRows(label, rows, width)
+}
+
+// wrapRows is wrapItems for rows of unbreakable cells: a row that fits no line of its own breaks between its cells.
+func wrapRows(label string, rows [][]string, width int) string {
 	const sep = "   "
 	lead := " " + label + " "
 	indent := strings.Repeat(" ", ansi.StringWidth(lead))
 	var lines []string
 	line, used := " "+pal.dim.Render(label)+" ", ansi.StringWidth(lead)
-	for i, it := range items {
-		w := ansi.StringWidth(it)
+	breakTo := func(prefix string) {
+		lines = append(lines, line)
+		line, used = prefix, len(prefix)
+	}
+	for i, row := range rows {
+		w := ansi.StringWidth(strings.Join(row, " "))
 		if i > 0 && width > 0 && used+len(sep)+w >= width {
-			lines = append(lines, line)
-			line, used = indent, len(indent)
+			breakTo(indent)
 		} else if i > 0 {
 			line, used = line+sep, used+len(sep)
 		}
-		line, used = line+it, used+w
+		for j, cell := range row {
+			cw := ansi.StringWidth(cell)
+			if j > 0 && width > 0 && used+1+cw >= width {
+				breakTo(indent + "  ")
+			} else if j > 0 {
+				line, used = line+" ", used+1
+			}
+			line, used = line+cell, used+cw
+		}
 	}
 	return strings.Join(append(lines, line), "\n")
 }
@@ -96,4 +122,18 @@ func profileDisplay(h, id string) string {
 		return h
 	}
 	return h + "/" + id
+}
+
+// Goal31Line exposes fleetLine to the throwaway render program in goal31-mockups.
+func Goal31Line(f core.Fleet, now time.Time, width int, tag func(string) string) string {
+	return ansi.Strip(fleetLine(f, now, width, tag))
+}
+
+// Goal31Today renders HEAD's fleetLine and the board's paint truncation, for the same throwaway program.
+func Goal31Today(f core.Fleet, now time.Time, width int, tag func(string) string) string {
+	lines := strings.Split(ansi.Strip(fleetLineToday(f, now, width, tag)), "\n")
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "…")
+	}
+	return strings.Join(lines, "\n")
 }
