@@ -92,7 +92,10 @@ func (c *Core) goalChief(under string) (string, error) {
 	if under == "" {
 		return "", nil
 	}
-	if _, _, remote := SplitRemote(under); remote {
+	under = c.Store.Unnicked(under)
+	if host, rest, remote := SplitRemote(under); remote && host == c.SelfName() {
+		under = rest
+	} else if remote {
 		return c.checkRemoteChief(Manager{}, under)
 	}
 	o, err := c.LoadOrg()

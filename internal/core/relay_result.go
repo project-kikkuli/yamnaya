@@ -147,8 +147,8 @@ func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 		Rec:      fmt.Sprintf("ym retries it each cycle: fix the cause on %s, or stop it with ym relay drop %s", r.Dest, strconv.FormatInt(r.Seq, 10))}
 	switch {
 	case ref.Final && len(y.Args) > 1 && y.Args[0] == "goal" && strings.HasPrefix(y.Args[1], "--"):
-		it.Question = fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(y.Args[len(y.Args)-1]), lineMax), ref.Error)
-		it.Rec = fmt.Sprintf("rerun ym goal --host %s with --repo naming a repository %s has, or start it on a host that has it", r.Dest, r.Dest)
+		it.Question = fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(y.Args[len(y.Args)-1]), lineMax), why)
+		it.Rec = fmt.Sprintf("rerun ym goal --host %s once its refusal is dealt with, or start the goal on a host that can take it", r.Dest)
 	case ref.Final:
 		it.Question = fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why)
 		it.Rec = fmt.Sprintf("rerun %s once %s can take it", cmd, r.Dest)
