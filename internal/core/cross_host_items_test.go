@@ -58,7 +58,11 @@ func TestChiefInboxFollowsItemsAcrossHosts(t *testing.T) {
 					f.sync(t)
 				}
 				found, err := cw.core.FindItem("", key)
-				if err != nil || found.State != ItemAnswered || found.Answer != "ship" || len(found.History) != 2 {
+				wantHistory := 2
+				if route == "escalated" {
+					wantHistory++
+				}
+				if err != nil || found.State != ItemAnswered || found.Answer != "ship" || len(found.History) != wantHistory {
 					t.Fatalf("answered item = %+v, %v", found, err)
 				}
 				if mine, err := cw.core.ToMe(cw.board(t), chief); err != nil || len(mine) != 0 {
