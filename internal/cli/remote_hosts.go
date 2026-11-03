@@ -367,6 +367,7 @@ func (e *env) readRemotes(wait time.Duration, show bool) error {
 	}
 	names := known()
 	if len(names) == 0 && wait > 0 {
+		e.core.ShowRemotes = show
 		return nil
 	}
 	r := newRemoteHosts(names, wait, func(h string, at time.Time, board []byte) {

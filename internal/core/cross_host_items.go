@@ -29,7 +29,7 @@ func (c *Core) ParseItemRef(ref string) ItemRef {
 
 func parseItemRef(ref string) ItemRef {
 	if n, ok := strings.CutPrefix(ref, "#"); ok {
-		if seq, err := strconv.ParseInt(n, 10, 64); err == nil {
+		if seq, err := strconv.ParseInt(n, 10, 64); err == nil && seq > 0 {
 			return ItemRef{Seq: seq}
 		}
 	}

@@ -168,9 +168,10 @@ func TestItemRefsKeepHostLocalSequencesDistinct(t *testing.T) {
 			}
 		})
 	}
-	missing := "#99999"
-	if _, err := f.b.core.FindItem("", missing); err == nil {
-		t.Fatal("missing local sequence resolved on another host")
+	for _, missing := range []string{"#99999", "#0", "#-1", "#bad", "c/#0"} {
+		if it, err := f.b.core.FindItem("", missing); err == nil {
+			t.Fatalf("invalid or missing sequence %s resolved as %+v", missing, it)
+		}
 	}
 }
 
