@@ -1,6 +1,7 @@
 package kaiju
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/scene"
@@ -46,5 +47,36 @@ func TestAMonsterKeepsItsPlaceWhateverHappensToIt(t *testing.T) {
 		if m := find(t, lone(f)); m.x != base.x || m.foot != base.foot {
 			t.Errorf("%s: moved from %v,%v to %v,%v", name, base.x, base.foot, m.x, m.foot)
 		}
+	}
+}
+
+func TestEveryOpenCellShowsTheColorsOfItsPixels(t *testing.T) {
+	old := scene.Colors
+	scene.Colors = scene.TrueColor
+	t.Cleanup(func() { scene.Colors = old })
+	for _, weather := range []scene.Weather{scene.Clear, scene.Storm, scene.Eruption} {
+		t.Run(strconv.Itoa(int(weather)), func(t *testing.T) {
+			s := lone(func(p *scene.Peak) { p.Weather = weather })
+			w, h := 160, 48
+			p := still(s, w, h).at(5, scene.Rect{})
+			defer p.release()
+			p.draw()
+			if weather == scene.Eruption && len(p.tint) == 0 {
+				t.Fatal("an eruption tinted nothing")
+			}
+			for y := range h {
+				for x := range w {
+					_, glyph := p.c.Cell(x, y)
+					if p.taken[y*w+x] || (glyph != " " && glyph != "▀") {
+						continue
+					}
+					fg, bg, _ := p.c.Ink(x, y)
+					top, bottom := scene.Code(p.px[2*y*w+x]), scene.Code(p.px[(2*y+1)*w+x])
+					if scene.Code(fg) != top || scene.Code(bg) != bottom {
+						t.Fatalf("cell %d,%d shows %06x/%06x over pixels %06x/%06x", x, y, scene.Code(fg), scene.Code(bg), top, bottom)
+					}
+				}
+			}
+		})
 	}
 }

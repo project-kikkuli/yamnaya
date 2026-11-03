@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -144,5 +145,82 @@ func TestPendingSceneWaitsForFocusAndTerminalOutput(t *testing.T) {
 	text := tableText(*m.page)
 	if got, want := m.View().Content, scene.Frame(m.sceneOf(), m.width, m.height, m.peaks.frame, text); got != want {
 		t.Fatal("resumed scene lost the pending selection")
+	}
+}
+
+func TestTheSceneOnScreenIsAFreshPaintOfEveryFrame(t *testing.T) {
+	old, colors, motion := pal, scene.Colors, scene.ReducedMotion
+	pal, scene.Colors, scene.ReducedMotion = newPalette(true), scene.TrueColor, false
+	t.Cleanup(func() { pal, scene.Colors, scene.ReducedMotion = old, colors, motion })
+	for _, theme := range scene.Themes() {
+		t.Run(theme.Name(), func(t *testing.T) {
+			m := New(&core.Core{})
+			m.board, m.loaded, m.width, m.height = workBoard(), true, 100, 32
+			m.board.Tree[0].Standing = core.StandMoving
+			m.peaks.hidden, m.peaks.theme, m.peaks.dark = false, theme.Name(), true
+			m.out = &output{rate: 1e9}
+			page := m.prepareView()
+			m.page = &page
+			text := tableText(page)
+			box := scene.TableBox(text, m.width, m.height)
+			for frame := 1; frame <= 6; frame++ {
+				m.peaks.frame = frame * 40
+				m.settle(true)
+				want := theme.Paint(m.sceneOf(), m.width, m.height, m.peaks.frame, box).Draw(text)
+				if m.peaks.screen.left != 0 || m.peaks.screen.c.Draw(text) != want {
+					t.Fatalf("frame %d on screen differs from a fresh paint of it", m.peaks.frame)
+				}
+			}
+		})
+	}
+}
+
+func TestABoardSceneFollowsEverythingItShows(t *testing.T) {
+	changed := workBoard()
+	changed.Tree[0].Standing = core.StandStuck
+	changed.Tree[0].Agents[0].Status = core.Waiting
+	changed.Gen = 2
+	for _, tc := range []struct {
+		name   string
+		change func(m *Model)
+	}{
+		{"same board", func(*Model) {}},
+		{"new generation", func(m *Model) { m.board = changed }},
+		{"selection", func(m *Model) { m.cursor = 1 }},
+		{"theme", func(m *Model) { m.peaks.theme = "kaiju" }},
+		{"dark", func(m *Model) { m.peaks.dark = !m.peaks.dark }},
+		{"a kill playing", func(m *Model) { m.fell([]string{"node:mgr"}, time.Now()) }},
+		{"a kill undone", func(m *Model) {
+			m.fell([]string{"node:mgr"}, time.Now().Add(-time.Minute))
+			m.sceneOf()
+			m.peaks.kills = map[string]fall{}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New(&core.Core{})
+			m.board, m.loaded = workBoard(), true
+			m.board.Gen = 1
+			m.boardScene()
+			tc.change(&m)
+			at := time.Now()
+			got := m.falling(m.boardScene(), at)
+			fresh := m
+			fresh.board.Gen = 0
+			want := fresh.falling(fresh.boardScene(), at)
+			got.Now = want.Now
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("scene %+v, a board built afresh gives %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestATickOfTheSameBoardBuildsNoRanges(t *testing.T) {
+	m := New(&core.Core{})
+	m.board, m.loaded = workBoard(), true
+	m.board.Gen = 1
+	first := m.boardScene()
+	if second := m.boardScene(); len(first.Ranges) == 0 || &first.Ranges[0] != &second.Ranges[0] {
+		t.Fatal("the same generation built its ranges again")
 	}
 }

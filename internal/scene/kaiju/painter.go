@@ -16,6 +16,8 @@ type painter struct {
 	table scene.Rect
 	lum   []float32
 	px    []rgb
+	// code is each pixel of px as the terminal sees it.
+	code  []int
 	solid []bool
 	tint  []tinted
 	// who is, per cell, one more than the index of the monster drawn there.
@@ -38,6 +40,7 @@ type tinted struct {
 type frameBufs struct {
 	lum   []float32
 	px    []rgb
+	code  []int
 	solid []bool
 	tint  []tinted
 	who   []int32
@@ -56,7 +59,7 @@ func (b *backdrop) at(frame int, table scene.Rect) *painter {
 	}
 	p.lum = append(p.bufs.lum[:0], b.lum...)
 	p.solid = append(p.bufs.solid[:0], b.solid...)
-	p.px = grow(p.bufs.px, len(b.lum))
+	p.px, p.code = grow(p.bufs.px, len(b.lum)), grow(p.bufs.code, len(b.lum))
 	p.tint = p.bufs.tint[:0]
 	cells := b.w * b.p / 2
 	p.who, p.taken, p.text = reuse(p.bufs.who, cells), reuse(p.bufs.taken, cells), reuse(p.bufs.text, cells)
@@ -65,7 +68,7 @@ func (b *backdrop) at(frame int, table scene.Rect) *painter {
 
 func (p *painter) release() {
 	if b := p.bufs; b != nil {
-		b.lum, b.px, b.solid, b.tint, b.who, b.taken, b.text = p.lum, p.px, p.solid, p.tint, p.who, p.taken, p.text
+		b.lum, b.px, b.code, b.solid, b.tint, b.who, b.taken, b.text = p.lum, p.px, p.code, p.solid, p.tint, p.who, p.taken, p.text
 		p.bufs = nil
 		scratch.Put(b)
 	}
@@ -168,7 +171,7 @@ func (p *painter) film() {
 	top, bottom := int(p.l.top), int(p.l.bottom)-1
 	expose := func(k, g int) {
 		if p.vig[k] == 0 {
-			p.px[k] = scene.Black
+			p.px[k], p.code[k] = scene.Black, p.blackCode
 			return
 		}
 		src := k
@@ -176,7 +179,8 @@ func (p *painter) film() {
 			src = min(bottom, max(top, k/p.w+dy))*p.w + min(p.w-1, max(0, k%p.w+dx))
 		}
 		v := p.lum[src]*p.vig[k]*flicker + grain[g&grainMask]
-		p.px[k] = p.ink[min(255, max(0, int(v*255)))]
+		i := min(255, max(0, int(v*255)))
+		p.px[k], p.code[k] = p.ink[i], p.inkCode[i]
 	}
 	for k := range p.lum {
 		expose(k, k+off)
@@ -187,6 +191,7 @@ func (p *painter) film() {
 	}
 	for _, t := range p.tint {
 		p.px[t.k] = mix(p.px[t.k], t.c, float64(t.a))
+		p.code[t.k] = scene.Code(p.px[t.k])
 	}
 }
 
@@ -213,11 +218,11 @@ func (p *painter) canvasOf() {
 				}
 				continue
 			}
-			top, bottom := p.px[up], p.px[down]
+			top, bottom := p.code[up], p.code[down]
 			if top == bottom {
-				p.c.Set(x, y, top, top, " ")
+				p.c.SetCode(x, y, top, top, " ")
 			} else {
-				p.c.Set(x, y, top, bottom, "▀")
+				p.c.SetCode(x, y, top, bottom, "▀")
 			}
 		}
 	}
