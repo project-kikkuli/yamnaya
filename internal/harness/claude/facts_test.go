@@ -231,3 +231,51 @@ func TestContextIsWhatTheLatestMainThreadReplyRead(t *testing.T) {
 		})
 	}
 }
+
+func TestRunningIsTheBackgroundWorkThatHasNotReportedBack(t *testing.T) {
+	bash := toolUse("b1", "Bash", `{"command":"go test ./...","run_in_background":true}`)
+	bashStarted := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: ba3nxn8vc."}]},"toolUseResult":{"stdout":"","backgroundTaskId":"ba3nxn8vc"}}`
+	agent := toolUse("a1", "Agent", `{"description":"Check TUI","prompt":"look"}`)
+	agentStarted := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a1","content":"launched"}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a5c01","description":"Check TUI"}}`
+	note := func(id, status string) string {
+		return `<task-notification>\n<task-id>` + id + `</task-id>\n<status>` + status + `</status>\n</task-notification>`
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  map[string]string
+	}{
+		{"foreground only", []string{toolUse("f1", "Bash", `{"command":"ls"}`), `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"f1","content":"x"}]},"toolUseResult":{"stdout":"x"}}`}, map[string]string{}},
+		{"string tool result", []string{toolUse("f1", "Bash", `{"command":"ls"}`), `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"f1","is_error":true,"content":"x"}]},"toolUseResult":"Error: x"}`}, map[string]string{}},
+		{"started", []string{bash, bashStarted, agent, agentStarted}, map[string]string{"ba3nxn8vc": "Bash: go test ./...", "a5c01": "Agent: Check TUI"}},
+		{"completed", []string{bash, bashStarted, agent, agentStarted, `{"type":"user","message":{"content":"` + note("ba3nxn8vc", "completed") + `"}}`}, map[string]string{"a5c01": "Agent: Check TUI"}},
+		{"failed while queued", []string{bash, bashStarted, `{"type":"queue-operation","operation":"enqueue","content":"` + note("ba3nxn8vc", "failed") + `"}`}, map[string]string{}},
+		{"stopped", []string{bash, bashStarted, toolUse("s1", "TaskStop", `{"task_id":"ba3nxn8vc"}`)}, map[string]string{}},
+		{"killed shell", []string{bash, bashStarted, toolUse("s1", "KillShell", `{"shell_id":"ba3nxn8vc"}`)}, map[string]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := map[string]string{}
+			for id, a := range newWorld(t, tc.lines...).session(t, nil).Running {
+				got[id] = a.String()
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("running %v, want %v", got, tc.want)
+			}
+			for id, want := range tc.want {
+				if got[id] != want {
+					t.Fatalf("running %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunningDropsWorkStartedBeforeTheProcess(t *testing.T) {
+	w := newWorld(t, toolUse("b1", "Bash", `{"command":"go test ./..."}`), `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"bg"}]},"toolUseResult":{"backgroundTaskId":"old"}}`)
+	a := &Adapter{Dir: w.dir, Now: time.Now}
+	proc7 := p(7, "claude")
+	proc7.Elapsed = time.Minute
+	if got := a.Discover([]proc.Proc{proc7})[0].Running; len(got) != 0 {
+		t.Fatalf("a task from before this process still counts: %v", got)
+	}
+}

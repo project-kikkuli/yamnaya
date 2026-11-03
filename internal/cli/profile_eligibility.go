@@ -11,6 +11,9 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
+// unsettled is a switchReady refusal that time can clear, so the switch waits for it instead of failing.
+type unsettled struct{ error }
+
 func (l launcher) switchReady(s core.Live, rec launch.Record, fleet *core.Fleet) error {
 	copies := append([]core.Session{s.Session}, s.Copies...)
 	for _, cp := range copies {
@@ -21,22 +24,17 @@ func (l launcher) switchReady(s core.Live, rec launch.Record, fleet *core.Fleet)
 			return fmt.Errorf("native source identity changed; reopen its login panel")
 		}
 		if cp.Prompt != nil {
-			return fmt.Errorf("a native prompt is active; source is unchanged")
-		}
-		for _, child := range cp.Crew {
-			if child.Status == core.Busy {
-				return fmt.Errorf("a child is active; source is unchanged")
-			}
+			return unsettled{fmt.Errorf("a native prompt is active; source is unchanged")}
 		}
 		if cp.Status == core.Idle {
 			continue
 		}
 		if cp.Status != core.Waiting || l.core == nil {
-			return fmt.Errorf("%s is %s or has a live action; switch when idle", core.Short(cp.ID), cp.Status)
+			return unsettled{fmt.Errorf("%s is %s or has a live action", core.Short(cp.ID), cp.Status)}
 		}
 		mainAt, err := l.core.InspectHandoff(cp)
 		if err != nil {
-			return fmt.Errorf("cannot switch waiting session: %w", err)
+			return unsettled{fmt.Errorf("cannot switch waiting session: %w", err)}
 		}
 		if fleet == nil {
 			dir := filepath.Dir(l.records.Dir)
@@ -58,7 +56,7 @@ func (l launcher) switchReady(s core.Live, rec launch.Record, fleet *core.Fleet)
 			}
 		}
 		if !verified {
-			return fmt.Errorf("waiting session has no current matching subscription exhaustion")
+			return unsettled{fmt.Errorf("waiting session has no current matching subscription exhaustion")}
 		}
 	}
 	return nil

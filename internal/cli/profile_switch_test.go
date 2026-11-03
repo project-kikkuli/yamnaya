@@ -162,7 +162,7 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 						t.Fatal(err)
 					}
 				}
-				_, err = l.SwitchProfile(rec.Key, "b")
+				msg, err := l.SwitchProfile(rec.Key, "b")
 				if allowed && err != nil {
 					t.Fatalf("switch failed: %v", err)
 				}
@@ -183,8 +183,14 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 					t.Fatalf("chief switch changed its report: %+v, %v", savedReport, loadErr)
 				}
 				if !allowed {
-					if err == nil || signals != 0 {
-						t.Fatalf("busy action interrupted: %v signals=%d", err, signals)
+					if signals != 0 {
+						t.Fatalf("busy action interrupted: signals=%d", signals)
+					}
+					if status == "busy" && (err != nil || !strings.Contains(msg, "switch pending -> b")) {
+						t.Fatalf("busy switch not queued: %q %v", msg, err)
+					}
+					if status != "busy" && err == nil {
+						t.Fatalf("refused login switched: %q", msg)
 					}
 					if _, err = os.Stat(filepath.Join(b.Root, rel)); !os.IsNotExist(err) {
 						t.Fatal("busy switch published artifacts")

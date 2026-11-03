@@ -88,6 +88,9 @@ type Facts struct {
 	// Context is the tokens the latest main-thread reply read in, cache reads and writes included; ContextAt is when it came.
 	Context   int64
 	ContextAt time.Time
+	// Running is the background work the agent started and has not heard back from, by task id: detached commands and
+	// subagents.
+	Running map[string]Action
 }
 
 // Sized records a reply that read tokens of context at at; a reply that read none, such as a harness's own, leaves it.

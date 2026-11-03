@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -67,7 +68,7 @@ func (m Model) profileSwitched(msg profileSwitchedMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil && msg.epoch == m.pn.epoch && m.pn.target != nil && m.pn.target.ref == msg.target.ref {
 		t := *m.pn.target
 		m.pn.rebind = &profileRebind{from: t.profile, to: msg.id}
-		if msg.id != "auto" && t.session != "" {
+		if msg.id != "auto" && t.session != "" && !strings.Contains(msg.message, "switch pending -> ") {
 			t.profile = msg.id
 			t.ref = qual(t.host, profile.SessionKey(t.harness, t.profile, t.session))
 			t.root = ""

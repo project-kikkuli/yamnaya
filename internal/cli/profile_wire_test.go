@@ -41,7 +41,7 @@ func TestRemoteProfileIdentityAndSharedSubscriptionSnapshots(t *testing.T) {
 	account := "claude/principal/workspace"
 	local := core.Fleet{Ready: true, At: now, Today: core.Spend{USD: 1}, Week: core.Spend{USD: 2}, Sessions: map[string]core.SessionSpend{}, Limits: []core.Limit{{Harness: "claude", Profile: "local-id", ProfileLabel: "same label", Account: account, Name: "5h", Used: 70, Seen: now}}}
 	remote := core.Fleet{Ready: true, At: now, Today: core.Spend{USD: 3}, Week: core.Spend{USD: 4}, Sessions: map[string]core.SessionSpend{"session": {Harness: "claude", Profile: "remote-id", ID: "session", Account: account}}, Limits: []core.Limit{{Harness: "claude", Profile: "remote-id", ProfileLabel: "same label", Account: account, Name: "5h", Used: 90, Seen: now.Add(time.Second)}, {Harness: "claude", Profile: "other-id", ProfileLabel: "same label", Account: "claude/other/workspace", Name: "5h", Used: 5, Seen: now}}}
-	wire := boardJSON{Self: "physical-host", Usage: usageWire(remote), Profiles: []core.LoginProfile{{Harness: "claude", ID: "remote-id", Label: "same label", Account: account}}, Sessions: []sessionJSON{{Harness: "claude", ID: "session", Profile: "remote-id", Account: account}}}
+	wire := boardJSON{Self: "physical-host", Usage: usageWire(remote), Profiles: []core.LoginProfile{{Harness: "claude", ID: "remote-id", Label: "same label", Account: account}}, Sessions: []sessionJSON{{Harness: "claude", ID: "session", Profile: "remote-id", Account: account, SwitchTo: "other-id", SwitchBlocked: "shared owner"}}}
 	raw, err := json.Marshal(wire)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +71,9 @@ func TestRemoteProfileIdentityAndSharedSubscriptionSnapshots(t *testing.T) {
 	}
 	if r.Profiles[0].Host != "alice@host-a" || r.Sessions[0].Profile != "remote-id" || r.Sessions[0].ConfigRoot != "" {
 		t.Fatalf("remote identity lost host scope: %#v", r)
+	}
+	if got := r.Sessions[0].Switch.String(); got != "switch -> other-id blocked: shared owner" {
+		t.Fatalf("remote row lost its pending switch: %q", got)
 	}
 	if remoteBoard("old", boardJSON{}).Usage != nil {
 		t.Fatal("old snapshot fabricated zero available usage")

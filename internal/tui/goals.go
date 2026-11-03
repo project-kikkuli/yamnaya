@@ -637,7 +637,7 @@ func (m Model) goalView() viewPage {
 		} else if r.session.Key() == n.Manager.Session {
 			label = pal.dim.Render("manager  ")
 		}
-		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + doingText(m.board.At, r.session.Session) + "\n")
+		b.WriteString(m.mark(i) + label + pad(titleOf(*r.session), 36) + " " + pal.state(stateWord(*r.session)).Render(pad(stateWord(*r.session), 8)) + " " + strings.TrimSpace(doingText(m.board.At, r.session.Session)+" "+pal.yellow.Render(r.session.Switch.String())) + "\n")
 	}
 	var subs []core.Worker
 	finished := 0

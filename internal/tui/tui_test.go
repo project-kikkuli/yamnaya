@@ -922,3 +922,35 @@ func TestABoardThatRestartedIntoANewYmSaysSo(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionRowShowsItsPendingSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		sw     core.PendingSwitch
+		wants  []string
+		absent string
+	}{
+		{name: "queued", sw: core.PendingSwitch{To: "work"}, wants: []string{"switch pending -> work"}},
+		{name: "blocked", sw: core.PendingSwitch{To: "work", Blocked: "shared owner"}, wants: []string{"switch -> work blocked: shared owner"}},
+		{name: "applied", absent: "switch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, _ := setup(t)
+			m = press(t, m, "down", "down", "down")
+			for i := range m.board.Projects {
+				for j := range m.board.Projects[i].Sessions {
+					m.board.Projects[i].Sessions[j].Switch = tc.sw
+				}
+			}
+			view := m.View().Content
+			for _, want := range tc.wants {
+				if !strings.Contains(view, want) {
+					t.Fatalf("row lacks %q:\n%s", want, view)
+				}
+			}
+			if tc.absent != "" && strings.Contains(view, tc.absent) {
+				t.Fatalf("row still says %q:\n%s", tc.absent, view)
+			}
+		})
+	}
+}

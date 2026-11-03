@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -24,6 +25,39 @@ type migration struct {
 	State       string          `json:"state"`
 	Blocked     string          `json:"blocked,omitempty"`
 	Fingerprint string          `json:"fingerprint,omitempty"`
+	Running     []string        `json:"running,omitempty"`
+}
+
+// migrationQueued is a saved switch nothing has acted on yet: the source still runs untouched.
+const migrationQueued = "queued"
+
+// note is what the resumed session is told: the switch, and the work that was running when it stopped.
+func (m migration) note() string {
+	note := m.ResumeNote
+	if note == "" {
+		note = fmt.Sprintf("ym switched this conversation from profile %s to profile %s. Your conversation and worktree are unchanged.", profile.ID(m.Source.Profile), m.Destination.ID)
+	}
+	if len(m.Running) == 0 {
+		return note
+	}
+	return note + " Still running when the old process stopped, and possibly ended with it: " + strings.Join(m.Running, "; ") + ". Re-check each one: read what it left and start again only what is still needed."
+}
+
+// PendingSwitches is the login switch ym still holds for each session, by harness:session.
+func (l launcher) PendingSwitches() map[string]core.PendingSwitch {
+	files, _ := filepath.Glob(filepath.Join(filepath.Dir(l.records.Dir), "migrations", "*.json"))
+	out := map[string]core.PendingSwitch{}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var m migration
+		if json.Unmarshal(raw, &m) == nil && m.Version != 0 && m.State != "running" {
+			out[m.Source.Harness+":"+m.Source.Session] = core.PendingSwitch{To: m.Destination.ID, Blocked: m.Blocked}
+		}
+	}
+	return out
 }
 
 func migrationPath(dir, harness, id string) string {
@@ -100,7 +134,7 @@ func (l launcher) finishMigration(m migration) (launch.Record, error) {
 		return rec, err
 	}
 	setRecordProfile(&rec, m.Destination)
-	rec.Handoff = m.ResumeNote
+	rec.Handoff = m.note()
 	if err = l.records.Save(rec); err != nil {
 		return rec, err
 	}
@@ -140,6 +174,11 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 			return rec, fmt.Errorf("profile handoff waits for the source to be idle and stopped; ym switch %s --profile %s", rec.Key, m.Destination.ID)
 		}
 	}
+	if m.State == migrationQueued && rec.Harness == "codex" {
+		if m.Expected, err = selectedRollout(sqliteRoot(m.Destination), rec.Session); err != nil {
+			return rec, err
+		}
+	}
 	return l.finishMigration(m)
 }
 
@@ -159,7 +198,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 			continue
 		}
 		for _, s := range b.Sessions {
-			if s.Remote != "" || s.Harness != m.Source.Harness || s.ID != m.Source.Session || s.Profile != m.Destination.ID {
+			if m.State == migrationQueued || s.Remote != "" || s.Harness != m.Source.Harness || s.ID != m.Source.Session || s.Profile != m.Destination.ID {
 				continue
 			}
 			if s.Harness == "codex" {
@@ -197,8 +236,15 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if m.Blocked != "" && m.Fingerprint == fingerprint {
 			continue
 		}
-		if s, ok := b.Session(m.Source.Session); ok && !s.Settled() {
+		s, live := b.Session(m.Source.Session)
+		if !live && m.State == migrationQueued {
 			continue
+		}
+		if live {
+			var later unsettled
+			if err := l.switchReady(s, m.Source, &b.Fleet); errors.As(err, &later) {
+				continue
+			}
 		}
 		_, attemptErr := l.SwitchProfile(m.Source.Key, m.Destination.ID)
 		if attemptErr != nil {

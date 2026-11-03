@@ -51,6 +51,9 @@ type sessionJSON struct {
 	// Last is the last line of the session's latest reply, written at LastAt.
 	Last   string `json:"last,omitempty"`
 	LastAt string `json:"last_at,omitempty"`
+	// SwitchTo is the login a pending switch moves the session to; SwitchBlocked is what keeps it from applying.
+	SwitchTo      string `json:"switch_to,omitempty"`
+	SwitchBlocked string `json:"switch_blocked,omitempty"`
 }
 
 func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -87,6 +90,9 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				for _, d := range j.Adrift {
 					line += "  [adrift " + d + "]"
 				}
+				if p := (core.PendingSwitch{To: j.SwitchTo, Blocked: j.SwitchBlocked}).String(); p != "" {
+					line += "  [" + p + "]"
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
 			for _, r := range b.Remotes {
@@ -107,7 +113,7 @@ func sessionsJSON(c *core.Core, b core.Board) []sessionJSON {
 	for _, s := range b.Sessions {
 		j := sessionJSON{ConfigRoot: s.ConfigRoot, Harness: s.Harness, Profile: s.Profile, ProfileLabel: s.ProfileLabel, Account: s.Account, Ref: s.Ref(), ID: s.ID, PID: s.PID, TTY: s.TTY, Cwd: s.Cwd, Repo: s.Repo, RepoKey: s.RepoKey, RepoID: s.RepoID, Worktree: s.Worktree,
 			Branch: s.Branch, Title: s.Title, Status: s.Status.String(), WaitingFor: s.WaitingFor, Since: ts(s.Since), Background: s.Background,
-			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies), Last: s.LastLine(), LastAt: ts(s.ResultAt)}
+			Host: s.Location(), Remote: s.Remote, Project: s.Project, Crew: len(s.Crew), Copies: len(s.Copies), Last: s.LastLine(), LastAt: ts(s.ResultAt), SwitchTo: s.Switch.To, SwitchBlocked: s.Switch.Blocked}
 		if s.Prompt != nil {
 			j.Prompt = s.Prompt.String()
 		}
@@ -137,7 +143,7 @@ func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	var relaunch bool
 	cmd := &cobra.Command{
 		Use:   "switch <session> --profile ID | --to claude|codex [--profile ID] [--relaunch]",
-		Short: "Port an idle session to the other harness with cs; --relaunch also ends it and starts the port on ym's server",
+		Short: "Move a session to another login, queued until it is idle if busy, or port an idle session to the other harness with cs; --relaunch also ends it and starts the port on ym's server",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if selected != "" && to == "" {
@@ -157,7 +163,7 @@ func switchCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	}
 	cmd.Flags().StringVar(&to, "to", "", "claude or codex")
 	cmd.Flags().BoolVar(&relaunch, "relaunch", false, "end the session and resume the port on ym's server in the same directory")
-	cmd.Flags().StringVar(&selected, "profile", "", "switch an idle or exited session to this login and resume it")
+	cmd.Flags().StringVar(&selected, "profile", "", "switch the session to this login and resume it, once it is idle if it is busy now")
 	return cmd
 }
 

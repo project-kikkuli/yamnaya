@@ -131,6 +131,8 @@ type Live struct {
 	// Paused is set while the owner's throttle holds the session stopped; Resumed is when the throttle last let sessions go.
 	Paused  bool
 	Resumed time.Time
+	// Switch is the login switch ym holds for the session until it sits idle at its prompt.
+	Switch PendingSwitch
 }
 
 // Location names where the session runs, for display.
@@ -532,6 +534,17 @@ func (c *Core) Board() (Board, error) {
 	dormant := c.dormant(fp.dormant, b.Sessions, b.moved)
 	if s, ok := c.Launches.(interface{ Saw([]Live) }); ok {
 		s.Saw(b.Sessions)
+	}
+	if p, ok := c.Launches.(interface {
+		PendingSwitches() map[string]PendingSwitch
+	}); ok {
+		pending := p.PendingSwitches()
+		for i := range b.Sessions {
+			s := &b.Sessions[i]
+			if ps, ok := pending[s.Harness+":"+s.ID]; ok && s.Remote == "" && profile.ID(s.Profile) != profile.ID(ps.To) {
+				s.Switch = ps
+			}
+		}
 	}
 	b.Launched = slices.Clone(fp.launched)
 	if c.ShowRemotes {

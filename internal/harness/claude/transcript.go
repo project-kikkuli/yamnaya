@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,25 +18,28 @@ import (
 )
 
 type record struct {
-	SessionID   string    `json:"sessionId"`
-	AgentID     string    `json:"agentId"`
-	Type        string    `json:"type"`
-	Subtype     string    `json:"subtype"`
-	IsMeta      bool      `json:"isMeta"`
-	IsSidechain bool      `json:"isSidechain"`
-	IsAPIError  bool      `json:"isApiErrorMessage"`
-	Error       string    `json:"error"`
-	CustomTitle string    `json:"customTitle"`
-	AgentName   string    `json:"agentName"`
-	AITitle     string    `json:"aiTitle"`
-	LastPrompt  string    `json:"lastPrompt"`
-	PRURL       string    `json:"prUrl"`
-	PRNumber    int       `json:"prNumber"`
-	PRRepo      string    `json:"prRepository"`
-	Cwd         string    `json:"cwd"`
-	ContinuedIn string    `json:"continuedInSessionId"`
-	Permission  string    `json:"permissionMode"`
-	Timestamp   time.Time `json:"timestamp"`
+	SessionID   string          `json:"sessionId"`
+	AgentID     string          `json:"agentId"`
+	Type        string          `json:"type"`
+	Subtype     string          `json:"subtype"`
+	IsMeta      bool            `json:"isMeta"`
+	IsSidechain bool            `json:"isSidechain"`
+	IsAPIError  bool            `json:"isApiErrorMessage"`
+	Error       string          `json:"error"`
+	CustomTitle string          `json:"customTitle"`
+	AgentName   string          `json:"agentName"`
+	AITitle     string          `json:"aiTitle"`
+	LastPrompt  string          `json:"lastPrompt"`
+	PRURL       string          `json:"prUrl"`
+	PRNumber    int             `json:"prNumber"`
+	PRRepo      string          `json:"prRepository"`
+	Cwd         string          `json:"cwd"`
+	ContinuedIn string          `json:"continuedInSessionId"`
+	Permission  string          `json:"permissionMode"`
+	Operation   string          `json:"operation"`
+	Timestamp   time.Time       `json:"timestamp"`
+	Content     json.RawMessage `json:"content"`
+	ToolResult  json.RawMessage `json:"toolUseResult"`
 	Origin      *struct {
 		Kind string `json:"kind"`
 	} `json:"origin"`
@@ -129,7 +133,7 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-const scanFormat = 9
+const scanFormat = 10
 
 // scan accumulates what a transcript says about itself, reading only bytes appended since the last read.
 // It is saved whole in the scan cache, so a later ym run resumes from Offset.
@@ -188,6 +192,7 @@ func (t scan) title() string {
 // call is a tool call awaiting its result: what ran, and the assistant message that made it.
 type call struct {
 	Tool, Command, Batch string
+	Action               core.Action
 }
 
 var wrote = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
@@ -218,6 +223,11 @@ func (t *scan) add(r record) {
 		t.Next = r.ContinuedIn
 	case "permission-mode":
 		t.Mode = r.Permission
+	case "queue-operation":
+		var text string
+		if r.Operation == "enqueue" && json.Unmarshal(r.Content, &text) == nil {
+			t.reported(text)
+		}
 	case "pr-link":
 		if r.PRURL != "" {
 			t.Facts.Opened(core.PR{URL: r.PRURL, Repo: r.PRRepo, Number: r.PRNumber})
@@ -326,7 +336,15 @@ func (t *scan) assistant(r record) {
 			if t.Calls == nil {
 				t.Calls = map[string]call{}
 			}
-			t.Calls[b.ID] = call{Tool: b.Name, Command: in.Command, Batch: r.Message.ID}
+			t.Calls[b.ID] = call{Tool: b.Name, Command: in.Command, Batch: r.Message.ID, Action: a}
+			if b.Name == "TaskStop" || b.Name == "KillShell" {
+				var stop struct {
+					TaskID  string `json:"task_id"`
+					ShellID string `json:"shell_id"`
+				}
+				_ = json.Unmarshal(b.Input, &stop)
+				delete(t.Facts.Running, stop.TaskID+stop.ShellID)
+			}
 			t.Drift.Call()
 			if a.Tool == "Bash" && strings.Contains(string(b.Input), "gh pr create") {
 				if t.Creating == nil {
@@ -339,6 +357,9 @@ func (t *scan) assistant(r record) {
 }
 
 func (t *scan) user(r record) {
+	if !r.IsSidechain {
+		t.reported(r.text())
+	}
 	if len(t.Creating) == 0 && len(t.Calls) == 0 {
 		return
 	}
@@ -347,6 +368,9 @@ func (t *scan) user(r record) {
 			continue
 		}
 		if c, ok := t.Calls[b.ToolUseID]; ok {
+			if !r.IsSidechain && !b.IsError {
+				t.started(c.Action, r.ToolResult)
+			}
 			if c.Tool == "Bash" && !b.IsError {
 				t.Facts.Pushed(c.Command, resultText(b.Content))
 			}
@@ -368,6 +392,41 @@ func (t *scan) user(r record) {
 		}
 	}
 }
+
+// started records the background task a tool result says the call left running.
+func (t *scan) started(a core.Action, raw json.RawMessage) {
+	var res struct {
+		Background string `json:"backgroundTaskId"`
+		Async      bool   `json:"isAsync"`
+		AgentID    string `json:"agentId"`
+	}
+	if json.Unmarshal(raw, &res) != nil {
+		return
+	}
+	id := res.Background
+	if res.Async {
+		id = res.AgentID
+	}
+	if id == "" {
+		return
+	}
+	if t.Facts.Running == nil {
+		t.Facts.Running = map[string]core.Action{}
+	}
+	t.Facts.Running[id] = a
+}
+
+// reported drops the background tasks a task notification in text says stopped.
+func (t *scan) reported(text string) {
+	if len(t.Facts.Running) == 0 || !strings.Contains(text, "<task-notification>") {
+		return
+	}
+	for _, m := range taskID.FindAllStringSubmatch(text, -1) {
+		delete(t.Facts.Running, m[1])
+	}
+}
+
+var taskID = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)
 
 // pending reports whether the transcript's last record leaves work outstanding.
 func (t scan) pending(quiet time.Duration) bool {
@@ -397,6 +456,7 @@ func (a *Adapter) scan(path string) scan {
 	t := a.advance(path)
 	out := *t
 	out.Facts.Tools = maps.Clone(t.Facts.Tools)
+	out.Facts.Running = maps.Clone(t.Facts.Running)
 	out.Facts.Drift = t.Drift.Signs()
 	a.mu.Unlock()
 	return out

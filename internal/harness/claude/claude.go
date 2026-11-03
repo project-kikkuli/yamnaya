@@ -387,6 +387,13 @@ func (a *Adapter) readFresh(p proc.Proc, st state, ok bool, now time.Time) core.
 		s.Status, s.Since = core.Idle, sc.LastAt
 	}
 	s.Facts = sc.Facts
+	if p.Elapsed > 0 {
+		for id, a := range s.Running {
+			if a.At.Before(p.Started(now)) {
+				delete(s.Running, id)
+			}
+		}
+	}
 	s.Task = sc.First
 	if s.Ask == "" {
 		s.Ask = sc.LastPrompt

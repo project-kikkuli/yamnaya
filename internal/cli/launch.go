@@ -213,10 +213,16 @@ func commitDirs(w launch.Worktree) []string {
 	return dirs
 }
 
+// handoffDelivered reports whether ask, the session's latest prompt on one line, opens with the note it was resumed with.
+func handoffDelivered(ask, note string) bool {
+	note = strings.Join(strings.Fields(note), " ")
+	return strings.Contains(ask, note[:min(48, len(note))])
+}
+
 // settle fills in a Codex session id from Codex's own thread table once Codex has written it.
 func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 	if rec.Handoff != "" && l.core != nil {
-		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && strings.Contains(s.Ask, "The prior turn stopped because") {
+		if s, err := l.core.Find(rec.Harness + ":" + profile.ID(rec.Profile) + "@" + rec.Session); err == nil && handoffDelivered(s.Ask, rec.Handoff) {
 			rec.Handoff = ""
 			if err := l.records.Save(rec); err != nil {
 				return rec, err

@@ -957,6 +957,9 @@ func (m Model) detailView() viewPage {
 		if len(s.Copies) > 1 {
 			line += "  " + pal.red.Render(fmt.Sprintf("%d COPIES", len(s.Copies)))
 		}
+		if p := s.Switch.String(); p != "" {
+			line += "  " + pal.yellow.Render(p)
+		}
 		if i == m.cursor && s.Adoptable() {
 			line += pal.dim.Render("   M move in")
 		}
@@ -1174,6 +1177,7 @@ func (m Model) sessionView() viewPage {
 	}
 	m.field(&b, "cwd", s.Cwd)
 	m.field(&b, "model", s.Model)
+	m.field(&b, "login", s.Switch.String())
 	m.field(&b, "spend", m.spend(*s))
 	m.field(&b, "task", clip(s.Task, 4))
 	if s.Ask != s.Task {

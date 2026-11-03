@@ -241,6 +241,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 			Worktree: s.Worktree, Branch: s.Branch, Title: s.Title, Status: core.ParseStatus(s.Status), WaitingFor: s.WaitingFor,
 			Since: parseTS(s.Since), Background: s.Background}, Project: s.Project, Remote: host, Where: s.Host}
 		l.Result, l.ResultAt = s.Last, parseTS(s.LastAt)
+		l.Switch = core.PendingSwitch{To: s.SwitchTo, Blocked: s.SwitchBlocked}
 		if s.Prompt != "" {
 			l.Prompt = &core.Prompt{Tool: s.Prompt}
 		}
