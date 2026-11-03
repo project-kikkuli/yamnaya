@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 	"github.com/spf13/cobra"
 )
@@ -76,7 +77,10 @@ func slotCmd() *cobra.Command {
 			defer leave()
 			release, n, err := pool.Acquire(ctx, c, func() {
 				st, _ := pool.Status()
+				u, low := pool.Low(c.Cwd)
 				switch {
+				case low:
+					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: %s (ym disk shows what is low)\n", diskHoldLine(u))
 				case st.Pressure.HoldsSlots() && len(st.Holders) > 0:
 					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: memory pressure holds new slots, waiting (ym slot --status shows load and consumers)")
 				case len(st.Holders) < st.Capacity:
@@ -118,12 +122,19 @@ func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 	if line := st.Pressure.Status(len(st.Holders)); line != "" {
 		fmt.Fprintln(w, line)
 	}
+	if st.Disk != nil {
+		fmt.Fprintf(w, "disk: %s\n", diskHoldLine(*st.Disk))
+	}
 	for _, h := range st.Holders {
 		fmt.Fprintf(w, "  slot %d  %s\n", h.Slot, claimLine(h, now))
 	}
 	for _, c := range st.Waiters {
 		fmt.Fprintf(w, "  waiting  %s\n", claimLine(c, now))
 	}
+}
+
+func diskHoldLine(u disk.Usage) string {
+	return fmt.Sprintf("%s has %.1f%% free (%s), below %.0f%%, so new slots wait", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Tier3Free*100)
 }
 
 func claimLine(c slot.Claim, now time.Time) string {

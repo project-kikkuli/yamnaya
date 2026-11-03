@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -227,5 +228,36 @@ func TestOwnerEscalationKeepsTheWholeChiefPathAcrossHosts(t *testing.T) {
 				t.Fatalf("parent cannot see owner escalation: %+v, %v", mine, err)
 			}
 		})
+	}
+}
+
+func TestAMachineItemFiledOnAHostWithARemoteChiefWaitsOnTheOwnerEverywhere(t *testing.T) {
+	f := newFleet(t)
+	f.a.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "b"}}}
+	chief := f.a.chief(t, "platform")
+	_, mgr := f.b.goal(t, "ship", "/repo/app")
+	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
+		t.Fatal(err)
+	}
+	it, err := f.b.core.AddOwnerItem(Item{Kind: KindChore, Session: "ym", Question: "disk low", Rec: "remove something"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Recipient != Owner {
+		t.Fatalf("recipient = %q, want the owner", it.Recipient)
+	}
+	isIt := func(n Need) bool { return n.Item != nil && n.Item.Question == "disk low" }
+	if b := f.b.board(t); !slices.ContainsFunc(b.Needs, isIt) {
+		t.Fatalf("the filing host's board does not ask the owner: %+v", b.Needs)
+	}
+	for range 3 {
+		f.sync(t)
+	}
+	if mine, err := f.a.core.ToMe(f.a.board(t), chief); err != nil || len(mine) != 0 {
+		t.Fatalf("the chief got the machine's item: %+v, %v", mine, err)
+	}
+	f.a.core.ShowRemotes = true
+	if b := f.a.board(t); !slices.ContainsFunc(b.Needs, isIt) {
+		t.Fatalf("the chief's host's board does not ask the owner: %+v", b.Needs)
 	}
 }

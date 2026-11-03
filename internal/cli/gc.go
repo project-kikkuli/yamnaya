@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -52,6 +53,27 @@ func cwds() []string {
 // under core.RepoRoots; otherwise it touches only the worktrees and branches its own launches made, never an adopted session's. It marks the records of worktrees it
 // removes landed, then drops the records landed over landedKeep ago whose transcripts are gone, logs every removal, and says how many.
 func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
+	return l.gcWith(repos, dry, sizes, launch.Policy{Idle: launch.Idle})
+}
+
+// liveWorktrees are the worktrees of non-landed records whose panes are alive, whatever their sessions' cwds; when tmux cannot
+// be read, every non-landed record's, since a session there may be alive.
+func (l launcher) liveWorktrees(recs []launch.Record) []string {
+	panes, err := l.srv.Panes()
+	var out []string
+	for _, rec := range recs {
+		if rec.IsLanded() || rec.Worktree.Path == "" {
+			continue
+		}
+		if pane, ok := panes[tmux.SessionName(rec.Key)]; err != nil || ok && !pane.Dead {
+			out = append(out, rec.Worktree.Path)
+		}
+	}
+	return out
+}
+
+// gcWith is gc under policy p.
+func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]launch.Swept, int) {
 	seen := map[string]bool{}
 	recs, _ := l.records.All()
 	var own *launch.Owned
@@ -77,6 +99,7 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 			dirs = append(dirs, rec.PreviousWorktree.Path)
 		}
 	}
+	dirs = append(dirs, l.liveWorktrees(recs)...)
 	var out []launch.Swept
 	for _, root := range repos {
 		if seen[root] {
@@ -86,7 +109,7 @@ func (l launcher) gc(repos []string, dry, sizes bool) ([]launch.Swept, int) {
 		if _, err := os.Stat(root); err != nil {
 			continue
 		}
-		s, err := launch.GC(root, now, dirs, l.squash, own, dry, sizes)
+		s, err := launch.GCWith(root, now, dirs, l.squash, own, dry, sizes, p)
 		if err != nil {
 			s.Errors = append(s.Errors, err.Error())
 		}
@@ -188,8 +211,8 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 	if pruned > 0 {
 		fmt.Fprintf(w, "%s %d landed launch records older than %d days whose conversations are gone\n", del, pruned, int(landedKeep.Hours()/24))
 	}
-	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d active, %d in use, %d locked or missing, %d unreadable\n",
-		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepActive],
+	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d with ignored files, %d active, %d in use, %d locked or missing, %d unreadable\n",
+		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepIgnored], kept[launch.KeepActive],
 		kept[launch.KeepInUse], kept[launch.KeepLocked], kept[launch.KeepFailing])
 }
 
@@ -204,6 +227,9 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 	dry := cmd.Flags().Bool("dry-run", false, "print what gc would remove and delete, changing nothing")
 	quiet := cmd.Flags().Bool("quiet", false, "print nothing and skip measuring sizes")
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		if *quiet {
+			disk.Lower()
+		}
 		l, err := newLauncher(e.core.StateDir)
 		if err != nil {
 			return err

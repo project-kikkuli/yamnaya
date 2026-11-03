@@ -904,6 +904,7 @@ func TestABoardThatRestartedIntoANewYmSaysSo(t *testing.T) {
 		restarted bool
 	}{{"after a restart", true}, {"started by hand", false}} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PATH", t.TempDir())
 			if c.restarted {
 				t.Setenv(RestartedEnv, "1")
 			}

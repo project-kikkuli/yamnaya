@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 	"github.com/project-kikkuli/yamnaya/internal/pressure"
 )
 
@@ -53,8 +54,10 @@ type Status struct {
 	Cores    int               `json:"cores"`
 	Memory   uint64            `json:"memory"`
 	Workers  int               `json:"workers"`
-	Holders  []Claim           `json:"holders"`
-	Waiters  []Claim           `json:"waiters"`
+	// Disk is the filesystem so low new slots wait, or nil.
+	Disk    *disk.Usage `json:"disk,omitempty"`
+	Holders []Claim     `json:"holders"`
+	Waiters []Claim     `json:"waiters"`
 }
 
 // Pool is the slots in Dir; Capacity is how many there are.
@@ -65,6 +68,15 @@ type Pool struct {
 	Memory   uint64
 	// Poll is how often a waiter tries the slots again.
 	Poll time.Duration
+	// Low reports the filesystem, among those it watches and extra, so low new slots wait; nil never holds them.
+	Low func(extra ...string) (disk.Usage, bool)
+}
+
+func (p Pool) low(extra ...string) (disk.Usage, bool) {
+	if p.Low == nil {
+		return disk.Usage{}, false
+	}
+	return p.Low(extra...)
 }
 
 // Capacity leaves two cores and a quarter of memory (at least 4 GiB) to the machine, then gives each slot two cores and 4 GiB.
@@ -97,7 +109,7 @@ func Machine() (Pool, error) {
 	if err != nil {
 		return Pool{}, err
 	}
-	return Pool{Dir: dir, Capacity: Capacity(cores, memory), Cores: cores, Memory: memory, Poll: 500 * time.Millisecond}, nil
+	return Pool{Dir: dir, Capacity: Capacity(cores, memory), Cores: cores, Memory: memory, Poll: 500 * time.Millisecond, Low: disk.Held}, nil
 }
 
 func (p Pool) lockPath(n int) string  { return filepath.Join(p.Dir, strconv.Itoa(n)+".lock") }
@@ -105,7 +117,7 @@ func (p Pool) claimPath(n int) string { return filepath.Join(p.Dir, strconv.Itoa
 func (p Pool) waitDir() string        { return filepath.Join(p.Dir, "waiting") }
 func (p Pool) ticketDir() string      { return filepath.Join(p.Dir, "lanes") }
 
-// Acquire waits until it holds a slot, then records c as its holder. Waiting, c is listed among the waiters; onWait
+// Acquire waits until it holds a slot and the disk is not too low, then records c as its holder. Waiting, c is listed among the waiters; onWait
 // runs once, the first time it gets none. A claim on no lane waits while a live lane holder waits for a slot, which is
 // where Lane's ticket lists a lane claim. Release gives the slot back.
 func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func(), slot int, err error) {
@@ -125,7 +137,11 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 				return nil, 0, err
 			}
 		}
-		for n := 1; n <= p.Capacity && !deferring; n++ {
+		capacity := p.Capacity
+		if _, low := p.low(c.Cwd); low {
+			capacity = 0
+		}
+		for n := 1; n <= capacity && !deferring; n++ {
 			f, err := p.tryLock(n)
 			if err != nil {
 				return nil, 0, err
@@ -242,6 +258,9 @@ func (p Pool) Status() (Status, error) {
 	}
 	if st.Throttle, err = pressure.ReadThrottle(p.Dir); err != nil {
 		return st, err
+	}
+	if u, low := p.low(); low {
+		st.Disk = &u
 	}
 	for n := 1; n <= p.Capacity; n++ {
 		busy, err := p.busy(n)

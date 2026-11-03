@@ -197,6 +197,7 @@ func NewRoot() *cobra.Command {
 		newCmd(with),
 		reviveCmd(routed),
 		gcCmd(with),
+		diskCmd(with),
 		killCmd(routed),
 		launchedCmd(with),
 		linkLaunchCmd(with), workReceiveCmd(with), workAuthorizeCmd(with),

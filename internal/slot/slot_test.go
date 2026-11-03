@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 )
 
 func TestCapacityLeavesTheMachineRoomAndTakesTheScarcerOfCoresAndMemory(t *testing.T) {
@@ -133,5 +136,39 @@ func TestParseCPUReadsPsLines(t *testing.T) {
 	got := ParseCPU("  101  12.5\n 7 0.0\nbad line here\n")
 	if got[101] != 12.5 || got[7] != 0 || len(got) != 2 {
 		t.Fatalf("ParseCPU = %v", got)
+	}
+}
+
+func TestALowDiskHoldsNewSlotsUntilItRecoversAndStatusSaysWhy(t *testing.T) {
+	p := pool(t)
+	var low atomic.Bool
+	low.Store(true)
+	u := disk.Usage{Path: "/data", Total: 100, Avail: 4}
+	p.Low = func(...string) (disk.Usage, bool) { return u, low.Load() }
+	waiting := make(chan struct{})
+	got := make(chan error, 1)
+	go func() {
+		rel, _, err := p.Acquire(context.Background(), Claim{PID: os.Getpid(), Command: []string{"make"}, Cwd: "/work"}, func() { close(waiting) })
+		if err == nil {
+			rel()
+		}
+		got <- err
+	}()
+	<-waiting
+	select {
+	case err := <-got:
+		t.Fatalf("admitted below the floor: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	st, err := p.Status()
+	if err != nil || st.Disk == nil || st.Disk.Path != "/data" || len(st.Waiters) != 1 {
+		t.Fatalf("status %+v %v", st, err)
+	}
+	low.Store(false)
+	if err := <-got; err != nil {
+		t.Fatal(err)
+	}
+	if st, err = p.Status(); err != nil || st.Disk != nil {
+		t.Fatalf("status %+v %v after recovery", st, err)
 	}
 }

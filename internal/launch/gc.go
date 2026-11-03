@@ -23,7 +23,17 @@ const (
 	KeepInUse   = "in use"
 	KeepLocked  = "locked"
 	KeepFailing = "unreadable"
+	KeepIgnored = "ignored files"
+	KeepEnough  = "enough free"
 )
+
+// Policy is how hard a gc reaps: Idle replaces the default idle time, Ignored also keeps a worktree holding git-ignored
+// files outside the regenerable allowlist, and Enough stops further removals once it reports true.
+type Policy struct {
+	Idle    time.Duration
+	Ignored bool
+	Enough  func() bool
+}
 
 // Sweep is what gc decided about one linked worktree: Keep is empty when it removes it.
 type Sweep struct {
@@ -36,6 +46,9 @@ type Sweep struct {
 	Head string
 	// PR is the merged pull request that squashed the worktree's local-only commits, or 0.
 	PR int
+	// Idle is how long the worktree went untouched and User a cwd inside it, whatever gc decided.
+	Idle time.Duration
+	User string
 }
 
 // Swept is one repository's gc: its worktrees, the branches it deleted, and what failed.
@@ -61,13 +74,13 @@ func (o *Owned) tree(path string) bool { return o == nil || o.Paths[path] }
 func (o *Owned) branch(name string) bool { return o == nil || o.Branches[name] }
 
 // Keep says why gc leaves a worktree, or "" when removing it loses nothing and nobody works in it.
-func Keep(dirty bool, local int, idle time.Duration, user string) (string, string) {
+func Keep(dirty bool, local int, idle, limit time.Duration, user string) (string, string) {
 	switch {
 	case dirty:
 		return KeepDirty, "has uncommitted or untracked changes"
 	case local > 0:
 		return KeepLocal, fmt.Sprintf("%d commits on no remote", local)
-	case idle < Idle:
+	case idle < limit:
 		return KeepActive, "touched " + idle.Round(time.Hour).String() + " ago"
 	case user != "":
 		return KeepInUse, "a process works in " + user
@@ -200,6 +213,11 @@ func Inside(path string, cwds []string) string {
 // squashed by a merged pull request that no worktree has checked out. With dry it only decides; with sizes it measures
 // every worktree it removes or keeps for dirt or local commits. A non-nil own leaves every other worktree and branch alone.
 func GC(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, sizes bool) (Swept, error) {
+	return GCWith(root, now, cwds, q, own, dry, sizes, Policy{Idle: Idle})
+}
+
+// GCWith is GC under policy p.
+func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, sizes bool, p Policy) (Swept, error) {
 	s := Swept{Root: root}
 	all, err := worktrees(root)
 	if err != nil {
@@ -211,9 +229,10 @@ func GC(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, s
 			used[w.branch] = true
 			continue
 		}
-		sw := Sweep{Path: w.path, Branch: w.branch, Head: Head(w.path)}
+		sw := Sweep{Path: w.path, Branch: w.branch, Head: Head(w.path), User: Inside(w.path, cwds)}
 		idle, local := now.Sub(touched(w.path)), 0
-		status, err := look(w.path, "status", "--porcelain")
+		sw.Idle = idle
+		status, err := look(w.path, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
 		if err == nil {
 			var n string
 			n, err = look(w.path, "rev-list", "--count", "HEAD", "--not", "--remotes")
@@ -234,7 +253,17 @@ func GC(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, s
 		case err != nil:
 			sw.Keep, sw.Why = KeepFailing, err.Error()
 		default:
-			sw.Keep, sw.Why = Keep(status != "", local, idle, Inside(w.path, cwds))
+			sw.Keep, sw.Why = Keep(status != "", local, idle, p.Idle, sw.User)
+		}
+		if sw.Keep == "" && p.Ignored {
+			if held, err := unregenerable(w.path); err != nil {
+				sw.Keep, sw.Why = KeepFailing, err.Error()
+			} else if len(held) > 0 {
+				sw.Keep, sw.Why = KeepIgnored, "holds git-ignored "+held[0]
+			}
+		}
+		if sw.Keep == "" && p.Enough != nil && p.Enough() {
+			sw.Keep, sw.Why = KeepEnough, "the disk has enough free"
 		}
 		if sw.Keep == "" {
 			sw.Why = "clean, every commit on a remote, untouched " + idle.Round(time.Hour).String() + ", unused"
