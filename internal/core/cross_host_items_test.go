@@ -176,7 +176,7 @@ func TestItemRefsKeepHostLocalSequencesDistinct(t *testing.T) {
 }
 
 func TestOwnerEscalationKeepsTheWholeChiefPathAcrossHosts(t *testing.T) {
-	for _, mode := range []string{"remote chief", "remote worker", "nested remote worker"} {
+	for _, mode := range []string{"remote chief", "remote worker", "nested remote worker", "continued remote worker"} {
 		t.Run(mode, func(t *testing.T) {
 			f, repo := remoteWorkFleet(t)
 			chief := f.a.chief(t, "parent")
@@ -210,6 +210,10 @@ func TestOwnerEscalationKeepsTheWholeChiefPathAcrossHosts(t *testing.T) {
 			it := fw.ask(t, session, "owner must decide?")
 			if _, err := fw.core.Escalate(it.Key()); err != nil {
 				t.Fatal(err)
+			}
+			if mode == "continued remote worker" {
+				fw.spawn("worker-new", "")
+				fw.claude.next = map[string]string{session: "worker-new"}
 			}
 			for range 3 {
 				f.sync(t)

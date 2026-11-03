@@ -162,7 +162,10 @@ func (c *Core) PathOf(b Board) (func(Item) ([]string, error), error) {
 		}
 		session := c.Resolve(it.Session)
 		if _, local := o.Managed(session, parents); !local {
-			owner, err := c.Store.remoteOwner(session)
+			owner, err := c.Store.remoteOwner(it.Session)
+			if errors.Is(err, sql.ErrNoRows) && session != it.Session {
+				owner, err = c.Store.remoteOwner(session)
+			}
 			if err == nil && owner.Host == self {
 				return []string{RemoteKey(owner.Origin, owner.Manager)}, nil
 			}
