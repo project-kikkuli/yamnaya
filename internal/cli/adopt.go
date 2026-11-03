@@ -102,7 +102,7 @@ func (l launcher) takeOver(from core.Live, harnessName, id string) (launch.Recor
 	return rec, l.records.Save(rec)
 }
 
-// Send types the owner's text into s when it runs on ym's server, holding it while a permission prompt shows; any other session
+// Send types the owner's text into s when it runs on ym's server, holding it while a permission prompt or first-run onboarding shows; any other session
 // gets it through its own inbox when its harness has one, else from ym item inbox.
 func (l launcher) Send(s core.Live, text string) (string, error) { return l.sendFrom(s, text, true) }
 
@@ -146,6 +146,9 @@ func (l launcher) send(session string, pane *serverPane, text string, inbox func
 		if err := detach("send-hold", strconv.FormatInt(m.Seq, 10), pane.id, pane.harness.Name()); err != nil {
 			return "", err
 		}
+		if step, ok := pane.onboarding(); ok {
+			return fmt.Sprintf("sent to %s, held until its first-run onboarding (%s) is finished", core.Short(session), step), nil
+		}
 	}
 	return fmt.Sprintf("sent to %s, %s", core.Short(session), out), nil
 }
@@ -178,8 +181,28 @@ func (p *serverPane) Prompt() (bool, bool, error) {
 	if err != nil {
 		return false, true, err
 	}
-	_, shown := p.harness.ParsePrompt(screen)
-	return shown, true, nil
+	if _, shown := p.harness.ParsePrompt(screen); shown {
+		return true, true, nil
+	}
+	_, onboarding := onboardingStep(p.harness, screen)
+	return onboarding, true, nil
+}
+
+// onboarding is the first-run setup step the pane shows, which no typed text may answer.
+func (p *serverPane) onboarding() (string, bool) {
+	screen, err := p.l.srv.Screen(core.Handle{ID: p.id})
+	if err != nil {
+		return "", false
+	}
+	return onboardingStep(p.harness, screen)
+}
+
+func onboardingStep(h core.Harness, screen string) (string, bool) {
+	o, ok := h.(core.Onboarder)
+	if !ok {
+		return "", false
+	}
+	return o.Onboarding(screen)
 }
 
 // Type types into the pane one ym at a time, so one sender's Enter never submits another's paste before it sees it land.

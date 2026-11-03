@@ -822,7 +822,15 @@ func needText(n core.Need) string {
 	if n.Session != nil && n.Session.Prompt != nil {
 		return n.Session.Prompt.String()
 	}
+	if n.Session != nil && n.Session.Status == core.Onboarding {
+		return onboardingWhat(n.Session.Session)
+	}
 	return "permission prompt"
+}
+
+// onboardingWhat names the first-run setup screen a session waits on.
+func onboardingWhat(s core.Session) string {
+	return "first-run onboarding: " + s.WaitingFor
 }
 
 func (m Model) projectName(key string) string {

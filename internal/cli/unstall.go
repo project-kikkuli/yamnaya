@@ -42,7 +42,7 @@ func (l launcher) unstall(now time.Time) error {
 		}
 		argv, err := startArgv(rec)
 		if err == nil {
-			err = trustRecord(rec)
+			err = prepareRecord(rec)
 		}
 		if err == nil {
 			err = l.srv.Respawn(name, rec.Worktree.Path, argv)

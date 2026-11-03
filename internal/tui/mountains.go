@@ -321,7 +321,7 @@ func appendClimber(team []scene.Climber, name string, st core.Status, stays bool
 	switch {
 	case st == core.Busy:
 		return append(team, scene.Climber{Name: name, Stance: scene.Climbing})
-	case st == core.Waiting:
+	case st == core.Waiting || st == core.Onboarding:
 		return append(team, scene.Climber{Name: name, Stance: scene.Waiting})
 	case st == core.Idle && stays:
 		return append(team, scene.Climber{Name: name, Stance: scene.Resting})

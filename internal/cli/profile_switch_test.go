@@ -201,6 +201,9 @@ func TestProfileSwitchResumesIdleAndExitedButNeverInterruptsBusySessions(t *test
 				if harness == "claude" && (got[1] != b.Root || got[2] != b.Root) {
 					t.Fatalf("Claude storage mismatch: %q", got)
 				}
+				if config, err := os.ReadFile(filepath.Join(b.Root, ".claude.json")); harness == "claude" && (err != nil || !strings.Contains(string(config), `"hasCompletedOnboarding": true`) || !strings.Contains(string(config), "fixture-user")) {
+					t.Fatalf("switched onto a profile without onboarding done and its login kept: %s, %v", config, err)
+				}
 				if harness == "codex" && (got[3] != b.Root || got[4] != b.Root || !strings.Contains(got[6], "--no-daemon") || !strings.Contains(got[6], "sqlite_home=")) {
 					t.Fatalf("Codex storage mismatch: %q", got)
 				}

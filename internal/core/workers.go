@@ -14,7 +14,7 @@ type Worker struct {
 	Session string
 	Member  *Member
 	Name    string
-	// State is busy, waiting, idle, hung, adrift or done.
+	// State is busy, waiting, onboarding, idle, hung, adrift or done.
 	State string
 	// Activity is the latest thing the worker did or said, At when.
 	Activity string

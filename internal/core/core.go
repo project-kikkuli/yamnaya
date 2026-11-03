@@ -21,10 +21,12 @@ const (
 	Done
 	// Moved is a session whose conversation continues under another id, such as a Claude session sent to the background.
 	Moved
+	// Onboarding is a session held on its harness's first-run setup screens, such as Claude Code's theme picker and security notes.
+	Onboarding
 )
 
 func (s Status) String() string {
-	return [...]string{"unknown", "busy", "waiting", "idle", "done", "moved"}[s]
+	return [...]string{"unknown", "busy", "waiting", "idle", "done", "moved", "onboarding"}[s]
 }
 
 // Prompt is a harness dialog waiting for the owner, such as a tool permission.
@@ -182,6 +184,12 @@ type Harness interface {
 	ParsePrompt(screen string) (Prompt, bool)
 	// Composer reads the input box the agent takes a message in; ok is false when the screen does not show it.
 	Composer(screen string) (text string, ok bool)
+}
+
+// Onboarder is a harness whose first-run setup screens hide its input box until the owner finishes them.
+type Onboarder interface {
+	// Onboarding is the setup step the screen shows; ok is false when it shows none.
+	Onboarding(screen string) (step string, ok bool)
 }
 
 // Waiter is a harness whose own files say when a process waits on a dialog, even one drawn past the screen's edge.

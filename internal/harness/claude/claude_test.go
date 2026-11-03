@@ -298,3 +298,60 @@ func TestOnlyATranscriptWithATurnIsResumedAndAnEmptyOneMovesAside(t *testing.T) 
 		})
 	}
 }
+
+func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
+	for _, c := range []struct {
+		screen     string
+		onboarding string
+		prompt     bool
+	}{
+		{"claude-onboarding-theme", "theme", false},
+		{"claude-onboarding-api-key", "api key", false},
+		{"claude-onboarding-login", "login", false},
+		{"claude-onboarding-security", "security notes", false},
+		{"claude-onboarding-terminal-setup", "terminal setup", false},
+		{"claude-idle", "", false},
+		{"claude-busy-pasted", "", false},
+		{"claude-bash", "", true},
+		{"claude-trust", "", true},
+	} {
+		t.Run(c.screen, func(t *testing.T) {
+			text := dialog(t, c.screen)
+			step, ok := ParseOnboarding(text)
+			if step != c.onboarding || ok != (c.onboarding != "") {
+				t.Errorf("ParseOnboarding = %q, %v; want %q", step, ok, c.onboarding)
+			}
+			if _, shown := ParsePrompt(text); shown != c.prompt {
+				t.Errorf("ParsePrompt shown = %v; want %v", shown, c.prompt)
+			}
+		})
+	}
+	if step, ok := ParseOnboarding(dialog(t, "claude-onboarding-security") + dialog(t, "claude-idle")); ok {
+		t.Errorf("security notes scrolled above a live input box read as onboarding %q", step)
+	}
+}
+
+func TestSessionsOnAProfileNotOnboardedAskForAScreenCheck(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		config string
+		check  bool
+	}{
+		{"absent", "", true},
+		{"theme null and no flag", `{"theme":null}`, true},
+		{"reset by a login change", `{"hasCompletedOnboarding":false}`, true},
+		{"done", `{"hasCompletedOnboarding":true}`, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := fixture(t)
+			a.Config = filepath.Join(t.TempDir(), ".claude.json")
+			if c.config != "" {
+				must(t, os.WriteFile(a.Config, []byte(c.config), 0o600))
+			}
+			ss := a.Discover([]proc.Proc{p(4242, "claude", "--session-id", "s1")})
+			if len(ss) != 1 || ss[0].CheckScreen != c.check {
+				t.Fatalf("Discover = %+v; want CheckScreen %v", ss, c.check)
+			}
+		})
+	}
+}

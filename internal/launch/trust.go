@@ -9,16 +9,7 @@ import (
 	"syscall"
 )
 
-func claudeConfigPath() (string, error) {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return filepath.Join(dir, ".claude.json"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".claude.json"), nil
-}
+func claudeConfigPath() (string, error) { return ClaudeConfigFile("", false) }
 
 // trustKeys is dir as given and as Claude Code sees it once symlinks resolve, such as /tmp to /private/tmp on macOS.
 func trustKeys(dir string) []string {
@@ -48,6 +39,37 @@ func TrustClaudeDir(dir string) error {
 }
 
 func trustClaudeAt(path, dir string) error {
+	return updateClaudeConfig(path, func(config map[string]json.RawMessage) (bool, error) {
+		projects := map[string]map[string]json.RawMessage{}
+		if raw, ok := config["projects"]; ok {
+			if err := json.Unmarshal(raw, &projects); err != nil {
+				return false, err
+			}
+		}
+		changed := false
+		for _, key := range claudeTrustKeys(dir) {
+			entry := projects[key]
+			if string(entry["hasTrustDialogAccepted"]) == "true" {
+				continue
+			}
+			if entry == nil {
+				entry = map[string]json.RawMessage{}
+			}
+			entry["hasTrustDialogAccepted"] = json.RawMessage("true")
+			projects[key] = entry
+			changed = true
+		}
+		if !changed {
+			return false, nil
+		}
+		raw, err := json.Marshal(projects)
+		config["projects"] = raw
+		return err == nil, err
+	})
+}
+
+// updateClaudeConfig applies change to the Claude Code config at path under ym's lock and replaces the file atomically, keeping its mode, when change reports a change.
+func updateClaudeConfig(path string, change func(config map[string]json.RawMessage) (bool, error)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -70,29 +92,8 @@ func trustClaudeAt(path, dir string) error {
 			return err
 		}
 	}
-	projects := map[string]map[string]json.RawMessage{}
-	if raw, ok := config["projects"]; ok {
-		if err := json.Unmarshal(raw, &projects); err != nil {
-			return err
-		}
-	}
-	changed := false
-	for _, key := range claudeTrustKeys(dir) {
-		entry := projects[key]
-		if string(entry["hasTrustDialogAccepted"]) == "true" {
-			continue
-		}
-		if entry == nil {
-			entry = map[string]json.RawMessage{}
-		}
-		entry["hasTrustDialogAccepted"] = json.RawMessage("true")
-		projects[key] = entry
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	if config["projects"], err = json.Marshal(projects); err != nil {
+	changed, err := change(config)
+	if err != nil || !changed {
 		return err
 	}
 	out, err := json.MarshalIndent(config, "", "  ")

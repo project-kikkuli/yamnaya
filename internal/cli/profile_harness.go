@@ -10,6 +10,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -59,6 +60,7 @@ func (h *profileHarness) all() ([]profile.Profile, map[string]core.Harness) {
 			if h.name == claude.Name {
 				cl := claude.New()
 				cl.Dir = p.Root
+				cl.Config, _ = launch.ClaudeConfigFile(p.Root, p.Explicit)
 				cl.Cache = h.cache
 				a = cl
 			} else {
@@ -162,6 +164,14 @@ func (h *profileHarness) ResumeProfile(id, selected string) []string {
 func (h *profileHarness) ParsePrompt(screen string) (core.Prompt, bool) {
 	_, as := h.all()
 	return as["default"].ParsePrompt(screen)
+}
+func (h *profileHarness) Onboarding(screen string) (string, bool) {
+	_, as := h.all()
+	o, ok := as["default"].(core.Onboarder)
+	if !ok {
+		return "", false
+	}
+	return o.Onboarding(screen)
 }
 func (h *profileHarness) Composer(screen string) (string, bool) {
 	_, as := h.all()

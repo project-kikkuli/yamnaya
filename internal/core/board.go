@@ -194,7 +194,7 @@ func (p Project) Duplicated() bool {
 	return false
 }
 
-// Need is one row of the needs-you list: a permission prompt, an open item, or an idle session whose last reply asks the owner.
+// Need is one row of the needs-you list: a permission prompt, a session on its first-run setup, an open item, or an idle session whose last reply asks the owner.
 type Need struct {
 	Session *Live
 	Item    *Item
@@ -474,7 +474,7 @@ func (c *Core) Board() (Board, error) {
 		}
 		if host != nil {
 			l.Handle, l.Ours = &h, ours(host)
-			if (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
+			if !onboard(&l, harnessOf[s.Harness], host, h) && (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
 				l.Prompt = c.prompts.on(l.Session, h, b.At, func() *Prompt {
 					if screen, err := host.Screen(h); err == nil {
 						if hn := harnessOf[s.Harness]; hn != nil {
@@ -1082,7 +1082,7 @@ func projectStatus(p Project) Status {
 	return best
 }
 
-// needs orders permission prompts first, then open items by how much they block, oldest first.
+// needs orders permission prompts and first-run setups first, then open items by how much they block, oldest first.
 // Open owner requests stay visible after their source sessions end.
 func needs(b Board) (live, stale []Need) {
 	asked := map[string]bool{}
@@ -1091,7 +1091,7 @@ func needs(b Board) (live, stale []Need) {
 		if asked[s.Key()] {
 			continue
 		}
-		if s.Prompt != nil || (s.Status == Waiting && strings.Contains(strings.ToLower(s.WaitingFor), "permission")) {
+		if s.Prompt != nil || s.Status == Onboarding || (s.Status == Waiting && strings.Contains(strings.ToLower(s.WaitingFor), "permission")) {
 			live = append(live, Need{Session: s, Project: s.Project})
 			asked[s.Key()] = true
 		}

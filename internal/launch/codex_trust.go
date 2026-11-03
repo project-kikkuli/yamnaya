@@ -120,12 +120,9 @@ func TrustRoot(harness, root, dir string, explicit bool) error {
 	if harness == "codex" {
 		return trustCodexAt(root, dir)
 	}
-	if !explicit {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		return trustClaudeAt(filepath.Join(home, ".claude.json"), dir)
+	path, err := ClaudeConfigFile(root, explicit)
+	if err != nil {
+		return err
 	}
-	return trustClaudeAt(filepath.Join(root, ".claude.json"), dir)
+	return trustClaudeAt(path, dir)
 }

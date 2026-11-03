@@ -117,7 +117,7 @@ func (st *Stats) count(s Status) {
 	switch s {
 	case Busy:
 		st.Running++
-	case Idle, Waiting:
+	case Idle, Waiting, Onboarding:
 		st.Idle++
 	}
 }
@@ -134,7 +134,7 @@ func ownStats(n Node, missions []Project, statuses map[string]PRStatus, opened [
 		switch w.State {
 		case "busy", "hung", "adrift":
 			st.Running++
-		case "idle", "waiting":
+		case "idle", "waiting", "onboarding":
 			st.Idle++
 		}
 		prs = append(prs, w.PRs...)

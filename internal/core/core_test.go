@@ -63,6 +63,9 @@ func (f *fakeHarness) ParsePrompt(screen string) (Prompt, bool) {
 	return Prompt{Tool: tool}, ok
 }
 func (f *fakeHarness) Composer(screen string) (string, bool) { return strings.CutPrefix(screen, "> ") }
+func (f *fakeHarness) Onboarding(screen string) (string, bool) {
+	return strings.CutPrefix(screen, "SETUP ")
+}
 
 type fakeHost struct {
 	name    string

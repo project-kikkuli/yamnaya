@@ -21,23 +21,25 @@ const (
 	EventCIRed     = "ci-red"
 	EventCIGreen   = "ci-green"
 	// EventPRReady is a pull request GitHub shows green, unblocked and clean to merge on its current head.
-	EventPRReady          = "pr-ready"
-	EventReview           = "review"
-	EventMerged           = "merged"
-	EventClosed           = "closed"
-	EventConflict         = "conflict"
-	EventStuck            = "stuck"
-	EventDone             = "done"
-	EventVerifying        = "verifying"
-	EventVerified         = "verified"
-	EventFailedVerify     = "failed-verify"
-	EventUpdate           = "update"
-	EventTimer            = "timer"
-	EventNudge            = "nudge"
-	EventAgentStopped     = "agent-stopped"
-	EventAgentHung        = "agent-hung"
-	EventAgentAdrift      = "agent-adrift"
-	EventAgentSwollen     = "agent-swollen"
+	EventPRReady      = "pr-ready"
+	EventReview       = "review"
+	EventMerged       = "merged"
+	EventClosed       = "closed"
+	EventConflict     = "conflict"
+	EventStuck        = "stuck"
+	EventDone         = "done"
+	EventVerifying    = "verifying"
+	EventVerified     = "verified"
+	EventFailedVerify = "failed-verify"
+	EventUpdate       = "update"
+	EventTimer        = "timer"
+	EventNudge        = "nudge"
+	EventAgentStopped = "agent-stopped"
+	EventAgentHung    = "agent-hung"
+	EventAgentAdrift  = "agent-adrift"
+	EventAgentSwollen = "agent-swollen"
+	// EventAgentOnboarding is an agent held on its harness's first-run setup screens, which only the owner can finish.
+	EventAgentOnboarding  = "agent-onboarding"
 	EventMachineThrottled = "machine-throttled"
 	EventResumed          = "resumed"
 	EventResumeFailed     = "resume-failed"
@@ -60,7 +62,7 @@ var ownerKinds = map[string]bool{
 var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventPRReady: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
-	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventResumed: true, EventResumeFailed: true,
+	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventAgentOnboarding: true, EventResumed: true, EventResumeFailed: true,
 	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true,
 }
 

@@ -102,6 +102,9 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.noticeHung(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.noticeOnboarding(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.noticeSwollen(b, o); err != nil {
 		errs = append(errs, err)
 	}

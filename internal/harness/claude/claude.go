@@ -26,7 +26,9 @@ const Name = "claude"
 const staleAfter = 15 * time.Minute
 
 type Adapter struct {
-	Dir    string
+	Dir string
+	// Config is the .claude.json Claude Code reads beside Dir; "" means Dir's own.
+	Config string
 	Bin    string
 	Cwd    func(pid int) string
 	Now    func() time.Time
@@ -59,19 +61,21 @@ type Adapter struct {
 	files    sync.Mutex
 	listings map[string]listing
 	jsons    map[string]jsonFile
+	setup    onboardingState
 }
 
 func New() *Adapter {
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	config := ""
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".claude")
+		dir, config = filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")
 	}
 	bin := os.Getenv("YAMNAYA_CLAUDE_BIN")
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: managedSettings(runtime.GOOS)}
+	return &Adapter{Dir: dir, Config: config, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: managedSettings(runtime.GOOS)}
 }
 
 // managedSettings is the file Claude Code reads the organization's settings from on goos.
@@ -233,6 +237,10 @@ func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 		}
 	}
 	a.kept = next
+	pending := !a.onboarded()
+	for i := range out {
+		out[i].CheckScreen = pending
+	}
 	return out
 }
 

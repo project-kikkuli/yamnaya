@@ -79,7 +79,7 @@ func (c *Core) find(ref string) (Live, error) {
 	l.HostErr = hostErr
 	if host != nil {
 		l.Handle, l.Ours = &h, ours(host)
-		if l.Prompt == nil {
+		if !onboard(&l, hit, host, h) && l.Prompt == nil {
 			if screen, err := host.Screen(h); err == nil {
 				if p, ok := hit.ParsePrompt(screen); ok {
 					l.Prompt = &p

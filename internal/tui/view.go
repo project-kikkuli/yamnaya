@@ -184,7 +184,7 @@ func (m Model) header() string {
 		counts[s.Status]++
 	}
 	var states []string
-	for _, st := range []core.Status{core.Busy, core.Waiting, core.Idle, core.Unknown} {
+	for _, st := range []core.Status{core.Busy, core.Waiting, core.Onboarding, core.Idle, core.Unknown} {
 		if counts[st] > 0 {
 			states = append(states, fmt.Sprintf("%d %s", counts[st], st))
 		}
@@ -743,11 +743,13 @@ func (m Model) needLines(i int, n core.Need) string {
 	sel := i == m.cursor
 	var b strings.Builder
 	if n.Item == nil {
-		what := "permission prompt"
+		label, what := "PERM ", "permission prompt"
 		if n.Session.Prompt != nil {
 			what = n.Session.Prompt.String()
+		} else if n.Session.Status == core.Onboarding {
+			label, what = "SETUP", onboardingWhat(n.Session.Session)
 		}
-		b.WriteString(m.mark(i) + pal.yellow.Render("PERM ") + " " + name + " " + what + "\n")
+		b.WriteString(m.mark(i) + pal.yellow.Render(label) + " " + name + " " + what + "\n")
 		if sel {
 			b.WriteString(pal.dim.Render("         enter go to its session · r reply") + "\n")
 		}

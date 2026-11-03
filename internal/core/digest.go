@@ -70,7 +70,7 @@ func (r Rollup) merged(more Rollup) Rollup {
 var countNouns = map[string]string{
 	EventFinished: "agent report", EventWorkResumed: "work resume", EventResumed: "agent resume", EventSteered: "steer", EventAdopted: "adoption",
 	EventVerifying: "verify run", EventCIGreen: "green CI run", EventCIRed: "red CI run", EventPROpened: "opened PR", EventMerged: "merged PR",
-	EventClosed: "closed PR", EventAgentStopped: "agent stop", EventAgentHung: "hung agent", EventAgentAdrift: "adrift agent", EventAgentSwollen: "swollen agent",
+	EventClosed: "closed PR", EventAgentStopped: "agent stop", EventAgentHung: "hung agent", EventAgentAdrift: "adrift agent", EventAgentSwollen: "swollen agent", EventAgentOnboarding: "onboarding agent",
 	EventStuck: "stuck repeat", EventFailedVerify: "failed verify repeat",
 }
 

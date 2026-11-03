@@ -200,8 +200,17 @@ func scopedArgv(rec launch.Record, args []string) []string {
 	}
 	return recordProfile(rec).Argv(args)
 }
-func trustRecord(rec launch.Record) error {
-	return launch.TrustRoot(rec.Harness, rec.ConfigRoot, rec.Worktree.Path, rec.ConfigExplicit)
+
+// prepareRecord readies rec's config before its agent starts: its directory trusted and, for Claude Code, onboarding done, so
+// the first screen is the prompt.
+func prepareRecord(rec launch.Record) error {
+	if err := launch.TrustRoot(rec.Harness, rec.ConfigRoot, rec.Worktree.Path, rec.ConfigExplicit); err != nil {
+		return err
+	}
+	if rec.Harness != claude.Name {
+		return nil
+	}
+	return launch.EnsureOnboardingComplete(rec.ConfigRoot, rec.ConfigExplicit)
 }
 func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 	dir := filepath.Dir(l.records.Dir)

@@ -466,7 +466,7 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 	if err != nil {
 		return core.Started{}, err
 	}
-	if err := trustRecord(rec); err != nil {
+	if err := prepareRecord(rec); err != nil {
 		return core.Started{}, err
 	}
 	rec.Starting = true
@@ -897,7 +897,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	if alignErr != nil {
 		return nil, "", alignErr
 	}
-	if err := trustRecord(rec); err != nil {
+	if err := prepareRecord(rec); err != nil {
 		return nil, "", err
 	}
 	if err := provisionProfile(recordProfile(rec)); err != nil {

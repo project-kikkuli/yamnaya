@@ -119,7 +119,7 @@ func (b Board) Verifier(s Live) (VerifierSession, bool) {
 
 // ParseStatus is the Status s names, Unknown when it names none.
 func ParseStatus(s string) Status {
-	for st := Unknown; st <= Moved; st++ {
+	for st := Unknown; st <= Onboarding; st++ {
 		if st.String() == s {
 			return st
 		}
