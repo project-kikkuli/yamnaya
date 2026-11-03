@@ -325,6 +325,9 @@ func (m Model) nodeSessions(n core.Node) []treeNode {
 		}
 	}
 	out := m.sessionsTree(sessions, nil)
+	if n.Goal != nil {
+		markManager(out, n.Manager.Session)
+	}
 	for i := range n.Verifiers {
 		out = append(out, treeNode{row: row{session: &n.Verifiers[i], verifier: true}})
 	}
@@ -332,6 +335,14 @@ func (m Model) nodeSessions(n core.Node) []treeNode {
 		out = append(out, treeNode{row: row{dormant: &n.DormantVerifiers[i], verifier: true}})
 	}
 	return out
+}
+
+func markManager(ns []treeNode, session string) {
+	for i := range ns {
+		r := &ns[i].row
+		r.manager = r.session != nil && r.member == nil && r.session.Key() == session
+		markManager(ns[i].children, session)
+	}
 }
 
 func (m Model) missionTree(p *core.Project, r *core.Repo) treeNode {
@@ -587,6 +598,8 @@ func (m Model) treeRowText(i int, r row, ids map[string]string, labels map[*core
 		label := ""
 		if r.verifier {
 			label = pal.dim.Render("verifier  ")
+		} else if r.manager {
+			label = pal.dim.Render("manager  ")
 		}
 		where := m.where(s)
 		if r.project != nil {

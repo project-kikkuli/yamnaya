@@ -79,7 +79,7 @@ type row struct {
 	key, parent, header, body        string
 	container, closed, initialClosed bool
 	sectionID                        int
-	verifier                         bool
+	verifier, manager                bool
 
 	// node is a goal's manager or a chief.
 	node    *core.Node

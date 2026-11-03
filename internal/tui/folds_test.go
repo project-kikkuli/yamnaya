@@ -592,3 +592,54 @@ func TestSearchRefreshQueryChangeAndBundleEnter(t *testing.T) {
 		t.Fatal("clearing search did not return to the normally folded bundle")
 	}
 }
+
+func TestGoalPageNamesTheManagerSessionOnly(t *testing.T) {
+	live := func(id, parent string) core.Live {
+		return core.Live{Session: core.Session{ID: id, Title: "title-" + id, Parent: parent, Status: core.Busy}}
+	}
+	lead := live("lead", "")
+	for _, tc := range []struct {
+		name    string
+		agents  []core.Live
+		manager string
+		want    map[string]bool
+	}{
+		{"manager alone", nil, "lead", map[string]bool{"title-lead": true}},
+		{"agent nested under the manager", []core.Live{live("kid", "")}, "lead", map[string]bool{"title-lead": true, "title-kid": false}},
+		{"agent beside the manager under an absent parent", []core.Live{live("kid", "gone")}, "lead", map[string]bool{"title-lead": true, "title-kid": false}},
+		{"session is not the recorded manager", []core.Live{live("kid", "")}, "elsewhere", map[string]bool{"title-lead": false, "title-kid": false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			owner := lead
+			m.board.Tree = []core.Node{{Manager: core.Manager{ID: "g", Name: "g", Session: tc.manager}, Goal: &core.Goal{ID: "g", Ask: "ask"}, Standing: core.StandMoving, Live: &owner, Agents: tc.agents}}
+			m.mode, m.goal, m.page = modeGoal, "g", nil
+			content := ansi.Strip(m.View().Content)
+			for title, want := range tc.want {
+				line := ""
+				for _, l := range strings.Split(content, "\n") {
+					if strings.Contains(l, title) {
+						line = l
+					}
+				}
+				if line == "" {
+					t.Fatalf("%s not on the page:\n%s", title, content)
+				}
+				if got := strings.Contains(line, "manager"); got != want {
+					t.Fatalf("%s labelled manager = %v, want %v: %q", title, got, want, line)
+				}
+			}
+		})
+	}
+}
+
+func TestChiefSessionIsNotLabelledManagerOnTheBoard(t *testing.T) {
+	m := treeModel()
+	owner := core.Live{Session: core.Session{ID: "chief-session", Title: "title-chief", Status: core.Busy}}
+	m.board.Tree = []core.Node{{Manager: core.Manager{ID: "c", Name: "c", Role: core.RoleChief, Session: "chief-session"}, Live: &owner}}
+	for _, r := range m.projectRows(true) {
+		if r.session != nil && r.session.ID == "chief-session" && r.manager {
+			t.Fatal("chief session labelled as a goal's manager")
+		}
+	}
+}
