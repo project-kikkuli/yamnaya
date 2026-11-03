@@ -22,8 +22,11 @@ type output struct {
 	rate float64
 }
 
+// frameRate is how many frames a second the board renders.
+const frameRate = 30
+
 // frameTime is how long a key may wait behind the mountains: one frame.
-const frameTime = 16 * time.Millisecond
+const frameTime = time.Second / frameRate
 
 func newOutput(f *os.File) *output { return newOutputTo(f, f) }
 
@@ -89,7 +92,7 @@ func (o *output) budget() int {
 	if o.rate == 0 {
 		return 16 << 10
 	}
-	return max(3<<9, int(o.rate*frameTime.Seconds()))
+	return max(3<<10, int(o.rate*frameTime.Seconds()))
 }
 
 // drain waits until the terminal has taken everything written to it.

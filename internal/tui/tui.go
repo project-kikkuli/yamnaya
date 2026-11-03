@@ -243,7 +243,7 @@ var ErrRestart = errors.New("ym executable changed")
 func Run(c *core.Core) error {
 	m := New(c)
 	m.out = newOutput(os.Stdout)
-	final, err := tea.NewProgram(m, tea.WithInput(input{os.Stdin}), tea.WithOutput(m.out), tea.WithColorProfile(scene.ColorProfile()), tea.WithFPS(30)).Run()
+	final, err := tea.NewProgram(m, tea.WithInput(input{os.Stdin}), tea.WithOutput(m.out), tea.WithColorProfile(scene.ColorProfile()), tea.WithFPS(frameRate)).Run()
 	m.out.drain()
 	if m, ok := final.(Model); ok && err == nil && m.restart {
 		return ErrRestart
