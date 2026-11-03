@@ -13,9 +13,10 @@ import (
 // Dossier is the evidence ym attaches to an item on its own: where it came from, the work's pull requests, what its agents did
 // last, and what changed in the goal since the owner last looked.
 type Dossier struct {
-	Goal    string `json:"goal,omitempty"`
-	GoalAsk string `json:"goal_ask,omitempty"`
-	Repo    string `json:"repo,omitempty"`
+	Goal     string `json:"goal,omitempty"`
+	GoalName string `json:"goal_name,omitempty"`
+	GoalAsk  string `json:"goal_ask,omitempty"`
+	Repo     string `json:"repo,omitempty"`
 	// From names who filed the item and, for an agent, the manager it works for.
 	From     string         `json:"from,omitempty"`
 	PRs      []PRNote       `json:"prs,omitempty"`
@@ -265,7 +266,7 @@ func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 		d.From = "agent " + agentName(b, it.Session) + ", in a session you started"
 	}
 	if g, ok := o.Goals[m.GoalID]; managed && ok {
-		d.Goal, d.GoalAsk, d.Repo = g.ID, g.Ask, g.Repo
+		d.Goal, d.GoalName, d.GoalAsk, d.Repo = g.ID, g.Name, g.Ask, g.Repo
 	}
 	seenPR := map[string]bool{}
 	for _, s := range sessions {
@@ -357,7 +358,11 @@ func DossierLines(d Dossier) [][2]string {
 		}
 	}
 	if d.Goal != "" {
-		add("goal", d.Goal+" "+oneLine(d.GoalAsk))
+		name := d.GoalName
+		if name == "" {
+			name = d.Goal
+		}
+		add("goal", name+" "+oneLine(d.GoalAsk))
 	}
 	add("repository", d.Repo)
 	add("from", d.From)
