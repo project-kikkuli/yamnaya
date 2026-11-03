@@ -31,7 +31,7 @@ func (c *Core) noticeForeign(b Board) error {
 		}
 		for _, pr := range s.AllPRs() {
 			st, fetched := statuses[pr.URL]
-			events := prEvents(pr.URL, pr.URL, "agent "+RemoteKey(c.SelfName(), s.Key()), st, fetched)
+			events := prEvents(pr.URL, pr.URL, "agent "+RemoteKey(c.SelfName(), s.Key()), st, fetched, c.now())
 			if st.Foreign() {
 				events = []GoalEvent{{Kind: EventPRTouched, Key: "touched:" + pr.URL, Payload: "worked on another author's " + pr.URL}}
 			}

@@ -263,9 +263,99 @@ func TestAPullRequestKeepsItsMergeStateWhileGitHubRecomputesIt(t *testing.T) {
 				now = now.Add(PRStale)
 			}
 			got, _ := st.PRStatuses()
-			if got[url].ReadyToMerge() != tc.ready {
-				t.Fatalf("after %d reads %+v ready %v, want %v", len(tc.reads), got[url].Merge, got[url].ReadyToMerge(), tc.ready)
+			if got[url].ReadyToMerge(now) != tc.ready {
+				t.Fatalf("after %d reads %+v ready %v, want %v", len(tc.reads), got[url].Merge, got[url].ReadyToMerge(now), tc.ready)
 			}
 		})
+	}
+}
+
+// settledSource answers every read with the same pull request, GitHub still computing its merge state after the first.
+type settledSource struct {
+	now    func() time.Time
+	reads  int
+	failed int
+}
+
+func (s *settledSource) PRStatuses(urls []string) (map[string]PRStatus, error) {
+	s.reads++
+	m := PRMergeFacts{Author: "mira", Viewer: "mira", OID: "h1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}
+	failed := 0
+	if s.reads > 1 {
+		m.Mergeable, m.MergeState = "UNKNOWN", "UNKNOWN"
+		failed = s.failed
+	}
+	out := map[string]PRStatus{}
+	for _, u := range urls {
+		out[u] = PRStatus{State: "OPEN", Review: "APPROVED", Passed: 1, Failed: failed, Fetched: s.now(), Merge: m}
+	}
+	return out, nil
+}
+
+func (s *settledSource) PRStatus(string) (PRStatus, error) { return PRStatus{}, errors.New("unused") }
+
+func TestAKeptCleanMergeStateDoesNotHideACheckThatFailsOnTheSameHead(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		failed int
+		ready  bool
+	}{
+		{"nothing failed", 0, true},
+		{"a check failed", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+			c := &Core{Store: st, PRs: &settledSource{now: func() time.Time { return now }, failed: tc.failed}, Now: func() time.Time { return now }}
+			url := "https://github.com/acme/august/pull/3"
+			if err := st.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, err := c.RefreshPRs(Board{}); err != nil {
+					t.Fatal(err)
+				}
+				now = now.Add(PRStale)
+			}
+			got, _ := st.PRStatuses()
+			if got[url].Merge.MergeState != "CLEAN" || got[url].ReadyForOwner(now) != tc.ready {
+				t.Fatalf("%+v ready %v, want %v", got[url], got[url].ReadyForOwner(now), tc.ready)
+			}
+		})
+	}
+}
+
+func TestAPullRequestNothingNamesIsReadSlowlyUntilItCloses(t *testing.T) {
+	st, err := OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	now := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	url := "https://github.com/me/app/pull/1"
+	if err := st.SavePRStatus(url, PRStatus{State: "OPEN", Fetched: now, Merge: PRMergeFacts{OID: "h1", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}); err != nil {
+		t.Fatal(err)
+	}
+	src := &countingSource{calls: map[string]int{}}
+	c := &Core{Store: st, PRs: src, Now: func() time.Time { return now }}
+	for _, step := range []struct {
+		after time.Duration
+		reads int
+	}{{PRStale, 0}, {PRSlowest, 1}, {PRSlowest, 1}} {
+		now = now.Add(step.after)
+		if _, err := c.RefreshPRs(Board{}); err != nil {
+			t.Fatal(err)
+		}
+		if src.calls[url] != step.reads {
+			t.Fatalf("read %d times after %v, want %d", src.calls[url], step.after, step.reads)
+		}
+	}
+	got, _ := st.PRStatuses()
+	if got[url].State != "MERGED" {
+		t.Fatalf("state %s, want the merged state the read found", got[url].State)
 	}
 }

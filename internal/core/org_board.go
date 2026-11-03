@@ -313,7 +313,7 @@ func (c *Core) queue(b *Board, o Org) error {
 		m, managed := o.Managed(sessionOn(s.Remote, s.Key()), b.parents)
 		for _, pr := range s.AllPRs() {
 			st, ok := statuses[pr.URL]
-			if seen[pr.URL] || !ok || !st.ReadyToMerge() || !st.OwnedPR() {
+			if seen[pr.URL] || !ok || !st.ReadyForOwner(b.At) || !st.OwnedPR() {
 				continue
 			}
 			seen[pr.URL] = true
@@ -354,7 +354,7 @@ func (c *Core) queue(b *Board, o Org) error {
 	for _, url := range urls {
 		st, ok := statuses[url]
 		found := PRsIn(url)
-		if seen[url] || !ok || len(found) != 1 || !st.ReadyToMerge() || !st.OwnedPR() {
+		if seen[url] || !ok || len(found) != 1 || !st.ReadyForOwner(b.At) || !st.OwnedPR() {
 			continue
 		}
 		seen[url] = true

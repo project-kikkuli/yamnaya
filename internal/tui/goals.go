@@ -534,14 +534,11 @@ func (m Model) queueLines(i int, n core.Need) (string, bool) {
 	case n.PR != nil:
 		head, what = pal.yellow.Render(pad("merge", 8)), n.PR.URL
 		if st := n.PR.Status; st != nil {
-			ci, review := "no checks", "no review required"
+			ci := "no checks"
 			if st.Passed > 0 {
 				ci = fmt.Sprintf("ci green, %d passed", st.Passed)
 			}
-			if st.Review == "APPROVED" {
-				review = "approved"
-			}
-			what = st.Title + pal.dim.Render(fmt.Sprintf("  %s#%d · %s · %s", n.PR.Repo, n.PR.Number, ci, review))
+			what = st.Title + pal.dim.Render(fmt.Sprintf("  %s#%d · %s · approved", n.PR.Repo, n.PR.Number, ci))
 		}
 		if n.Manager != "" {
 			what = m.managerName(n.Manager) + ": " + what

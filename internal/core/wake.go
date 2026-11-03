@@ -94,7 +94,7 @@ func (c *Core) Notice(b Board) error {
 				}
 				continue
 			}
-			for _, e := range prEvents(pr.URL, title, who, st, fetched) {
+			for _, e := range prEvents(pr.URL, title, who, st, fetched, c.now()) {
 				if _, _, err := c.RecordGoalEvent(g.ID, e.Kind, e.Payload, g.ID+":"+e.Key); err != nil {
 					errs = append(errs, err)
 				}
@@ -118,7 +118,7 @@ func (c *Core) Notice(b Board) error {
 			if st.Title != "" {
 				title = fmt.Sprintf("%q %s", st.Title, url)
 			}
-			for _, e := range prEvents(url, title, "", st, true)[1:] {
+			for _, e := range prEvents(url, title, "", st, true, c.now())[1:] {
 				if _, _, err := c.RecordGoalEvent(goal, e.Kind, e.Payload, goal+":"+e.Key); err != nil {
 					errs = append(errs, err)
 				}
@@ -129,7 +129,7 @@ func (c *Core) Notice(b Board) error {
 }
 
 // prEvents are the events a pull request's last fetched status stands for, each keyed so it happens once.
-func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
+func prEvents(url, title, who string, st PRStatus, fetched bool, now time.Time) []GoalEvent {
 	out := []GoalEvent{{Kind: EventPROpened, Key: "pr:" + url, Payload: who + " opened " + title}}
 	if !fetched || st.State == PRGone {
 		return out
@@ -150,7 +150,7 @@ func prEvents(url, title, who string, st PRStatus, fetched bool) []GoalEvent {
 		out = append(out, GoalEvent{Kind: EventConflict, Key: "conflict:" + url + "@" + head,
 			Payload: title + " conflicts with its base branch; GitHub runs no CI on it until it is rebased"})
 	}
-	if st.ReadyToMerge() {
+	if st.ReadyToMerge(now) {
 		out = append(out, GoalEvent{Kind: EventPRReady, Key: "ready:" + url + "@" + head, Payload: title + " is green and ready to merge"})
 	}
 	if st.Threads > 0 {

@@ -391,7 +391,13 @@ func TestGreenPullRequestsGoToTheOwnerOnlyWhereNoManagerMayMerge(t *testing.T) {
 		{name: "written elsewhere, repo not cleared", repo: "august", kind: "authored", status: green, wantQueue: true},
 		{name: "written by someone else", repo: "august", kind: "self", status: func(st *PRStatus) { st.Merge.Author = "bo" }},
 		{name: "red CI", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Failed = 1; st.Merge.MergeState = "UNSTABLE" }},
-		{name: "superseded cancelled run, GitHub calls it clean", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Failed = 1 }, wantQueue: true},
+		{name: "failing check though GitHub calls it clean", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Failed = 1 }},
+		{name: "failing check under a live session", repo: "august", kind: "self", status: func(st *PRStatus) { st.Failed = 1 }},
+		{name: "failing check, manager cleared", repo: "auth-plane", kind: "goal", status: func(st *PRStatus) { st.Failed = 1 }},
+		{name: "conflicted", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Merge.Mergeable = "CONFLICTING"; st.Merge.MergeState = "DIRTY" }},
+		{name: "no review decision", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Review = "" }},
+		{name: "no review decision, manager cleared", repo: "auth-plane", kind: "goal", status: func(st *PRStatus) { st.Review = "" }, wantNotified: true},
+		{name: "read too long ago", repo: "august", kind: "self", status: func(st *PRStatus) { st.Fetched = st.Fetched.Add(-prMergeFresh) }},
 		{name: "CI running", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Pending = 1 }},
 		{name: "open thread", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Unresolved = 1 }},
 		{name: "draft", repo: "august", kind: "authored", status: func(st *PRStatus) { st.Merge.Draft = true }},
@@ -421,7 +427,7 @@ func TestGreenPullRequestsGoToTheOwnerOnlyWhereNoManagerMayMerge(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			st := PRStatus{State: "OPEN", Title: "Ship it", Passed: 4, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+			st := PRStatus{State: "OPEN", Title: "Ship it", Review: "APPROVED", Passed: 4, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
 			tc.status(&st)
 			if err := w.core.Store.SavePRStatus(url, st); err != nil {
 				t.Fatal(err)
@@ -461,7 +467,7 @@ func TestAnAuthoredPullRequestLeavesTheQueueOnceGitHubStopsListingIt(t *testing.
 	if err := w.core.Store.SyncAuthored(map[string]string{url: "Ship it"}); err != nil {
 		t.Fatal(err)
 	}
-	st := PRStatus{State: "OPEN", Passed: 1, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	st := PRStatus{State: "OPEN", Review: "APPROVED", Passed: 1, Fetched: w.clock, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
 	if err := w.core.Store.SavePRStatus(url, st); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +545,7 @@ func TestADoneGoalNeverWaitsInTheQueueAndLeavesTheTreeOnceClearedOrADayOld(t *te
 
 func TestASettledDutyLeavesTheOwnersQueueOnItsOwn(t *testing.T) {
 	const url = "https://github.com/acme/august/pull/7"
-	green := PRStatus{State: "OPEN", Passed: 4, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
+	green := PRStatus{State: "OPEN", Review: "APPROVED", Passed: 4, Merge: PRMergeFacts{Author: "mira", Viewer: "mira", OID: "abc", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}
 	stuck := func(w *orgWorld, t *testing.T, edit func(*Goal)) {
 		t.Helper()
 		g, err := w.core.Store.Goal("goal1")

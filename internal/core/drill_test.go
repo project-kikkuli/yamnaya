@@ -181,7 +181,7 @@ func TestAFetchThatCannotReadChecksKeepsTheLastReadOfTheSameHead(t *testing.T) {
 				t.Fatal(err)
 			}
 			st := all[url]
-			if st.Failed != tc.failed || st.Unresolved != tc.unresolved || st.Title != "Retries" || st.Merge.Error == "" || st.ReadyToMerge() {
+			if st.Failed != tc.failed || st.Unresolved != tc.unresolved || st.Title != "Retries" || st.Merge.Error == "" || st.ReadyToMerge(clock) {
 				t.Fatalf("status after an unreadable fetch %+v", st)
 			}
 		})

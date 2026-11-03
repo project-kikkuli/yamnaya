@@ -74,7 +74,7 @@ The **Needs you** queue holds only what needs you now, and each row leaves on it
 - stuck goals
 - asks that climbed past every manager and chief
 - explicit owner requests (`ym item add --to owner`) and document reviews (`ym item review <document> --question "<review request>" --rec "<recommendation>"`)
-- pull requests ready for your merge, as `merge` rows with repository and number, CI, review state and title: every open pull request your GitHub account wrote, whichever session, goal or tool opened it, once it is not a draft, no check is running and GitHub calls its checks passing, no review thread is open, the review is approved or not required, and GitHub calls the merge clean. A goal's pull request stays with its manager instead in a repository `ym goal authority` clears. `ym serve` asks GitHub for your open pull requests every 5 minutes, so one leaves once merged or closed
+- pull requests ready for your merge, as `merge` rows with repository and number, CI, review state and title: every open pull request your GitHub account wrote, whichever session, goal or tool opened it, once it is not a draft, no check is running and every check's newest run passed, no review thread is open, the review is approved, and GitHub calls the merge clean, all as read within the hour. A goal's pull request stays with its manager instead in a repository `ym goal authority` clears. `ym serve` asks GitHub for your open pull requests every 5 minutes, so one leaves once merged or closed
 - GitHub review requests addressed to you personally, not to your teams, with the pull request's title and who opened it
 - Notion discussions and reviews addressed to you that no goal claims
 - permission prompts

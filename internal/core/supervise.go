@@ -294,7 +294,7 @@ func (c *Core) noticeMerges(b Board, o Org) error {
 		}
 		for _, pr := range s.AllPRs() {
 			st, ok := statuses[pr.URL]
-			if !ok || !st.ReadyToMerge() || !st.OwnedPR() {
+			if !ok || !st.ReadyToMerge(c.now()) || !st.OwnedPR() {
 				continue
 			}
 			if cleared, err := c.Store.CanMerge(prRepoName(pr)); err != nil || !cleared {

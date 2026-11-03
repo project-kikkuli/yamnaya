@@ -8,7 +8,7 @@ import (
 )
 
 func TestABatchReadsEveryPullRequestItCanAndLeavesTheRest(t *testing.T) {
-	open := `{"state":"OPEN","title":"Retries","headRefName":"retries","headRefOid":"h1","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","author":{"login":"Mira"},
+	open := `{"state":"OPEN","title":"Retries","headRefName":"retries","headRefOid":"h1","mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","author":{"login":"Mira"},
 		"commits":{"totalCount":2},"reviewThreads":{"totalCount":1,"nodes":[{"isResolved":false}]},
 		"last":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"checkRunCountsByState":[{"state":"SUCCESS","count":4},{"state":"FAILURE","count":1}],"statusContextCountsByState":[]}}}}]}}`
 	urls := []string{"https://github.com/me/app/pull/1", "https://github.com/me/app/pull/2", "https://github.com/gone/app/pull/3"}

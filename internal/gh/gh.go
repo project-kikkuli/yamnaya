@@ -158,7 +158,7 @@ func (s *Source) PRStatuses(urls []string) (map[string]core.PRStatus, error) {
 		if raw, ok := v.Data[fmt.Sprintf("p%d", i)]; !ok || json.Unmarshal(raw, &pr) != nil || pr == nil || pr.State == "" {
 			continue
 		}
-		st := s.status(pr)
+		st := s.status(u, pr)
 		st.Merge.Author, st.Merge.Viewer = pr.Author.Login, viewer.Login
 		got[u] = st
 	}
@@ -262,10 +262,10 @@ func (s *Source) details(url string) (core.PRStatus, error) {
 		}
 		return core.PRStatus{}, errors.New("no pull request at " + url)
 	}
-	return s.status(pr), nil
+	return s.status(url, pr), nil
 }
 
-func (s *Source) status(pr *prJSON) core.PRStatus {
+func (s *Source) status(url string, pr *prJSON) core.PRStatus {
 	st := core.PRStatus{Merge: core.PRMergeFacts{OID: pr.HeadRefOID, Draft: pr.Draft, Mergeable: pr.Mergeable, MergeState: pr.MergeState}, State: pr.State, Title: pr.Title, Review: pr.ReviewDecision, Head: pr.HeadRefName,
 		Commits: pr.Commits.TotalCount, Threads: pr.ReviewThreads.TotalCount, Fetched: s.Now()}
 	for _, t := range pr.ReviewThreads.Nodes {
@@ -302,6 +302,12 @@ func (s *Source) status(pr *prJSON) core.PRStatus {
 	// its base: GitHub runs no pull request checks on it until it is rebased.
 	if st.Passed+st.Failed+st.Pending == 0 && pr.State == "OPEN" && pr.Mergeable != "CONFLICTING" && pr.BaseRef != nil && pr.BaseRef.Target.Rollup != nil {
 		st.Pending = 1
+	}
+	// A check GitHub reran leaves its replaced run in the counts; only a pull request it may call clean is worth reading run by run.
+	if st.Failed > 0 && pr.State == "OPEN" && (pr.MergeState == "CLEAN" || pr.MergeState == "UNKNOWN") {
+		if n, err := s.superseded(url); err == nil {
+			st.Failed -= n
+		}
 	}
 	return st
 }
