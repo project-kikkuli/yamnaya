@@ -321,7 +321,7 @@ func TestAColdStartRaisesOneNotificationSayingWhatCameBackAndWhatDidNot(t *testi
 	if len(shown) != 1 {
 		t.Fatalf("notifications %q, want exactly one after the restart", shown)
 	}
-	for _, want := range []string{"2 of 3", "manager " + m.ID, "agent " + Short("agent"), "Could not resume", "claude not found on PATH"} {
+	for _, want := range []string{"2 of 3", "manager " + m.Name, "agent " + Short("agent"), "Could not resume", "claude not found on PATH"} {
 		if !strings.Contains(shown[0], want) {
 			t.Errorf("notification %q lacks %q", shown[0], want)
 		}

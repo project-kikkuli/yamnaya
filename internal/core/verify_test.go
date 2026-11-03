@@ -284,7 +284,7 @@ func TestAnIdleVerifierIsRemindedOnce(t *testing.T) {
 	verifier := w.verifiers()[0]
 	w.tick(t, StartGrace)
 	w.tick(t, time.Minute)
-	if got := w.handedTo(verifier); len(got) != 1 || !strings.Contains(got[0], "ym goal verdict "+w.goal.ID) {
+	if got := w.handedTo(verifier); len(got) != 1 || !strings.Contains(got[0], "ym goal verdict "+w.goal.Name) {
 		t.Fatalf("idle verifier was told %q, want one reminder", got)
 	}
 }

@@ -104,7 +104,7 @@ func TestCopyButtonsCarryTheTextBriefMdAndTheTerminalShow(t *testing.T) {
 		{"/b/" + g.ID, "context", ym("goal", "context", "--all", g.ID)},
 		{"/b/" + g.ID, itemLabel, ym("copy", "--stdout", "item", it.Key())},
 		{"/i/" + strconv.FormatInt(it.Seq, 10), itemLabel, ym("copy", "--stdout", "item", it.Key())},
-		{"/", g.ID + " brief", ym("copy", "--stdout", "brief", g.ID)},
+		{"/", g.Name + " brief", ym("copy", "--stdout", "brief", g.ID)},
 	} {
 		t.Run(tc.page+" "+tc.label, func(t *testing.T) {
 			got := brief

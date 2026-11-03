@@ -23,7 +23,7 @@ func TestItemsShowWhoOwesAnAnswerAndEscalateWithoutDuplicating(t *testing.T) {
 			}
 			m = press(t, refresh(t, m), "I")
 			m = to(t, m, func(r row) bool { return r.item != nil && r.item.Seq == it.Seq })
-			if v := ansi.Strip(m.View().Content); !strings.Contains(v, "to chief platform ("+manager.ID+")") {
+			if v := ansi.Strip(m.View().Content); !strings.Contains(v, "to chief platform") {
 				t.Fatalf("recipient is invisible:\n%s", v)
 			}
 			m = press(t, m, keys...)

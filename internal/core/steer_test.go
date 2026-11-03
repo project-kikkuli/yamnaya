@@ -239,7 +239,7 @@ func TestABriefGoesStaleWhenSomethingMeaningfulHappensAfterIt(t *testing.T) {
 	if f := fresh(m.ID); f.Stale() {
 		t.Fatalf("a brief just written shows stale: %+v", f)
 	}
-	if f := fresh(chief.ID); !f.Stale() || !strings.Contains(f.BehindWhat, m.ID) {
+	if f := fresh(chief.ID); !f.Stale() || !strings.Contains(f.BehindWhat, m.Name) {
 		t.Fatalf("chief's rollup ignores its report's newer brief: %+v", f)
 	}
 	w.clock = w.clock.Add(time.Minute)
@@ -355,7 +355,7 @@ func TestASteerWakesTheManagerAndItsChiefAndAGoalEventStalesTheBriefInTheSameWak
 	w.steer(t, g.ID, "make the importer handle CSV and TSV", Owner)
 	w.loop(t, 2)
 	got := wakes(w.handedTo(m.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "Revision 1") {
+	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.Name) || !strings.Contains(got[0], "Revision 1") {
 		t.Fatalf("manager wakes %q, want one carrying the steer's revision", got)
 	}
 	if heard := strings.Join(wakes(w.handedTo(chief.Session)), "\n"); !strings.Contains(heard, "steered") {

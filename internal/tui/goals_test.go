@@ -170,8 +170,8 @@ func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
 			if chief.Manager.Repo != "" || chief.Manager.Directory == "" {
 				t.Fatalf("chief inherited a repository: %+v", chief.Manager)
 			}
-			if chief.Manager.Name != "data team" {
-				t.Fatalf("no chief named data team on the board; message %q", m.message)
+			if chief.Manager.Name != "data-team" {
+				t.Fatalf("no chief named data-team on the board; message %q", m.message)
 			}
 			for i, mg := range ms {
 				if got, want := parentOf(t, c, mg.ID), slices.Contains(tc.want, i); (got == chief.Manager.ID) != want {
@@ -729,7 +729,7 @@ func TestXOnAGoalUntiesTheChosenPullRequest(t *testing.T) {
 }
 
 func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
-	for _, key := range []string{"N", "+"} {
+	for _, key := range []string{"n", "+"} {
 		t.Run(key, func(t *testing.T) {
 			m, c, _ := goalSetup(t, "service goal")
 			l := c.Launches.(*launches)

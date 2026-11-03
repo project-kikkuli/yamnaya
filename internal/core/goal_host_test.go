@@ -135,7 +135,7 @@ func TestAGoalStartedOnAHostReachedOnlyByRelayRunsThereUnderTheRequesterOrTellsI
 			cycle()
 			cycle()
 			if !slices.ContainsFunc(f.b.handedTo(chief.Session), func(s string) bool {
-				return strings.Contains(s, RemoteKey("a", started[0].GoalID)) && strings.Contains(s, "first PR up")
+				return strings.Contains(s, RemoteKey("a", started[0].Name)) && strings.Contains(s, "first PR up")
 			}) {
 				t.Errorf("chief on b was handed %q; want a's goal's update", f.b.handedTo(chief.Session))
 			}
