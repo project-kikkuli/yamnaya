@@ -11,12 +11,16 @@ import (
 func TestOverloadHoldsNewSlotsOnlyWhileOneIsHeld(t *testing.T) {
 	for _, c := range []struct {
 		name  string
+		cause string
 		held  int
 		grant bool
 	}{
-		{"idle pool grants one despite load", 0, true},
-		{"busy pool holds the rest", 1, false},
-		{"busier pool holds the rest", 3, false},
+		{"idle pool grants one despite memory pressure", "memory", 0, true},
+		{"busy pool holds the rest for memory", "memory", 1, false},
+		{"busier pool holds the rest for memory", "memory", 3, false},
+		{"idle pool grants one under cpu", "cpu", 0, true},
+		{"busy pool grants another under cpu", "cpu", 1, true},
+		{"the last slot still fills under cpu", "cpu", 3, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p := pool(t)
@@ -28,7 +32,7 @@ func TestOverloadHoldsNewSlotsOnlyWhileOneIsHeld(t *testing.T) {
 				}
 				defer release()
 			}
-			if err := (pressure.State{Active: true, Holding: true}).Save(p.Dir); err != nil {
+			if err := (pressure.State{Active: true, Holding: true, Cause: c.cause}).Save(p.Dir); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +66,7 @@ func TestCancelDuringOverloadRemovesWaitingClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if err := (pressure.State{Active: true, Holding: true}).Save(p.Dir); err != nil {
+	if err := (pressure.State{Active: true, Holding: true, Cause: "memory"}).Save(p.Dir); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

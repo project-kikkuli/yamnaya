@@ -24,11 +24,11 @@ func TestTheHeaderShowsSlotHoldersWaitersAndAnOverload(t *testing.T) {
 		want []string
 	}{
 		{"no pool", core.Machine{}, nil},
-		{"throttled", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true}}, Load: 24},
-			[]string{" slots 0/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), 0 slots held, next slot granted", " overloaded: load 24 on 12 cores"}},
-		{"throttled with a slot held", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true}}, Load: 24,
+		{"throttled", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true, Cause: "memory"}}, Load: 24},
+			[]string{" slots 0/4 held · load 24.0 on 12 cores", " throttle (memory): heavy agent jobs nice 15 (0 live), 0 slots held, next slot granted", " overloaded: load 24 on 12 cores"}},
+		{"throttled with a slot held", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true, Holding: true, Cause: "memory"}}, Load: 24,
 			Holders: []core.SlotUse{use("goal1", "PR tests", "go", "test", "./...")}},
-			[]string{" slots 1/4 held · load 24.0 on 12 cores", " throttle: heavy agent jobs nice 15 (0 live), 1 slots held, new slots wait",
+			[]string{" slots 1/4 held · load 24.0 on 12 cores", " throttle (memory): heavy agent jobs nice 15 (0 live), 1 slots held, new slots wait",
 				"   slot 1  goal1 PR tests  go test ./...  3m", " overloaded: load 24 on 12 cores"}},
 		{"recovering", core.Machine{Slots: slot.Status{Capacity: 4, Cores: 12, Pressure: pressure.State{Active: true}}, Load: 10},
 			[]string{" slots 0/4 held · load 10.0 on 12 cores", " throttle: recovering, new slots open; clears after 3 minutes without agent pressure"}},

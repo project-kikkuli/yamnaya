@@ -32,7 +32,7 @@ func slotCmd() *cobra.Command {
 		Long: "slot waits for one of the machine-wide slots agent-slot also uses (capacity from physical cores and memory), " +
 			"runs the command at niceness --nice while holding it, and releases it when the command and everything it left in its process group have ended. " +
 			"Common runtime and build worker pools share the available cores across slots. " +
-			"--lane serializes commands with the same name before they take a slot. " +
+			"--lane serializes commands with the same name, oldest first, before they take a slot; the one holding a lane takes the next free slot ahead of commands on no lane. " +
 			"An interrupt or termination passes to the whole group. --status lists capacity, load, holders and waiters.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pool, err := slot.Machine()
@@ -64,7 +64,7 @@ func slotCmd() *cobra.Command {
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 			defer stop()
-			leave, err := pool.Lane(ctx, lane, c, func() {
+			leave, seated, err := pool.Lane(ctx, lane, c, func() {
 				fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: lane %q taken, waiting (ym slot --status shows who holds it)\n", lane)
 			})
 			if errors.Is(err, context.Canceled) {
@@ -76,13 +76,17 @@ func slotCmd() *cobra.Command {
 			defer leave()
 			release, n, err := pool.Acquire(ctx, c, func() {
 				st, _ := pool.Status()
-				if st.Pressure.Holding && len(st.Holders) > 0 {
-					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: overload holds new slots, waiting (ym slot --status shows load and consumers)")
-				} else {
+				switch {
+				case st.Pressure.HoldsSlots() && len(st.Holders) > 0:
+					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: memory pressure holds new slots, waiting (ym slot --status shows load and consumers)")
+				case len(st.Holders) < st.Capacity:
+					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: a lane's job takes the next free slot, waiting (ym slot --status shows it)")
+				default:
 					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: all %d slots taken, waiting (ym slot --status shows who holds them)\n", st.Capacity)
 				}
 			})
 			stop()
+			seated()
 			if errors.Is(err, context.Canceled) {
 				return exitStatus(130)
 			}
@@ -124,7 +128,12 @@ func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 
 func claimLine(c slot.Claim, now time.Time) string {
 	parts := []string{clip(c.Line(), 80)}
-	if c.Lane != "" {
+	switch {
+	case c.LaneHolder:
+		parts = append(parts, "lane "+c.Lane+" holder")
+	case c.LanePlace > 0:
+		parts = append(parts, fmt.Sprintf("lane %s #%d in line", c.Lane, c.LanePlace))
+	case c.Lane != "":
 		parts = append(parts, "lane "+c.Lane)
 	}
 	if c.PID > 0 {

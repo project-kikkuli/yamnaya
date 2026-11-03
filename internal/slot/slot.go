@@ -23,14 +23,18 @@ const gib = 1 << 30
 
 // Claim is who holds or waits for a slot, and for what.
 type Claim struct {
-	Slot    int       `json:"slot,omitempty"`
-	Lane    string    `json:"lane,omitempty"`
-	PID     int       `json:"pid"`
-	Command []string  `json:"command"`
-	Cwd     string    `json:"cwd,omitempty"`
-	Harness string    `json:"harness,omitempty"`
-	Session string    `json:"session,omitempty"`
-	Since   time.Time `json:"since"`
+	Slot int    `json:"slot,omitempty"`
+	Lane string `json:"lane,omitempty"`
+	// LaneHolder and LanePlace are filled in by Status: the job that has its lane, and a lane waiter's place in line from 1.
+	// Neither is set for a waiter from a ym older than lane tickets, which cannot be told apart.
+	LaneHolder bool      `json:"lane_holder,omitempty"`
+	LanePlace  int       `json:"lane_place,omitempty"`
+	PID        int       `json:"pid"`
+	Command    []string  `json:"command"`
+	Cwd        string    `json:"cwd,omitempty"`
+	Harness    string    `json:"harness,omitempty"`
+	Session    string    `json:"session,omitempty"`
+	Since      time.Time `json:"since"`
 }
 
 // Line is the claim's command as one line, or what is known of a holder that left no claim.
@@ -99,9 +103,11 @@ func Machine() (Pool, error) {
 func (p Pool) lockPath(n int) string  { return filepath.Join(p.Dir, strconv.Itoa(n)+".lock") }
 func (p Pool) claimPath(n int) string { return filepath.Join(p.Dir, strconv.Itoa(n)+".json") }
 func (p Pool) waitDir() string        { return filepath.Join(p.Dir, "waiting") }
+func (p Pool) ticketDir() string      { return filepath.Join(p.Dir, "lanes") }
 
 // Acquire waits until it holds a slot, then records c as its holder. Waiting, c is listed among the waiters; onWait
-// runs once, the first time every slot is taken. Release gives the slot back.
+// runs once, the first time it gets none. A claim on no lane waits while a live lane holder waits for a slot, which is
+// where Lane's ticket lists a lane claim. Release gives the slot back.
 func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func(), slot int, err error) {
 	if err = os.MkdirAll(p.waitDir(), 0o755); err != nil {
 		return nil, 0, err
@@ -113,18 +119,24 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 		if readErr != nil {
 			return nil, 0, readErr
 		}
-		for n := 1; n <= p.Capacity; n++ {
+		deferring := false
+		if c.Lane == "" {
+			if deferring, err = p.laneHolderWaits(); err != nil {
+				return nil, 0, err
+			}
+		}
+		for n := 1; n <= p.Capacity && !deferring; n++ {
 			f, err := p.tryLock(n)
 			if err != nil {
 				return nil, 0, err
 			}
-			if f == nil && state.Holding {
+			if f == nil && state.HoldsSlots() {
 				break
 			}
 			if f == nil {
 				continue
 			}
-			if state.Holding {
+			if state.HoldsSlots() {
 				idle, err := p.othersIdle(n)
 				if err != nil {
 					f.Close()
@@ -147,8 +159,10 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 			}, n, nil
 		}
 		if first {
-			if err = writeJSON(waiting, c); err != nil {
-				return nil, 0, err
+			if c.Lane == "" {
+				if err = writeJSON(waiting, c); err != nil {
+					return nil, 0, err
+				}
 			}
 			if onWait != nil {
 				onWait()
@@ -242,6 +256,7 @@ func (p Pool) Status() (Status, error) {
 			c = Claim{}
 		}
 		c.Slot = n
+		c.LaneHolder = c.Lane != ""
 		st.Holders = append(st.Holders, c)
 	}
 	entries, err := os.ReadDir(p.waitDir())
@@ -249,6 +264,9 @@ func (p Pool) Status() (Status, error) {
 		return st, err
 	}
 	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
 		path := filepath.Join(p.waitDir(), e.Name())
 		c, err := readClaim(path)
 		if err != nil || !alive(c.PID) {
@@ -257,6 +275,11 @@ func (p Pool) Status() (Status, error) {
 		}
 		st.Waiters = append(st.Waiters, c)
 	}
+	onLanes, err := p.laneClaims()
+	if err != nil {
+		return st, err
+	}
+	st.Waiters = append(st.Waiters, onLanes...)
 	sort.Slice(st.Holders, func(i, j int) bool { return st.Holders[i].Slot < st.Holders[j].Slot })
 	sort.Slice(st.Waiters, func(i, j int) bool { return st.Waiters[i].Since.Before(st.Waiters[j].Since) })
 	return st, nil

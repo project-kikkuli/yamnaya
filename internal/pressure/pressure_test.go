@@ -1,8 +1,10 @@
 package pressure
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -231,15 +233,19 @@ func TestLinuxKernelRowsWithoutNiceValuesPreserveAncestryAndDoNotAbortTheSample(
 }
 
 func TestThrottleLinesTellWhetherTheNextSlotIsGranted(t *testing.T) {
-	holding := State{Active: true, Holding: true, Cause: "cpu", Reason: "cpu: 97% busy, agents use 80% of it", Changed: []Change{{Process: Process{PID: 7, CPU: 90, Command: "go"}, Owner: Owner{Goal: "g", Manager: "m"}}}}
+	reason := "cpu: 97% busy, agents use 80% of it"
+	holdingCPU := State{Active: true, Holding: true, Cause: "cpu", Reason: reason, Changed: []Change{{Process: Process{PID: 7, CPU: 90, Command: "go"}, Owner: Owner{Goal: "g", Manager: "m"}}}}
+	holdingMemory := holdingCPU
+	holdingMemory.Cause = "memory"
 	for _, c := range []struct {
 		name        string
 		state       State
 		held        int
 		line, slots string
 	}{
-		{"idle pool", holding, 0, "throttle (cpu): heavy agent jobs nice 15 (1 live), 0 slots held, next slot granted", "slots open"},
-		{"busy pool", holding, 2, "throttle (cpu): heavy agent jobs nice 15 (1 live), 2 slots held, new slots wait", "slots held"},
+		{"idle pool", holdingMemory, 0, "throttle (memory): heavy agent jobs nice 15 (1 live), 0 slots held, next slot granted", "slots open"},
+		{"busy pool", holdingMemory, 2, "throttle (memory): heavy agent jobs nice 15 (1 live), 2 slots held, new slots wait", "slots held"},
+		{"cpu leaves slots open", holdingCPU, 2, "throttle (cpu): heavy agent jobs nice 15 (1 live), 2 slots held, new slots open", "slots open"},
 		{"recovering", State{Active: true}, 2, "throttle: recovering, new slots open; clears after 3 minutes without agent pressure", ""},
 	} {
 		if got := c.state.Line(c.held); got != c.line {
@@ -248,5 +254,84 @@ func TestThrottleLinesTellWhetherTheNextSlotIsGranted(t *testing.T) {
 		if notices := c.state.Notices(c.held); c.slots != "" && (len(notices) != 1 || !strings.Contains(notices[0].Text, "cpu: 97% busy, agents use 80% of it; child jobs nice 15; "+c.slots+";")) {
 			t.Errorf("%s: notices %+v, want %q", c.name, notices, c.slots)
 		}
+	}
+}
+
+func TestEveryStrainRenicesAgentJobsButOnlyMemoryHoldsSlots(t *testing.T) {
+	at := time.Unix(1000, 0)
+	roots := map[int]Owner{10: {Session: "worker"}}
+	for _, c := range []struct {
+		name  string
+		load  load
+		cause string
+		slots bool
+	}{
+		{"cpu", agentsCPU, "cpu", false},
+		{"memory", agentsSwap, "memory", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var s State
+			var niced []int
+			set := func(p Process, nice int) error {
+				if nice != Nice {
+					t.Errorf("nice %d, want %d", nice, Nice)
+				}
+				niced = append(niced, p.PID)
+				return nil
+			}
+			for _, tick := range []time.Time{at, at.Add(HighFor)} {
+				if err := s.Sample(tick, c.load.host, c.load.procs(), roots, nil, set); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !s.Active || !s.Holding || s.Cause != c.cause || s.HoldsSlots() != c.slots {
+				t.Fatalf("active %v holding %v cause %q holds slots %v", s.Active, s.Holding, s.Cause, s.HoldsSlots())
+			}
+			if !reflect.DeepEqual(niced, []int{11}) {
+				t.Fatalf("niced %v, want the agent's job", niced)
+			}
+		})
+	}
+}
+
+// An older ym slot reads overload.json's Holding as "new slots wait", and an older ym serve writes it for either cause.
+func TestOverloadFileKeepsOlderSlotsAndOlderServesTruthful(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		written string
+		state   State
+		file    bool
+		holding bool
+		slots   bool
+	}{
+		{name: "cpu frees older waiters", state: State{Active: true, Holding: true, Cause: "cpu"}, holding: true},
+		{name: "memory holds older waiters", state: State{Active: true, Holding: true, Cause: "memory"}, file: true, holding: true, slots: true},
+		{name: "nothing holds anyone", state: State{Active: true}},
+		{name: "older serve under cpu", written: `{"Active":true,"Holding":true,"cause":"cpu"}`, file: true, holding: true},
+		{name: "older serve under memory", written: `{"Active":true,"Holding":true,"cause":"memory"}`, file: true, holding: true, slots: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "overload.json")
+			if c.written != "" {
+				if err := os.WriteFile(path, []byte(c.written), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := c.state.Save(dir); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var older struct{ Holding bool }
+			if err := json.Unmarshal(raw, &older); err != nil || older.Holding != c.file {
+				t.Fatalf("an older ym slot reads Holding %v, want %v: %v in %s", older.Holding, c.file, err, raw)
+			}
+			got, err := Read(dir)
+			if err != nil || got.Holding != c.holding || got.HoldsSlots() != c.slots {
+				t.Fatalf("read holding %v holds slots %v, want %v %v: %v", got.Holding, got.HoldsSlots(), c.holding, c.slots, err)
+			}
+		})
 	}
 }

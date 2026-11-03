@@ -106,23 +106,33 @@ type State struct {
 }
 
 func Read(dir string) (State, error) {
-	var s State
+	var file struct {
+		State
+		Strained *bool
+	}
 	raw, err := os.ReadFile(filepath.Join(dir, "overload.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
+		return file.State, nil
 	}
 	if err != nil {
-		return s, err
+		return file.State, err
 	}
-	err = json.Unmarshal(raw, &s)
-	return s, err
+	err = json.Unmarshal(raw, &file)
+	if file.Strained != nil {
+		file.Holding = *file.Strained
+	}
+	return file.State, err
 }
 
 func (s State) Save(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(s)
+	// A ym slot started before CPU stopped holding slots obeys the file's Holding, so that key says only whether slots wait.
+	raw, err := json.Marshal(struct {
+		State
+		Holding, Strained bool
+	}{s, s.HoldsSlots(), s.Holding})
 	if err != nil {
 		return err
 	}
@@ -133,6 +143,10 @@ func (s State) Save(dir string) error {
 	return os.Rename(path+".new", path)
 }
 
+// HoldsSlots reports whether new slots wait: only for memory, which the scheduler cannot share out. The slot cap and
+// niceness already bound what jobs take of the processor.
+func (s State) HoldsSlots() bool { return s.Holding && s.Cause == "memory" }
+
 // Line describes the throttle given how many slots are held; with none held the next slot is still granted.
 func (s State) Line(held int) string {
 	head := "throttle:"
@@ -140,6 +154,8 @@ func (s State) Line(held int) string {
 		head = "throttle (" + s.Cause + "):"
 	}
 	switch {
+	case s.Holding && !s.HoldsSlots():
+		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), %d slots held, new slots open", head, len(s.Changed), held)
 	case s.Holding && held == 0:
 		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), 0 slots held, next slot granted", head, len(s.Changed))
 	case s.Holding:
@@ -333,7 +349,7 @@ func (s State) Notices(held int) []Notice {
 			top = append(top, fmt.Sprintf("%s pid %d %.0f%%", filepath.Base(c.Command), c.PID, c.CPU))
 		}
 		slots := "slots open"
-		if s.Holding && held > 0 {
+		if s.HoldsSlots() && held > 0 {
 			slots = "slots held"
 		}
 		out = append(out, Notice{Manager: changes[0].Manager, Goal: goal, Text: fmt.Sprintf("%s; child jobs nice 15; %s; top: %s", s.Reason, slots, strings.Join(top, ", "))})
