@@ -174,10 +174,10 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var build func(core.Manager, int, map[string]bool) briefNode
 	build = func(m core.Manager, depth int, seen map[string]bool) briefNode {
 		seen[m.ID] = true
-		n := briefNode{ID: m.ID, Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: "chief", Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
+		n := briefNode{ID: m.Shown(), Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: "chief", Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
 			Fresh: fresh[m.ID], Now: time.Now()}
 		if g, ok := o.Goals[m.GoalID]; ok {
-			n.Kind, n.Title, n.Repo = g.ID, g.Ask, g.Repo
+			n.Kind, n.Title, n.Repo = g.Shown(), g.Ask, g.Repo
 			if g.ArtifactURL != "" {
 				n.Artifact = g.ArtifactURL
 			}
@@ -299,13 +299,13 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 	rb := hosts.Boards()[0]
 	id := strings.ToLower(ref)
 	for _, g := range rb.Goals {
-		if g.ID == id {
+		if g.ID == id || g.Name == id {
 			id = g.ManagerID
 		}
 	}
 	var m *core.Manager
 	for i := range rb.Managers {
-		if rb.Managers[i].ID == id {
+		if rb.Managers[i].ID == id || m == nil && rb.Managers[i].Name == id {
 			m = &rb.Managers[i]
 		}
 	}
@@ -313,11 +313,11 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 		http.Error(w, fmt.Sprintf("%s: no goal or chief %s on %s as of %s", rb.StateAt(time.Now()), ref, host, rb.At.Local().Format(time.Kitchen)), http.StatusNotFound)
 		return
 	}
-	n := briefNode{ID: core.RemoteKey(host, m.ID), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
+	n := briefNode{ID: core.RemoteKey(host, m.Shown()), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
 		Fresh: rb.Fresh[m.ID], Now: time.Now()}
 	for _, g := range rb.Goals {
 		if g.ID == m.GoalID {
-			n.Kind, n.Title, n.Repo = core.RemoteKey(host, g.ID), g.Ask, g.Repo
+			n.Kind, n.Title, n.Repo = core.RemoteKey(host, g.Shown()), g.Ask, g.Repo
 			n.page = g.BriefPage
 			if g.ArtifactURL != "" {
 				n.Artifact = g.ArtifactURL
@@ -380,15 +380,8 @@ func directHost(host string) bool {
 }
 
 func findManager(o core.Org, ref string) (core.Manager, bool) {
-	ref = strings.ToLower(ref)
-	if m, ok := o.Managers[ref]; ok {
-		return m, true
-	}
-	if g, ok := o.Goals[ref]; ok {
-		m, ok := o.Managers[g.ManagerID]
-		return m, ok
-	}
-	return core.Manager{}, false
+	m, err := o.Lookup(ref)
+	return m, err == nil
 }
 
 func (s *briefSite) render(w http.ResponseWriter, t *template.Template, data any) {

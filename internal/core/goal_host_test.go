@@ -72,7 +72,7 @@ func TestAGoalStartedOnAHostReachedOnlyByRelayRunsThereUnderTheRequesterOrTellsI
 			if err != nil {
 				t.Fatal(err)
 			}
-			g, err := f.b.core.NewGoalOn(host, "ship the fix", tc.repo, "", chief.ID, requester)
+			g, err := f.b.core.NewGoalOn(host, "", "ship the fix", tc.repo, "", chief.ID, requester)
 			if err != nil || !strings.Contains(g.Evidence, "queued for a") {
 				t.Fatalf("NewGoalOn = %+v, %v; want the goal queued for a", g, err)
 			}

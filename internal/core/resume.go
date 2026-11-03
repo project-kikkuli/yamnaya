@@ -111,7 +111,7 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 		c.Store.SaveManager(m)
 		c.note(resumeNote{who: who, session: m.Session, failure: err.Error(), settled: true})
 		if g, ok := o.Goals[m.GoalID]; ok {
-			c.RecordGoalEvent(g.ID, EventResumeFailed, fmt.Sprintf("%s could not be resumed in session %s: %v", who, Short(m.Session), err),
+			c.RecordGoalEvent(g.Shown(), EventResumeFailed, fmt.Sprintf("%s could not be resumed in session %s: %v", who, Short(m.Session), err),
 				"resume-failed\x00"+m.Session+"\x00"+err.Error())
 		}
 		return m, true
@@ -124,9 +124,9 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 
 func managerWho(m Manager) string {
 	if m.Role == RoleChief {
-		return "chief " + m.ID
+		return "chief " + m.Shown()
 	}
-	return "manager " + m.ID
+	return "manager " + m.Shown()
 }
 
 // GoalWork is the active manager or chief whose work a session is, directly or through the sessions that spawned it, or that runs

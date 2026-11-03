@@ -107,6 +107,11 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		docs := &docSweeper{dir: dir, every: 3 * time.Minute, recheck: 15 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
 		if discover && !once {
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
+			go func() {
+				if n, err := e.core.NameUnnamed(); err != nil || n > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "named %d goals and chiefs: %v\n", n, err)
+				}
+			}()
 		}
 		last := time.Now()
 		// stale is the last warning logged that a newer ym is first on PATH, so each is logged once.

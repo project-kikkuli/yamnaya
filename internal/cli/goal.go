@@ -18,10 +18,10 @@ import (
 )
 
 func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo, selected, under, host string
+	var repo, selected, under, host, name string
 	var useCodex bool
 	cmd := &cobra.Command{
-		Use:   "goal [--codex] [--host HOST] [--repo NAME|PATH] [--under CHIEF] <ask>",
+		Use:   "goal [--codex] [--host HOST] [--repo NAME|PATH] [--under CHIEF] [--name NAME] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -41,7 +41,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 					return err
 				}
 				if to != e.core.SelfName() {
-					g, err := e.core.NewGoalOn(to, args[0], repo, harnessFlag(useCodex), under, requester, selected)
+					g, err := e.core.NewGoalOn(to, name, args[0], repo, harnessFlag(useCodex), under, requester, selected)
 					if err != nil {
 						return err
 					}
@@ -53,7 +53,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			g, m, err := e.core.NewGoalUnder(args[0], dir, harnessFlag(useCodex), under, selected)
+			g, m, err := e.core.NewGoalNamed(name, args[0], dir, harnessFlag(useCodex), under, selected)
 			if err != nil {
 				return err
 			}
@@ -65,10 +65,10 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 				return err
 			}
 			if m.LastError != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but its manager %s did not start: %s; ym serve retries with backoff\n", g.ID, m.ID, m.LastError)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but its manager did not start: %s; ym serve retries with backoff\n", g.Shown(), m.LastError)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: manager %s runs it as %s\nbrief: %s\nopen: o on the board, or ym open %s\n", g.ID, m.ID, core.Short(m.Session), g.BriefPath, m.Session)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: its manager runs as %s\nbrief: %s\nopen: o on the board, or ym open %s\n", g.Shown(), core.Short(m.Session), g.BriefPath, m.Session)
 			return nil
 		}),
 	}
@@ -76,10 +76,11 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile for the manager and verifiers")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "run the manager, and the goal's verifiers, on codex instead of claude")
 	cmd.Flags().StringVar(&under, "under", "", "chief the goal's manager reports to, or host/chief on another host (default: the calling chief, else you)")
+	cmd.Flags().StringVar(&name, "name", "", "the goal's name, kebab-case (default: a short name made from the ask)")
 	cmd.Flags().StringVar(&host, "host", "", "start the goal on this host, by name or @nickname, in the repository --repo names there; one ym reaches only through relays gets it when it next syncs")
 	cmd.AddCommand(goalListCmd(hosts), goalShowCmd(hosts), goalDoneCmd(with), goalVerdictCmd(with), goalArtifactCmd(with), goalSendCmd(hosts),
 		goalRelaunchCmd(hosts), goalAckCmd(hosts), goalAuthorityCmd(with), goalContextCapCmd(with), goalUpdateCmd(with), goalWakeCmd(with), goalFeedCmd(hosts), goalEventCmd(hosts),
-		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts))
+		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts), goalRenameCmd(with))
 	return cmd
 }
 
@@ -166,8 +167,8 @@ func treeRows(b core.Board, under string) []goalRow {
 	var walk func(core.Node, int)
 	walk = func(n core.Node, depth int) {
 		m := n.Manager
-		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Name, Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Depth: depth,
-			BriefURL: core.BriefURL(m.ID), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host, HostState: away[m.Host]}
+		r := goalRow{ID: m.ID, Role: m.Role, Name: m.Shown(), Parent: m.ParentID, State: n.Standing, Session: m.Session, Brief: m.BriefPath, Artifact: m.ArtifactURL, Depth: depth,
+			BriefURL: core.BriefURL(m.Shown()), BriefStale: n.Fresh.Stale(), Adopted: true, fresh: n.Fresh, Host: m.Host, HostState: away[m.Host]}
 		if m.Host != "" {
 			r.BriefURL = ""
 		}
@@ -199,6 +200,7 @@ func treeRows(b core.Board, under string) []goalRow {
 		}
 		if n.Goal != nil {
 			r.Goal, r.Ask, r.Brief, r.Artifact = n.Goal.ID, n.Goal.Ask, n.Goal.BriefPath, n.Goal.ArtifactURL
+			r.Name = n.Goal.Shown()
 		}
 		out = append(out, r)
 		for _, c := range n.Children {
@@ -253,12 +255,9 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 func printGoalRow(w io.Writer, r goalRow) {
 	what := r.Ask
 	if r.Role == core.RoleChief {
-		what = "chief " + r.Name
+		what = "chief"
 	}
-	id := r.ID
-	if r.Goal != "" {
-		id = r.Goal + " " + r.ID
-	}
+	id := r.Name
 	indent := strings.Repeat("  ", r.Depth)
 	status := []string{r.fresh.String()}
 	if r.Host != "" {
@@ -371,7 +370,7 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return nil
 			}
 			for _, r := range treeRows(b, "") {
-				if strings.EqualFold(r.ID, args[0]) || strings.EqualFold(r.Goal, args[0]) {
+				if strings.EqualFold(r.ID, args[0]) || strings.EqualFold(r.Goal, args[0]) || r.Name == strings.ToLower(args[0]) {
 					r.Depth = 0
 					printGoalRow(cmd.OutOrStdout(), r)
 					if r.Artifact != "" {
@@ -390,7 +389,7 @@ func goalShowCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 						}
 					}
 					if r.Revision > 0 {
-						fmt.Fprintf(cmd.OutOrStdout(), "  plan revision %d, %s; ym goal context %s prints it\n", r.Revision, map[bool]string{true: "adopted", false: "not adopted"}[r.Adopted], r.ID)
+						fmt.Fprintf(cmd.OutOrStdout(), "  plan revision %d, %s; ym goal context %s prints it\n", r.Revision, map[bool]string{true: "adopted", false: "not adopted"}[r.Adopted], r.Name)
 					}
 					if r.fresh.Brief == nil {
 						if brief, err := os.ReadFile(r.Brief); err == nil {
@@ -555,6 +554,22 @@ func goalRelaunchCmd(with func(runFunc) func(*cobra.Command, []string) error) *c
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s relaunched as %s\n", m.ID, core.Short(m.Session))
+			return nil
+		}),
+	}
+}
+
+func goalRenameCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <goal|chief> <name>",
+		Short: "Rename a goal or chief, as N does on the board; its old name and id stop showing but its id still names it",
+		Args:  cobra.ExactArgs(2),
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			old, err := e.core.Rename(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s is now %s\n", old, args[1])
 			return nil
 		}),
 	}
@@ -797,7 +812,7 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return err
 			}
 			if len(events) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), g.ID+": nothing yet")
+				fmt.Fprintln(cmd.OutOrStdout(), g.Shown()+": nothing yet")
 			}
 			out := e.nicked(cmd.OutOrStdout())
 			for _, ev := range events {

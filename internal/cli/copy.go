@@ -58,7 +58,7 @@ func copyText(e *env, kind, ref string, revision int) (text, what string, err er
 	case "context":
 		m, text, rev, err := e.core.Context(ref)
 		if err != nil || revision == 0 || revision == rev {
-			return text, fmt.Sprintf("%s's context revision %d", m.ID, rev), err
+			return text, fmt.Sprintf("%s's context revision %d", m.Shown(), rev), err
 		}
 		steers, err := e.core.Store.Steers(m.ID)
 		if err != nil {
@@ -66,10 +66,10 @@ func copyText(e *env, kind, ref string, revision int) (text, what string, err er
 		}
 		for _, st := range steers {
 			if st.Revision == revision {
-				return st.Text, fmt.Sprintf("%s's context revision %d", m.ID, revision), nil
+				return st.Text, fmt.Sprintf("%s's context revision %d", m.Shown(), revision), nil
 			}
 		}
-		return "", "", fmt.Errorf("%s has no context revision %d: %w", m.ID, revision, core.ErrNotFound)
+		return "", "", fmt.Errorf("%s has no context revision %d: %w", m.Shown(), revision, core.ErrNotFound)
 	case "item":
 		b, err := e.core.Board()
 		if err != nil {

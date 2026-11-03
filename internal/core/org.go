@@ -33,17 +33,19 @@ type Goal struct {
 	WorkRevision       int64
 	ActiveVerification int64
 	ID                 string
-	Ask                string
-	Repo               string
-	ManagerID          string
-	State              string
-	Evidence           string
-	Summary            string
-	BriefPath          string
-	ArtifactURL        string
-	LastMovedAt        time.Time
-	CreatedAt          time.Time
-	DoneAt             time.Time
+	// Name is how the goal shows, unique among this host's goals and chiefs; its id stays its key.
+	Name        string
+	Ask         string
+	Repo        string
+	ManagerID   string
+	State       string
+	Evidence    string
+	Summary     string
+	BriefPath   string
+	ArtifactURL string
+	LastMovedAt time.Time
+	CreatedAt   time.Time
+	DoneAt      time.Time
 	// AckedAt is when the owner cleared the goal: a stuck one from the queue, a done one from the goal tree.
 	AckedAt time.Time
 	// Host is the host the goal runs on when that is not this one.
@@ -87,6 +89,7 @@ type Manager struct {
 const orgSchema = `
 CREATE TABLE IF NOT EXISTS ym_goals (
 	num INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL DEFAULT '',
 	ask TEXT NOT NULL,
 	repo TEXT NOT NULL DEFAULT '',
 	manager_id TEXT NOT NULL DEFAULT '',
@@ -225,8 +228,8 @@ func (s *Store) AddGoal(g Goal) (Goal, error) {
 		g.State = GoalActive
 	}
 	var num int64
-	err := s.db.QueryRow(`INSERT INTO ym_goals (ask, repo, state, brief_path, last_moved_at, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING num`,
-		g.Ask, g.Repo, g.State, g.BriefPath, stamp(g.CreatedAt), stamp(g.CreatedAt)).Scan(&num)
+	err := s.db.QueryRow(`INSERT INTO ym_goals (name, ask, repo, state, brief_path, last_moved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING num`,
+		g.Name, g.Ask, g.Repo, g.State, g.BriefPath, stamp(g.CreatedAt), stamp(g.CreatedAt)).Scan(&num)
 	g.ID, g.LastMovedAt = goalID(num), g.CreatedAt
 	return g, err
 }
@@ -242,8 +245,8 @@ func (s *Store) SaveGoal(g Goal) error {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_goals SET version=version+1, ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=? AND version=?`,
-		g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num, g.Version)
+	res, err := tx.Exec(`UPDATE ym_goals SET version=version+1, name=?, ask=?, repo=?, manager_id=?, state=?, evidence=?, summary=?, brief_path=?, artifact_url=?, last_moved_at=?, done_at=?, acked_at=? WHERE num=? AND version=?`,
+		g.Name, g.Ask, g.Repo, g.ManagerID, g.State, g.Evidence, g.Summary, g.BriefPath, g.ArtifactURL, stamp(g.LastMovedAt), stamp(g.DoneAt), stamp(g.AckedAt), num, g.Version)
 	if err = changed(res, err); err != nil {
 		return err
 	}
@@ -261,13 +264,13 @@ func (s *Store) SaveGoal(g Goal) error {
 	return tx.Commit()
 }
 
-const goalCols = `num, ask, repo, manager_id, state, evidence, summary, brief_path, artifact_url, last_moved_at, created_at, done_at, acked_at, version, work_revision, active_verification`
+const goalCols = `num, name, ask, repo, manager_id, state, evidence, summary, brief_path, artifact_url, last_moved_at, created_at, done_at, acked_at, version, work_revision, active_verification`
 
 func scanGoal(row interface{ Scan(...any) error }) (Goal, error) {
 	var g Goal
 	var num int64
 	var moved, created, done, acked sql.NullString
-	err := row.Scan(&num, &g.Ask, &g.Repo, &g.ManagerID, &g.State, &g.Evidence, &g.Summary, &g.BriefPath, &g.ArtifactURL, &moved, &created, &done, &acked, &g.Version, &g.WorkRevision, &g.ActiveVerification)
+	err := row.Scan(&num, &g.Name, &g.Ask, &g.Repo, &g.ManagerID, &g.State, &g.Evidence, &g.Summary, &g.BriefPath, &g.ArtifactURL, &moved, &created, &done, &acked, &g.Version, &g.WorkRevision, &g.ActiveVerification)
 	g.ID = goalID(num)
 	g.LastMovedAt, g.CreatedAt, g.DoneAt, g.AckedAt = parseTime(moved), parseTime(created), parseTime(done), parseTime(acked)
 	return g, err

@@ -143,7 +143,7 @@ func (c *Core) NoticeDrift(b Board) error {
 		key := s.Key()
 		who := "agent " + Short(key)
 		if m, isManager := o.ManagerOf(key); isManager {
-			who = "manager " + m.ID
+			who = "manager " + m.Shown()
 		} else if s.Title != "" {
 			who += " (" + oneLine(s.Title) + ")"
 		}
