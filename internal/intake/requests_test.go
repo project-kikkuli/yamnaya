@@ -72,13 +72,14 @@ func TestAuthoredListsEveryOpenPullRequestTheOwnerWroteOrFailsWhole(t *testing.T
 	for _, tc := range []struct {
 		name, page string
 		want       int
-		fail       bool
+		fail, exit bool
 	}{
-		{"two", `{"total_count":2,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}},{"title":"B","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/c/d/pull/2"}}]}`, 2, false},
-		{"two pages", `{"total_count":2,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}` + "\n" + `{"total_count":2,"items":[{"title":"B","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/c/d/pull/2"}}]}`, 2, false},
-		{"none", `{"total_count":0,"items":[]}`, 0, false},
-		{"incomplete", `{"total_count":2,"incomplete_results":true,"items":[]}`, 0, true},
-		{"short page", `{"total_count":3,"items":[{"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}`, 0, true},
+		{"two", `{"total_count":2,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}},{"title":"B","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/c/d/pull/2"}}]}`, 2, false, false},
+		{"two pages", `{"total_count":2,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}` + "\n" + `{"total_count":2,"items":[{"title":"B","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/c/d/pull/2"}}]}`, 2, false, false},
+		{"none", `{"total_count":0,"items":[]}`, 0, false, false},
+		{"incomplete", `{"total_count":2,"incomplete_results":true,"items":[]}`, 0, true, false},
+		{"exit after first page", `{"total_count":1,"items":[{"title":"A","user":{"login":"owner"},"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}`, 0, true, true},
+		{"short page", `{"total_count":3,"items":[{"pull_request":{"html_url":"https://github.com/a/b/pull/1"}}]}`, 0, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := Fetcher{Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -91,6 +92,9 @@ func TestAuthoredListsEveryOpenPullRequestTheOwnerWroteOrFailsWhole(t *testing.T
 				endpoint, err := url.Parse(args[len(args)-1])
 				if err != nil || endpoint.Query().Get("q") != "is:pr is:open author:owner" {
 					t.Fatalf("search is not the owner's open pull requests: %v", args)
+				}
+				if tc.exit {
+					return []byte(tc.page), errors.New("exit status 1")
 				}
 				return []byte(tc.page), nil
 			}}
