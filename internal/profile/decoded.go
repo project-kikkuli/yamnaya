@@ -43,12 +43,13 @@ func readDecoded[T any](path string, decode func([]byte) (T, error)) (T, error) 
 	if value, ok, err := unchanged[T](path, info); ok {
 		return value, err
 	}
+	settled := time.Since(info.ModTime()) > settledAfter
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return zero, err
 	}
 	value, err := decode(b)
-	if time.Since(info.ModTime()) > settledAfter {
+	if settled {
 		decodedMu.Lock()
 		decodedFiles[path] = decodedFile{info: info, value: value, err: err}
 		decodedMu.Unlock()
