@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -79,23 +80,14 @@ func Load(dir string) ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(path(dir))
+	saved, err := readDecoded(path(dir), decodeSaved)
 	if errors.Is(err, os.ErrNotExist) {
 		return out, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var saved []Profile
-	if err = json.Unmarshal(b, &saved); err != nil {
-		return nil, fmt.Errorf("profiles: %w", err)
-	}
-	for _, p := range saved {
-		if err := validate(p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
+	out = append(out, saved...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Harness != out[j].Harness {
 			return out[i].Harness < out[j].Harness
@@ -116,6 +108,31 @@ func Load(dir string) ([]Profile, error) {
 		}
 	}
 	return out, nil
+}
+func decodeSaved(b []byte) ([]Profile, error) {
+	var saved []Profile
+	if err := json.Unmarshal(b, &saved); err != nil {
+		return nil, fmt.Errorf("profiles: %w", err)
+	}
+	for _, p := range saved {
+		if err := validate(p); err != nil {
+			return nil, err
+		}
+	}
+	return saved, nil
+}
+func decodeDefaults(b []byte) ([]Profile, error) {
+	var ps []Profile
+	err := json.Unmarshal(b, &ps)
+	return ps, err
+}
+func withAccounts(saved []Profile) []Profile {
+	ps := slices.Clone(saved)
+	for i := range ps {
+		ps[i].AuthOverride = ps[i].AuthOverride || authEnvironment(ps[i].Harness)
+		ps[i].Account = Identity(ps[i])
+	}
+	return ps
 }
 func Find(ps []Profile, harness, id string) (Profile, error) {
 	for _, p := range ps {
@@ -301,16 +318,20 @@ func (p Profile) Environment(base []string) []string {
 	return append(out, "YAMNAYA_PROFILE="+p.ID, "YAMNAYA_ACCOUNT="+p.Account)
 }
 func defaultsAt(dir string) ([]Profile, error) {
-	defaults := Defaults()
 	if dir == "" {
-		return defaults, nil
+		return Defaults(), nil
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return defaults, nil
+		return Defaults(), nil
 	} else if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, "profile-defaults.json")
+	if info, err := os.Stat(path); err == nil {
+		if ps, ok, err := unchanged[[]Profile](path, info); ok && err == nil {
+			return withAccounts(ps), nil
+		}
+	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
@@ -319,21 +340,14 @@ func defaultsAt(dir string) ([]Profile, error) {
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(path)
+	ps, err := readDecoded(path, decodeDefaults)
 	if err == nil {
-		var ps []Profile
-		if err = json.Unmarshal(b, &ps); err != nil {
-			return nil, err
-		}
-		for i := range ps {
-			ps[i].AuthOverride = ps[i].AuthOverride || authEnvironment(ps[i].Harness)
-			ps[i].Account = Identity(ps[i])
-		}
-		return ps, nil
+		return withAccounts(ps), nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	defaults := Defaults()
 	if id := os.Getenv("YAMNAYA_PROFILE"); id != "" && id != "default" {
 		home, _ := os.UserHomeDir()
 		for i := range defaults {
@@ -354,7 +368,7 @@ func defaultsAt(dir string) ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err = json.Marshal(defaults)
+	b, err := json.Marshal(defaults)
 	if err == nil {
 		_, err = f.Write(b)
 	}

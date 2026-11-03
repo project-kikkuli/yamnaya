@@ -17,6 +17,27 @@ var subscriptionOverrides = []string{
 	"CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE", "CODEX_APP_SERVER_LOGIN_CLIENT_ID",
 }
 
+type claudeSettings struct {
+	helper            string
+	env               map[string]string
+	badHelper, badEnv bool
+}
+
+func decodeClaudeSettings(b []byte) (claudeSettings, error) {
+	var settings claudeSettings
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return settings, err
+	}
+	if raw := doc["apiKeyHelper"]; len(raw) > 0 {
+		settings.badHelper = json.Unmarshal(raw, &settings.helper) != nil
+	}
+	if raw := doc["env"]; len(raw) > 0 {
+		settings.badEnv = json.Unmarshal(raw, &settings.env) != nil
+	}
+	return settings, nil
+}
+
 func (p Profile) ValidateSubscription(cwd string) error {
 	if err := p.DefaultConstraint(); err != nil {
 		return err
@@ -40,40 +61,30 @@ func (p Profile) ValidateSubscription(cwd string) error {
 		paths = append(paths, filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(cwd, ".claude", "settings.local.json"))
 	}
 	for _, path := range paths {
-		b, err := os.ReadFile(path)
+		settings, err := readDecoded(path, decodeClaudeSettings)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		var doc map[string]json.RawMessage
-		if err = json.Unmarshal(b, &doc); err != nil {
-			return err
+		if settings.badHelper {
+			return fmt.Errorf("profile %s has an invalid apiKeyHelper setting", p.ID)
 		}
-		var helper string
-		if raw := doc["apiKeyHelper"]; len(raw) > 0 {
-			if err = json.Unmarshal(raw, &helper); err != nil {
-				return fmt.Errorf("profile %s has an invalid apiKeyHelper setting", p.ID)
-			}
-		}
-		if helper != "" {
+		if settings.helper != "" {
 			return fmt.Errorf("profile %s uses apiKeyHelper instead of its subscription", p.ID)
 		}
-		var env map[string]string
-		if raw := doc["env"]; len(raw) > 0 {
-			if err = json.Unmarshal(raw, &env); err != nil {
-				return fmt.Errorf("profile %s settings env must contain string values", p.ID)
-			}
+		if settings.badEnv {
+			return fmt.Errorf("profile %s settings env must contain string values", p.ID)
 		}
 		{
 			for _, k := range subscriptionOverrides {
-				if v, ok := env[k]; ok && v != "" {
+				if v, ok := settings.env[k]; ok && v != "" {
 					return fmt.Errorf("profile %s settings override subscription authentication (%s)", p.ID, k)
 				}
 			}
 			for _, k := range []string{"CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"} {
-				if v, ok := env[k]; ok && v != p.Root {
+				if v, ok := settings.env[k]; ok && v != p.Root {
 					return fmt.Errorf("profile %s settings redirect %s", p.ID, k)
 				}
 			}

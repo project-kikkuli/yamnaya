@@ -78,6 +78,9 @@ func (h *profileHarness) all() ([]profile.Profile, map[string]core.Harness) {
 }
 func (h *profileHarness) forProc(p proc.Proc) (profile.Profile, core.Harness) {
 	ps, as := h.all()
+	return h.match(p, ps, as)
+}
+func (h *profileHarness) match(p proc.Proc, ps []profile.Profile, as map[string]core.Harness) (profile.Profile, core.Harness) {
 	root := proc.ConfigRoot(p.PID, profile.EnvKey(h.name))
 	if root != "" {
 		if real, err := filepath.EvalSymlinks(root); err == nil {
@@ -113,14 +116,14 @@ func (h *profileHarness) Discover(ps []proc.Proc) []core.Session {
 	groups := map[string][]proc.Proc{}
 	profiles := map[string]profile.Profile{}
 	adapters := map[string]core.Harness{}
+	all, as := h.all()
 	for _, p := range ps {
-		q, a := h.forProc(p)
+		q, a := h.match(p, all, as)
 		groups[q.ID] = append(groups[q.ID], p)
 		profiles[q.ID] = q
 		adapters[q.ID] = a
 	}
 	// Claude's background jobs also need their root's discovery even without a terminal process.
-	all, as := h.all()
 	for _, q := range all {
 		if q.Harness == h.name {
 			profiles[q.ID] = q

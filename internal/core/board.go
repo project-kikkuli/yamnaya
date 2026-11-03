@@ -570,10 +570,12 @@ func (c *Core) Board() (Board, error) {
 	if err != nil {
 		return b, err
 	}
+	b.indexSessions()
+	byProject := b.vibesByProject(vibes)
 	for i := range b.Projects {
 		p := &b.Projects[i]
 		p.Phases = phases[p.Key]
-		p.Vibes = b.VibesOf(vibes, p.Key)
+		p.Vibes = byProject[p.Key]
 		for j := range p.Sessions {
 			p.Sessions[j].Project = p.Key
 		}

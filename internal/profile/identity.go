@@ -21,25 +21,27 @@ func Identity(p Profile) string {
 		if _, err := os.Stat(filepath.Join(p.Root, ".config.json")); err == nil {
 			path = filepath.Join(p.Root, ".config.json")
 		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return ""
-		}
-		var d struct {
-			Account struct {
-				User string `json:"accountUuid"`
-				Org  string `json:"organizationUuid"`
-			} `json:"oauthAccount"`
-		}
-		if json.Unmarshal(b, &d) != nil || d.Account.User == "" || d.Account.Org == "" {
-			return ""
-		}
-		return "claude/" + d.Account.User + "/" + d.Account.Org
+		account, _ := readDecoded(path, claudeAccount)
+		return account
 	}
-	b, err := os.ReadFile(filepath.Join(p.Root, "auth.json"))
-	if err != nil {
-		return ""
+	account, _ := readDecoded(filepath.Join(p.Root, "auth.json"), codexAccount)
+	return account
+}
+
+func claudeAccount(b []byte) (string, error) {
+	var d struct {
+		Account struct {
+			User string `json:"accountUuid"`
+			Org  string `json:"organizationUuid"`
+		} `json:"oauthAccount"`
 	}
+	if json.Unmarshal(b, &d) != nil || d.Account.User == "" || d.Account.Org == "" {
+		return "", nil
+	}
+	return "claude/" + d.Account.User + "/" + d.Account.Org, nil
+}
+
+func codexAccount(b []byte) (string, error) {
 	var d struct {
 		Tokens struct {
 			ID      string `json:"id_token"`
@@ -47,15 +49,15 @@ func Identity(p Profile) string {
 		} `json:"tokens"`
 	}
 	if json.Unmarshal(b, &d) != nil {
-		return ""
+		return "", nil
 	}
 	parts := strings.Split(d.Tokens.ID, ".")
 	if len(parts) != 3 {
-		return ""
+		return "", nil
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	var claims struct {
 		Auth struct {
@@ -65,7 +67,7 @@ func Identity(p Profile) string {
 		} `json:"https://api.openai.com/auth"`
 	}
 	if json.Unmarshal(raw, &claims) != nil {
-		return ""
+		return "", nil
 	}
 	account := d.Tokens.Account
 	if account == "" {
@@ -75,7 +77,7 @@ func Identity(p Profile) string {
 		claims.Auth.User = claims.Auth.Fallback
 	}
 	if claims.Auth.User == "" || account == "" {
-		return ""
+		return "", nil
 	}
-	return "codex/" + claims.Auth.User + "/" + account
+	return "codex/" + claims.Auth.User + "/" + account, nil
 }

@@ -21,15 +21,16 @@ type codexConfig struct {
 }
 
 func readCodexConfig(root string) (codexConfig, error) {
-	var config codexConfig
-	b, err := os.ReadFile(filepath.Join(root, "config.toml"))
+	config, err := readDecoded(filepath.Join(root, "config.toml"), decodeCodexConfig)
 	if os.IsNotExist(err) {
-		return config, nil
+		return codexConfig{}, nil
 	}
-	if err != nil {
-		return config, err
-	}
-	if err = toml.Unmarshal(b, &config); err != nil {
+	return config, err
+}
+
+func decodeCodexConfig(b []byte) (codexConfig, error) {
+	var config codexConfig
+	if err := toml.Unmarshal(b, &config); err != nil {
 		return config, fmt.Errorf("native config.toml is invalid")
 	}
 	if selected, ok := config.Profiles[config.Profile]; ok {

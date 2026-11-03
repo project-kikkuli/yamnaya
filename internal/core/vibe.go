@@ -91,11 +91,14 @@ func (v Vibe) on() string {
 
 // VibesOf is the vibes set on a project, newest first.
 func (b Board) VibesOf(all []Vibe, project string) []Vibe {
-	var out []Vibe
+	return b.vibesByProject(all)[project]
+}
+
+func (b Board) vibesByProject(all []Vibe) map[string][]Vibe {
+	out := map[string][]Vibe{}
 	for _, v := range all {
-		if b.ProjectOf(v.on()) == project {
-			out = append(out, v)
-		}
+		project := b.ProjectOf(v.on())
+		out[project] = append(out[project], v)
 	}
 	return out
 }

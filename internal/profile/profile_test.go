@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func isolated(t *testing.T) string {
@@ -251,5 +253,167 @@ func TestClaudeDefaultConstraintsDoNotDisableNamedProfiles(t *testing.T) {
 				t.Fatal("Claude default disabled Codex")
 			}
 		})
+	}
+}
+
+func TestLoadSeesEveryProfileFileChange(t *testing.T) {
+	claudeDoc := func(user string) string {
+		return `{"oauthAccount":{"accountUuid":"` + user + `","organizationUuid":"org"}}`
+	}
+	authDoc := func(user string) string {
+		claims, _ := json.Marshal(map[string]any{"https://api.openai.com/auth": map[string]string{"chatgpt_user_id": user, "chatgpt_account_id": "acct"}})
+		return `{"tokens":{"id_token":"x.` + base64.RawURLEncoding.EncodeToString(claims) + `.y"}}`
+	}
+	account := func(harness, id string) func([]Profile) string {
+		return func(ps []Profile) string {
+			p, err := Find(ps, harness, id)
+			if err != nil {
+				return ""
+			}
+			return p.Account
+		}
+	}
+	label := func(ps []Profile) string {
+		p, err := Find(ps, "claude", "work")
+		if err != nil {
+			return ""
+		}
+		return p.Label
+	}
+	work := func(dir, lbl string) string {
+		b, _ := json.Marshal([]Profile{{Harness: "claude", ID: "work", Label: lbl, Root: filepath.Join(filepath.Dir(dir), "work")}})
+		return string(b)
+	}
+	cases := []struct {
+		name         string
+		file         func(dir string) string
+		before       func(dir string) string
+		after        func(dir string) string
+		read         func([]Profile) string
+		seenB, seenA string
+	}{
+		{
+			name:   "native login",
+			file:   func(dir string) string { return filepath.Join(filepath.Dir(dir), "work", ".claude.json") },
+			before: func(string) string { return claudeDoc("aaaa") },
+			after:  func(string) string { return claudeDoc("bbbb") },
+			read:   account("claude", "work"),
+			seenB:  "claude/aaaa/org", seenA: "claude/bbbb/org",
+		},
+		{
+			name:   "codex login",
+			file:   func(dir string) string { return filepath.Join(filepath.Dir(dir), "default-codex", "auth.json") },
+			before: func(string) string { return authDoc("aaaa") },
+			after:  func(string) string { return authDoc("bbbb") },
+			read:   account("codex", "default"),
+			seenB:  "codex/aaaa/acct", seenA: "codex/bbbb/acct",
+		},
+		{
+			name:   "settings take a login away",
+			file:   func(dir string) string { return filepath.Join(filepath.Dir(dir), "default-claude", "settings.json") },
+			before: func(string) string { return `{"env":{"NOTHING_HERE":"xxxxxxxx"}}` },
+			after:  func(string) string { return `{"env":{"ANTHROPIC_API_KEY":"xxxxx"}}` },
+			read:   account("claude", "default"),
+			seenB:  "claude/dflt/org", seenA: "",
+		},
+		{
+			name:   "profile list",
+			file:   path,
+			before: func(dir string) string { return work(dir, "aaaa") },
+			after:  func(dir string) string { return work(dir, "bbbb") },
+			read:   label,
+			seenB:  "aaaa", seenA: "bbbb",
+		},
+	}
+	for _, c := range cases {
+		for _, change := range []struct {
+			name string
+			old  time.Duration
+		}{{"right after the write", 0}, {"after the file settled", time.Hour}} {
+			t.Run(c.name+"/"+change.name, func(t *testing.T) {
+				dir := isolated(t)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for file, doc := range map[string]string{
+					filepath.Join(filepath.Dir(dir), "default-claude", ".claude.json"): claudeDoc("dflt"),
+					path(dir): work(dir, "work"),
+				} {
+					if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				file := c.file(dir)
+				if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(file, []byte(c.before(dir)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if change.old > 0 {
+					at := time.Now().Add(-change.old)
+					if err := os.Chtimes(file, at, at); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for range 2 {
+					ps, err := Load(dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := c.read(ps); got != c.seenB {
+						t.Fatalf("before: %q, want %q", got, c.seenB)
+					}
+				}
+				if err := os.WriteFile(file, []byte(c.after(dir)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				ps, err := Load(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := c.read(ps); got != c.seenA {
+					t.Fatalf("after: %q, want %q", got, c.seenA)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadCostDoesNotGrowWithAnUnchangedAccountFile(t *testing.T) {
+	dir := isolated(t)
+	root := filepath.Join(filepath.Dir(dir), "default-claude")
+	for _, d := range []string{dir, root} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(root, ".claude.json")
+	doc := `{"oauthAccount":{"accountUuid":"u","organizationUuid":"o"},"padding":"` + strings.Repeat("x", 4<<20) + `"}`
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(file, at, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	ps, err := Load(dir)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := Find(ps, "claude", "default"); p.Account != "claude/u/o" {
+		t.Fatalf("account %q", p.Account)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
+		t.Fatalf("second load allocated %d bytes for a 4 MiB file it had already read", grew)
 	}
 }
