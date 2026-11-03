@@ -1,8 +1,11 @@
 package cli
 
 import (
-	"github.com/project-kikkuli/yamnaya/internal/core"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 type usageJSON struct {
@@ -26,6 +29,7 @@ func usageWire(f core.Fleet) *usageJSON {
 	for _, s := range f.Sessions {
 		out.Sessions = append(out.Sessions, s)
 	}
+	slices.SortFunc(out.Sessions, func(a, b core.SessionSpend) int { return strings.Compare(a.Key(), b.Key()) })
 	return out
 }
 func usageFromWire(w *usageJSON) *core.Fleet {

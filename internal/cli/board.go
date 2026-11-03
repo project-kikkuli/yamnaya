@@ -78,6 +78,7 @@ type dormantJSON struct {
 
 func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var build bool
+	var since string
 	cmd := &cobra.Command{
 		Use:   "board",
 		Short: "Print this host's sessions, open items, launches, waiting sessions and goal tree as JSON, for another host's ym to show",
@@ -99,6 +100,9 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				}
 				if err != nil {
 					return err
+				}
+				if since != "" {
+					return writeBoardSince(cmd.OutOrStdout(), dir, raw, since)
 				}
 				_, err = cmd.OutOrStdout().Write(raw)
 				return err
@@ -126,6 +130,8 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		}),
 	}
 	cmd.Flags().BoolVar(&build, "build", false, "build the board now, reading usage as ym serve does, instead of printing ym serve's latest snapshot")
+	cmd.Flags().StringVar(&since, "since", "", "print only what a reader holding this snapshot token lacks, as a compressed frame")
+	cmd.Flags().MarkHidden("since")
 	return cmd
 }
 

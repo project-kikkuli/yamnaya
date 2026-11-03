@@ -40,11 +40,21 @@ type remoteHosts struct {
 	running map[string]chan struct{}
 	// silent is why each host that stopped answering did not, until it answers again.
 	silent map[string]error
+	// held is the last snapshot read from each host; stored finds one an earlier process kept, nil when none is kept.
+	held   map[string]heldBoard
+	stored func(host string) []byte
+}
+
+// heldBoard is a host's snapshot as printed, and parsed once read in this process.
+type heldBoard struct {
+	raw    []byte
+	token  string
+	parsed *core.RemoteBoard
 }
 
 func newRemoteHosts(names []string, wait time.Duration, seen func(string, time.Time, []byte)) *remoteHosts {
 	return &remoteHosts{names: names, ssh: sshBin(), timeout: 40 * time.Second, every: 5 * time.Second, slow: 5 * time.Second, wait: wait, seen: seen,
-		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}, kept: map[string]core.RemoteBoard{}, silent: map[string]error{}}
+		last: map[string]core.RemoteBoard{}, polled: map[string]time.Time{}, running: map[string]chan struct{}{}, kept: map[string]core.RemoteBoard{}, silent: map[string]error{}, held: map[string]heldBoard{}}
 }
 
 // sshBin is the ssh ym runs: $YAMNAYA_SSH_BIN, else ssh.
@@ -143,12 +153,13 @@ wait:
 func (r *remoteHosts) read(host string, done chan struct{}) {
 	b := core.RemoteBoard{Host: host}
 	out, err := r.board(host)
+	same := r.parsedAlready(host, out, err)
 	unreachable := errors.Is(err, core.ErrUnreachable)
 	if unreachable {
 		err = errors.Unwrap(err)
 	}
 	var j boardJSON
-	if err == nil {
+	if err == nil && same == nil {
 		if err = json.Unmarshal(out, &j); err != nil {
 			err = fmt.Errorf("ym board printed no board: %w", err)
 		}
@@ -164,10 +175,16 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 		if b.FailingSince.IsZero() {
 			b.FailingSince = time.Now()
 		}
+	} else if same != nil {
+		b = *same
 	} else {
 		b = remoteBoard(host, j)
 		if b.At = parseTS(j.At); b.At.IsZero() {
 			b.At = time.Now()
+		}
+		if h, ok := r.held[host]; ok {
+			h.parsed = &b
+			r.held[host] = h
 		}
 	}
 	r.mu.Unlock()
@@ -185,10 +202,49 @@ func (r *remoteHosts) read(host string, done chan struct{}) {
 	close(done)
 }
 
+// parsedAlready is the board this process already parsed from out, when out is the snapshot it last read from host.
+func (r *remoteHosts) parsedAlready(host string, out []byte, err error) *core.RemoteBoard {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h, ok := r.held[host]
+	if err != nil || !ok || h.parsed == nil || !bytes.Equal(h.raw, out) {
+		return nil
+	}
+	return h.parsed
+}
+
+// holding is the snapshot this process holds for host, taking one an earlier process kept when it holds none.
+func (r *remoteHosts) holding(host string) heldBoard {
+	r.mu.Lock()
+	h, ok := r.held[host]
+	stored := r.stored
+	r.mu.Unlock()
+	if ok || stored == nil {
+		return h
+	}
+	if raw := stored(host); raw != nil {
+		h = heldBoard{raw: raw, token: boardToken(raw)}
+		r.mu.Lock()
+		r.held[host] = h
+		r.mu.Unlock()
+	}
+	return h
+}
+
+// boardCommand asks host for what a reader holding since lacks; a ym too old for --since prints the whole board instead.
+func boardCommand(since string) string {
+	if since == "" {
+		since = noBoard
+	}
+	return remoteCommand([]string{"board", "--since", since}) + " 2>/dev/null || " + remoteCommand([]string{"board"})
+}
+
+// board is the snapshot host holds, whole, however it travelled.
 func (r *remoteHosts) board(host string) ([]byte, error) {
+	h := r.holding(host)
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
-	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes"), remoteCommand([]string{"board"}))...)
+	c := exec.CommandContext(ctx, r.ssh, append(sshArgs(host, "-o", "BatchMode=yes"), boardCommand(h.token))...)
 	c.WaitDelay = time.Second
 	var errb bytes.Buffer
 	c.Stderr = &errb
@@ -203,7 +259,20 @@ func (r *remoteHosts) board(host string) ([]byte, error) {
 		}
 		return nil, sshErr(err, errb.Bytes())
 	}
-	return out, nil
+	if !bytes.HasPrefix(out, []byte(boardFrame)) {
+		return out, nil
+	}
+	raw, token, kind, err := readBoardFrame(out, h.raw)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		delete(r.held, host)
+		return nil, err
+	}
+	if kind != frameSame {
+		r.held[host] = heldBoard{raw: raw, token: token}
+	}
+	return raw, nil
 }
 
 // wrapped is err that also matches mark, reading as err alone.
@@ -353,6 +422,17 @@ func sshErr(err error, stderr []byte) error {
 	return err
 }
 
+// keptBoardOf finds the board st kept for a host, nil when it keeps none.
+func keptBoardOf(st *core.Store) func(string) []byte {
+	return func(host string) []byte {
+		_, raw, ok, _ := st.KeptBoard(host)
+		if !ok {
+			return nil
+		}
+		return raw
+	}
+}
+
 // readRemotes routes commands to every host ym remote reached, waiting up to wait for a host's first answer; show also puts their
 // boards on this one.
 func (e *env) readRemotes(wait time.Duration, show bool) error {
@@ -383,6 +463,7 @@ func (e *env) readRemotes(wait time.Duration, show bool) error {
 			}
 		}
 	}
+	r.stored = keptBoardOf(st)
 	if wait == 0 {
 		r.known = known
 	}
