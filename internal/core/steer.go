@@ -217,7 +217,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		return Steer{}, err
 	}
 	if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
-		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID))
+		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.Shown()))
 	}
 	if author != Owner {
 		reports, via := climb(o, author, m.ID)
