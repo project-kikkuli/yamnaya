@@ -1630,6 +1630,17 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return m, nil
 			}
+			if host, _, ok := core.SplitRemote(m.inItem); ok {
+				if err := core.CheckName(text); err != nil {
+					m.mode, m.pickErr = modeInput, err.Error()
+					return m, nil
+				}
+				ref, label := m.inItem, m.inLabel
+				return m, m.do(func() (string, error) {
+					_, err := m.core.Rename(ref, text)
+					return label + " is now " + text + " on " + m.hostTag(host), err
+				})
+			}
 			old, err := m.core.Rename(m.inItem, text)
 			if err != nil {
 				m.mode, m.pickErr = modeInput, err.Error()

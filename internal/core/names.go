@@ -147,11 +147,12 @@ func HaikuName(ask string) string {
 
 // Rename gives the goal or chief ref names the name name; a goal's manager takes the same name.
 func (c *Core) Rename(ref, name string) (string, error) {
-	if host, _, ok := SplitRemote(ref); ok {
-		return "", fmt.Errorf("%s runs on %s; rename it there", ref, host)
-	}
 	if err := CheckName(name); err != nil {
 		return "", err
+	}
+	if host, rest, ok := SplitRemote(ref); ok {
+		_, err := c.RunRemote(host, "goal", "rename", rest, name)
+		return ref, err
 	}
 	o, err := c.LoadOrg()
 	if err != nil {

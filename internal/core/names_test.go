@@ -148,3 +148,36 @@ func TestNamingUnnamedGoalsAndChiefsLeavesNamedOnesAlone(t *testing.T) {
 		t.Errorf("goal %s named %q, want fix-flaky-ci-on", old.ID, got)
 	}
 }
+
+func TestAnotherHostsGoalIsRenamedOnItsHostAndShowsByTheNameItsHostReports(t *testing.T) {
+	for _, tc := range []struct {
+		name, to string
+		ran      []string
+		err      string
+	}{
+		{name: "a valid name runs on its host", to: "faster-login", ran: []string{"goal", "rename", "mgr3", "faster-login"}},
+		{name: "an invalid name never leaves", to: "Faster Login", err: "kebab-case"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			r := &fakeRemotes{boards: []RemoteBoard{{Host: "box",
+				Managers: []Manager{{ID: "mgr3", Role: RoleManager, Name: "make-login-faster", GoalID: "goal2"}},
+				Goals:    []Goal{{ID: "goal2", Name: "make-login-faster", Ask: "make login faster", ManagerID: "mgr3"}}}}}
+			w.core.Remotes, w.core.ShowRemotes = r, true
+			n := node(t, w.board(t), "box/mgr3")
+			if n.Goal.Ref() != "box/make-login-faster" || n.Manager.Ref() != "box/make-login-faster" {
+				t.Fatalf("another host's goal shows as %q, its manager %q; want both box/make-login-faster", n.Goal.Ref(), n.Manager.Ref())
+			}
+			_, err := w.core.Rename("box/mgr3", tc.to)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) || len(r.ran) != 0 {
+					t.Fatalf("Rename = %v, ran %q; want an error saying %q and nothing run", err, r.ran, tc.err)
+				}
+				return
+			}
+			if err != nil || len(r.ran) != 1 || strings.Join(r.ran[0], " ") != "box "+strings.Join(tc.ran, " ") {
+				t.Fatalf("Rename = %v, ran %q; want %q on box", err, r.ran, tc.ran)
+			}
+		})
+	}
+}

@@ -22,7 +22,7 @@ func TestGoalRenameRenamesAGoalOrChiefAndItsBriefPageAnswersToEveryRef(t *testin
 		{name: "a chief by its id", ref: "mgr1", to: "data-platform"},
 		{name: "its own name again", ref: "data", to: "data"},
 		{name: "an invalid name", ref: "data", to: "Data Platform", err: "kebab-case"},
-		{name: "another host's chief", ref: "box/mgr1", to: "data-platform", err: "rename it there"},
+		{name: "another host's chief", ref: "box/mgr1", to: "data-platform", err: "no remote hosts are wired"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
