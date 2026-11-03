@@ -301,7 +301,7 @@ func relayErrors(db *sql.DB) error {
 		}
 	}
 	for _, col := range []struct{ name, def string }{
-		{"last_error", "TEXT NOT NULL DEFAULT ''"}, {"refusals", "INTEGER NOT NULL DEFAULT 0"}, {"refused_since", "INTEGER"},
+		{"last_error", "TEXT NOT NULL DEFAULT ''"}, {"refusals", "INTEGER NOT NULL DEFAULT 0"}, {"refused_since", "INTEGER"}, {"reported", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var has int
 		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_relay') WHERE name = ?`, col.name).Scan(&has); err != nil {
@@ -317,15 +317,15 @@ func relayErrors(db *sql.DB) error {
 	return nil
 }
 
-// noteRefused records why another host refused each of this host's relays refs name, own or carried on: a final refusal ends the
-// relay, any other counts toward the owner hearing of it. It returns the relays it refused for the first time or for good.
+// noteRefused records why another host refused each of this host's relays refs name, own or carried on: a final refusal is ended by
+// its caller once reported, any other counts toward the owner hearing of it. It returns the relays refused for the first time or for good.
 func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) ([]Relay, error) {
 	var news []Relay
 	for _, r := range refs {
 		set := `last_error = ?, refusals = refusals + 1, refused_since = COALESCE(refused_since, ?)`
 		args := []any{r.Error, at.UnixNano()}
 		if r.Final {
-			set = `last_error = ?, delivered = ?`
+			set, args = `last_error = ?`, []any{r.Error}
 		}
 		where, key := ` WHERE delivered IS NULL AND origin = ? AND origin_seq = ?`, []any{r.Origin, r.OriginSeq}
 		if r.Origin == self {
@@ -469,13 +469,13 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	if err := c.drainLocalRevocations(); err != nil {
 		return RelayReply{}, err
 	}
-	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
-		return RelayReply{}, err
-	}
 	if err := c.noteRefused(req.Refused); err != nil {
 		return RelayReply{}, err
 	}
 	if err := c.noteDone(req.Done); err != nil {
+		return RelayReply{}, err
+	}
+	if err := c.Store.markRelayed(req.Ack, c.now()); err != nil {
 		return RelayReply{}, err
 	}
 	refused, done, recvErr := c.Receive(req.Entries)
@@ -533,11 +533,9 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		if err := c.keepItemSnapshots(reply.ItemSnapshots); err != nil {
 			return err
 		}
-		if err := c.noteRefused(reply.Refused); err != nil {
-			return err
-		}
-		if err := c.noteDone(reply.Done); err != nil {
-			return err
+		if err := errors.Join(c.noteRefused(reply.Refused), c.noteDone(reply.Done)); err != nil {
+			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
+			continue
 		}
 		refused := map[RelayRef]bool{}
 		for _, ref := range reply.Refused {

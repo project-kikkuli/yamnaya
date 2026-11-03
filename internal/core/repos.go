@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -211,7 +212,11 @@ func (c *Core) Repos() ([]string, error) {
 func (c *Core) ResolveRepo(ref string) (string, error) {
 	if IsRepoPath(ref) {
 		path := ExpandHome(ref)
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		info, err := os.Stat(path)
+		switch {
+		case err == nil && !info.IsDir(), errors.Is(err, syscall.ENOTDIR):
+			return "", Final(fmt.Errorf("%s is not a directory on this host", path))
+		case errors.Is(err, os.ErrNotExist):
 			if _, held := c.RepoHost(path); !held {
 				return "", Final(fmt.Errorf("%s does not exist on this host", path))
 			}

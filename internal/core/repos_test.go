@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,7 +115,11 @@ func repoCore(t *testing.T, root string) *Core {
 
 func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
 	root := repoTree(t, "acme/atlas/", "acme/atlantic-api/", "acme/atlas-wt-x=wt", "kikkuli/yamnaya/", "one/app/", "two/app/")
-	home, _ := os.UserHomeDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	must(t, os.MkdirAll(filepath.Join(home, "src"), 0o755))
+	file := filepath.Join(home, "a-file")
+	must(t, os.WriteFile(file, nil, 0o600))
 	for _, c := range []struct {
 		ref  string
 		want string
@@ -126,13 +131,17 @@ func TestResolveRepoTakesAUniqueNameOrAPath(t *testing.T) {
 		{"atl", "", "matches several"},
 		{"app", "", "matches several"},
 		{"nothing", "", "no repository matches"},
-		{"/abs/path", "/abs/path", ""},
+		{filepath.Join(home, "src"), filepath.Join(home, "src"), ""},
 		{"~/src", filepath.Join(home, "src"), ""},
+		{filepath.Join(home, "missing"), "", "does not exist"},
+		{"~/missing", "", "does not exist"},
+		{file, "", "not a directory"},
+		{filepath.Join(file, "sub"), "", "not a directory"},
 	} {
 		t.Run(c.ref, func(t *testing.T) {
 			got, err := repoCore(t, root).ResolveRepo(c.ref)
 			if c.err != "" {
-				if err == nil || !strings.Contains(err.Error(), c.err) {
+				if !errors.Is(err, ErrFinal) || !strings.Contains(err.Error(), c.err) {
 					t.Fatalf("ResolveRepo(%q) = %q, %v; want error %q", c.ref, got, err, c.err)
 				}
 				return

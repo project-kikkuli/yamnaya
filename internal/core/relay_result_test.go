@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func cycleAll(f *fleet, n int) {
@@ -160,6 +162,9 @@ func TestTheRequesterHearsAGoalCommandsOutcomeOnceWhoeverItIs(t *testing.T) {
 					t.Fatal(err)
 				}
 				cycleAll(f, 1)
+				if err := f.b.core.Loop(f.b.board(t)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			cycle()
 			f.a.core.RunSelf = func(args ...string) (string, error) {
@@ -234,6 +239,214 @@ func TestARefusalThatMayClearFilesNoItemAndItsDropAdviceWorksWhereItSaysTo(t *te
 			}
 			if pending, _ := f.a.core.Store.PendingRelays(); holder == "a" && len(pending) != 0 {
 				t.Errorf("a still carries %+v", pending)
+			}
+		})
+	}
+}
+
+// breakMessages makes every message w records fail, as a store that errors does, until the returned func mends it.
+func breakMessages(t *testing.T, w *orgWorld) func() {
+	t.Helper()
+	if _, err := w.core.Store.db.Exec(`ALTER TABLE ym_messages RENAME TO ym_messages_gone`); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		t.Helper()
+		if _, err := w.core.Store.db.Exec(`ALTER TABLE ym_messages_gone RENAME TO ym_messages`); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func recorded(t *testing.T, w *orgWorld, session, text string) int {
+	t.Helper()
+	var n int
+	if err := w.core.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND text LIKE ?`, session, "%"+text+"%").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAnOutcomeIsToldOnceHoweverTheHostReportingItFails(t *testing.T) {
+	failing := map[string]func(t *testing.T, w *orgWorld) func(){
+		"its board cannot be read": func(t *testing.T, w *orgWorld) func() {
+			procs := w.core.Procs
+			w.core.Procs = func() ([]proc.Proc, error) { return nil, stderrors.New("ps failed") }
+			return func() { w.core.Procs = procs }
+		},
+		"its store cannot record a message": breakMessages,
+	}
+	for how, fail := range failing {
+		for _, tc := range []struct {
+			name string
+			// dest runs b's command; reporter is the host whose failure is under test. With its own command in flight a's own report
+			// fails while it carries b's outcome back.
+			dest, reporter string
+			final, ownToo  bool
+		}{
+			{name: "the origin, on the confirming call", dest: "a", reporter: "b"},
+			{name: "the origin, refused for good", dest: "a", reporter: "b", final: true},
+			{name: "the middle host, whose own report fails too", dest: "c", reporter: "a", ownToo: true},
+		} {
+			t.Run(how+"/"+tc.name, func(t *testing.T) {
+				f := newFleet(t)
+				chief := f.b.chief(t, "platform")
+				local := f.a.chief(t, "local")
+				run := func(args ...string) (string, error) {
+					if tc.final {
+						return "", Final(stderrors.New("the marker"))
+					}
+					return "the marker " + args[2], nil
+				}
+				map[string]*orgWorld{"a": f.a, "c": f.c}[tc.dest].core.RunSelf = run
+				if tc.ownToo {
+					if err := f.a.core.Relay("c", RelayYM, relayYM{Args: []string{"item", "answer", "#1", "yes"}, Requester: local.Session}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				f.b.core.Requester = func() string { return chief.Session }
+				if _, err := f.b.core.RunOrRelay(tc.dest, "item", "answer", "#3", "yes"); err != nil {
+					t.Fatal(err)
+				}
+				mend := fail(t, map[string]*orgWorld{"a": f.a, "b": f.b}[tc.reporter])
+				cycleAll(f, 4)
+				mend()
+				cycleAll(f, 4)
+				if tc.final {
+					if asked := questions(t, f.b); len(asked) != 1 {
+						t.Errorf("requester's items %q, want the refusal once", asked)
+					}
+				} else if n := recorded(t, f.b, chief.Session, "the marker #3"); n != 1 {
+					t.Errorf("requester was told %d times, want once", n)
+				}
+				if tc.ownToo {
+					if n := recorded(t, f.a, local.Session, "the marker #1"); n != 1 {
+						t.Errorf("a's own requester was told %d times, want once", n)
+					}
+				}
+				for name, w := range map[string]*orgWorld{"a": f.a, "b": f.b} {
+					if pending, _ := w.core.Store.PendingRelays(); len(pending) != 0 {
+						t.Errorf("%s still holds %+v", name, pending)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAHostThatCannotReportStillCarriesRelaysToTheNextHost(t *testing.T) {
+	f := newFleet(t)
+	local := f.a.chief(t, "local")
+	f.b.core.RunSelf = func(args ...string) (string, error) { return "ran", nil }
+	var ran []string
+	f.c.core.RunSelf = func(args ...string) (string, error) {
+		ran = append(ran, strings.Join(args, " "))
+		return "ran", nil
+	}
+	for _, dest := range []string{"b", "c"} {
+		if err := f.a.core.Relay(dest, RelayYM, relayYM{Args: []string{"item", "answer", "#1", dest}, Requester: local.Session}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer breakMessages(t, f.a)()
+	cycleAll(f, 1)
+	if !slices.Contains(ran, "item answer #1 c") {
+		t.Errorf("c ran %q while a could not report b's outcome, want its command carried", ran)
+	}
+}
+
+func TestARequesterHearsDirectlyWhenTheGoalsFeedWillNotReachIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		end  func(t *testing.T, f *fleet, g Goal, m, chief Manager)
+		// feed says the goal's feed still reaches the chief, so it hears there and not directly.
+		feed  bool
+		final bool
+	}{
+		{name: "a live goal", feed: true},
+		{name: "a goal that is done", end: func(t *testing.T, f *fleet, g Goal, _, _ Manager) {
+			got, err := f.a.core.Store.Goal(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.State = GoalDone
+			if err := f.a.core.Store.SaveGoal(got); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a goal that is done, refused for good", final: true, end: func(t *testing.T, f *fleet, g Goal, _, _ Manager) {
+			got, err := f.a.core.Store.Goal(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.State = GoalDone
+			if err := f.a.core.Store.SaveGoal(got); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a retired manager", end: func(t *testing.T, f *fleet, _ Goal, m, _ Manager) {
+			m.Retired = true
+			if err := f.a.core.Store.SaveManager(m); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a retired chief asking", end: func(t *testing.T, f *fleet, _ Goal, _, chief Manager) {
+			chief.Retired = true
+			if err := f.b.core.Store.SaveManager(chief); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.b.chief(t, "platform")
+			g, m := f.a.goal(t, "ship the fix", "/repo/app")
+			if err := f.a.core.Attach(m.ID, RemoteKey("b", chief.ID)); err != nil {
+				t.Fatal(err)
+			}
+			cycle := func() {
+				t.Helper()
+				if err := f.a.core.Loop(f.a.board(t)); err != nil {
+					t.Fatal(err)
+				}
+				cycleAll(f, 1)
+				if err := f.b.core.Loop(f.b.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cycle()
+			if tc.end != nil {
+				m, _ = f.a.core.Store.Manager(m.ID)
+				tc.end(t, f, g, m, chief)
+			}
+			cycle()
+			f.a.core.RunSelf = func(args ...string) (string, error) {
+				if tc.final {
+					return "", Final(stderrors.New("the marker"))
+				}
+				return "the marker", nil
+			}
+			f.b.core.Requester = func() string { return chief.Session }
+			if err := f.b.core.AckGoal(RemoteKey("a", g.ID)); err != nil {
+				t.Fatal(err)
+			}
+			for range 5 {
+				cycle()
+			}
+			direct, asked := recorded(t, f.b, chief.Session, "ym: ym goal ack"), questions(t, f.b)
+			switch {
+			case tc.final:
+				if len(asked) != 1 || direct != 0 {
+					t.Errorf("requester was told %d times and asked %q, want the refusal in one item", direct, asked)
+				}
+			case tc.feed:
+				if direct != 0 || recorded(t, f.b, chief.Session, "the marker") != 1 {
+					t.Errorf("chief heard directly %d times, feed %d; want the feed once", direct, recorded(t, f.b, chief.Session, "the marker"))
+				}
+			default:
+				if direct != 1 {
+					t.Errorf("requester was told %d times, want once directly: %q", direct, f.b.handedTo(chief.Session))
+				}
 			}
 		})
 	}

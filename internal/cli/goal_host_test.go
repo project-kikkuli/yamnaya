@@ -234,24 +234,67 @@ func TestAGoalWithHostNamingAPathOnlyTheCallerCanReadIsRefusedWhereItIsAsked(t *
 	}
 }
 
-func TestARelayedGoalIsStartedOnceWhenItsWorkServiceCannotStart(t *testing.T) {
-	t.Setenv("YAMNAYA_NO_SERVE", "0")
-	file := filepath.Join(t.TempDir(), "a-file")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("YAMNAYA_STATE_DIR", filepath.Join(file, "state"))
-	if err := ensureWorkService(); err == nil {
-		t.Fatal("the work service started; this test needs it to fail before it spawns one")
-	}
-	a, b, chief, sync, _ := relayedHosts(t)
-	if out, err := goalRun(b, chief.Session, "--host", a.SelfName(), "--repo", "app", "ship the fix"); err != nil {
-		t.Fatalf("ym goal on b: %v: %s", err, out)
-	}
-	for range 4 {
-		sync()
-	}
-	if started := managersOn(t, a); len(started) != 1 {
-		t.Errorf("a started %d managers, want the goal once: %+v", len(started), started)
+func TestARelayedStartRunsOnceWhenItsWorkServiceCannotStart(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		role string
+		args []string
+		cmd  func(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command
+	}{
+		{"a goal", core.RoleManager, []string{"goal", "--repo", "app", "--", "ship the fix"},
+			func(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+				return goalCmd(with, with)
+			}},
+		{"a chief", core.RoleChief, []string{"chief", "--repo", "app", "second"},
+			func(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
+				return chiefCmd(with, with)
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("YAMNAYA_NO_SERVE", "0")
+			file := filepath.Join(t.TempDir(), "a-file")
+			if err := os.WriteFile(file, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("YAMNAYA_STATE_DIR", filepath.Join(file, "state"))
+			if err := ensureWorkService(); err == nil {
+				t.Fatal("the work service started; this test needs it to fail before it spawns one")
+			}
+			a, b, _, sync, _ := relayedHosts(t)
+			a.RunSelf = func(args ...string) (string, error) {
+				with := func(run runFunc) func(*cobra.Command, []string) error {
+					return func(cmd *cobra.Command, x []string) error { return run(&env{core: a}, cmd, x) }
+				}
+				cmd := tc.cmd(with)
+				var out bytes.Buffer
+				cmd.SetOut(&out)
+				cmd.SetErr(&out)
+				cmd.SetArgs(args[1:])
+				cmd.SilenceUsage, cmd.SilenceErrors = true, true
+				if err := cmd.Execute(); err != nil {
+					return "", fmt.Errorf("ym %s: %w", strings.Join(args, " "), err)
+				}
+				return out.String(), nil
+			}
+			if _, err := b.RunOrRelay(a.SelfName(), tc.args...); err != nil {
+				t.Fatal(err)
+			}
+			for range 4 {
+				sync()
+			}
+			o, err := a.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := 0
+			for _, m := range o.Managers {
+				if m.Role == tc.role {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("a recorded %d, want one", n)
+			}
+		})
 	}
 }

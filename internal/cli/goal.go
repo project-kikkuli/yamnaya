@@ -744,7 +744,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 				return nil
 			}
 			if err := ensureWorkService(); err != nil {
-				return err
+				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but ym serve did not start: %v\n", m.ID, err)
 			}
 			if m.LastError != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but it did not start: %s; ym serve retries with backoff\n", m.ID, m.LastError)

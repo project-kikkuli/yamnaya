@@ -49,7 +49,7 @@ func (c *Core) noteRelayed(r Relay, out string, err error, ref *RelayRef) error 
 	if _, _, err := c.RecordGoalEvent(g.ID, kind, text, key); err != nil {
 		return err
 	}
-	ref.Goal, ref.Chief = g.ID, remoteChiefAbove(o, m)
+	ref.Goal, ref.Chief = g.ID, feedChief(o, m)
 	return nil
 }
 
@@ -77,19 +77,28 @@ func relayTarget(args []string) string {
 	return ""
 }
 
-// remoteChiefAbove is the first chief above m that runs on another host, which hears its goal's feed, as this host names it.
-func remoteChiefAbove(o Org, m Manager) string {
+// feedChief is the chief on another host that m's goal's feed reaches, as this host names it: wakeRemoteChiefs passes over a retired
+// manager below it, and one with no live goal right under it.
+func feedChief(o Org, m Manager) string {
 	seen := map[string]bool{}
-	for at := m.ParentID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
-		seen[at] = true
-		if _, _, remote := SplitRemote(at); remote {
-			return at
+	for !seen[m.ID] && !m.Retired {
+		seen[m.ID] = true
+		if _, _, remote := SplitRemote(m.ParentID); remote {
+			if o.Active(m) {
+				return m.ParentID
+			}
+			return ""
 		}
+		next, ok := o.Managers[m.ParentID]
+		if !ok {
+			return ""
+		}
+		m = next
 	}
 	return ""
 }
 
-// hearsFeed reports whether session is the chief ref names, or one above it, so the goal's feed already reaches it.
+// hearsFeed reports whether session is among the chiefs tellChiefs hands the feed ref names to on this host.
 func (c *Core) hearsFeed(o Org, session string, ref RelayRef) bool {
 	host, chief, remote := SplitRemote(ref.Chief)
 	if !remote || host != c.SelfName() {
@@ -100,11 +109,16 @@ func (c *Core) hearsFeed(o Org, session string, ref RelayRef) bool {
 		return false
 	}
 	seen := map[string]bool{}
-	for at := chief; at != "" && !seen[at]; at = o.Managers[at].ParentID {
+	for at := chief; at != "" && !seen[at]; {
 		seen[at] = true
-		if at == m.ID {
+		up := o.Above(at)
+		if up == m.ID {
 			return true
 		}
+		if _, _, remote := SplitRemote(up); remote || up == Owner {
+			return false
+		}
+		at = o.Managers[up].ParentID
 	}
 	return false
 }
@@ -123,7 +137,12 @@ func (c *Core) noteRefused(refs []RelayRef) error {
 		if r.Origin == "" {
 			key = RelayRef{Origin: self, OriginSeq: r.Seq}
 		}
-		errs = append(errs, c.outcome(r, byRef[key]))
+		ref := byRef[key]
+		err := c.outcome(r, ref)
+		if err == nil && ref.Final {
+			err = c.Store.markRelayed([]int64{r.Seq}, c.now())
+		}
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -165,12 +184,31 @@ func (c *Core) heardOutcome(ref RelayRef) error {
 	return c.relayOutcome(own, ref)
 }
 
-// relayOutcome tells the session that queued ym command r how it turned out where it ran, unless its goal's feed reaches that session
-// already: what it printed, a message while ym retries it, or an item when it was refused for good, which goes to the owner when no
-// session queued it and no goal's feed records it.
+// relayOutcome reports how ym command r ended once, however often the news of it arrives; a refusal that may clear is only ever
+// news once.
 func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
+	if r.Kind != RelayYM {
+		return nil
+	}
+	if ref.Error != "" && !ref.Final {
+		return c.tellOutcome(r, ref)
+	}
+	reported, err := c.Store.outcomeReported(r.Seq)
+	if err != nil || reported {
+		return err
+	}
+	if err := c.tellOutcome(r, ref); err != nil {
+		return err
+	}
+	return c.Store.markOutcomeReported(r.Seq)
+}
+
+// tellOutcome tells the session that queued ym command r how it turned out where it ran, unless its goal's feed reaches that session
+// already: what it printed, a message while ym retries it, or an item when it was refused for good, which goes to the owner when no
+// session queued it and no goal's feed records it. A board that cannot be read leaves a message queued for the session.
+func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	var y relayYM
-	if r.Kind != RelayYM || json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) == 0 {
+	if json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) == 0 {
 		return nil
 	}
 	if y.Requester == "" && (!ref.Final || ref.Goal != "") {
@@ -192,14 +230,8 @@ func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 		if out == "" {
 			out = "done"
 		}
-		if berr != nil {
-			return berr
-		}
 		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s: %s", cmd, r.Dest, out), false)
 	case !ref.Final:
-		if berr != nil {
-			return berr
-		}
 		drop := fmt.Sprintf("ym relay drop %d", r.Seq)
 		if ref.Holder != "" {
 			drop = fmt.Sprintf("ym relay drop %d on %s", ref.HolderSeq, ref.Holder)
@@ -223,10 +255,24 @@ func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 	}
 	it.Scope = c.ScopeOf(b, it.Session)
 	added, err := c.Store.addItem(it)
-	if err != nil || added.Recipient == Owner {
+	if err != nil {
+		return err
+	}
+	if err := c.Store.markOutcomeReported(r.Seq); err != nil || added.Recipient == Owner {
 		return err
 	}
 	return c.askManager(b, o, added)
+}
+
+func (s *Store) outcomeReported(seq int64) (bool, error) {
+	var reported bool
+	err := s.db.QueryRow(`SELECT reported FROM ym_relay WHERE seq = ?`, seq).Scan(&reported)
+	return reported, err
+}
+
+func (s *Store) markOutcomeReported(seq int64) error {
+	_, err := s.db.Exec(`UPDATE ym_relay SET reported = 1 WHERE seq = ?`, seq)
+	return err
 }
 
 // ownRelay is the relay this host queued as seq.
