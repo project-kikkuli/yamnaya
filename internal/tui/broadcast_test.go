@@ -44,9 +44,9 @@ func TestBroadcastReachesEveryAgentUnderTheCursorsLevel(t *testing.T) {
 	}{
 		{"needs you rows reach every agent", modeList, func(r row) bool { return r.stale }, "every agent",
 			[]string{"a1", "a2", "cs", "m1s", "m2s", "s1", "s2"}},
-		{"chief reaches its whole subtree", modeList, func(r row) bool { return r.node != nil && r.node.Manager.ID == "c1" }, "boss (c1) and everyone below",
+		{"chief reaches its whole subtree", modeList, func(r row) bool { return r.node != nil && r.node.Manager.ID == "c1" }, "boss and everyone below",
 			[]string{"a1", "a2", "cs", "m1s", "m2s"}},
-		{"goal reaches its manager and agents", modeList, func(r row) bool { return r.node != nil && r.node.Manager.ID == "m2" }, "two (m2)",
+		{"goal reaches its manager and agents", modeList, func(r row) bool { return r.node != nil && r.node.Manager.ID == "m2" }, "two",
 			[]string{"a2", "m2s"}},
 		{"repository reaches its missions and goals", modeList, func(r row) bool { return r.repo != nil && r.project == nil }, "repository one",
 			[]string{"a1", "m1s", "s1", "s2"}},

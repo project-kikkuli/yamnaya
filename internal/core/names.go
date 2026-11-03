@@ -237,3 +237,11 @@ func (m Manager) Ref() string {
 	}
 	return m.Shown()
 }
+
+// Ref names the goal for a link or message: its name, qualified by its host when it runs on another one.
+func (g Goal) Ref() string {
+	if g.Host != "" && g.Name != "" {
+		return RemoteKey(g.Host, g.Name)
+	}
+	return g.Shown()
+}

@@ -40,7 +40,7 @@ func TestABriefPagePastesCleanWithTheAskAsWritten(t *testing.T) {
 				t.Fatalf("BriefPage(%s) = %q, %v; want the brief file\n%s", g.ID, page, err, file)
 			}
 			title, _, _ := strings.Cut(page, "\n")
-			if want := "# " + g.ID + ": " + shortName(tc.ask); title != want {
+			if want := "# " + g.Name + ": " + shortName(tc.ask); title != want {
 				t.Fatalf("title %q, want %q", title, want)
 			}
 			asked := tc.asked

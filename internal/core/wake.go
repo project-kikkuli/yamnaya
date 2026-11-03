@@ -346,7 +346,7 @@ func chiefText(o Org, events []GoalEvent) string {
 		if !ok {
 			return "your agent"
 		}
-		return g.Shown()
+		return g.Ref()
 	})
 }
 
