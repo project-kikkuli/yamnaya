@@ -18,7 +18,7 @@ func (p Pool) Lane(ctx context.Context, name string, claim Claim, onWait func())
 	if name == "" {
 		return func() {}, func() {}, nil
 	}
-	key := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
+	key := laneKey(name)
 	dir := filepath.Join(p.ticketDir(), key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, err
@@ -69,6 +69,18 @@ func (p Pool) Lane(ctx context.Context, name string, claim Claim, onWait func())
 		case <-time.After(p.Poll):
 		}
 	}
+}
+
+func laneKey(name string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(name))) }
+
+// ownHolderTicket is the ticket of the job holding lane name, which a job calling this is: the lane's flock lets only one
+// hold it. "" when it took no ticket.
+func (p Pool) ownHolderTicket(name string) (string, error) {
+	holders, err := liveTickets(filepath.Join(p.ticketDir(), laneKey(name)), holderTicket)
+	if err != nil || len(holders) == 0 {
+		return "", err
+	}
+	return holders[0], nil
 }
 
 // laneDirs are the directories of tickets, one for each lane that has been used.

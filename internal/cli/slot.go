@@ -80,7 +80,7 @@ func slotCmd() *cobra.Command {
 				u, low := pool.Low(c.Cwd)
 				switch {
 				case low:
-					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: %s (ym disk shows what is low)\n", diskHoldLine(u))
+					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: %s, so this job waits; other jobs can still get slots (ym disk shows what is low)\n", diskHoldLine(u))
 				case st.Pressure.HoldsSlots() && len(st.Holders) > 0:
 					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: memory pressure holds new slots, waiting (ym slot --status shows load and consumers)")
 				case len(st.Holders) < st.Capacity:
@@ -122,8 +122,8 @@ func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 	if line := st.Pressure.Status(len(st.Holders)); line != "" {
 		fmt.Fprintln(w, line)
 	}
-	if st.Disk != nil {
-		fmt.Fprintf(w, "disk: %s\n", diskHoldLine(*st.Disk))
+	for _, line := range diskHeldLines(st.Waiters) {
+		fmt.Fprintln(w, line)
 	}
 	for _, h := range st.Holders {
 		fmt.Fprintf(w, "  slot %d  %s\n", h.Slot, claimLine(h, now))
@@ -134,7 +134,28 @@ func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 }
 
 func diskHoldLine(u disk.Usage) string {
-	return fmt.Sprintf("%s has %.1f%% free (%s), below %.0f%%, so new slots wait", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Tier3Free*100)
+	return fmt.Sprintf("%s has %.1f%% free (%s), below %.0f%%", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Tier3Free*100)
+}
+
+// diskHeldLines names, for each low filesystem, the waiters it holds back. Other jobs can still take slots.
+func diskHeldLines(waiters []slot.Claim) []string {
+	var paths []string
+	usage, pids := map[string]disk.Usage{}, map[string][]string{}
+	for _, c := range waiters {
+		if c.DiskLow == nil {
+			continue
+		}
+		if _, seen := usage[c.DiskLow.Path]; !seen {
+			paths = append(paths, c.DiskLow.Path)
+		}
+		usage[c.DiskLow.Path] = *c.DiskLow
+		pids[c.DiskLow.Path] = append(pids[c.DiskLow.Path], fmt.Sprintf("pid %d", c.PID))
+	}
+	lines := make([]string, 0, len(paths))
+	for _, path := range paths {
+		lines = append(lines, fmt.Sprintf("disk: %s: holds back %s; other jobs can still get slots", diskHoldLine(usage[path]), strings.Join(pids[path], ", ")))
+	}
+	return lines
 }
 
 func claimLine(c slot.Claim, now time.Time) string {
@@ -148,6 +169,9 @@ func claimLine(c slot.Claim, now time.Time) string {
 		parts = append(parts, "lane "+c.Lane)
 	case c.SlotPlace > 0:
 		parts = append(parts, fmt.Sprintf("#%d for a slot", c.SlotPlace))
+	}
+	if c.DiskLow != nil {
+		parts = append(parts, "held by low disk "+c.DiskLow.Path)
 	}
 	if c.PID > 0 {
 		parts = append(parts, fmt.Sprintf("pid %d", c.PID))

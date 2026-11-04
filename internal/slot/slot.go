@@ -28,15 +28,19 @@ type Claim struct {
 	Lane string `json:"lane,omitempty"`
 	// Status fills in LaneHolder, the job that has its lane, and LanePlace and SlotPlace, a waiter's place in line from 1.
 	// None is set for a waiter from a ym older than tickets, which takes no place.
-	LaneHolder bool      `json:"lane_holder,omitempty"`
-	LanePlace  int       `json:"lane_place,omitempty"`
-	SlotPlace  int       `json:"slot_place,omitempty"`
-	PID        int       `json:"pid"`
-	Command    []string  `json:"command"`
-	Cwd        string    `json:"cwd,omitempty"`
-	Harness    string    `json:"harness,omitempty"`
-	Session    string    `json:"session,omitempty"`
-	Since      time.Time `json:"since"`
+	LaneHolder bool `json:"lane_holder,omitempty"`
+	LanePlace  int  `json:"lane_place,omitempty"`
+	SlotPlace  int  `json:"slot_place,omitempty"`
+	// DiskLow is the filesystem keeping this waiter from a slot. Only the waiter can know it, since it depends on its own
+	// environment, so it writes this into its own ticket; ReportsDisk says it does, which a ticket from an older ym does not.
+	DiskLow     *disk.Usage `json:"disk_low,omitempty"`
+	ReportsDisk bool        `json:"reports_disk,omitempty"`
+	PID         int         `json:"pid"`
+	Command     []string    `json:"command"`
+	Cwd         string      `json:"cwd,omitempty"`
+	Harness     string      `json:"harness,omitempty"`
+	Session     string      `json:"session,omitempty"`
+	Since       time.Time   `json:"since"`
 }
 
 // Line is the claim's command as one line, or what is known of a holder that left no claim.
@@ -55,11 +59,11 @@ type Status struct {
 	Cores    int               `json:"cores"`
 	Memory   uint64            `json:"memory"`
 	Workers  int               `json:"workers"`
-	// Disk is the filesystem so low new slots wait, or nil.
+	// Disk is the lowest filesystem holding back a waiter, which says so on its claim, or nil. Other jobs can still get slots.
 	Disk    *disk.Usage `json:"disk,omitempty"`
 	Holders []Claim     `json:"holders"`
 	Waiters []Claim     `json:"waiters"`
-	// SlotsWait is whether a free slot would be refused now, for memory or disk. Pressure.Holding also covers cpu, which never refuses one.
+	// SlotsWait is whether the memory hold refuses a free slot to every job now. Pressure.Holding also covers cpu, which never does.
 	SlotsWait bool `json:"slots_wait"`
 }
 
@@ -127,6 +131,7 @@ func (p Pool) slotLineDir() string    { return filepath.Join(p.Dir, "slot-line")
 // for its own filesystem keeps its place without holding up those behind it. Release gives the slot back.
 func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func(), slot int, err error) {
 	var place *ticket
+	var own string
 	if c.Lane == "" {
 		if err = os.MkdirAll(p.slotLineDir(), 0o755); err != nil {
 			return nil, 0, err
@@ -135,21 +140,39 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 			return nil, 0, err
 		}
 		defer place.drop()
+		own = place.path
+	} else if own, err = p.ownHolderTicket(c.Lane); err != nil {
+		return nil, 0, err
 	}
+	var reported *disk.Usage
+	recovering := 0
 	for first := true; ; first = false {
 		state, readErr := pressure.Read(p.Dir)
 		if readErr != nil {
 			return nil, 0, readErr
 		}
-		deferring := false
-		if place != nil {
+		capacity := p.Capacity
+		var held *disk.Usage
+		if u, low := p.low(c.Cwd); low {
+			capacity, held = 0, &u
+		}
+		// older waiters on the same filesystem poll within two of this job's polls and clear their own holds; until then, passing
+		// them would take their place
+		if held == nil && reported != nil {
+			recovering = 2
+		}
+		deferring := recovering > 0
+		recovering = max(0, recovering-1)
+		if !sameHold(held, reported) && own != "" {
+			if err = markTicketDisk(own, c, held); err != nil {
+				return nil, 0, err
+			}
+			reported = held
+		}
+		if place != nil && !deferring {
 			if deferring, err = p.behind(place); err != nil {
 				return nil, 0, err
 			}
-		}
-		capacity := p.Capacity
-		if _, low := p.low(c.Cwd); low {
-			capacity = 0
 		}
 		for n := 1; n <= capacity && !deferring; n++ {
 			f, err := p.tryLock(n)
@@ -217,14 +240,29 @@ func (p Pool) behind(place *ticket) (bool, error) {
 	return true, nil
 }
 
-// diskHolds reports whether the job with the ticket at path waits for its filesystem.
+// diskHolds reports whether the job with the ticket at path says its filesystem holds it back.
 func (p Pool) diskHolds(path string) bool {
 	c, err := readClaim(path)
-	if err != nil {
-		return false
+	return err == nil && p.diskHold(c) != nil
+}
+
+// diskHold is what c says holds it back. Only a claim from a ym that does not report it is judged here, by its cwd.
+func (p Pool) diskHold(c Claim) *disk.Usage {
+	if c.ReportsDisk {
+		return c.DiskLow
 	}
-	_, low := p.low(c.Cwd)
-	return low
+	if u, low := p.low(c.Cwd); low {
+		return &u
+	}
+	return nil
+}
+
+// sameHold reports whether two holds would read the same on a status line, so a waiter rewrites its ticket only for a change.
+func sameHold(a, b *disk.Usage) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Path == b.Path && int(a.Free()*1000) == int(b.Free()*1000)
 }
 
 // tryLock returns slot n's lock file held, or nil when another process holds it.
@@ -294,9 +332,6 @@ func (p Pool) Status() (Status, error) {
 	if st.Throttle, err = pressure.ReadThrottle(p.Dir); err != nil {
 		return st, err
 	}
-	if u, low := p.low(); low {
-		st.Disk = &u
-	}
 	for n := 1; n <= p.Capacity; n++ {
 		busy, err := p.busy(n)
 		if err != nil {
@@ -344,12 +379,14 @@ func (p Pool) Status() (Status, error) {
 			st.Waiters = append(st.Waiters, c)
 		}
 	}
-	for _, c := range st.Waiters {
-		if u, low := p.low(c.Cwd); low && st.Disk == nil {
-			st.Disk = &u
+	for i := range st.Waiters {
+		u := p.diskHold(st.Waiters[i])
+		st.Waiters[i].DiskLow = u
+		if u != nil && (st.Disk == nil || u.Free() < st.Disk.Free()) {
+			st.Disk = u
 		}
 	}
-	st.SlotsWait = st.Pressure.HoldsSlots() && len(st.Holders) > 0 || st.Disk != nil
+	st.SlotsWait = st.Pressure.HoldsSlots() && len(st.Holders) > 0
 	sort.Slice(st.Holders, func(i, j int) bool { return st.Holders[i].Slot < st.Holders[j].Slot })
 	sort.Slice(st.Waiters, func(i, j int) bool { return st.Waiters[i].Since.Before(st.Waiters[j].Since) })
 	return st, nil

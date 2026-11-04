@@ -89,7 +89,8 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		defer cancel()
 		if discover && !once {
 			if l, ok := e.core.Launches.(launcher); ok {
-				if defaultStateDir(dir) {
+				// the slot pool follows the home, not YAMNAYA_STATE_DIR, so a scoped serve would overwrite the machine's overload.json
+				if core.DefaultStateDir(dir) {
 					pool, err := slot.Machine()
 					if err != nil {
 						return err
@@ -365,19 +366,11 @@ func startWorkService() error {
 // abandoned reports whether dir is a state directory other than the owner's that was deleted, as a finished rehearsal deletes its own.
 // It reads the database file, the one file a running serve never writes anew: every cycle rewrites others and recreates dir for them.
 func abandoned(dir string) bool {
-	if defaultStateDir(dir) {
+	if core.DefaultStateDir(dir) {
 		return false
 	}
 	_, err := os.Stat(filepath.Join(dir, "ym.db"))
 	return errors.Is(err, fs.ErrNotExist)
-}
-
-// defaultStateDir reports whether dir is this home's own state directory. Only that serve watches pressure: the slot pool
-// follows the home, not YAMNAYA_STATE_DIR, so a serve scoped to another directory would overwrite the machine's overload.json.
-func defaultStateDir(dir string) bool {
-	home, err := os.UserHomeDir()
-	abs, _ := filepath.Abs(dir)
-	return err != nil || abs == filepath.Join(home, ".local", "state", "yamnaya")
 }
 
 // endAbandoned ends the agents ym launched for a deleted state directory, unless they share the owner's tmux server, then stops serving it.

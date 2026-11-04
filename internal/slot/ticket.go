@@ -1,6 +1,7 @@
 package slot
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 )
 
 const (
@@ -26,6 +29,7 @@ type ticket struct {
 
 // takeTicket joins the line in dir. The ticket is locked and written before its name appears, so no reader finds it dead.
 func takeTicket(dir string, c Claim) (*ticket, error) {
+	c.ReportsDisk = true
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
@@ -58,6 +62,34 @@ func (t *ticket) hold() error {
 	}
 	t.path = path
 	return nil
+}
+
+// markTicketDisk writes into the ticket at path what its disk is doing to c. It keeps the inode, whose flock is the ticket's
+// liveness, and pads with spaces rather than truncating, so a reader sees JSON at any moment but for a torn read of this one
+// write, which it takes as no hold until its next poll.
+func markTicketDisk(path string, c Claim, held *disk.Usage) error {
+	c.ReportsDisk, c.DiskLow = true, held
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if pad := int(info.Size()) - len(raw); pad > 0 {
+		raw = append(raw, bytes.Repeat([]byte{' '}, pad)...)
+	}
+	_, err = f.WriteAt(raw, 0)
+	return err
 }
 
 func (t *ticket) drop() {

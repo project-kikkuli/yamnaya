@@ -131,17 +131,29 @@ func TestOnlyTheHomesOwnServeWritesTheMachinesOverloadFile(t *testing.T) {
 		t.Skip("tmux not installed")
 	}
 	for _, c := range []struct {
-		name   string
-		scoped bool
+		name    string
+		scoped  bool
+		symlink bool
 	}{
-		{"the home's own state dir", false},
-		{"a state dir of its own", true},
+		{name: "the home's own state dir"},
+		{name: "a symlink to the home's own state dir", symlink: true},
+		{name: "a state dir of its own", scoped: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := t.TempDir()
 			state := filepath.Join(home, ".local", "state", "yamnaya")
 			if c.scoped {
 				state = filepath.Join(home, "drill", "state")
+			}
+			if c.symlink {
+				if err := os.MkdirAll(state, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				link := filepath.Join(home, "link")
+				if err := os.Symlink(state, link); err != nil {
+					t.Fatal(err)
+				}
+				state = link
 			}
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_STATE_HOME", "")

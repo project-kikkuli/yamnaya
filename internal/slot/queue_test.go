@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -42,10 +43,14 @@ func TestSlotJob(t *testing.T) {
 		pid = claimed
 	}
 	p := Pool{Dir: dir, Capacity: capacity, Cores: 4, Poll: 10 * time.Millisecond}
+	if poll, err := time.ParseDuration(os.Getenv("SLOT_JOB_POLL")); err == nil {
+		p.Poll = poll
+	}
 	if low := os.Getenv("SLOT_JOB_LOW_WHILE"); low != "" {
 		p.Low = func(extra ...string) (disk.Usage, bool) {
 			_, err := os.Stat(low)
-			return disk.Usage{Path: "low"}, err == nil && slices.Contains(extra, lowDiskCwd)
+			held := slices.Contains(extra, lowDiskCwd) || os.Getenv("SLOT_JOB_OWN_DISK_LOW") != ""
+			return disk.Usage{Path: "/low", Total: 100, Avail: 4}, err == nil && held
 		}
 	}
 	c := Claim{PID: pid, Command: []string{name}, Since: time.Now(), Lane: lane, Cwd: os.Getenv("SLOT_JOB_CWD")}
@@ -193,6 +198,8 @@ func (q *queue) laneHolder(name string) {
 	q.t.Helper()
 	q.next("lane " + name)
 	q.waitFor(name+" holding its lane", func(st Status) bool { return listed(st, name, func(c Claim) bool { return c.LaneHolder }) })
+	// a poll already past its look at the lanes when the holder arrived may still take a slot; let those finish
+	time.Sleep(settle)
 }
 
 func (q *queue) gone(name string) {
@@ -715,9 +722,12 @@ func TestAJobItsOwnDiskHoldsBackHoldsUpNobodyAndKeepsItsPlace(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		lane string
+		why  string
 	}{
-		{"the head of the plain line", ""},
-		{"a lane holder waiting for a slot", "yamnaya-test"},
+		{"the head of the plain line, by its cwd", "", "SLOT_JOB_CWD=" + lowDiskCwd},
+		{"a lane holder, by its cwd", "yamnaya-test", "SLOT_JOB_CWD=" + lowDiskCwd},
+		{"the head of the plain line, by its own TMPDIR or GOCACHE", "", "SLOT_JOB_OWN_DISK_LOW=1"},
+		{"a lane holder, by its own TMPDIR or GOCACHE", "yamnaya-test", "SLOT_JOB_OWN_DISK_LOW=1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			q := newQueue(t, 1)
@@ -727,7 +737,7 @@ func TestAJobItsOwnDiskHoldsBackHoldsUpNobodyAndKeepsItsPlace(t *testing.T) {
 				t.Fatal(err)
 			}
 			env := []string{"SLOT_JOB_LOW_WHILE=" + low}
-			q.start("held", c.lane, append(env, "SLOT_JOB_CWD="+lowDiskCwd)...)
+			q.start("held", c.lane, append(env, c.why)...)
 			q.next("lane held")
 			q.waiting("held")
 			other := q.start("other", "", env...)
@@ -739,6 +749,8 @@ func TestAJobItsOwnDiskHoldsBackHoldsUpNobodyAndKeepsItsPlace(t *testing.T) {
 			if err := os.Remove(low); err != nil {
 				t.Fatal(err)
 			}
+			// a healthy job can pass until the held job's next poll clears its mark
+			q.waitFor("held's hold to clear", func(st Status) bool { return diskLowOf(t, st, "held") == "" })
 			third := q.start("third", "", env...)
 			q.next("lane third")
 			q.waiting("third")
@@ -746,6 +758,185 @@ func TestAJobItsOwnDiskHoldsBackHoldsUpNobodyAndKeepsItsPlace(t *testing.T) {
 			q.next("slot held")
 			q.quiet()
 			third.kill()
+		})
+	}
+}
+
+// diskLowOf is the filesystem status says holds back the waiter named name, read as a status reader gets it.
+func diskLowOf(t *testing.T, st Status, name string) string {
+	t.Helper()
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read struct {
+		Waiters []struct {
+			Command []string
+			DiskLow *struct {
+				Path string
+			} `json:"disk_low"`
+		}
+	}
+	if err := json.Unmarshal(raw, &read); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range read.Waiters {
+		if strings.Join(c.Command, " ") == name && c.DiskLow != nil {
+			return c.DiskLow.Path
+		}
+	}
+	return ""
+}
+
+func TestEveryReaderGetsOneAnswerAboutWhoseDiskHoldsThem(t *testing.T) {
+	lowForReader := func(...string) (disk.Usage, bool) {
+		return disk.Usage{Path: "/readers-own", Total: 100, Avail: 1}, true
+	}
+	for _, c := range []struct {
+		name   string
+		reader func(...string) (disk.Usage, bool)
+	}{
+		{"a reader on a healthy disk", nil},
+		{"a reader whose own disk is low", lowForReader},
+	} {
+		for _, lane := range []string{"", "yamnaya-test"} {
+			t.Run(c.name+", lane "+lane, func(t *testing.T) {
+				q := newQueue(t, 2)
+				low := filepath.Join(t.TempDir(), "low")
+				if err := os.WriteFile(low, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				q.pool.Low = c.reader
+				held := q.start("held", lane, "SLOT_JOB_LOW_WHILE="+low, "SLOT_JOB_OWN_DISK_LOW=1")
+				defer held.kill()
+				q.next("lane held")
+				says := func(want string) {
+					t.Helper()
+					q.waitFor("held's hold reading "+want, func(st Status) bool { return diskLowOf(t, st, "held") == want })
+				}
+				says("/low")
+				st, err := q.pool.Status()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if st.Disk == nil || st.Disk.Path != "/low" || st.SlotsWait {
+					t.Fatalf("disk %+v, slots wait %v; want /low and slots not waiting", st.Disk, st.SlotsWait)
+				}
+				q.start("healthy", "")
+				q.next("lane healthy")
+				q.next("slot healthy")
+				if err := os.Remove(low); err != nil {
+					t.Fatal(err)
+				}
+				q.next("slot held")
+				if st, err = q.pool.Status(); err != nil || st.Disk != nil {
+					t.Fatalf("after recovery disk %+v, %v", st.Disk, err)
+				}
+			})
+		}
+	}
+}
+
+func TestADeadWaitersDiskHoldMeansNothing(t *testing.T) {
+	for _, lane := range []string{"", "yamnaya-test"} {
+		t.Run("lane "+lane, func(t *testing.T) {
+			q := newQueue(t, 1)
+			release := q.occupy(1)
+			low := filepath.Join(t.TempDir(), "low")
+			if err := os.WriteFile(low, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			held := q.start("held", lane, "SLOT_JOB_LOW_WHILE="+low, "SLOT_JOB_OWN_DISK_LOW=1")
+			q.next("lane held")
+			q.waitFor("held's hold", func(st Status) bool { return diskLowOf(t, st, "held") == "/low" })
+			q.start("next", "")
+			q.next("lane next")
+			q.waiting("next")
+			held.kill()
+			q.gone("held")
+			st, err := q.pool.Status()
+			if err != nil || st.Disk != nil {
+				t.Fatalf("status names a dead waiter's disk: %+v, %v", st.Disk, err)
+			}
+			release[0]()
+			q.next("slot next")
+		})
+	}
+}
+
+// A ticket from a ym that writes no field is judged by its cwd, as every ticket was.
+func TestAnOlderTicketWithoutTheFieldIsJudgedByItsCwd(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		cwd      string
+		deferred bool
+	}{
+		{"its cwd is low", lowDiskCwd, false},
+		{"its cwd is healthy", "/healthy", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newQueue(t, 1)
+			low := filepath.Join(t.TempDir(), "low")
+			if err := os.WriteFile(low, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			line := q.pool.slotLineDir()
+			if err := os.MkdirAll(line, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(line, fmt.Sprintf("%020d-1%s", 1, queuedTicket))
+			if err := os.WriteFile(path, []byte(`{"pid":1,"command":["older"],"cwd":"`+c.cwd+`"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+				t.Fatal(err)
+			}
+			q.start("next", "", "SLOT_JOB_LOW_WHILE="+low)
+			q.next("lane next")
+			if c.deferred {
+				q.quiet()
+				f.Close()
+			}
+			q.next("slot next")
+		})
+	}
+}
+
+func TestWaitersAllHeldByADiskRecoverInTheirOrder(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		why  string
+	}{
+		{"by their cwd", "SLOT_JOB_CWD=" + lowDiskCwd},
+		{"by their own TMPDIR or GOCACHE", "SLOT_JOB_OWN_DISK_LOW=1"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newQueue(t, 1)
+			low := filepath.Join(t.TempDir(), "low")
+			if err := os.WriteFile(low, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var line []*job
+			for i := range 4 {
+				name := "job" + strconv.Itoa(i)
+				line = append(line, q.start(name, "", "SLOT_JOB_LOW_WHILE="+low, "SLOT_JOB_POLL=300ms", c.why))
+				q.next("lane " + name)
+				q.waitFor(name+"'s hold", func(st Status) bool { return diskLowOf(t, st, name) == "/low" })
+				// spread their polls, so the recovery lands first on any of them
+				time.Sleep(70 * time.Millisecond)
+			}
+			if err := os.Remove(low); err != nil {
+				t.Fatal(err)
+			}
+			for _, j := range line {
+				q.next("slot " + j.name)
+				j.finish()
+			}
 		})
 	}
 }
