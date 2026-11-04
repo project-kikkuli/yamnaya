@@ -695,19 +695,51 @@ func TestAnAmbiguousItemRefOffersRefsThatWorkWithoutAnId(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = w.core.FindItem("", "demo:"+inChief.ID)
-	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("FindItem = %v, want it ambiguous", err)
-	}
-	if strings.Contains(err.Error(), boss.ID) {
-		t.Fatalf("message shows the id: %v", err)
-	}
-	for _, it := range []Item{inChief, inRepo} {
-		if !strings.Contains(err.Error(), it.Key()) {
-			t.Fatalf("message does not offer %s: %v", it.Key(), err)
+	for _, ref := range []string{"demo:" + inChief.ID, inChief.ID} {
+		_, err = w.core.FindItem("", ref)
+		if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+			t.Fatalf("FindItem(%q) = %v, want it ambiguous", ref, err)
 		}
-		if got, err := w.core.FindItem("", it.Key()); err != nil || got.Seq != it.Seq {
-			t.Fatalf("the offered %s found #%d, %v", it.Key(), got.Seq, err)
+		if _, offered, _ := strings.Cut(err.Error(), "ambiguous:"); strings.Contains(offered, boss.ID) || strings.Contains(offered, "demo:") {
+			t.Fatalf("message offers a ref that does not resolve: %v", err)
 		}
+		for _, it := range []Item{inChief, inRepo} {
+			if !strings.Contains(err.Error(), it.Key()) {
+				t.Fatalf("message does not offer %s: %v", it.Key(), err)
+			}
+			if got, err := w.core.FindItem("", it.Key()); err != nil || got.Seq != it.Seq {
+				t.Fatalf("the offered %s found #%d, %v", it.Key(), got.Seq, err)
+			}
+		}
+	}
+}
+
+func TestAChiefStoredByNameIsSettledToItsIdWhenItsHostsBoardShowsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name, parent, want string
+		board              []Manager
+	}{
+		{name: "the chief has arrived", parent: "box/fresh-chief", want: "box/mgr9", board: []Manager{{ID: "mgr9", Role: RoleChief, Name: "fresh-chief"}}},
+		{name: "not on that board", parent: "box/nosuch", want: "box/nosuch", board: []Manager{{ID: "mgr9", Role: RoleChief, Name: "fresh-chief"}}},
+		{name: "that board has no chief by the name", parent: "box/a-goal", want: "box/a-goal", board: []Manager{{ID: "mgr9", Role: RoleManager, Name: "a-goal"}}},
+		{name: "another host has the name", parent: "far/fresh-chief", want: "far/fresh-chief", board: []Manager{{ID: "mgr9", Role: RoleChief, Name: "fresh-chief"}}},
+		{name: "already an id", parent: "box/mgr9", want: "box/mgr9", board: []Manager{{ID: "mgr9", Role: RoleChief, Name: "fresh-chief"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "anything", "/repo/august")
+			if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET parent_id=? WHERE 'mgr'||num=?`, tc.parent, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			w.core.Store.invalidate()
+			w.core.Remotes, w.core.ShowRemotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: tc.board}}}, true
+			if parent := w.board(t).Org.Managers[m.ID].ParentID; parent != tc.want {
+				t.Fatalf("the board's parent %q, want %q", parent, tc.want)
+			}
+			got, err := w.core.Store.Manager(m.ID)
+			if err != nil || got.ParentID != tc.want {
+				t.Fatalf("stored parent %q, %v; want %q", got.ParentID, err, tc.want)
+			}
+		})
 	}
 }

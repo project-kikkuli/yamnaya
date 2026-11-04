@@ -29,6 +29,8 @@ type remoteHosts struct {
 	// timeout bounds one host's read; every is how old a read gets before the next Boards starts another; wait is how long
 	// Boards waits for a host it has never read; slow is how long a read runs before the host reads as slow.
 	timeout, every, wait, slow time.Duration
+	// waitUntil ends the one wait a process gets, however many Boards it calls.
+	waitUntil time.Time
 	// seen hears each host that answered, with what it printed.
 	seen func(host string, at time.Time, board []byte)
 
@@ -118,8 +120,12 @@ func (r *remoteHosts) Boards() []core.RemoteBoard {
 			first = append(first, ch)
 		}
 	}
+	if r.waitUntil.IsZero() {
+		r.waitUntil = time.Now().Add(r.wait)
+	}
+	until := time.Until(r.waitUntil)
 	r.mu.Unlock()
-	deadline := time.NewTimer(r.wait)
+	deadline := time.NewTimer(until)
 	defer deadline.Stop()
 wait:
 	for _, ch := range first {

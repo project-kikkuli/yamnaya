@@ -821,13 +821,15 @@ func (m Model) needLines(i int, n core.Need) string {
 
 const (
 	minLead = 16
-	// needRest and itemRest are what a Needs You row and an item row keep beside their lead: the mark, the key and the start of the
-	// question, and an item row's state and recipient too.
+	// needRest is what a Needs You row keeps beside its lead: the mark, the key and the start of the question.
 	needRest = 39
-	itemRest = 60
-	// minRecipient and minQuestion are the least of an item row's recipient and question a long recipient leaves, so its key stays whole.
-	minRecipient = 8
-	minQuestion  = 20
+	// itemFixed is an item row's state, gaps and margin. Its key stays whole: the question gives way to minQuestion, then the recipient to
+	// minRecipient, then the question to minItemQuestion, then the lead to minItemLead.
+	itemFixed       = 1 + 10 + 4 + 2 + 2 + 1
+	minRecipient    = 6
+	minQuestion     = 20
+	minItemQuestion = 8
+	minItemLead     = 8
 )
 
 // itemID names an item, with its project where the needs list mixes projects.
@@ -1067,15 +1069,18 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	longest := 0
+	leads, keys := 0, 0
 	for _, other := range m.items {
-		longest = max(longest, ansi.StringWidth(m.tagged(other.Host, m.board.Org.ItemLead(other))))
+		leads = max(leads, ansi.StringWidth(m.tagged(other.Host, m.board.Org.ItemLead(other))))
+		keys = max(keys, ansi.StringWidth(strings.TrimSpace(ids[other.Key()])))
 	}
-	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), m.leadColumn(longest, itemRest)) + " " + pad(it.State, 10) + " to "
+	// what the row's lead, recipient and question share once its mark, state, gaps and longest key are out.
+	free := m.width - ansi.StringWidth(m.mark(i)) - itemFixed - keys
+	lead := max(minItemLead, min(leads, free-minRecipient-minItemQuestion))
+	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), lead) + " " + pad(it.State, 10) + " to "
 	ref := strings.TrimSpace(ids[it.Key()])
-	left := m.width - ansi.StringWidth(head) - ansi.StringWidth(ref) - 5
-	head += ansi.Truncate(m.recipientName(it), max(minRecipient, left-minQuestion), "…") + "  "
-	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
+	head += ansi.Truncate(m.recipientName(it), max(minRecipient, free-lead-minQuestion), "…") + "  "
+	room := max(minItemQuestion, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
 	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)

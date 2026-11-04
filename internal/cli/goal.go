@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,7 +26,15 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		Use:   "goal [--codex] [--host HOST] [--repo NAME|PATH] [--under CHIEF] [--name NAME] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
-		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
+		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			under = e.core.Store.Unnicked(under)
+			_, _, underHost := core.SplitRemote(under)
+			readHosts := sync.OnceValue(func() error { return e.readRemotes(remoteWait, true) })
+			if host != "" || underHost {
+				if err := readHosts(); err != nil {
+					return err
+				}
+			}
 			var requester string
 			if cl, err := e.caller(); err == nil {
 				requester = cl.Session
@@ -53,6 +62,11 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 			dir, err := e.repoArg(repo)
 			if err != nil {
 				return err
+			}
+			if _, err := os.Stat(dir); err != nil {
+				if err := readHosts(); err != nil {
+					return err
+				}
 			}
 			g, m, err := e.core.NewGoalNamed(name, args[0], dir, harnessFlag(useCodex), under, selected)
 			if err != nil {

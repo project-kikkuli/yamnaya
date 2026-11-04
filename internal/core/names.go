@@ -441,3 +441,23 @@ func (c *Core) renameInItems(id, name string) error {
 	}
 	return nil
 }
+
+// settleParents turns a chief on another host, stored by name because its board had not shown it yet, into its id once o, merged
+// with that board, does. A name that host's board does not have stays as it is.
+func (c *Core) settleParents(o Org) error {
+	var errs []error
+	for id, m := range o.Managers {
+		host, rest, remote := SplitRemote(m.ParentID)
+		if m.Host != "" || !remote || idShaped.MatchString(rest) {
+			continue
+		}
+		if boss, err := o.lookup(m.ParentID); err == nil && boss.Role == RoleChief && boss.Host == host {
+			_, err := c.Store.db.Exec(`UPDATE ym_managers SET parent_id=? WHERE 'mgr' || num = ? AND parent_id=?`, boss.ID, id, m.ParentID)
+			c.Store.invalidate()
+			errs = append(errs, err)
+			m.ParentID = boss.ID
+			o.Managers[id] = m
+		}
+	}
+	return errors.Join(errs...)
+}

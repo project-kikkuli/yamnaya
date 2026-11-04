@@ -971,25 +971,29 @@ func TestANeedsYouRowShowsAWholeNameWhenTheWidthHasRoomForIt(t *testing.T) {
 	}
 }
 
-func TestAnItemRowKeepsItsKeyWholeBesideALongLeadAndRecipient(t *testing.T) {
-	const long = "this-is-a-forty-character-goal-name-here"
+func TestAnItemRowKeepsItsKeyWholeWhateverElseIsLong(t *testing.T) {
+	const lead, to = "this-is-a-forty-character-goal-name-here", "chief-with-a-forty-character-name-itself"
 	for _, tc := range []struct {
-		width      int
-		wholeLead  bool
-		wholeTo    bool
-		recipient  string
-		wantQuestn string
+		name     string
+		width    int
+		key      string
+		question string
+		wholeTo  bool
+		wholeLed bool
 	}{
-		{width: 200, wholeLead: true, wholeTo: true, recipient: "chief-with-a-forty-character-name-itself", wantQuestn: "which way should the export go"},
-		{width: 100, wholeLead: true, recipient: "chief-with-a-forty-character-name-itself", wantQuestn: "which way"},
-		{width: 80, recipient: "chief-with-a-forty-character-name-itself", wantQuestn: "which"},
+		{name: "a wide board", width: 200, key: "#7", question: "which way should the export go", wholeTo: true, wholeLed: true},
+		{name: "a short key at 100", width: 100, key: "#7", question: "which way", wholeLed: true},
+		{name: "a short key at 80", width: 80, key: "#7", question: "which", wholeLed: true},
+		{name: "a key of 22 at 100", width: 100, key: "byo-mbp-dm6tyx3m6c/#84", question: "which", wholeLed: true},
+		{name: "a key of 34 at 100", width: 100, key: "this-is-a-thirty-char-repo-name:D1", question: "which"},
+		{name: "a key of 34 at 80", width: 80, key: "this-is-a-thirty-char-repo-name:D1", question: "which"},
 	} {
-		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "short ask")
-			if _, err := c.Rename(ms[0].ID, long); err != nil {
+			if _, err := c.Rename(ms[0].ID, lead); err != nil {
 				t.Fatal(err)
 			}
-			boss, err := c.NewChief(tc.recipient, "", t.TempDir(), "", nil)
+			boss, err := c.NewChief(to, "", t.TempDir(), "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -997,15 +1001,15 @@ func TestAnItemRowKeepsItsKeyWholeBesideALongLeadAndRecipient(t *testing.T) {
 			m.width = tc.width
 			it := core.Item{Seq: 7, ID: "D1", Kind: core.KindDecision, State: core.ItemOpen, Recipient: boss.ID, Question: "which way should the export go when it is large?", Dossier: core.Dossier{Goal: ms[0].GoalID}}
 			m.items = []core.Item{it}
-			line, _, _ := strings.Cut(ansi.Strip(m.itemLines(-1, it, map[string]string{it.Key(): "#7"})), "\n")
+			line, _, _ := strings.Cut(ansi.Strip(m.itemLines(-1, it, map[string]string{it.Key(): tc.key})), "\n")
 			if w := ansi.StringWidth(line); w > tc.width {
 				t.Fatalf("row is %d wide at %d columns:\n%s", w, tc.width, line)
 			}
-			if !strings.HasSuffix(line, "#7") {
-				t.Fatalf("row lost its key:\n%s", line)
+			if !strings.HasSuffix(line, tc.key) {
+				t.Fatalf("row lost its key %q:\n%s", tc.key, line)
 			}
-			if strings.Contains(line, long) != tc.wholeLead || strings.Contains(line, tc.recipient) != tc.wholeTo || !strings.Contains(line, tc.wantQuestn) {
-				t.Fatalf("whole lead %v, whole recipient %v, question %q wanted at %d columns:\n%s", tc.wholeLead, tc.wholeTo, tc.wantQuestn, tc.width, line)
+			if strings.Contains(line, lead) != tc.wholeLed || strings.Contains(line, to) != tc.wholeTo || !strings.Contains(line, tc.question) {
+				t.Fatalf("want whole lead %v, whole recipient %v, question %q:\n%s", tc.wholeLed, tc.wholeTo, tc.question, line)
 			}
 		})
 	}
