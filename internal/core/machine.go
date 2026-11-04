@@ -38,7 +38,7 @@ type Swollen struct {
 	Session, Goal, Name string
 }
 
-// Line is "memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under goal2 w1".
+// Line is "memory: script pid 41 holds 26 GiB, 41% of RAM, for 51m, under csv-export w1".
 func (s Swollen) Line() string {
 	line := fmt.Sprintf("memory: %s pid %d holds %.0f GiB, %.0f%% of RAM, for %s", s.Command, s.PID, s.Bytes/(1<<30), s.Share*100, Span(s.Elapsed))
 	if who := who(s.Goal, s.Name, ""); who != "" {
@@ -78,6 +78,8 @@ func who(goal, name, fallback string) string {
 	switch {
 	case goal != "" && name != "":
 		return goal + " " + name
+	case goal != "":
+		return goal
 	case name != "":
 		return name
 	}
@@ -160,12 +162,12 @@ func placer(b Board, procs []proc.Proc) places {
 	}
 	var walk func(Node)
 	walk = func(n Node) {
-		goal := n.Manager.ID
+		goal := n.Manager.Shown()
 		if n.Goal != nil {
-			goal = n.Goal.ID
+			goal = n.Goal.Shown()
 		}
 		if n.Live != nil {
-			p.named[n.Live.Key()] = [2]string{goal, n.Manager.ID}
+			p.named[n.Live.Key()] = [2]string{goal, ""}
 		}
 		for _, w := range n.Workers {
 			if w.Member == nil {
@@ -286,7 +288,7 @@ func (m Machine) Overload() string {
 	return s
 }
 
-// Line is what the use runs, for whom and for how long: "goal3 tests  go test ./...  4m".
+// Line is what the use runs, for whom and for how long: "csv-export tests  go test ./...  4m".
 func (u SlotUse) Line(now time.Time) string {
 	s := u.Claim.Line()
 	if who := u.Who(); who != "" {

@@ -158,7 +158,7 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 			return out, err
 		}
 		now := c.now()
-		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, order.Author, order.Why, out.PRs), Created: now, Delivered: now}); err != nil {
+		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, c.closerName(order.Author), order.Why, out.PRs), Key: closureKey(order.Author, now, int64(g.Version)), Created: now, Delivered: now}); err != nil {
 			return out, err
 		}
 		if !g.Ended() {

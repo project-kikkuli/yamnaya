@@ -184,7 +184,7 @@ func (c *Core) sortChief(chief string, events []GoalEvent) (chiefSort, error) {
 			out.action = append(out.action, e)
 			continue
 		case EventGoalClosed:
-			if parseClosure(e).Actor == "chief "+chief {
+			if closerOf(e) == chief {
 				out.quiet = append(out.quiet, e)
 			} else {
 				out.action = append(out.action, e)

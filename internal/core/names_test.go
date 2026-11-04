@@ -822,3 +822,78 @@ func TestABoardsQueueRowsFollowARename(t *testing.T) {
 		t.Fatalf("row %q does not follow the rename", line)
 	}
 }
+
+func TestACloseShowsItsChiefsNameAndIsJudgedByItsId(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		closer  string
+		stored  func(*orgWorld, Goal, Manager, string) GoalEvent
+		settle  bool
+		action  bool
+		line    string
+		hideIDs bool
+	}{
+		{name: "closed now by the chief reading it", closer: "boss", line: "closed as abandoned by chief boss-chief: not needed", hideIDs: true},
+		{name: "closed now by another chief", closer: "other", action: true, line: "by chief other-chief:", hideIDs: true},
+		{name: "closed now by the owner", closer: "owner", action: true, line: "by the owner:", hideIDs: true},
+		{name: "stored with the id, not settled", closer: "boss", stored: legacyClose, line: "by chief "},
+		{name: "stored with the id, settled", closer: "boss", stored: legacyClose, settle: true, line: "closed as abandoned by chief boss-chief: not needed", hideIDs: true},
+		{name: "another chief's, stored with the id and settled", closer: "other", stored: legacyClose, settle: true, action: true, line: "by chief other-chief:", hideIDs: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "the-goal" }
+			g, m := w.goal(t, "anything", "/repo/august")
+			boss := w.chief(t, "boss-chief", m.ID)
+			other := w.chief(t, "other-chief", boss.ID)
+			author := map[string]string{"boss": boss.ID, "other": other.ID, "owner": Owner}[tc.closer]
+			if tc.stored != nil {
+				tc.stored(w, g, m, author)
+			} else if _, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "not needed", Author: author}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.settle {
+				if n, err := w.core.SettleClosures(); err != nil || n != 1 {
+					t.Fatalf("settled %d, %v; want 1", n, err)
+				}
+				if n, err := w.core.SettleClosures(); err != nil || n != 0 {
+					t.Fatalf("settling again changed %d, %v", n, err)
+				}
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			at := slices.IndexFunc(events, func(e GoalEvent) bool { return e.Kind == EventGoalClosed })
+			if at < 0 {
+				t.Fatalf("no close in %+v", events)
+			}
+			e := events[at]
+			if !strings.Contains(e.Payload, tc.line) {
+				t.Fatalf("line %q, want %q", e.Payload, tc.line)
+			}
+			if tc.hideIDs && (strings.Contains(e.Payload, boss.ID) || strings.Contains(e.Payload, other.ID)) {
+				t.Fatalf("line %q shows an id", e.Payload)
+			}
+			split, err := w.core.sortChief(boss.ID, []GoalEvent{e})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(split.action) == 1; got != tc.action {
+				t.Fatalf("needs the chief %v, want %v: %+v", got, tc.action, split)
+			}
+			if cl := parseClosure(e); cl.Disposition != CloseAbandoned || cl.Reason != "not needed" {
+				t.Fatalf("closure %+v", cl)
+			}
+		})
+	}
+}
+
+// legacyClose stores a close as it was written when its line named its chief by id.
+func legacyClose(w *orgWorld, g Goal, _ Manager, author string) GoalEvent {
+	e, _, err := w.core.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(CloseAbandoned, author, "not needed", nil), Created: w.clock, Delivered: w.clock})
+	if err != nil {
+		panic(err)
+	}
+	return e
+}

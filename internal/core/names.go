@@ -462,6 +462,14 @@ func (c *Core) settleParents(o Org) error {
 	return errors.Join(errs...)
 }
 
+// RefOf is how the manager or chief with this id is named across hosts.
+func (o Org) RefOf(id string) string {
+	if m, ok := o.Managers[id]; ok {
+		return m.Ref()
+	}
+	return id
+}
+
 // ActorShown is who a goal's closure says closed it, a chief by its name.
 func (o Org) ActorShown(actor string) string {
 	if id, ok := strings.CutPrefix(actor, "chief "); ok {

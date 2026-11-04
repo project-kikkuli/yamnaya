@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,8 +16,26 @@ type GoalClosure struct {
 	At          time.Time
 }
 
-const closedPrefix, closedPR = "closed as ", "open pull request: "
+const closedPrefix, closedPR, closedKey = "closed as ", "open pull request: ", "closed:"
 
+// closureKey carries who closed a goal, by id, so the name the event's line shows can be for people alone.
+func closureKey(author string, at time.Time, n int64) string {
+	return fmt.Sprintf("%s%s:%d:%d", closedKey, author, at.UnixNano(), n)
+}
+
+// closerOf is the id of whoever closed the goal in e, Owner for the owner. A close older than closureKey names its chief by id in its line.
+func closerOf(e GoalEvent) string {
+	if rest, ok := strings.CutPrefix(e.Key, closedKey); ok {
+		id, _, _ := strings.Cut(rest, ":")
+		return id
+	}
+	if id, ok := strings.CutPrefix(parseClosure(e).Actor, "chief "); ok {
+		return id
+	}
+	return Owner
+}
+
+// closureText is a goal-closed event's line; author is the closer as people read it.
 func closureText(disposition, author, why string, prs []string) string {
 	by := "the owner"
 	if author != Owner {
@@ -40,6 +59,44 @@ func parseClosure(e GoalEvent) GoalClosure {
 		}
 	}
 	return out
+}
+
+// closerName is the closer with this id as a close's line shows it.
+func (c *Core) closerName(author string) string {
+	if author == Owner {
+		return author
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return author
+	}
+	if c.Remotes != nil {
+		c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	}
+	return o.RefOf(author)
+}
+
+// SettleClosures rewrites each close stored with its chief's id in its line to show the chief's name, and moves the id to the event's key.
+func (c *Core) SettleClosures() (int, error) {
+	events, err := scanEvents(c.Store.db.Query(`SELECT `+eventCols+` FROM ym_goal_events WHERE kind = ? AND key = ''`, EventGoalClosed))
+	if err != nil {
+		return 0, err
+	}
+	settled := 0
+	var errs []error
+	for _, e := range events {
+		author := closerOf(e)
+		if author == Owner {
+			continue
+		}
+		payload := strings.Replace(e.Payload, " by chief "+author+": ", " by chief "+c.closerName(author)+": ", 1)
+		_, err := c.Store.db.Exec(`UPDATE ym_goal_events SET payload = ?, key = ? WHERE seq = ?`, payload, closureKey(author, e.Created, e.Seq), e.Seq)
+		if errs = append(errs, err); err == nil {
+			settled++
+		}
+	}
+	c.Store.invalidate()
+	return settled, errors.Join(errs...)
 }
 
 // standingEvents lists the goal events of kind no reopening or new work has followed, nor a newer one of kind.

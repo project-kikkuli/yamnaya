@@ -13,7 +13,7 @@ func TestTheMachinePlacesSlotsAndHeavyProcessesWithTheirGoalAndSession(t *testin
 	now := time.Now()
 	b := Board{At: now,
 		Sessions: []Live{{Session: Session{ID: "s-tests", PID: 100, Title: "tests"}}, {Session: Session{ID: "s-mgr", PID: 150}}},
-		Tree: []Node{{Manager: Manager{ID: "mgr3", GoalID: "goal3"}, Goal: &Goal{ID: "goal3"},
+		Tree: []Node{{Manager: Manager{ID: "mgr3", GoalID: "goal3", Name: "csv-export"}, Goal: &Goal{ID: "goal3", Name: "csv-export"},
 			Live:    &Live{Session: Session{ID: "s-mgr", PID: 150}},
 			Workers: []Worker{{Session: "s-tests", Name: "board tests", State: "busy"}}}},
 	}
@@ -37,14 +37,14 @@ func TestTheMachinePlacesSlotsAndHeavyProcessesWithTheirGoalAndSession(t *testin
 	if !m.Overloaded() {
 		t.Fatalf("load 9 on 4 cores must count as overloaded")
 	}
-	if want := "overloaded: load 9 on 4 cores · top: goal3 board tests 400%, WindowServer 80%"; m.Overload() != want {
+	if want := "overloaded: load 9 on 4 cores · top: csv-export board tests 400%, WindowServer 80%"; m.Overload() != want {
 		t.Fatalf("Overload() = %q, want %q", m.Overload(), want)
 	}
 	u := placer(b, procs).use(slot.Claim{PID: 200, Command: []string{"go", "test"}, Since: now.Add(-4 * time.Minute)})
-	if u.Session != "s-tests" || !strings.HasPrefix(u.Line(now), "goal3 board tests  go test  4m") {
+	if u.Session != "s-tests" || !strings.HasPrefix(u.Line(now), "csv-export board tests  go test  4m") {
 		t.Fatalf("use = %+v, line %q", u, u.Line(now))
 	}
-	if u := placer(b, procs).use(slot.Claim{PID: 999, Session: "s-mgr"}); u.Who() != "goal3 mgr3" {
+	if u := placer(b, procs).use(slot.Claim{PID: 999, Session: "s-mgr"}); u.Who() != "csv-export" {
 		t.Fatalf("a claim naming its session in the environment is placed by it; got %q", u.Who())
 	}
 }

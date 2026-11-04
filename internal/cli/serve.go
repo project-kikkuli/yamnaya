@@ -114,6 +114,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				if n, err := e.core.NameUnnamed(); err != nil || n > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), "named %d goals and chiefs: %v\n", n, err)
 				}
+				if n, err := e.core.SettleClosures(); err != nil || n > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "settled %d closes: %v\n", n, err)
+				}
 			}()
 		}
 		last := time.Now()
