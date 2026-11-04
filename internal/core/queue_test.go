@@ -582,7 +582,7 @@ func TestReRankingShowsAtOnceWithoutAScan(t *testing.T) {
 		t.Fatalf("order before: %d first", b.Needs[0].Item.Seq)
 	}
 	i := slices.IndexFunc(b.Needs, func(n Need) bool { return n.Item != nil && n.Item.Seq == low.Seq })
-	if err := w.core.RankNeed(b.Needs[i], "top"); err != nil {
+	if err := w.core.RankNeed(b, b.Needs[i], "top"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := w.core.Reranked(b, b.Needs[i])

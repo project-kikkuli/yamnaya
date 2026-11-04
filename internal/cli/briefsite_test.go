@@ -879,3 +879,17 @@ func TestThePagesMoveRanksAsTheOwnerUnderTheSameGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestACheckMarkIsNotInsideTheRowThatOpens(t *testing.T) {
+	w := newDoWorld(t)
+	for _, want := range []string{"build the queue", "repo#1"} {
+		row := w.rowOf(t, want)
+		summary := row[:strings.Index(row, "</summary>")]
+		if strings.Contains(summary, "<button") {
+			t.Fatalf("a button in the summary takes taps aimed at the text: %s", summary)
+		}
+		if !strings.Contains(row[strings.Index(row, "</details>"):], `class="check"`) {
+			t.Fatalf("no check mark beside the row: %s", row)
+		}
+	}
+}

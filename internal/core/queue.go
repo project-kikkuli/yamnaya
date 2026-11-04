@@ -67,6 +67,10 @@ func queueItems(db *sql.DB) error {
 	}
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ym_queue_marks (
 		key TEXT PRIMARY KEY, pin INTEGER NOT NULL DEFAULT 0, pin_owner INTEGER NOT NULL DEFAULT 0, snooze_until TEXT)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ym_owner_ranks (key TEXT PRIMARY KEY, pos INTEGER)`)
 	return err
 }
 
@@ -226,6 +230,12 @@ func (s *Store) RankItem(ref, dir string, owner bool) (Item, bool, error) {
 	if err != nil {
 		return it, false, err
 	}
+	if !owner {
+		held, err := s.rankHeld("item:" + it.Key())
+		if err != nil || held {
+			return it, false, err
+		}
+	}
 	top, err := s.highestPin(owner)
 	if err != nil {
 		return it, false, err
@@ -244,6 +254,12 @@ func (s *Store) RankItem(ref, dir string, owner bool) (Item, bool, error) {
 // RankRow pins a row that is not an item, by its MarkKey; false means the owner already ranked it and a chief cannot.
 func (s *Store) RankRow(key, dir string, owner bool) (bool, error) {
 	defer s.invalidate()
+	if !owner {
+		held, err := s.rankHeld(key)
+		if err != nil || held {
+			return false, err
+		}
+	}
 	marks, err := s.queueMarks()
 	if err != nil {
 		return false, err
@@ -337,7 +353,13 @@ func (c *Core) Reranked(b Board, n Need) (Board, error) {
 	return b, c.foldLater(&b)
 }
 
-func (c *Core) RankNeed(n Need, dir string) error {
+func (c *Core) RankNeed(b Board, n Need, dir string) error {
+	if dir == "up" || dir == "down" {
+		return c.Store.stepRow(b, n, dir)
+	}
+	if err := c.Store.holdRank(n.orderKey(), true); err != nil {
+		return err
+	}
 	if n.Item != nil {
 		_, _, err := c.Rank(n.Item.Key(), dir, true)
 		return err
@@ -713,6 +735,12 @@ func (c *Core) foldLater(b *Board) error {
 	}
 	rank(b.Needs, b.At)
 	rank(b.Later, b.At)
+	order, err := c.Store.ownerOrder()
+	if err != nil {
+		return err
+	}
+	applyOwnerOrder(b.Needs, order)
+	applyOwnerOrder(b.Later, order)
 	return nil
 }
 

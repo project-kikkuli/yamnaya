@@ -164,6 +164,36 @@ func itemQueueCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	return cmd
 }
 
+func ownerStep(e *env, cmd *cobra.Command, ref, dir string) error {
+	b, err := e.core.Board()
+	if err != nil {
+		return err
+	}
+	if b, err = e.core.WithHostRows(b); err != nil {
+		return err
+	}
+	match := func(n core.Need) bool {
+		return n.PR != nil && n.PR.URL == ref || n.Review != nil && n.Review.URL == ref
+	}
+	if len(core.PRsIn(ref)) != 1 {
+		key, err := e.itemKey(b, ref)
+		if err != nil {
+			return err
+		}
+		match = func(n core.Need) bool { return n.Item != nil && n.Item.Key() == key }
+	}
+	for _, ns := range [][]core.Need{b.Needs, b.Later} {
+		if i := slices.IndexFunc(ns, match); i >= 0 {
+			if err := e.core.RankNeed(b, ns[i], dir); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s moved %s\n", ns[i].ID(), dir)
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not in the owner's queue", ref)
+}
+
 func itemRankCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var chief bool
 	cmd := &cobra.Command{
@@ -173,6 +203,9 @@ func itemRankCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if _, err := e.caller(); err == nil {
 				chief = true
+			}
+			if !chief && (args[1] == "up" || args[1] == "down") {
+				return ownerStep(e, cmd, args[0], args[1])
 			}
 			if len(core.PRsIn(args[0])) == 1 {
 				ok, err := e.core.Store.RankRow("pr:"+args[0], args[1], !chief)

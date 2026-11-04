@@ -1186,8 +1186,8 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "f", ",", ".":
 		if r.need != nil {
-			n, dir := *r.need, map[string]string{"f": "top", ",": "up", ".": "down"}[k.String()]
-			return m, m.do(func() (string, error) { return n.ID() + " ranked " + dir, m.core.RankNeed(n, dir) })
+			n, dir, board := *r.need, map[string]string{"f": "top", ",": "up", ".": "down"}[k.String()], m.board
+			return m, m.do(func() (string, error) { return n.ID() + " ranked " + dir, m.core.RankNeed(board, n, dir) })
 		}
 	case "l":
 		if r.need != nil {
