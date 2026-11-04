@@ -205,6 +205,28 @@ func TestARowIsOneLineAndGainsDimFactsOnlyWhenWide(t *testing.T) {
 	}
 }
 
+const stayRanked = time.Duration(-1)
+
+func endedGoalAsk(impact, snooze string) func(*testing.T, *orgWorld) string {
+	return func(t *testing.T, w *orgWorld) string {
+		g, m := w.goal(t, "ship", "/repo/a")
+		it, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "done goal", Rec: "x", Impact: impact, Session: m.Session})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.State = GoalDone
+		if err := w.core.Store.SaveGoal(g); err != nil {
+			t.Fatal(err)
+		}
+		if snooze != "" {
+			if _, err := w.core.SnoozeFor(it.Key(), snooze); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return it.Qualified()
+	}
+}
+
 func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testing.T) {
 	url := "https://github.com/acme/repo/pull/5"
 	for _, tc := range []struct {
@@ -283,6 +305,10 @@ func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testi
 			}
 			return it.Qualified()
 		}, 0},
+		{"a prod item of a finished goal stays ranked", endedGoalAsk(ImpactProd, ""), stayRanked},
+		{"a clinical item of a finished goal stays ranked", endedGoalAsk(ImpactClinical, ""), stayRanked},
+		{"a routine item of a finished goal folds", endedGoalAsk(ImpactRoutine, ""), 0},
+		{"a snoozed prod item of a finished goal folds until it wakes", endedGoalAsk(ImpactProd, "1h"), time.Hour + time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -296,6 +322,12 @@ func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testi
 				return false
 			}
 			b := w.board(t)
+			if tc.back == stayRanked {
+				if !has(b.Needs) || has(b.Later) {
+					t.Fatalf("%s not ranked: needs %d later %d", id, len(b.Needs), len(b.Later))
+				}
+				return
+			}
 			if has(b.Needs) || !has(b.Later) {
 				t.Fatalf("%s not folded: needs %d later %d", id, len(b.Needs), len(b.Later))
 			}

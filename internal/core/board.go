@@ -1164,7 +1164,7 @@ func needs(b Board) (live, later []Need) {
 					n.Project = s.Project
 				}
 			}
-			if it.State == ItemSnoozed || itemGoalEnded(b.Org, *it) {
+			if it.State == ItemSnoozed || itemGoalEnded(b.Org, *it) && !n.Urgent() {
 				later = append(later, n)
 			} else {
 				live = append(live, n)
