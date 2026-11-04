@@ -51,19 +51,27 @@ func (a *failoverAttempt) failed(account string, until time.Time, err error) {
 	a.Failed[account], a.Why[account] = until, err.Error()
 }
 
-// noteStop tells the login's record of a stop of this conversation once: one stop however many ways ym hears of it, while its process lasts
-// and no later turn has stopped.
+// noteStop tells the login's record of a stop of this conversation once: one stop however many ways ym hears of it. With no later turn it is the
+// same stop in the same process, or in a new one while its bar stands; a landing past the bar tried the login again, so a stop there is new.
 func (a *failoverAttempt) noteStop(dir string, p profile.Profile, e core.Exhaustion, pid int, at, reset time.Time, limits []core.Limit) error {
-	if a.Recorded == e.Event || a.Recorded != "" && a.On == p.Account && pid != 0 && a.PID == pid && (a.Unproven || !e.Seen.After(a.LastAt)) {
-		if a.On != p.Account || a.Unproven {
-			a.On = p.Account
-			a.Unproven = false
-			if e.Seen.After(a.LastAt) {
-				a.LastAt = e.Seen
-			}
-			return saveFailover(dir, e.Harness, *a)
+	process := pid != 0 && a.PID == pid
+	same := a.Recorded == e.Event
+	if !same && a.Recorded != "" && a.On == p.Account {
+		bar, err := readBar(barPath(dir, p))
+		if err != nil {
+			return err
 		}
-		return nil
+		same = process && a.Unproven || !e.Seen.After(a.LastAt) && (process || bar.Until.After(at))
+	}
+	if same {
+		if a.On == p.Account && !a.Unproven && (pid == 0 || a.PID == pid) {
+			return nil
+		}
+		a.On, a.Unproven, a.PID = p.Account, false, cmp.Or(pid, a.PID)
+		if e.Seen.After(a.LastAt) {
+			a.LastAt = e.Seen
+		}
+		return saveFailover(dir, e.Harness, *a)
 	}
 	if err := recordStop(dir, p, at, reset, limits); err != nil {
 		return err

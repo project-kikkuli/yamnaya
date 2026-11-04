@@ -2719,6 +2719,128 @@ func TestWireAHistoricLedgerStopIsLeftAlone(t *testing.T) {
 	}
 }
 
+// restartServe is a new ym over the same state, the panes left running: it knows only what it saved.
+func (w *wireWorld) restartServe(t *testing.T) {
+	t.Helper()
+	c, err := Wire(filepath.Join(w.state, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Store.Close() })
+	m := usage.New(w.state)
+	t.Cleanup(func() { m.Close() })
+	c.Meter, w.meter = m, m
+	if _, err = m.Scan(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	c.Now = func() time.Time { return *w.clock }
+	w.l = c.Launches.(launcher)
+	w.l.statuses = &statusChecks{}
+	c.Launches = w.l
+	w.c = c
+}
+
+// restartProcess ends the session's process and starts it again on the same login, past any gate, while its screen shows the same stop.
+func (w *wireWorld) restartProcess(t *testing.T) {
+	t.Helper()
+	b, err := w.c.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := b.Session(profileConversation)
+	if _, err = w.c.Stop(s); err != nil {
+		t.Fatal(err)
+	}
+	once := w.l
+	once.anyway, once.operation = true, profileConversation
+	rec, _ := w.l.records.Find(w.rec.Key)
+	rec.Killed = time.Time{}
+	if err = w.l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err = w.c.Store.ClearKill(profileConversation); err != nil {
+		t.Fatal(err)
+	}
+	before := len(w.starts(t))
+	if _, err = once.revive(rec); err != nil {
+		t.Fatal(err)
+	}
+	w.settle(t, before+1)
+}
+
+// One stop is one stop across a restart of ym or of the session's process while its bar stands. A later turn's stop is a second, and so is a
+// dialog that returns once the bar has passed, as that landing tried the login again.
+func TestWireOneStopAcrossARestartIsOneStop(t *testing.T) {
+	addTurn := func(t *testing.T, w *wireWorld) {
+		f, err := os.OpenFile(w.transcript(t, w.def), os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprint(f, wireTurn(profileConversation, w.clock.Add(time.Second)))
+		f.Close()
+	}
+	for _, known := range []bool{false, true} {
+		for _, c := range []struct {
+			name   string
+			then   func(*testing.T, *wireWorld)
+			second bool
+		}{
+			{name: "ym restarts with the pane alive", then: func(t *testing.T, w *wireWorld) { w.restartServe(t) }},
+			{name: "its process restarts while the bar stands", then: func(t *testing.T, w *wireWorld) { w.restartProcess(t) }},
+			{name: "ym and its process both restart", then: func(t *testing.T, w *wireWorld) {
+				w.restartProcess(t)
+				w.restartServe(t)
+			}},
+			{name: "a new turn stops in the same process", second: true, then: addTurn},
+			{name: "a new turn stops after a restart", second: true, then: func(t *testing.T, w *wireWorld) {
+				addTurn(t, w)
+				w.restartProcess(t)
+			}},
+			{name: "the dialog returns once the bar has passed", second: true, then: func(t *testing.T, w *wireWorld) {
+				*w.clock = w.bar(t, w.def).Until.Add(time.Minute)
+				w.restartProcess(t)
+			}},
+		} {
+			t.Run(fmt.Sprintf("%s/known reset %v", c.name, known), func(t *testing.T) {
+				w := newWireWorld(t)
+				w.exhaust(t, w.work, w.other)
+				text := wireDialog(t)
+				if known {
+					text, _ = w.walled(t, "walled-c-after-esc.txt")
+				}
+				w.screen(t, w.def, text, "waiting")
+				w.land(t)
+				w.pass(t, time.Minute)
+				first := w.bar(t, w.def)
+				items := w.items(t)
+				if len(items) != 1 || first.Stopped.IsZero() || first.Held {
+					t.Fatalf("bar %+v, items %+v", first, items)
+				}
+				if _, err := w.c.Store.Transition(items[0].Key(), core.ItemDismissed, "not now"); err != nil {
+					t.Fatal(err)
+				}
+				c.then(t, w)
+				for range 2 {
+					w.pass(t, 15*time.Second)
+				}
+				got := w.bar(t, w.def)
+				if c.second {
+					if !got.Stopped.After(first.Stopped) {
+						t.Fatalf("a real second stop was not counted: %+v after %+v", got, first)
+					}
+					return
+				}
+				if !got.Stopped.Equal(first.Stopped) || got.Held || !got.Until.Equal(first.Until) || got.Unclaimed != first.Unclaimed || !got.Claim.Equal(first.Claim) {
+					t.Fatalf("one stop counted twice: %+v after %+v", got, first)
+				}
+				if all := w.items(t); len(all) != 1 {
+					t.Fatalf("a closed item was filed again: %d items", len(all))
+				}
+			})
+		}
+	}
+}
+
 func TestLoginRecordKeepsEveryConcurrentWrite(t *testing.T) {
 	dir := t.TempDir()
 	p := profile.Profile{Harness: "claude", ID: "default", Account: "claude/u/a"}
