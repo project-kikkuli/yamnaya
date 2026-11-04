@@ -417,6 +417,7 @@ func (a *Adapter) read(db *sql.DB, p proc.Proc, id string, now time.Time, claime
 	}
 	sc := a.scan(t.rollout, t.cwd)
 	s.Facts = sc.Facts
+	s.QuotaAt = sc.QuotaAt
 	s.Task = firstNonEmpty(oneLine(t.task), sc.First)
 	if s.Model == "" {
 		s.Model = t.model

@@ -173,7 +173,7 @@ func (c *Core) refreshSwollen(b Board, o Org) (map[string]bool, error) {
 	now := c.now()
 	for _, m := range o.Ordered() {
 		s, ok := b.Session(m.Session)
-		if m.Host != "" || !o.Active(m) || !ok || s.Context < limit || managerOff(off, o, b.parents, m) {
+		if m.Host != "" || !o.Active(m) || !ok || s.Context < limit || managerOff(off, o, b.parents, m) || c.limited(b, s) {
 			continue
 		}
 		if fresh == nil {

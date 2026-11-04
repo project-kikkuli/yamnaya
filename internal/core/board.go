@@ -104,6 +104,7 @@ type Core struct {
 	paced       PRPace
 	recovery    recovery
 	cpu         cpuCache
+	slotted     slotSeen
 	mem         cpuCache
 	prDiscovery prDiscovery
 }
@@ -135,6 +136,9 @@ type Live struct {
 	Resumed time.Time
 	// Switching is the login switch queued for the session until ym serve applies it at its next turn end.
 	Switching *Switching
+	// Slot is set while the session holds or waits for a slot or lane; SlotAt is when ym last saw that.
+	Slot   bool
+	SlotAt time.Time
 }
 
 // ThrottleHolds reports whether the owner's throttle keeps session stopped.

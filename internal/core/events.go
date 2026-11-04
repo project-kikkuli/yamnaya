@@ -46,6 +46,11 @@ const (
 	// EventRelayed is a ym command another host relayed here, with what it printed; EventRelayFailed is one that failed.
 	EventRelayed     = "relayed"
 	EventRelayFailed = "relay-failed"
+	// EventRelayStalled tells a session's goal that a host stopped carrying the commands it queued there; EventRelayBack that it carries them again.
+	EventRelayStalled = "relay-stalled"
+	EventRelayBack    = "relay-back"
+	// EventAgentLimited is a session stopped by its usage limit, which no message can move until the limit resets.
+	EventAgentLimited = "agent-limited"
 	// EventRefreshed is ym retiring a manager's or chief's large session and starting a fresh one from its brief.
 	EventRefreshed = "refreshed"
 	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, no new failure or request to decide, a repeat or a still-waiting note. Its payload says why it was counted.
@@ -69,12 +74,15 @@ var chiefKinds = map[string]bool{
 	EventPROpened: true, EventCIRed: true, EventCIGreen: true, EventPRReady: true, EventReview: true, EventMerged: true, EventClosed: true, EventConflict: true,
 	EventStuck: true, EventDone: true, EventVerifying: true, EventVerified: true, EventFailedVerify: true, EventUpdate: true,
 	EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true, EventAgentOnboarding: true, EventResumed: true, EventResumeFailed: true,
-	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true,
+	EventSteered: true, EventAdopted: true, EventWorkResumed: true, EventRelayed: true, EventRelayFailed: true, EventRelayStalled: true, EventRelayBack: true, EventAgentLimited: true,
 	EventGoalClosed: true, EventGoalReopened: true, EventGoalArchived: true,
 }
 
 // endingKinds are what a chief still hears of a goal that ended, and hears even as the first thing a host reports to it.
 var endingKinds = map[string]bool{EventGoalClosed: true, EventGoalArchived: true}
+
+// movementKinds are the events that show a goal moved whatever its manager's session did.
+var movementKinds = []string{EventPROpened, EventCIRed, EventCIGreen, EventPRReady, EventConflict, EventReview, EventMerged, EventClosed, EventSteered, EventAdopted, EventWorkResumed}
 
 // notifyKinds are the only events that also raise a desktop notification.
 var notifyKinds = map[string]bool{EventDone: true, EventStuck: true}
@@ -266,6 +274,20 @@ func (s *Store) markDelivered(events []GoalEvent, at time.Time) error {
 }
 
 // lastKind is the kind of the goal's newest event that is not an agent's reply adding nothing or a restart, "" when it has none.
+// lastMovement is when something outside the manager's own turns last changed where goal stands, zero when nothing has.
+func (s *Store) lastMovement(goal string) (time.Time, error) {
+	args := []any{goal}
+	for _, k := range movementKinds {
+		args = append(args, k)
+	}
+	var at sql.NullString
+	err := s.db.QueryRow(`SELECT created FROM ym_goal_events WHERE goal = ? AND kind IN (?`+strings.Repeat(", ?", len(movementKinds)-1)+`) ORDER BY seq DESC LIMIT 1`, args...).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	return parseTime(at), err
+}
+
 func (s *Store) lastKind(goal string) (string, error) {
 	var kind string
 	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? AND kind NOT IN (?, ?) ORDER BY seq DESC LIMIT 1`, goal, EventIdleAgain, EventRefreshed).Scan(&kind)

@@ -187,6 +187,12 @@ CREATE TABLE IF NOT EXISTS ym_relay (
 	delivered INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ym_relay_origin ON ym_relay(origin, origin_seq) WHERE origin != '';
+CREATE TABLE IF NOT EXISTS ym_relay_stalls (
+	dest TEXT PRIMARY KEY,
+	since INTEGER NOT NULL,
+	item TEXT NOT NULL DEFAULT '',
+	told TEXT NOT NULL DEFAULT '[]'
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ym_relay_seen (
 	origin TEXT NOT NULL,
 	origin_seq INTEGER NOT NULL,

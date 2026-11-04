@@ -274,6 +274,16 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 				return errors.New("ym's launcher is unavailable")
 			}
 			text := strings.Join(args[1:], " ")
+			if _, callErr := e.core.Calling(os.Getpid(), os.Getenv); !errors.Is(callErr, core.ErrNotFound) {
+				held, err := e.core.HoldForLimit(args[0], text)
+				if err != nil {
+					return err
+				}
+				if held {
+					fmt.Fprintf(cmd.OutOrStdout(), "queued: %s is stopped by its usage limit and gets this once the limit resets\n", args[0])
+					return nil
+				}
+			}
 			var msg string
 			rec, lookupErr := l.lookup(args[0])
 			if lookupErr != nil && !errors.Is(lookupErr, core.ErrNotFound) {

@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 )
@@ -17,6 +16,8 @@ const (
 	QuietAfter = 30 * time.Minute
 	// Nudges is how many nudges a quiet manager gets before its goal shows as stuck in the owner's queue.
 	Nudges = 2
+	// nudgeReply is how long a nudged manager's own turn runs before it counts as work rather than a reply to the nudge.
+	nudgeReply = 10 * time.Minute
 	// maxBackoff caps the wait between relaunches of a manager that keeps failing.
 	maxBackoff = time.Hour
 )
@@ -102,6 +103,9 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.noticeHung(b, o); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.noticeLimited(b, o); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.noticeOnboarding(b, o); err != nil {
 		errs = append(errs, err)
 	}
@@ -175,27 +179,21 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 	if !alive || hung || g.State == GoalVerifying {
 		return nil
 	}
-	return c.watchQuiet(b, act, m, g)
+	return c.watchQuiet(b, o, act, m, g)
 }
 
-// watchQuiet moves the goal's clock on anything that moved and nudges, then flags, a manager whose goal stopped moving.
-func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
+// watchQuiet moves the goal's clock on anything that moved and nudges, then flags, a manager whose goal stopped moving. A usage limit
+// holds the clock, and what the goal correctly waits on moves it, so only a goal nothing will move reaches the owner.
+func (c *Core) watchQuiet(b Board, o Org, act activity, m Manager, g Goal) error {
 	now := c.now()
-	if moved := c.lastMoved(act, m); moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) {
-		g.LastMovedAt = moved
-		if g.State == GoalStuck && strings.HasPrefix(g.Evidence, quietEvidence) {
-			g.State, g.Evidence = GoalActive, ""
+	moved := c.lastMoved(act, m)
+	for _, s := range act.sessions[m.ID] {
+		if c.limited(b, *s) {
+			moved = now
 		}
-		if err := c.Store.SaveGoal(g); err != nil {
-			return err
-		}
-		if m.Nudges > 0 {
-			m.Nudges, m.NudgedAt = 0, timeZero
-			if err := c.Store.SaveManager(m); err != nil {
-				return err
-			}
-		}
-		return nil
+	}
+	if moved.Sub(g.LastMovedAt) >= time.Minute || (moved.After(g.LastMovedAt) && (g.State == GoalStuck || m.Nudges > 0)) || (m.Nudges > 0 && g.LastMovedAt.After(m.NudgedAt)) {
+		return c.noteMoved(m, g, moved)
 	}
 	since := g.LastMovedAt
 	if m.NudgedAt.After(since) {
@@ -204,9 +202,19 @@ func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 	if now.Sub(since) < QuietAfter {
 		return nil
 	}
+	if c.inFlight(b, o, m) {
+		return c.noteMoved(m, g, now)
+	}
+	last, err := c.Store.lastMovement(g.ID)
+	if err != nil {
+		return err
+	}
+	if last.After(g.LastMovedAt) {
+		return c.noteMoved(m, g, last)
+	}
 	if m.Nudges < Nudges {
-		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs, refresh your brief with ym goal brief, and keep driving the goal to done; if it is blocked on something beyond your authority, escalate with ym item add.",
-			g.Shown(), g.LastMovedAt.Local().Format(time.Kitchen))
+		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs and keep driving the goal to done. A brief or a reply does not count as movement, and after %d nudges it shows stuck to the owner: start the next piece of work, set a wake with ym goal wake if it waits on something ym cannot see, or escalate with ym item add if it is blocked on something beyond your authority.",
+			g.Shown(), g.LastMovedAt.Local().Format(time.Kitchen), Nudges)
 		if err := c.tell(b, m.Session, text, false); err != nil {
 			return err
 		}
@@ -224,6 +232,24 @@ func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 		g.Evidence += "; last doing " + s.Doing.String()
 	}
 	return c.saveStuck(g, was)
+}
+
+// noteMoved records that the goal moved at moved: it is quiet no longer and its manager's nudges start over.
+func (c *Core) noteMoved(m Manager, g Goal, moved time.Time) error {
+	if moved.After(g.LastMovedAt) {
+		g.LastMovedAt = moved
+	}
+	if g.State == GoalStuck && strings.HasPrefix(g.Evidence, quietEvidence) {
+		g.State, g.Evidence = GoalActive, ""
+	}
+	if err := c.Store.SaveGoal(g); err != nil {
+		return err
+	}
+	if m.Nudges > 0 {
+		m.Nudges, m.NudgedAt = 0, timeZero
+		return c.Store.SaveManager(m)
+	}
+	return nil
 }
 
 // saveStuck saves a goal that got stuck and, when it was not stuck before, records the stuck event the owner is notified of.
@@ -259,8 +285,9 @@ func (c *Core) activity(b Board, o Org) activity {
 	return act
 }
 
-// lastMoved is the latest sign of life in m's goal: its session or its agents' turns, its brief, or now while any of them works or
-// it waits on the owner.
+// lastMoved is the latest sign of life in m's goal: its agents' turns, its session's until a nudge, or now while any of them works
+// or it waits on the owner. Once nudged, the manager's own turn counts only past nudgeReply: a reply to a nudge moves nothing. A
+// session its usage limit stopped moves nothing either.
 func (c *Core) lastMoved(act activity, m Manager) time.Time {
 	now := c.now()
 	var latest time.Time
@@ -270,13 +297,22 @@ func (c *Core) lastMoved(act activity, m Manager) time.Time {
 		}
 	}
 	for _, s := range act.sessions[m.ID] {
-		if (s.Status == Busy && !s.Hung(now, c.Woke)) || s.Status == Waiting || s.Status == Onboarding {
+		if !s.QuotaAt.IsZero() {
+			continue
+		}
+		if s.Slot || s.Status == Waiting || s.Status == Onboarding {
+			return now
+		}
+		if s.Key() == m.Session && m.Nudges > 0 {
+			if s.Status == Busy && now.Sub(s.Since) >= nudgeReply && !s.Hung(now, c.Woke) {
+				return now
+			}
+			continue
+		}
+		if s.Status == Busy && !s.Hung(now, c.Woke) {
 			return now
 		}
 		seen(s.lastActive())
-	}
-	if info, err := os.Stat(m.BriefPath); err == nil {
-		seen(info.ModTime())
 	}
 	if act.asking[m.ID] {
 		return now

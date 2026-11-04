@@ -99,7 +99,7 @@ func (c *Core) reach(b Board, session string) (Live, bool) {
 		return s, false
 	}
 	targets, err := c.Store.offTargets()
-	if err == nil && offIn(targets, b.Org, b.parents, s.Key()) {
+	if err == nil && offIn(targets, b.Org, b.parents, s.Key()) || c.limited(b, s) {
 		return Live{}, false
 	}
 	return s, true

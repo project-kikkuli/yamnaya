@@ -405,7 +405,7 @@ func (c *Core) watchBriefs(b Board, o Org) error {
 		if now.Sub(behind) < BriefGrace || !nudged[m.ID].Before(behind) {
 			continue
 		}
-		if s, ok := b.Session(m.Session); ok && s.Status == Busy {
+		if s, ok := b.Session(m.Session); ok && (s.Status == Busy || c.limited(b, s)) {
 			continue
 		}
 		text := fmt.Sprintf("ym: your brief is behind (%s). Refresh it now with ym goal brief --assessment \"…\" --changed \"…\" --uncertainty \"…\" --next \"…\" --waiting-on \"…\".", f.reason())

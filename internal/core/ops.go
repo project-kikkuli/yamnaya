@@ -417,7 +417,8 @@ func (c *Core) Redeliver(b Board) (int, error) {
 // pendingFresh is how old a pending message may be for ym serve to type it in; older ones wait for ym item inbox.
 const pendingFresh = time.Hour
 
-// typePending types each idle session's pending messages from the last pendingFresh into its empty input box, all in one paste.
+// typePending types each idle session's pending messages from the last pendingFresh, or since a usage limit stopped it, into its
+// empty input box, all in one paste.
 func (c *Core) typePending(b Board, o Org) (int, error) {
 	msgs, err := c.Store.PendingMessages()
 	if err != nil {
@@ -427,11 +428,11 @@ func (c *Core) typePending(b Board, o Org) (int, error) {
 	bySession := map[string][]Message{}
 	var order []string
 	for _, m := range msgs {
-		if now.Sub(m.CreatedAt) > pendingFresh {
-			continue
-		}
 		s, ok := c.reach(b, c.carrier(o, m.Session))
 		if !ok {
+			continue
+		}
+		if heldByLimit := !s.QuotaAt.IsZero() && m.CreatedAt.After(s.QuotaAt); now.Sub(m.CreatedAt) > pendingFresh && !heldByLimit {
 			continue
 		}
 		if _, seen := bySession[s.Key()]; !seen {

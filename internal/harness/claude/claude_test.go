@@ -229,6 +229,68 @@ func TestALeadWhoseTurnEndedIsIdleWhileItsCrewWorks(t *testing.T) {
 	}
 }
 
+func TestAConversationCompactedBetweenTurnsIsIdleThoughClaudeSaysBusy(t *testing.T) {
+	boundary := time.Date(2026, 11, 3, 23, 10, 53, 0, time.UTC)
+	at := func(d time.Duration) string { return boundary.Add(d).Format(time.RFC3339) }
+	ended := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"text","text":"Done"}],"stop_reason":"end_turn"}}`, at(-time.Hour))
+	calling := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use"}}`, at(-time.Minute))
+	compact := fmt.Sprintf(`{"type":"system","subtype":"compact_boundary","timestamp":%q}`, at(0))
+	summary := fmt.Sprintf(`{"type":"user","isCompactSummary":true,"timestamp":%q,"message":{"content":"This session is being continued"}}`, at(0))
+	prompt := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"next"}}`, at(time.Minute))
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  core.Status
+	}{
+		{"compacted after its turn ended", []string{ended, compact, summary}, core.Idle},
+		{"compacted mid-turn", []string{calling, compact, summary}, core.Busy},
+		{"a turn started after the compaction", []string{ended, compact, summary, prompt}, core.Busy},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := "55555555-eeee-4eee-8eee-555555555555"
+			must(t, os.MkdirAll(filepath.Join(dir, "projects", "-Users-me-x"), 0o755))
+			must(t, os.MkdirAll(filepath.Join(dir, "sessions"), 0o755))
+			write(t, filepath.Join(dir, "sessions", "8.json"), fmt.Sprintf(`{"pid":8,"sessionId":%q,"cwd":"/Users/me/x","status":"busy","statusUpdatedAt":%d}`, id, boundary.UnixMilli()))
+			write(t, filepath.Join(dir, "projects", "-Users-me-x", id+".jsonl"), strings.Join(c.lines, "\n")+"\n")
+			a := &Adapter{Dir: dir, Now: time.Now}
+			if s := a.Discover([]proc.Proc{p(8, "claude")})[0]; s.Status != c.want {
+				t.Fatalf("status %v since %v, want %v", s.Status, s.Since, c.want)
+			}
+		})
+	}
+}
+
+func TestAUsageLimitStopShowsOnTheSession(t *testing.T) {
+	stop := time.Date(2026, 11, 3, 18, 11, 30, 0, time.UTC)
+	limit := func(sidechain bool) string {
+		return fmt.Sprintf(`{"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","isSidechain":%v,"timestamp":%q,"message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your weekly limit · resets Nov 5, 3am (UTC)"}],"stop_reason":"stop_sequence"}}`, sidechain, stop.Format(time.RFC3339))
+	}
+	prompt := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"carry on"}}`, stop.Add(time.Hour).Format(time.RFC3339))
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  time.Time
+	}{
+		{"its turn ended on the limit", []string{limit(false)}, stop},
+		{"a subagent hit it", []string{limit(true)}, time.Time{}},
+		{"a later turn started", []string{limit(false), prompt}, time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := "55555555-eeee-4eee-8eee-555555555555"
+			must(t, os.MkdirAll(filepath.Join(dir, "projects", "-Users-me-x"), 0o755))
+			must(t, os.MkdirAll(filepath.Join(dir, "sessions"), 0o755))
+			write(t, filepath.Join(dir, "sessions", "8.json"), fmt.Sprintf(`{"pid":8,"sessionId":%q,"cwd":"/Users/me/x","status":"idle","statusUpdatedAt":%d}`, id, stop.UnixMilli()))
+			write(t, filepath.Join(dir, "projects", "-Users-me-x", id+".jsonl"), strings.Join(c.lines, "\n")+"\n")
+			a := &Adapter{Dir: dir, Now: time.Now}
+			if s := a.Discover([]proc.Proc{p(8, "claude")})[0]; !s.QuotaAt.Equal(c.want) {
+				t.Fatalf("QuotaAt %v, want %v", s.QuotaAt, c.want)
+			}
+		})
+	}
+}
+
 func transcript(reply time.Time, next string) string {
 	out := fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"go"}}`+"\n", reply.Add(-time.Minute).Format(time.RFC3339))
 	if next != "" {

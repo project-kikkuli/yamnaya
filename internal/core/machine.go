@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -138,6 +139,38 @@ func (c *Core) machine(b *Board, procs []proc.Proc) {
 		m.Swollen = place.swollen(c.mem.read(b.At, c.Mem), float64(st.Memory))
 	}
 	b.Machine = m
+	c.markSlots(b)
+}
+
+// slotSeen remembers when each session last held or waited for a slot, so its next tool call has time to follow the slot's end.
+type slotSeen struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+// markSlots flags every session holding or waiting for a slot or lane.
+func (c *Core) markSlots(b *Board) {
+	c.slotted.mu.Lock()
+	defer c.slotted.mu.Unlock()
+	if c.slotted.at == nil {
+		c.slotted.at = map[string]time.Time{}
+	}
+	used := map[string]bool{}
+	for _, u := range append(slices.Clone(b.Machine.Holders), b.Machine.Waiters...) {
+		if u.Session != "" {
+			used[u.Session] = true
+			c.slotted.at[u.Session] = b.At
+		}
+	}
+	mark := func(ls []Live) {
+		for i := range ls {
+			ls[i].Slot, ls[i].SlotAt = used[ls[i].Key()], c.slotted.at[ls[i].Key()]
+		}
+	}
+	mark(b.Sessions)
+	for i := range b.Projects {
+		mark(b.Projects[i].Sessions)
+	}
 }
 
 type places struct {

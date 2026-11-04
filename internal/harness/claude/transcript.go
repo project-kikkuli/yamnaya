@@ -24,6 +24,7 @@ type record struct {
 	IsMeta      bool      `json:"isMeta"`
 	IsSidechain bool      `json:"isSidechain"`
 	IsAPIError  bool      `json:"isApiErrorMessage"`
+	IsSummary   bool      `json:"isCompactSummary"`
 	Error       string    `json:"error"`
 	CustomTitle string    `json:"customTitle"`
 	AgentName   string    `json:"agentName"`
@@ -158,7 +159,9 @@ type scan struct {
 	UserAt         time.Time
 	QuotaAt        time.Time
 	QuotaSidechain bool
-	Invalid        bool
+	// IdleCompact is when Claude compacted the conversation between turns, until a turn starts; its native state stays busy after that.
+	IdleCompact time.Time
+	Invalid     bool
 	// Creating holds tool calls that run gh pr create, until their results arrive.
 	Creating map[string]bool
 	Facts    core.Facts
@@ -228,8 +231,15 @@ func (t *scan) add(r record) {
 			t.Open = false
 		case "compact_boundary":
 			t.Drift.Compacted(r.Timestamp)
+			if !r.IsSidechain && t.LastType == "assistant" && t.LastStop == "end_turn" && !t.UserAt.After(t.LastAt) {
+				t.IdleCompact = r.Timestamp
+			}
 		}
 	case "user", "assistant":
+		if r.IsSummary {
+			return
+		}
+		t.IdleCompact = time.Time{}
 		t.QuotaAt = time.Time{}
 		if r.Type == "assistant" && r.IsAPIError && r.Error == "rate_limit" {
 			t.QuotaAt = r.Timestamp

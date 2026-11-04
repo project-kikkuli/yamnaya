@@ -443,10 +443,16 @@ func (a *Adapter) readFresh(p proc.Proc, st state, ok bool, now time.Time) core.
 		s.Status, s.Successor, s.Since = core.Moved, sc.Next, sc.modified
 	}
 	delegated := s.Status == core.Busy
-	if delegated && sc.ended(s.Since) {
+	switch {
+	case delegated && sc.ended(s.Since):
 		s.Status, s.Since = core.Idle, sc.LastAt
+	case delegated && !sc.IdleCompact.IsZero():
+		s.Status, s.Since = core.Idle, sc.IdleCompact
 	}
 	s.Facts = sc.Facts
+	if !sc.QuotaSidechain {
+		s.QuotaAt = sc.QuotaAt
+	}
 	s.Task = sc.First
 	if s.Ask == "" {
 		s.Ask = sc.LastPrompt

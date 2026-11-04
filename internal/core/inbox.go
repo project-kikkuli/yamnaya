@@ -15,11 +15,11 @@ import (
 var wakeKinds = map[string]bool{
 	EventAsked: true, EventStuck: true, EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true,
 	EventAgentOnboarding: true, EventResumeFailed: true, EventCIRed: true, EventConflict: true, EventReview: true, EventSteered: true, EventFailedVerify: true,
-	EventTimer: true, EventNudge: true, EventMachineThrottled: true, EventRelayFailed: true,
+	EventTimer: true, EventNudge: true, EventMachineThrottled: true, EventRelayFailed: true, EventAgentLimited: true, EventRelayStalled: true, EventRelayBack: true,
 }
 
 // wholeKinds are the events a wake shows whole: a failure's cause and a relayed command's outcome are lost when cut.
-var wholeKinds = map[string]bool{EventResumeFailed: true, EventRelayed: true, EventRelayFailed: true}
+var wholeKinds = map[string]bool{EventResumeFailed: true, EventRelayed: true, EventRelayFailed: true, EventRelayStalled: true, EventRelayBack: true}
 
 const (
 	// WakeDebounce is how long ym waits after the first event that wakes a manager, so a burst reaches it as one message.

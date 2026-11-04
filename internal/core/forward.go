@@ -25,7 +25,7 @@ func (c *Core) ForwardIdle(b Board) error {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
 		key := s.Key()
-		if s.Status != Idle || s.Prompt != nil || s.Result == "" {
+		if s.Status != Idle || s.Prompt != nil || s.Result == "" || s.limitLine() != "" {
 			continue
 		}
 		m, managed := b.Org.Managed(key, b.parents)

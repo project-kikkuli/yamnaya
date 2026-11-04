@@ -14,7 +14,7 @@ func (c *Core) Loop(b Board) error {
 	var errs []error
 	c.watchCold(b)
 	c.trackRunning(b)
-	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold, c.archiveDone, c.sweepLaunches} {
+	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.watchRelays, c.Wake, c.reportCold, c.archiveDone, c.sweepLaunches} {
 		errs = append(errs, step(b))
 	}
 	return errors.Join(append(errs, c.NotifyOwner())...)
@@ -468,7 +468,7 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 	return e, err
 }
 
-// nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI, no wake
+// nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working or in a slot, no pull request awaiting CI, no wake
 // set, no ask waiting on someone, and nothing that wakes it since its last wake; what waits for the digest rides along. It nudges once until something else happens on the
 // goal; a manager that stays idle after that is the quiet watch's to nudge and flag.
 func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
@@ -491,13 +491,13 @@ func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
 	if c.inFlight(b, o, m) {
 		return nil
 	}
-	_, _, err := c.RecordGoalEvent(g.ID, EventNudge, "you ended your turn with nothing in flight: no agent working, no pull request awaiting CI, no wake set, nobody owing you an answer.",
+	_, _, err := c.RecordGoalEvent(g.ID, EventNudge, "you ended your turn with nothing in flight: no agent working or in a slot, no pull request awaiting CI, no wake set, nobody owing you an answer.",
 		"nudge:"+m.Session+"@"+s.ResultAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-// inFlight reports whether anything of m's is still moving on its own: an agent that is not hung, or a subagent of one, working or just launched, a pull request with CI
-// still running, a wake set, or an open ask one of its sessions filed.
+// inFlight reports whether anything of m's is still moving on its own: an agent that is not hung, or a subagent of one, working or just launched, a session holding or
+// waiting for a slot or lane, a session waiting out a usage limit, a pull request with CI still running, a wake set, or an open ask one of its sessions filed.
 func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 	statuses, _ := c.Store.PRStatuses()
 	if tracked, err := c.Store.GoalPRs(); err == nil {
@@ -512,8 +512,11 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 		if !mine(s.Key()) {
 			continue
 		}
+		if s.Slot || c.limited(b, s) {
+			return true
+		}
 		starting := s.Status == Unknown && s.PID > 0 && s.Result == ""
-		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting || s.Status == Onboarding || starting) && !s.Hung(c.now(), c.Woke) {
+		if s.Key() != m.Session && s.QuotaAt.IsZero() && (s.Status == Busy || s.Status == Waiting || s.Status == Onboarding || starting) && !s.Hung(c.now(), c.Woke) {
 			return true
 		}
 		for _, member := range s.Crew {

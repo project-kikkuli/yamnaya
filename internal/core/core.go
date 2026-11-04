@@ -150,6 +150,8 @@ type Session struct {
 	Status     Status
 	WaitingFor string
 	Since      time.Time
+	// QuotaAt is when a usage limit ended the session's turn, zero once a later turn starts.
+	QuotaAt time.Time
 	// Successor is the session this one continued in, set when Status is Moved.
 	Successor string
 	Crew      []Member
