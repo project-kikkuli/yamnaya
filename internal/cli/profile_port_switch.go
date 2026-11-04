@@ -19,7 +19,8 @@ var errPortRefused = errors.New("the port was refused before the session stopped
 // errPortHeld is portGate's answer where a port would be made; nothing has happened to the session.
 var errPortHeld = errors.New("ym holds the port")
 
-// gatePort is the one test every port ym chose passes as it is made, however it got here.
+// gatePort is the one test of every port this function chain makes, however it got here. It is all ym's own: an owner's --to and T port through
+// core.Switch, so nothing has to remember to mark a port for the gate.
 func (l launcher) gatePort(rec launch.Record, m migration) error {
 	dir := filepath.Dir(l.records.Dir)
 	a, err := loadFailover(dir, rec.Harness, rec.Session)
@@ -54,9 +55,8 @@ func (l launcher) portSwitch(rec launch.Record, live core.Live, dest profile.Pro
 	if err != nil {
 		return none, err
 	}
-	m := migration{Version: 1, ResumeNote: l.resumeNote, Reason: reason, Source: rec, Destination: dest, State: "prepared", Since: time.Now(), Automatic: l.automatic}
+	m := migration{Version: 1, ResumeNote: l.resumeNote, Reason: reason, Source: rec, Destination: dest, State: "prepared", Since: time.Now()}
 	if prior.Version != 0 && prior.State != "running" && prior.Destination.ID == dest.ID && prior.Destination.Harness == dest.Harness {
-		m.Automatic = m.Automatic || prior.Automatic
 		m.ResumeNote, m.Reason, m.Crew, m.Head = cmp.Or(m.ResumeNote, prior.ResumeNote), cmp.Or(m.Reason, prior.Reason), prior.Crew, prior.Head
 	}
 	if err = retargetFailover(dir, rec.Harness, rec.Session, prior, dest); err != nil {
@@ -123,10 +123,8 @@ func (l launcher) portRecord(rec launch.Record, live core.Live, m migration) (la
 	dir := filepath.Dir(l.records.Dir)
 	old, dest := rec.Session, m.Destination
 	if m.Head == "" {
-		if m.Automatic {
-			if err := l.gatePort(rec, m); err != nil {
-				return rec, err
-			}
+		if err := l.gatePort(rec, m); err != nil {
+			return rec, err
 		}
 		session := core.Session{Harness: rec.Harness, ID: old, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Cwd: rec.Worktree.Path}
 		if live.ID != "" {

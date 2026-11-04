@@ -1927,6 +1927,55 @@ func TestAFailedTargetIsSkippedForTheNextUsableLogin(t *testing.T) {
 	}
 }
 
+type datedHarness struct {
+	turnHarness
+	stop core.QuotaStop
+}
+
+func (h datedHarness) SilentQuotaStop(core.Session, string) (core.QuotaStop, bool, error) {
+	return h.stop, true, nil
+}
+
+// A pane first read after its reset says the wall may be gone only if the stop's own time says so; a stop with no such time is a wall now.
+func TestAResetThatHasPassedFreesTheLoginOnlyWhenDatedFromTheStop(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		dated bool
+		freed bool
+	}{
+		{name: "dated from the stop", dated: true, freed: true},
+		{name: "read only against now"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, clock := dialogWorld(t)
+			base := w.l.core.Harnesses[0].(silentHarness).turnHarness
+			w.l.core.Harnesses = []core.Harness{datedHarness{base, core.QuotaStop{At: clock.Add(-2 * time.Hour), Reset: clock.Add(-time.Hour), Dated: c.dated}}}
+			tickFailover(t, w, *clock)
+			bar, err := readBar(barPath(w.state, w.def))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.freed == bar.Until.After(*clock) {
+				t.Fatalf("bar %+v at %v, freed %v", bar, *clock, c.freed)
+			}
+		})
+	}
+}
+
+func TestAQueuedSwitchKeepsItsNoteOnlyForTheSameHarness(t *testing.T) {
+	for _, c := range []struct {
+		name, harness, want string
+	}{{"the same login", "claude", "the note"}, {"the same id on another harness", "codex", ""}} {
+		t.Run(c.name, func(t *testing.T) {
+			m := migration{Destination: profile.Profile{Harness: c.harness, ID: "default"}}
+			m.inherit(migration{State: "queued", ResumeNote: "the note", Destination: profile.Profile{Harness: "claude", ID: "default"}})
+			if m.ResumeNote != c.want {
+				t.Fatalf("note %q", m.ResumeNote)
+			}
+		})
+	}
+}
+
 func TestSweepLeavesASessionAPortStoppedSoTheRetryKeepsItsNote(t *testing.T) {
 	const ported = "01a1b2c3-0000-7000-8000-000000000042"
 	w, tick, _ := portWorld(t, false)

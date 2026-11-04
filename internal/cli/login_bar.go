@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -539,8 +540,11 @@ func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profil
 // of those two, or its own answer that it is signed out. Anything else is unknown, and the conversation waits with this error as its reason.
 func (l launcher) portGate(dir string, a failoverAttempt, ps []profile.Profile, e core.Exhaustion, limits []core.Limit, now time.Time) error {
 	source := profile.Profile{Harness: e.Harness, ID: profile.ID(e.Profile), Account: e.Account}
-	if a.On != e.Account && !barEvidence(dir, source, limits, now) {
-		return fmt.Errorf("its login's bar is one stop's guess, so ym waits it out")
+	if barredUntil(dir, source, limits, now).IsZero() {
+		return fmt.Errorf("its own login %s has usage again", source.ID)
+	}
+	if (a.On != e.Account || l.turnSince(a)) && !barEvidence(dir, source, limits, now) {
+		return fmt.Errorf("the bar on login %s is one stop's guess, so ym tries it again %s", source.ID, quotaReset(barredUntil(dir, source, limits, now)))
 	}
 	var unknown []profile.Profile
 	for _, p := range ps {
@@ -569,6 +573,15 @@ func (l launcher) portGate(dir string, a failoverAttempt, ps []profile.Profile, 
 		}
 	}
 	return nil
+}
+
+// turnSince is a turn having ended in the conversation after its last stop, which then says nothing about now.
+func (l launcher) turnSince(a failoverAttempt) bool {
+	if a.State.Session == "" {
+		return false
+	}
+	rec, ok := l.records.Find(a.State.Session)
+	return ok && rec.Harness == claude.Name && recordClaude(rec).LastTurnAt(rec.Worktree.Path, rec.Session).After(a.LastAt)
 }
 
 // errRowsUnread is a meter that has not read its rows yet, which is no reason to think a login without one is free.

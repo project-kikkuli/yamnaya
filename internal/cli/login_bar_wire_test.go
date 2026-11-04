@@ -37,7 +37,7 @@ type wireWorld struct {
 const wireIdle = "✻ Done\n────────────────\n❯ \n────────────────\n"
 
 const wireClaude = `#!/bin/bash
-case " $* " in *" auth status "*|*" login status "*) [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/fail" ] && exit 3; [ -f "$CLAUDE_CONFIG_DIR/killed" ] && kill -9 $$; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false,"authMethod":"none"}'; exit 1; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
+case " $* " in *" auth status "*|*" login status "*) echo x >> "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/status-calls"; [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/fail" ] && exit 3; [ -f "$CLAUDE_CONFIG_DIR/killed" ] && kill -9 $$; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false,"authMethod":"none"}'; exit 1; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
 root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
@@ -1393,7 +1393,9 @@ func TestAnIdleSessionIsCapturedOnceAMinuteAndAtOnceWhenItGoesIdleAgain(t *testi
 			}
 		}
 		b.At = at
-		w.l.silentStops(b)
+		if _, _, unlooked := w.l.silentStops(b); len(unlooked) != 0 {
+			t.Fatalf("a pane whose last look found no stop held its login: %v", unlooked)
+		}
 	}
 	base := b.At
 	for _, c := range []struct {
@@ -1653,7 +1655,7 @@ func TestWireAQueuedPortIsReDecidedWhenALoginOfItsHarnessComesBack(t *testing.T)
 		t.Fatal(err)
 	}
 	rec, _ := w.l.records.Find(w.rec.Key)
-	if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: "queued", Since: *w.clock, Automatic: true}); err != nil {
+	if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: "queued", Since: *w.clock}); err != nil {
 		t.Fatal(err)
 	}
 	if err = saveFailover(w.state, "claude", failoverAttempt{Event: "e", On: w.def.Account, State: core.FailoverState{Session: profileConversation, Profile: "default", Account: w.def.Account, Status: "queued", Target: cx.ID}}); err != nil {
@@ -2127,7 +2129,7 @@ func TestWireThePortGateIsAtTheSink(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec, _ := w.l.records.Find(w.rec.Key)
-		if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: state, Since: *w.clock, Automatic: true}); err != nil {
+		if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: state, Since: *w.clock}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2270,6 +2272,20 @@ func TestWireOneStopSeenByScreenAndLedgerIsRecordedOnce(t *testing.T) {
 }
 
 // A session ym stopped to continue and could not start again comes back without anyone asking, unless the owner has since killed it.
+func TestWireAReturningSessionAlreadyBackUsesNoLanding(t *testing.T) {
+	w := newWireWorld(t)
+	w.land(t)
+	a, _ := loadFailover(w.state, "claude", profileConversation)
+	a.Returning, a.State.Session = true, profileConversation
+	if err := saveFailover(w.state, "claude", a); err != nil {
+		t.Fatal(err)
+	}
+	w.pass(t, time.Minute)
+	if a, _ = loadFailover(w.state, "claude", profileConversation); a.Returning || len(w.starts(t)) != 1 {
+		t.Fatalf("returning %v, starts %q", a.Returning, w.starts(t))
+	}
+}
+
 func TestWireASessionStoppedThenFailedComesBack(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -2383,6 +2399,324 @@ func (m idleMeter) Fleet(now time.Time) core.Fleet {
 		return core.Fleet{At: now}
 	}
 	return m.Meter.Fleet(now)
+}
+
+// A status that always exits 1 with no answer says nothing: the session stays, one item stands, and serve does not spawn a check per pass.
+func TestWireAStatusThatAlwaysFailsIsAskedABoundedNumberOfTimes(t *testing.T) {
+	w := newWireWorld(t)
+	w.exhaust(t, w.other)
+	w.screen(t, w.def, wireDialog(t), "waiting")
+	w.land(t)
+	putProfileFile(t, filepath.Join(w.work.Root, "fail"), "")
+	if err := os.Remove(filepath.Join(w.work.Root, "status-calls")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	for range 12 {
+		w.pass(t, 15*time.Second)
+	}
+	raw, _ := os.ReadFile(filepath.Join(w.work.Root, "status-calls"))
+	if got, most := strings.Count(string(raw), "x"), 1+int(time.Since(started)/statusFresh); got == 0 || got > most {
+		t.Fatalf("%d status checks in 12 passes, want at most %d", got, most)
+	}
+	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
+		t.Fatalf("on %q", rec.Profile)
+	}
+	if items := w.items(t); len(items) != 1 {
+		t.Fatalf("items %+v", items)
+	}
+	if a, _ := loadFailover(w.state, "claude", profileConversation); a.Failed[w.work.Account].After(*w.clock) {
+		t.Fatalf("no answer held the login back: %+v", a.Failed)
+	}
+}
+
+// Through the real queue: a port ym queued while the session was busy, once a login of its harness is usable, is never made.
+func TestWireAPortQueuedWhileBusyIsNotMadeOnceALoginIsUsable(t *testing.T) {
+	for _, route := range []string{"failover", "a queued switch whose login ran out"} {
+		t.Run(route, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.addCodex(t)
+			ports := countPorts(w)
+			w.exhaust(t, w.def, w.work, w.other)
+			w.screen(t, w.def, wireIdle, "busy")
+			w.land(t)
+			rec, _ := w.l.records.Find(w.rec.Key)
+			if route == "failover" {
+				f, err := os.OpenFile(w.transcript(t, w.def), os.O_APPEND|os.O_WRONLY, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fmt.Fprint(f, wireWall(time.Now()))
+				f.Close()
+				w.scan(t)
+			} else {
+				if err := saveMigration(w.state, migration{Version: 1, Source: rec, Destination: w.other, State: "queued", Since: *w.clock}); err != nil {
+					t.Fatal(err)
+				}
+				if err := saveFailover(w.state, "claude", failoverAttempt{Event: "e", On: w.def.Account, State: core.FailoverState{Session: profileConversation, Profile: "default", Account: w.def.Account, Status: "queued", Target: w.other.ID}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.pass(t, time.Minute)
+			if m, _ := loadMigration(w.state, "claude", profileConversation); route == "failover" && (m.State != "queued" || m.Destination.Harness != "codex") {
+				a, _ := loadFailover(w.state, "claude", profileConversation)
+				b, _ := w.c.Board()
+				live, _ := b.Session(profileConversation)
+				t.Fatalf("no port queued while busy: %+v; failover %+v; status %v exhaustions %+v", m.Destination.ID, a.State, live.Status, b.Fleet.Exhaustions)
+			}
+			w.row(t, w.work, -1, 10, w.clock.Add(24*time.Hour))
+			putProfileFile(t, w.transcript(t, w.def), wireTurn(profileConversation, time.Now()))
+			w.screen(t, w.def, wireIdle, "idle")
+			time.Sleep(300 * time.Millisecond)
+			for range 3 {
+				w.pass(t, time.Minute)
+			}
+			if rec, _ = w.l.records.Find(w.rec.Key); *ports != 0 || rec.Profile != "claude-work" {
+				t.Fatalf("%d ports, on %q", *ports, rec.Profile)
+			}
+		})
+	}
+}
+
+// An owner's port goes through core.Switch, around the gate, however usable a login of the harness is.
+func TestWireAnOwnersPortDoesNotMeetTheGate(t *testing.T) {
+	w := newWireWorld(t)
+	w.addCodex(t)
+	ports := countPorts(w)
+	w.row(t, w.work, -1, 10, w.clock.Add(24*time.Hour))
+	w.land(t)
+	b, err := w.c.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := b.Session(profileConversation)
+	w.c.Switch(b, s, "codex")
+	if *ports != 1 {
+		t.Fatalf("%d ports", *ports)
+	}
+}
+
+// A conversation whose own login has recovered never ports: it goes back to that login.
+func TestWireOwnLoginRecoveredMeansNoPort(t *testing.T) {
+	t.Run("a normal turn since the stop", func(t *testing.T) {
+		w := newWireWorld(t)
+		w.addCodex(t)
+		ports := countPorts(w)
+		w.exhaust(t, w.work, w.other)
+		if err := recordStop(w.state, w.def, *w.clock, time.Time{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveFailover(w.state, "claude", failoverAttempt{Recorded: "e", On: w.def.Account, LastAt: w.clock.Add(-time.Hour), State: core.FailoverState{Session: profileConversation}}); err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := w.l.records.Find(w.rec.Key)
+		w.l.revive(rec)
+		if *ports != 0 {
+			t.Fatalf("%d ports", *ports)
+		}
+	})
+	t.Run("a row clears its own login, at the sink", func(t *testing.T) {
+		w := newWireWorld(t)
+		w.addCodex(t)
+		ports := countPorts(w)
+		w.exhaust(t, w.work, w.other)
+		if err := recordStop(w.state, w.def, *w.clock, w.clock.Add(time.Hour), nil); err != nil {
+			t.Fatal(err)
+		}
+		*w.clock = w.clock.Add(time.Minute)
+		w.row(t, w.def, -1, 5, w.clock.Add(24*time.Hour))
+		*w.clock = w.clock.Add(time.Minute)
+		ps, err := profile.Load(w.state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cx, err := profile.Find(ps, "codex", "codex-main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := w.l.records.Find(w.rec.Key)
+		_, err = w.l.portRecord(rec, core.Live{}, migration{Version: 1, Source: rec, Destination: cx, State: "queued", Since: *w.clock})
+		if !errors.Is(err, errPortHeld) || !strings.Contains(err.Error(), "its own login") || *ports != 0 {
+			t.Fatalf("%v, %d ports", err, *ports)
+		}
+	})
+	t.Run("stopped, the write failed, its own login recovered", func(t *testing.T) {
+		w := newWireWorld(t)
+		w.addCodex(t)
+		ports := countPorts(w)
+		w.exhaust(t, w.work, w.other)
+		ps, err := profile.Load(w.state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cx, err := profile.Find(ps, "codex", "codex-main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := w.l.records.Find(w.rec.Key)
+		if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: "prepared", Since: *w.clock}); err != nil {
+			t.Fatal(err)
+		}
+		for range 3 {
+			w.pass(t, time.Minute)
+		}
+		time.Sleep(300 * time.Millisecond)
+		if got := strings.Join(w.starts(t), " "); *ports != 0 || got != "default" {
+			t.Fatalf("%d ports, starts %q", *ports, got)
+		}
+	})
+}
+
+// A stopped session is never sent to a login that answered it is signed out.
+func TestWireAStoppedPortIsNotRetargetedToASignedOutLogin(t *testing.T) {
+	w := newWireWorld(t)
+	w.addCodex(t)
+	ports := countPorts(w)
+	w.exhaust(t, w.def)
+	putProfileFile(t, filepath.Join(w.work.Root, "out"), "")
+	ps, err := profile.Load(w.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cx, err := profile.Find(ps, "codex", "codex-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := w.l.records.Find(w.rec.Key)
+	if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: "prepared", Since: *w.clock}); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		w.pass(t, time.Minute)
+	}
+	if rec, _ = w.l.records.Find(w.rec.Key); rec.Profile != "personal" || *ports != 0 {
+		t.Fatalf("on %q, %d ports", rec.Profile, *ports)
+	}
+}
+
+// A session that merely exited says on its row what holds it, and neither says what ym switch would refuse.
+func TestWireAnExitedSessionSaysWhatHoldsIt(t *testing.T) {
+	put := func(file, body string) func(*testing.T, *wireWorld) {
+		return func(t *testing.T, w *wireWorld) { putProfileFile(t, filepath.Join(w.work.Root, file), body) }
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(*testing.T, *wireWorld)
+	}{
+		{name: "a check that hangs", setup: put("hang", "")},
+		{name: "a status that fails", setup: put("fail", "")},
+		{name: "a truncated identity", setup: put(".claude.json", "{")},
+		{name: "truncated settings", setup: put("settings.json", "{")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.addCodex(t)
+			ports := countPorts(w)
+			w.exhaust(t, w.def, w.other)
+			c.setup(t, w)
+			rec, _ := w.l.records.Find(w.rec.Key)
+			_, err := w.l.revive(rec)
+			if err == nil || !strings.Contains(err.Error(), "claude-work") || strings.Contains(err.Error(), "ym switch") || *ports != 0 {
+				t.Fatalf("%d ports, err %v", *ports, err)
+			}
+			*w.clock = w.clock.Add(time.Minute)
+			b, berr := w.c.Board()
+			if berr != nil {
+				t.Fatal(berr)
+			}
+			found := ""
+			for _, l := range b.Launched {
+				if l.Session == profileConversation && l.Switching != nil {
+					found = l.Switching.String()
+				}
+			}
+			if !strings.Contains(found, "claude-work") || !strings.Contains(found, "ym profiles login") {
+				t.Fatalf("row %q", found)
+			}
+		})
+	}
+}
+
+// Fresh rows clear a false stop across a fleet of idle sessions, whichever of them a pass looks at; only one really showing a stop holds it.
+func TestWireAFalseStopClearsAcrossAFleetUnlessOneShowsIt(t *testing.T) {
+	for _, showing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("one showing the stop %v", showing), func(t *testing.T) {
+			w := newWireWorld(t)
+			w.exhaust(t, w.work, w.other)
+			w.screen(t, w.def, wireIdle, "idle")
+			w.land(t)
+			w.addSession(t, 1, w.def)
+			w.pass(t, 20*time.Second)
+			w.addSession(t, 2, w.def)
+			w.pass(t, 20*time.Second)
+			text, _ := w.walled(t, "walled-a-first-landing.txt")
+			w.screen(t, w.def, text, "idle")
+			time.Sleep(400 * time.Millisecond)
+			w.pass(t, 20*time.Second)
+			if !showing {
+				w.screen(t, w.def, wireIdle, "idle")
+				time.Sleep(400 * time.Millisecond)
+			}
+			for range 6 {
+				w.pass(t, 20*time.Second)
+				w.row(t, w.def, -1, 5, w.clock.Add(24*time.Hour))
+			}
+			w.pass(t, 20*time.Second)
+			if got := !barredUntil(w.state, w.def, w.l.limits(), *w.clock).IsZero(); got != showing {
+				t.Fatalf("barred %v, want %v: %+v", got, showing, w.bar(t, w.def))
+			}
+		})
+	}
+}
+
+// Typing under the footer is the owner's: a session is not moved out from under it.
+func TestWireADraftUnderALiveFooterIsNotMoved(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	footer := "  ⚠ Usage limit reached · limit resets 3am\n    Continuing automatically at 3am · esc to cancel\n"
+	for _, c := range []struct {
+		name, box string
+		moves     bool
+	}{{"an empty box", "❯ ", true}, {"a draft", "❯ half a thought", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.screen(t, w.def, "✻ Worked for 1s\n"+rule+"\n"+c.box+"\n"+rule+"\n"+footer, "idle")
+			w.land(t)
+			w.pass(t, time.Minute)
+			if rec, _ := w.l.records.Find(w.rec.Key); (rec.Profile == "claude-work") != c.moves {
+				t.Fatalf("on %q", rec.Profile)
+			}
+		})
+	}
+}
+
+// A ledger stop lasts for ever: one a session left behind is history and costs no file, a recent one or one on the login it is on still counts.
+func TestWireAHistoricLedgerStopIsLeftAlone(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		age      time.Duration
+		recorded bool
+	}{
+		{name: "days old, on a login it has left", age: 72 * time.Hour},
+		{name: "minutes old", age: 10 * time.Minute, recorded: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.exhaust(t, w.def, w.work, w.other)
+			b, err := w.c.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.At = *w.clock
+			b.Fleet.Exhaustions = []core.Exhaustion{{Harness: "claude", Profile: "default", Account: w.def.Account, Session: "55555555-5555-4555-8555-555555555555", Reason: quotaReason("claude"), Event: "old", Seen: w.clock.Add(-c.age)}}
+			if err = w.l.Failover(b); err != nil {
+				t.Fatal(err)
+			}
+			_, statErr := os.Stat(failoverPath(w.state, "claude", "55555555-5555-4555-8555-555555555555"))
+			if (statErr == nil) != c.recorded {
+				t.Fatalf("file %v, want recorded %v", statErr, c.recorded)
+			}
+		})
+	}
 }
 
 func TestLoginRecordKeepsEveryConcurrentWrite(t *testing.T) {

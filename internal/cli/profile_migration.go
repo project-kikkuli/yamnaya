@@ -8,6 +8,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -43,13 +44,11 @@ type migration struct {
 	Version     int             `json:"version"`
 	Source      launch.Record   `json:"source"`
 	Destination profile.Profile `json:"destination"`
-	// Automatic is a switch ym chose itself, whose port must pass portGate.
-	Automatic   bool   `json:"automatic,omitempty"`
-	Expected    string `json:"expected_rollout"`
-	Head        string `json:"published_head"`
-	State       string `json:"state"`
-	Blocked     string `json:"blocked,omitempty"`
-	Fingerprint string `json:"fingerprint,omitempty"`
+	Expected    string          `json:"expected_rollout"`
+	Head        string          `json:"published_head"`
+	State       string          `json:"state"`
+	Blocked     string          `json:"blocked,omitempty"`
+	Fingerprint string          `json:"fingerprint,omitempty"`
 	// BlockedAt is when serve last tried it, so a host where nothing changes still tries again in time.
 	BlockedAt time.Time  `json:"blocked_at,omitzero"`
 	NoteRead  bool       `json:"note_read,omitempty"`
@@ -60,7 +59,7 @@ type migration struct {
 
 // inherit keeps the reason and note a queued switch to the same login was saved with when the attempt applying it brings none.
 func (m *migration) inherit(prior migration) {
-	if prior.State != "queued" || prior.Destination.ID != m.Destination.ID {
+	if prior.State != "queued" || prior.Destination.ID != m.Destination.ID || prior.Destination.Harness != m.Destination.Harness {
 		return
 	}
 	m.Blocked, m.Fingerprint = prior.Blocked, prior.Fingerprint
@@ -193,13 +192,16 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 	if m.State == "queued" && !l.loginOut(m.Destination).IsZero() {
 		return rec, nil
 	}
-	if m.Destination.Harness != rec.Harness {
-		if m.Automatic && m.Head == "" {
-			if back, ok, err := l.backToHarness(m, rec); err != nil {
-				return rec, err
-			} else if ok {
-				m = back
-			}
+	if m.Destination.Harness != rec.Harness && m.Head == "" {
+		back, how, err := l.backToHarness(m)
+		if err != nil {
+			return rec, err
+		}
+		if how == backOwnLogin {
+			return rec, nil
+		}
+		if how == backOtherLogin {
+			m = back
 		}
 	}
 	if m.Destination.Harness != rec.Harness {
@@ -316,7 +318,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 				return err
 			}
 		}
-		if decided, err := l.redecidePort(m, rec); err != nil {
+		if decided, err := l.redecidePort(m); err != nil {
 			return err
 		} else if decided {
 			continue
@@ -404,7 +406,6 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 	}
 	next := l
 	next.toHarness = target.Harness
-	next.automatic = true
 	ref := m.Source.Key
 	if rec.Key == "" {
 		ref = m.Source.Session
@@ -422,19 +423,18 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 
 // redecidePort puts a failover's queued port through the gate again until it applies: a login of the session's own harness may have come back.
 // decided is whether anything but applying it follows.
-func (l launcher) redecidePort(m migration, rec launch.Record) (decided bool, err error) {
-	if !m.Automatic || m.Head != "" || m.Destination.Harness == m.Source.Harness || m.State != "queued" && m.State != "prepared" {
+func (l launcher) redecidePort(m migration) (decided bool, err error) {
+	if m.Head != "" || m.Destination.Harness == m.Source.Harness || m.State != "queued" && m.State != "prepared" {
 		return false, nil
 	}
-	if err = l.gatePort(m.Source, m); err != nil && !errors.Is(err, errPortHeld) {
+	_, how, err := l.backToHarness(m)
+	if err != nil || how != backNone {
 		return true, err
 	}
-	back, ok, backErr := l.backToHarness(m, rec)
-	if backErr != nil || ok {
-		_ = back
-		return true, backErr
-	}
-	if err != nil {
+	if err = l.gatePort(m.Source, m); err != nil {
+		if !errors.Is(err, errPortHeld) {
+			return true, err
+		}
 		return true, l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
 			latest.Blocked = err.Error()
 			return true
@@ -443,29 +443,48 @@ func (l launcher) redecidePort(m migration, rec launch.Record) (decided bool, er
 	return false, nil
 }
 
-// backToHarness turns a port ym chose back onto a usable login of the session's own harness, if one has come back, and saves that.
-func (l launcher) backToHarness(m migration, rec launch.Record) (migration, bool, error) {
+const (
+	backNone = iota
+	backOwnLogin
+	backOtherLogin
+)
+
+// backToHarness turns a port not yet written back to the session's harness if it can: to its own login once that has usage again, which ends the
+// switch, else to another that has answered it can take it, and saves that.
+func (l launcher) backToHarness(m migration) (migration, int, error) {
 	dir := filepath.Dir(l.records.Dir)
 	ps, err := profile.Load(dir)
 	if err != nil {
-		return m, false, err
+		return m, backNone, err
 	}
 	a, err := loadFailover(dir, m.Source.Harness, m.Source.Session)
 	if err != nil {
-		return m, false, err
+		return m, backNone, err
 	}
-	target, err := failoverTarget(usableLogins(dir, a, ps, l.limits(), l.now()), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path)
+	limits, now := l.limits(), l.now()
+	source := profile.Profile{Harness: m.Source.Harness, ID: profile.ID(m.Source.Profile), Account: m.Source.Account}
+	if barredUntil(dir, source, limits, now).IsZero() {
+		stopped := m.State == "prepared"
+		if err = os.Remove(migrationPath(dir, m.Source.Harness, m.Source.Session)); err != nil {
+			return m, backNone, err
+		}
+		a.Returning = a.Returning || stopped
+		a.State.Target, a.State.Status, a.State.Reason = "", "continued", "its own login has usage again"
+		a.State.Session = m.Source.Session
+		return m, backOwnLogin, saveFailover(dir, m.Source.Harness, a)
+	}
+	usable := usableLogins(dir, a, ps, limits, now)
+	signedOut, unanswered := l.loginChecks(usable, m.Source.Account)
+	usable = slices.DeleteFunc(usable, func(p profile.Profile) bool { return signedOut[loginKey(p)] || unanswered[loginKey(p)] })
+	target, err := failoverTarget(usable, core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path)
 	if err != nil {
-		return m, false, nil
+		return m, backNone, nil
 	}
-	if _, unanswered := l.loginChecks([]profile.Profile{target}, ""); unanswered[loginKey(target)] {
-		return m, false, nil
-	}
-	m.Destination, m.Automatic, m.Blocked = target, false, ""
+	m.Destination, m.Blocked = target, ""
 	if err = retargetFailover(dir, m.Source.Harness, m.Source.Session, m, target); err != nil {
-		return m, false, err
+		return m, backNone, err
 	}
-	return m, true, saveMigration(dir, m)
+	return m, backOtherLogin, saveMigration(dir, m)
 }
 
 // showWaiting says on the row why a switch cannot apply to a session stopped at the quota dialog, which never ends its turn by itself;
@@ -543,6 +562,7 @@ func (l launcher) atStopReasons(dir string) map[string]core.Switching {
 		stop.Blocked = stop.Barred
 		if a.State.Status == "blocked" {
 			stop.Blocked = atStopReason(dir, a, harness)
+			stop.Down = stop.Blocked
 		}
 		if stop.Blocked != "" {
 			out[harness+":"+a.State.Session] = stop

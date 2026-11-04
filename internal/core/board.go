@@ -592,12 +592,12 @@ func (c *Core) Board() (Board, error) {
 			}
 		}
 		for i := range b.Launched {
-			if p, ok := pending[b.Launched[i].Harness+":"+b.Launched[i].Session]; ok && !p.AtStop {
+			if p, ok := pending[b.Launched[i].Harness+":"+b.Launched[i].Session]; ok && b.Launched[i].State != "running" && (!p.AtStop || p.Down != "") {
 				b.Launched[i].Switching = &p
 			}
 		}
 		for i := range dormant {
-			if p, ok := pending[dormant[i].Harness+":"+dormant[i].Session]; ok && !p.AtStop {
+			if p, ok := pending[dormant[i].Harness+":"+dormant[i].Session]; ok && (!p.AtStop || p.Down != "") {
 				dormant[i].Switching = &p
 			}
 		}

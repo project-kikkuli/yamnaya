@@ -569,3 +569,66 @@ func TestTextInTheComposerIsNoFooter(t *testing.T) {
 		})
 	}
 }
+
+// A bare clock on a pane up since the stop means the next such time after the stop, however late it is first read. On a pane that landed after
+// the stop it is what the screen says now.
+func TestABareClockIsDatedFromTheStopWhenThePaneHasBeenUpSince(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = saved })
+	utc := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, time.UTC) }
+	now := utc(4, 4, 1)
+	footer, err := os.ReadFile("testdata/quota-footer.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialog, err := os.ReadFile("testdata/walled-c-after-esc.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name          string
+		screen        string
+		status        string
+		stop, started time.Time
+		dated         bool
+		want          time.Time
+	}{
+		{name: "footer, stopped before the clock, up since", screen: string(footer), status: "idle", stop: utc(4, 2, 40), started: utc(4, 1, 0), dated: true, want: utc(4, 3, 0)},
+		{name: "footer, stopped after the clock, up since", screen: string(footer), status: "idle", stop: utc(4, 3, 30), started: utc(4, 1, 0), dated: true, want: utc(5, 3, 0)},
+		{name: "dialog, stopped before the clock, up since", screen: string(dialog), status: "waiting", stop: utc(4, 2, 40), started: utc(4, 1, 0), dated: true, want: utc(4, 3, 0)},
+		{name: "dialog on a landing after the stop", screen: string(dialog), status: "waiting", stop: utc(4, 2, 40), started: utc(4, 3, 50), want: utc(5, 3, 0)},
+		{name: "process start not readable", screen: string(footer), status: "idle", stop: utc(4, 2, 40), want: utc(5, 3, 0)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			state := `{"pid":42,"sessionId":"quota-session","cwd":"/work","status":"` + c.status + `"}`
+			if err := os.MkdirAll(filepath.Join(root, "sessions"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "sessions", "42.json"), []byte(state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ended := `{"type":"assistant","sessionId":"quota-session","timestamp":"` + c.stop.Format(time.RFC3339) + `","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}}`
+			path := filepath.Join(root, "projects", encodeCwd("/work"), "quota-session.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(ended+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var ps []proc.Proc
+			if !c.started.IsZero() {
+				ps = []proc.Proc{{PID: 42, Elapsed: now.Sub(c.started)}}
+			}
+			a := &Adapter{Dir: root, Now: func() time.Time { return now }, Procs: func() ([]proc.Proc, error) { return ps, nil }}
+			stop, stopped, err := a.SilentQuotaStop(core.Session{ID: "quota-session", PID: 42, Cwd: "/work"}, c.screen)
+			if err != nil || !stopped {
+				t.Fatalf("%v, stopped %v", err, stopped)
+			}
+			if stop.Dated != c.dated || !stop.Reset.Equal(c.want) {
+				t.Fatalf("%+v, want dated %v at %v", stop, c.dated, c.want)
+			}
+		})
+	}
+}

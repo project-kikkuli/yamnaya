@@ -76,8 +76,8 @@ func (a *failoverAttempt) noteStop(dir string, p profile.Profile, e core.Exhaust
 }
 
 // stopLogin is the login a stop really happened on: the one the session started on, if the profile has since been logged in again.
-func (l launcher) stopLogin(p profile.Profile, session string) profile.Profile {
-	if rec, ok := l.records.Find(session); ok && profile.ID(rec.Profile) == profile.ID(p.ID) && rec.Account != "" && rec.Account != p.Account {
+func (l launcher) stopLogin(p profile.Profile, rec launch.Record, ok bool) profile.Profile {
+	if ok && profile.ID(rec.Profile) == profile.ID(p.ID) && rec.Account != "" && rec.Account != p.Account {
 		p.Account = rec.Account
 	}
 	return p
@@ -209,22 +209,27 @@ func (l launcher) silentStops(b core.Board) (stops []silentStop, unproven []core
 		if s.Remote != "" || s.ID == "" || s.Account == "" || s.Prompt != nil {
 			continue
 		}
+		// A session no look can read holds its login's stop only if the stop was its own: a last look that found none is a look.
+		hold := func() {
+			if a, err := loadFailover(filepath.Dir(l.records.Dir), s.Harness, s.ID); err == nil && a.On == s.Account {
+				unlooked[s.Account] = true
+			}
+		}
 		if s.Status != core.Waiting && s.Status != core.Idle {
 			if s.Status != core.Busy {
-				unlooked[s.Account] = true
+				hold()
 			}
 			continue
 		}
 		key := fmt.Sprintf("%s-%d-%d", s.ID, s.PID, s.Since.Unix())
 		if l.idleScreens != nil && s.Status == core.Idle {
 			if last, seen := l.idleScreens.Load(key); seen && b.At.Sub(last.(time.Time)) < idleScreenEvery {
-				unlooked[s.Account] = true
 				continue
 			}
 		}
 		stop, stopped, err := l.core.SilentQuotaStop(s.Session)
 		if stop.Unread {
-			unlooked[s.Account] = true
+			hold()
 		}
 		if !stopped {
 			if l.idleScreens != nil && s.Status == core.Idle && !stop.Unread {
@@ -253,11 +258,12 @@ func (l launcher) showUnproven(dir string, ps []profile.Profile, e core.Exhausti
 	if err != nil {
 		return err
 	}
+	rec, recorded := l.records.Find(e.Session)
 	pid := 0
 	if s, ok := b.Session(e.Session); ok {
 		pid = s.PID
 	}
-	if err = a.noteStop(dir, l.stopLogin(selected, e.Session), e, pid, at, time.Time{}, limits); err != nil {
+	if err = a.noteStop(dir, l.stopLogin(selected, rec, recorded), e, pid, at, time.Time{}, limits); err != nil {
 		return err
 	}
 	a.Unproven = true
@@ -380,7 +386,13 @@ func (l launcher) Failover(b core.Board) error {
 	if err != nil {
 		return err
 	}
-	if err := l.bringBack(dir, killed); err != nil {
+	byID := make(map[string]launch.Record, len(all))
+	for _, rec := range all {
+		if rec.Session != "" {
+			byID[rec.Session] = rec
+		}
+	}
+	if err := l.bringBack(dir, killed, b, byID); err != nil {
 		return err
 	}
 	silent, unproven, unlooked := l.silentStops(b)
@@ -389,7 +401,8 @@ func (l launcher) Failover(b core.Board) error {
 	show := func(e core.Exhaustion) {
 		showing[e.Account] = true
 		if p, err := profile.Find(ps, e.Harness, e.Profile); err == nil {
-			notices = append(notices, setShowing(dir, l.stopLogin(p, e.Session), true))
+			rec, ok := byID[e.Session]
+			notices = append(notices, setShowing(dir, l.stopLogin(p, rec, ok), true))
 		}
 	}
 	for _, stop := range unproven {
@@ -416,14 +429,22 @@ func (l launcher) Failover(b core.Board) error {
 	for _, e := range events {
 		screen := slices.IndexFunc(silent, func(s silentStop) bool { return s.Exhaustion.Event == e.Event })
 		stands := slices.ContainsFunc(standing, func(s core.Exhaustion) bool { return s.Session == e.Session })
-		if screen < 0 && !stands && l.copiedStop(e) {
-			continue
+		rec, hasRec := byID[e.Session]
+		live, alive := b.Session(e.Session)
+		if screen < 0 && !stands {
+			// Ledger stops last for ever: one the session has left behind is only history, and not worth a file.
+			if (!alive || live.Account != e.Account) && b.At.Sub(e.Seen) > unknownResetBar || copiedStop(dir, e, rec, hasRec) {
+				continue
+			}
 		}
 		reset, actual, dialog, selfContinues := time.Time{}, false, false, false
 		at := e.Seen
 		if screen >= 0 {
 			reset, actual, dialog, selfContinues = silent[screen].Reset, true, true, silent[screen].SelfContinues
 			at = b.At
+			if silent[screen].Dated && !reset.IsZero() && !reset.After(b.At) {
+				at = e.Seen
+			}
 		} else if stands {
 			actual = true
 		} else if reset, actual = trueExhaustion(e, b.Fleet.Limits, b.At); !actual {
@@ -453,10 +474,10 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		recorded := a.Recorded
 		pid := 0
-		if s, ok := b.Session(e.Session); ok {
-			pid = s.PID
+		if alive {
+			pid = live.PID
 		}
-		if err = a.noteStop(dir, l.stopLogin(selected, e.Session), e, pid, at, reset, b.Fleet.Limits); err != nil {
+		if err = a.noteStop(dir, l.stopLogin(selected, rec, hasRec), e, pid, at, reset, b.Fleet.Limits); err != nil {
 			return err
 		}
 		if selfContinues && a.Recorded != recorded {
@@ -468,12 +489,11 @@ func (l launcher) Failover(b core.Board) error {
 				return err
 			}
 		}
-		s, alive := b.Session(e.Session)
+		s := live
 		if !alive || s.Remote != "" || l.core != nil && l.core.RowsUnloaded(b.Fleet) {
 			continue
 		}
-		rec, ok := l.records.Find(e.Session)
-		if !ok || profile.ID(rec.Profile) != profile.ID(e.Profile) || rec.IsLanded() || !rec.Killed.IsZero() || killed[e.Session] {
+		if !hasRec || profile.ID(rec.Profile) != profile.ID(e.Profile) || rec.IsLanded() || !rec.Killed.IsZero() || killed[e.Session] {
 			continue
 		}
 		if l.core != nil && (l.core.Off(e.Session) || b.ThrottleHolds(e.Session)) {
@@ -493,6 +513,9 @@ func (l launcher) Failover(b core.Board) error {
 			continue
 		}
 		until := barredUntil(dir, selected, b.Fleet.Limits, b.At)
+		if selfContinues && l.core.Drafting(s) {
+			continue
+		}
 		if selfContinues {
 			// The footer outranks what rows say. Past its reset Claude carries on by itself, so ym only steps in if it plainly has not.
 			until = a.Continues
@@ -572,7 +595,7 @@ func (l launcher) Failover(b core.Board) error {
 }
 
 // bringBack retries the sessions ym stopped to continue and could not start again, paced like any landing. An owner's kill since ends that.
-func (l launcher) bringBack(dir string, killed map[string]bool) error {
+func (l launcher) bringBack(dir string, killed map[string]bool, b core.Board, byID map[string]launch.Record) error {
 	files, err := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
 	if err != nil || l.core == nil {
 		return err
@@ -587,8 +610,9 @@ func (l launcher) bringBack(dir string, killed map[string]bool) error {
 			continue
 		}
 		harness, _, _ := strings.Cut(filepath.Base(path), "-")
-		rec, ok := l.records.Find(a.State.Session)
-		if !ok || rec.IsLanded() || !rec.Killed.IsZero() || killed[a.State.Session] {
+		rec, ok := byID[a.State.Session]
+		_, back := b.Session(a.State.Session)
+		if !ok || back || rec.IsLanded() || !rec.Killed.IsZero() || killed[a.State.Session] {
 			a.Returning = false
 			if err = saveFailover(dir, harness, a); err != nil {
 				return err
@@ -649,12 +673,11 @@ func (l launcher) standingStops(dir string, ps []profile.Profile, b core.Board, 
 
 // copiedStop is a ledger stop older than the session's arrival on the login it is charged to: a switch copies the transcript, so that line is
 // the other login's history.
-func (l launcher) copiedStop(e core.Exhaustion) bool {
-	rec, ok := l.records.Find(e.Session)
+func copiedStop(dir string, e core.Exhaustion, rec launch.Record, ok bool) bool {
 	if !ok || rec.Account != e.Account || !e.Seen.Before(rec.AttachedAt) {
 		return false
 	}
-	m, err := loadMigration(filepath.Dir(l.records.Dir), e.Harness, e.Session)
+	m, err := loadMigration(dir, e.Harness, e.Session)
 	return err == nil && m.Version != 0 && m.Destination.Account == e.Account
 }
 
@@ -664,7 +687,6 @@ func (l launcher) failoverSwitch(rec launch.Record, target profile.Profile, note
 	next := l
 	next.resumeNote = note
 	next.toHarness = target.Harness
-	next.automatic = true
 	out, err := next.QueueProfileSwitch(rec.Session, target.ID, reason)
 	if err != nil {
 		m, loadErr := loadMigration(filepath.Dir(l.records.Dir), rec.Harness, rec.Session)

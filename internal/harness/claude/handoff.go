@@ -144,6 +144,9 @@ func dialogReset(text string, now time.Time) time.Time {
 	return time.Time{}
 }
 
+// lateRead is how long past a bare clock a screen read now still means that clock, not its next occurrence.
+const lateRead = time.Hour
+
 var quotaClock = regexp.MustCompile(`^(?:([A-Z][a-z]{2})(\d{1,2}),)?(\d{1,2})(?::(\d{2}))?(am|pm)(?:\((.+)\))?$`)
 
 // parseQuotaReset reads when Claude says a limit resets, with spaces removed: a clock time, perhaps with a date and a zone. A bare time is
@@ -185,7 +188,7 @@ func parseQuotaReset(text string, now time.Time) time.Time {
 		return at
 	}
 	at := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
-	if at.Before(now.Add(-time.Hour)) {
+	if at.Before(now.Add(-lateRead)) {
 		at = at.AddDate(0, 0, 1)
 	}
 	return at
@@ -224,6 +227,15 @@ func (a *Adapter) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, 
 		return stop, true, err
 	}
 	stop.At = sc.LastAt
+	if run := a.processStart(s); !run.IsZero() && run.Before(stop.At) {
+		// A process older than the stop has shown it since: the time it names is the next after the stop, however late this reads it.
+		stop.Dated = true
+		if footer {
+			stop.Reset, _ = footerStop(text, stop.At.Add(lateRead))
+		} else {
+			stop.Reset = dialogReset(text, stop.At.Add(lateRead))
+		}
+	}
 	return stop, true, nil
 }
 
@@ -340,6 +352,31 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 	return sc.QuotaAt, a.handoffChildren(s, path)
 }
 
+// processStart is when s's process started, zero when that cannot be read.
+func (a *Adapter) processStart(s core.Session) time.Time {
+	list := a.Procs
+	if list == nil {
+		list = proc.List
+	}
+	ps, err := list()
+	if err != nil {
+		return time.Time{}
+	}
+	return a.startedIn(proc.Index(ps), s)
+}
+
+func (a *Adapter) startedIn(table proc.Table, s core.Session) time.Time {
+	p, ok := table[s.PID]
+	if !ok {
+		return time.Time{}
+	}
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+	return p.Started(now())
+}
+
 // handoffChildren proves nothing the session spawned is still working.
 func (a *Adapter) handoffChildren(s core.Session, path string) error {
 	list := a.Procs
@@ -351,15 +388,7 @@ func (a *Adapter) handoffChildren(s core.Session, path string) error {
 		return err
 	}
 	table := proc.Index(ps)
-	var run time.Time
-	if p, ok := table[s.PID]; ok {
-		now := time.Now
-		if a.Now != nil {
-			now = a.Now
-		}
-		run = p.Started(now())
-	}
-	children, err := a.stoppedChildren(path, s.ID, run)
+	children, err := a.stoppedChildren(path, s.ID, a.startedIn(table, s))
 	if err != nil {
 		return err
 	}

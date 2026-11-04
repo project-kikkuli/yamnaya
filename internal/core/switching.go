@@ -9,6 +9,8 @@ type Switching struct {
 	// Barred is how the login Account stands for a session that stopped on it, shown once it sits idle on that login, whatever its scrollback says.
 	Barred  string `json:"barred,omitempty"`
 	Account string `json:"account,omitempty"`
+	// Down is what a session that is not running shows of why it cannot move.
+	Down string `json:"down,omitempty"`
 	// Stopped marks a switch that has itself stopped the session, so its exit is the switch's and no crash.
 	Stopped bool `json:"stopped,omitempty"`
 }

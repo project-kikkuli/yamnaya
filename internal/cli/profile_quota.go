@@ -130,6 +130,8 @@ func (l launcher) quotaWait(rec launch.Record, ps []profile.Profile, source prof
 	q := &core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}
 	if why != nil && !errors.Is(why, errNoUsablePool) {
 		q.Held = why.Error()
+		a.State = core.FailoverState{Session: rec.Session, Profile: profile.ID(rec.Profile), Account: source.Account, Status: "blocked", Reason: q.Held}
+		saveFailover(dir, rec.Harness, a)
 	}
 	return q
 }

@@ -71,11 +71,12 @@ func (c *Core) AtQuotaStop(s Live) bool {
 
 // QuotaStop is a session held on its limit that only its screen shows: At dates the turn, Reset is what the screen says, zero when it
 // says nothing, and SelfContinues means the harness carries on by itself when the limit resets. Unread is a screen that could not be read,
-// which says nothing about whether a stop still shows.
+// which says nothing about whether a stop still shows. Dated is a Reset read from when the stop happened, because the pane has been up since.
 type QuotaStop struct {
 	At, Reset     time.Time
 	SelfContinues bool
 	Unread        bool
+	Dated         bool
 }
 
 // SilentQuotaStopper is a harness that can show a session held on its limit with no quota error behind it, or whose rows say otherwise.
