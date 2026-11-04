@@ -522,8 +522,8 @@ func (m Model) renderTree(rows []row) viewPage {
 	for i, r := range rows {
 		rowModel := m
 		rowModel.width = max(20, m.width-2*r.depth-2)
-		flush := r.need != nil && !strings.HasPrefix(r.key, "doc-ask:") && m.width < core.QueueWidth+2*r.depth+5
-		if flush {
+		flush := (r.need != nil && !strings.HasPrefix(r.key, "doc-ask:") || r.key == "heading:needs") && m.width < core.QueueWidth+2*r.depth+5
+		if flush && r.need != nil {
 			rowModel.width = m.width + 3
 		}
 		text := rowModel.treeRowText(i, r, ids, labels)

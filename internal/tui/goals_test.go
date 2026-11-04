@@ -1206,11 +1206,19 @@ func TestAFullDoLineDrawsWholeOnTheBoardAsOnTheOtherSurfaces(t *testing.T) {
 				m := treeModel()
 				m.width, m.cursor, m.page = width, 0, nil
 				m.board.Needs = nil
+				m.board.Later = make([]core.Need, 10)
+				for i := range m.board.Later {
+					m.board.Later[i] = core.Need{Project: "mission", Item: &core.Item{Seq: int64(100 + i), ID: fmt.Sprintf("D%d", 100+i), Kind: core.KindDecision, Question: "q", State: core.ItemSnoozed}}
+				}
 				for i := range tc.rows {
 					m.board.Needs = append(m.board.Needs, core.Need{Project: "mission", Item: &core.Item{Seq: int64(i + 1), ID: fmt.Sprintf("D%d", i+1), Kind: core.KindDecision, Question: "q",
 						DoLine: fmt.Sprintf("%s%02d", do[:core.MaxDoLine-2], i+1), Rec: "r", Impact: tc.impact}})
 				}
 				content := ansi.Strip(m.View().Content)
+				header := core.QueueHeader(m.board.Needs, len(m.board.Later))
+				if !strings.Contains(content, header) {
+					t.Fatalf("header %q missing at width %d:\n%s", header, width, content)
+				}
 				labels := core.RankLabels(tc.rows)
 				for i := range m.board.Needs {
 					want, _ := core.RowLine(m.board.Needs[i], labels[i], core.QueueWidth, m.board.At)
