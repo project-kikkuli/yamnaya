@@ -55,7 +55,7 @@ func newLauncher(dir string) (launcher, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
-	l.everywhere = core.DefaultStateDir(dir)
+	l.everywhere = core.OwnerStateDir(dir)
 	conf := tmux.Conf()
 	if old, err := os.ReadFile(l.conf); err == nil && string(old) == conf {
 		return l, nil

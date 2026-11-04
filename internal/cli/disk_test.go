@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -506,5 +508,74 @@ func TestYmDiskSaysWhatTheLastPassRiskedOnlyWhileTheDiskIsLow(t *testing.T) {
 		if got := strings.Contains(b.String(), "builds may have failed"); got != x.want {
 			t.Errorf("free %d printed %q, want %v", x.free, b.String(), x.want)
 		}
+	}
+}
+
+func TestOnlyTheOwnersOwnStateDirWatchesTheDiskUnlessADrillOptsIn(t *testing.T) {
+	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
+	if err != nil {
+		t.Skip("no passwd entry here: ", err)
+	}
+	real := filepath.Join(u.HomeDir, ".local", "state", "yamnaya")
+	// t.TempDir lies under the test run's own rehearsal root, so what must be outside one goes elsewhere
+	outside, err := os.MkdirTemp("/tmp", "ym-disk-watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(outside)
+	fake, _ := filepath.EvalSymlinks(outside)
+	marked := filepath.Join(fake, "drill")
+	os.MkdirAll(filepath.Join(marked, "state"), 0o755)
+	os.WriteFile(filepath.Join(marked, core.RehearsalMark), nil, 0o644)
+	for _, c := range []struct {
+		name  string
+		home  string
+		xdg   string
+		dir   string
+		optIn bool
+		want  bool
+	}{
+		{"the real state dir", "", "", real, false, true},
+		{"the real state dir with a private XDG_STATE_HOME", "", fake, real, false, true},
+		{"a private state dir with a private XDG_STATE_HOME", "", fake, filepath.Join(fake, "state"), false, false},
+		{"a default-looking state dir under an overridden HOME", fake, "", filepath.Join(fake, ".local", "state", "yamnaya"), false, false},
+		{"a rehearsal without the opt-in", "", "", filepath.Join(marked, "state"), false, false},
+		{"a rehearsal with the opt-in", "", "", filepath.Join(marked, "state"), true, true},
+		{"the opt-in outside a rehearsal", "", "", filepath.Join(fake, "state"), true, false},
+		{"the opt-in under an overridden HOME outside a rehearsal", fake, "", filepath.Join(fake, ".local", "state", "yamnaya"), true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.home != "" {
+				t.Setenv("HOME", c.home)
+			}
+			if c.xdg != "" {
+				t.Setenv("XDG_STATE_HOME", c.xdg)
+			}
+			t.Setenv(core.DiskWatchEnv, map[bool]string{true: "1"}[c.optIn])
+			if got := core.WatchesDisk(c.dir); got != c.want {
+				t.Fatalf("WatchesDisk(%s) = %v, want %v", c.dir, got, c.want)
+			}
+		})
+	}
+}
+
+func TestAYmWhoseHomeIsOverriddenReclaimsNothingReal(t *testing.T) {
+	fake, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", fake)
+	state := filepath.Join(fake, ".local", "state", "yamnaya")
+	os.MkdirAll(state, 0o755)
+	if !core.DefaultStateDir(state) {
+		t.Fatal("the fixture should look like the default state dir")
+	}
+	l, err := newLauncher(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.everywhere {
+		t.Fatal("swept every repository")
+	}
+	may := diskMay(l.everywhere, state)
+	if may == nil || may("") || may("/home/someone/.cache/go-build") {
+		t.Fatal("may reach a real cache")
 	}
 }

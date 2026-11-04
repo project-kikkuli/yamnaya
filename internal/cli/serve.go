@@ -96,9 +96,11 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				stopped := make(chan struct{})
 				go func() { defer close(stopped); watchPressure(ctx, l, pool, cmd.ErrOrStderr()) }()
 				defer func() { cancel(); <-stopped }()
-				watched := make(chan struct{})
-				go func() { defer close(watched); watchDisk(ctx, l, dir, cmd.ErrOrStderr()) }()
-				defer func() { cancel(); <-watched }()
+				if core.WatchesDisk(dir) {
+					watched := make(chan struct{})
+					go func() { defer close(watched); watchDisk(ctx, l, dir, cmd.ErrOrStderr()) }()
+					defer func() { cancel(); <-watched }()
+				}
 			}
 		}
 		upgraded := make(chan bool, 1)
