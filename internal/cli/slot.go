@@ -80,7 +80,7 @@ func slotCmd() *cobra.Command {
 				u, low := pool.Low(c.Cwd)
 				switch {
 				case low:
-					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: %s, so this job waits; other jobs can still get slots (ym disk shows what is low)\n", diskHoldLine(u))
+					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: %s, so this job waits; jobs on other disks can still get slots (ym disk shows what is low)\n", diskHoldLine(u))
 				case st.Pressure.HoldsSlots() && len(st.Holders) > 0:
 					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: memory pressure holds new slots, waiting (ym slot --status shows load and consumers)")
 				case len(st.Holders) < st.Capacity:
@@ -137,7 +137,7 @@ func diskHoldLine(u disk.Usage) string {
 	return fmt.Sprintf("%s has %.1f%% free (%s), below %.0f%%", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Tier3Free*100)
 }
 
-// diskHeldLines names, for each low filesystem, the waiters it holds back. Other jobs can still take slots.
+// diskHeldLines names, for each low filesystem, the waiters it holds back. Jobs whose TMPDIR, GOCACHE and cwd are on other filesystems can still take slots.
 func diskHeldLines(waiters []slot.Claim) []string {
 	var paths []string
 	usage, pids := map[string]disk.Usage{}, map[string][]string{}
@@ -153,7 +153,7 @@ func diskHeldLines(waiters []slot.Claim) []string {
 	}
 	lines := make([]string, 0, len(paths))
 	for _, path := range paths {
-		lines = append(lines, fmt.Sprintf("disk: %s: holds back %s; other jobs can still get slots", diskHoldLine(usage[path]), strings.Join(pids[path], ", ")))
+		lines = append(lines, fmt.Sprintf("disk: %s: holds back %s; jobs on other disks can still get slots", diskHoldLine(usage[path]), strings.Join(pids[path], ", ")))
 	}
 	return lines
 }

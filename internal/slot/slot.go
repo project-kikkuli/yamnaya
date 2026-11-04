@@ -59,7 +59,7 @@ type Status struct {
 	Cores    int               `json:"cores"`
 	Memory   uint64            `json:"memory"`
 	Workers  int               `json:"workers"`
-	// Disk is the lowest filesystem holding back a waiter, which says so on its claim, or nil. Other jobs can still get slots.
+	// Disk is the lowest filesystem holding back a waiter, which says so on its claim, or nil. Jobs on other disks can still get slots.
 	Disk    *disk.Usage `json:"disk,omitempty"`
 	Holders []Claim     `json:"holders"`
 	Waiters []Claim     `json:"waiters"`

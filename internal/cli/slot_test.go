@@ -43,7 +43,7 @@ func TestSlotStatusNamesTheJobsTheirOwnDiskHoldsBack(t *testing.T) {
 	}
 	var out bytes.Buffer
 	printSlots(&out, st, 0, time.Now())
-	for _, want := range []string{"/low has 4.0% free", "holds back pid 7;", "other jobs can still get slots", "held by low disk /low"} {
+	for _, want := range []string{"/low has 4.0% free", "holds back pid 7;", "jobs on other disks can still get slots", "held by low disk /low"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("status lacks %q:\n%s", want, out.String())
 		}
