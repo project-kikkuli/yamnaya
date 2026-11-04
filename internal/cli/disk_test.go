@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -869,6 +870,48 @@ func TestAYmOffTheOwnersStateLeavesARecordOutsideItsRootCompletelyAlone(t *testi
 			}
 			if got, ok := l.records.Find(rec.Key); !ok || !got.IsLanded() || got.Recovery.Files != 1 {
 				t.Fatalf("record inside the root: %+v, found %v", got, ok)
+			}
+		})
+	}
+}
+
+func TestYmDiskSaysWhetherAServeIsActuallyWatching(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
+	serve := exec.Command("sh", "-c", "sleep 60; true", "ym", "serve")
+	if err := serve.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { serve.Process.Kill(); serve.Wait() }()
+	other := exec.Command("sleep", "60")
+	if err := other.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { other.Process.Kill(); other.Wait() }()
+	for _, c := range []struct {
+		name  string
+		optIn bool
+		pid   int
+		want  string
+	}{
+		{"a serve holds this state", true, serve.Process.Pid, "watcher on"},
+		{"no serve ever wrote its status", true, 0, "watcher off: ym serve is not running"},
+		{"the recorded pid is gone", true, 1 << 30, "watcher off: ym serve is not running"},
+		{"the recorded pid is now something else", true, other.Process.Pid, "watcher off: ym serve is not running"},
+		{"the gate refuses this state, a serve or not", false, serve.Process.Pid, "watcher off: "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			state := filepath.Join(root, strings.ReplaceAll(c.name, " ", "-"))
+			os.MkdirAll(state, 0o755)
+			t.Setenv(core.DiskWatchEnv, map[bool]string{true: "1"}[c.optIn])
+			if c.pid != 0 {
+				os.WriteFile(filepath.Join(state, "work-service.json"), []byte(fmt.Sprintf(`{"pid":%d}`, c.pid)), 0o600)
+			}
+			if got := diskWatcherLine(state); !strings.HasPrefix(got, c.want) {
+				t.Fatalf("said %q, want %q", got, c.want)
+			}
+			if _, err := os.Stat(filepath.Join(state, "work-service.lock")); err == nil {
+				t.Fatal("created the serve lock")
 			}
 		})
 	}

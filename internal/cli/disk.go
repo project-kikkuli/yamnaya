@@ -18,6 +18,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/disk"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 const (
@@ -397,6 +398,37 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
 }
 
+// diskWatcherLine says whether the watcher is alive for this state dir, reading only: taking the serve lock even briefly could make a
+// serve starting at that moment give up.
+func diskWatcherLine(dir string) string {
+	if why, _ := core.DiskWatchOff(dir); why != "" {
+		return "watcher off: " + why
+	}
+	if !serveRunning(dir) {
+		return "watcher off: ym serve is not running"
+	}
+	return "watcher on"
+}
+
+// serveRunning reports whether the process serve last recorded for this state dir is alive and still a ym serve.
+func serveRunning(dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "work-service.json"))
+	if err != nil {
+		return false
+	}
+	var status struct {
+		PID int `json:"pid"`
+	}
+	if json.Unmarshal(raw, &status) != nil || status.PID <= 0 {
+		return false
+	}
+	procs, err := proc.List()
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(procs, func(p proc.Proc) bool { return p.PID == status.PID && slices.Contains(p.Args, "serve") })
+}
+
 // printDisk shows each filesystem and the episode. What the last pass could not free matters only while a filesystem is still low.
 func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 	low := false
@@ -425,11 +457,7 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "disk", Short: "Show free space on the filesystems ym watches, the tier each is in and the current low-disk episode", Args: cobra.NoArgs}
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
-		if why, _ := core.DiskWatchOff(e.core.StateDir); why != "" {
-			fmt.Fprintln(cmd.OutOrStdout(), "watcher off:", why)
-		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "watcher on")
-		}
+		fmt.Fprintln(cmd.OutOrStdout(), diskWatcherLine(e.core.StateDir))
 		printDisk(cmd.OutOrStdout(), disk.Each(disk.Stat, diskPaths(cmd.Context())), readDiskState(e.core.StateDir))
 		return nil
 	})
