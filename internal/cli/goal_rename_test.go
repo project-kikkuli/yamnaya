@@ -183,6 +183,10 @@ func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
 		ssh     bool
 		parent  string
 		started bool
+		// refusal is in the error when ym goal refuses; queued says the goal went to the host, whichever way ym reached it.
+		refusal        string
+		queued         bool
+		down, noChiefs bool
 	}{
 		{name: "a local repository", args: []string{"--repo", here}, started: true},
 		{name: "under a chief by host and name", args: []string{"--repo", here, "--under", "box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
@@ -190,11 +194,22 @@ func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
 		{name: "under a chief in upper case", args: []string{"--repo", here, "--under", "BOX/CORE-LEAD"}, ssh: true, parent: "box/mgr9", started: true},
 		{name: "under a chief by @host", args: []string{"--repo", here, "--under", "@box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
 		{name: "a repository another host holds", args: []string{"--repo", "/src/app"}, ssh: true},
+		{name: "under a chief the host does not have", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
+		{name: "under a chief by @host the host does not have", args: []string{"--repo", here, "--under", "@box/nosuch"}, ssh: true, refusal: "core-lead"},
+		{name: "on the host, under a chief it does not have", args: []string{"--host", "box", "--repo", "app", "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
+		{name: "on the host, under its chief", args: []string{"--host", "box", "--repo", "app", "--under", "box/core-lead"}, ssh: true, queued: true},
+		{name: "under a chief of a host that does not answer", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, down: true, parent: "box/nosuch", started: true},
+		{name: "under a chief of a host known only through relays", args: []string{"--repo", here, "--under", "elsewhere/nosuch"}, ssh: true, parent: "elsewhere/nosuch", started: true},
+		{name: "under a chief of a host with none to compare", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, noChiefs: true, parent: "box/nosuch", started: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("YAMNAYA_NO_SERVE", "1")
 			dir := t.TempDir()
-			managers, err := json.Marshal([]core.Manager{{ID: "mgr9", Role: core.RoleChief, Name: "core-lead", Repo: "/src/app"}})
+			roster := []core.Manager{{ID: "mgr9", Role: core.RoleChief, Name: "core-lead", Repo: "/src/app"}}
+			if tc.noChiefs {
+				roster = nil
+			}
+			managers, err := json.Marshal(roster)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +219,11 @@ func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
 				t.Fatal(err)
 			}
 			stub := filepath.Join(dir, "ssh")
-			if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\ncat "+filepath.Join(dir, "board.json")+"\n"), 0o755); err != nil {
+			answer := "cat " + filepath.Join(dir, "board.json")
+			if tc.down {
+				answer = "exit 255"
+			}
+			if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\n"+answer+"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("YAMNAYA_SSH_BIN", stub)
@@ -225,8 +244,22 @@ func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
 			cmd.SetArgs(append(tc.args, "ship the thing"))
-			if err := cmd.Execute(); err != nil {
+			err = cmd.Execute()
+			if tc.refusal != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+					t.Errorf("ym goal %v = %v, want it refused naming %q", tc.args, err, tc.refusal)
+				}
+				if pending, _ := st.PendingRelays(); len(pending) != 0 {
+					t.Errorf("queued %+v", pending)
+				}
+			} else if err != nil {
 				t.Fatalf("ym goal %v: %v\n%s", tc.args, err, out.String())
+			}
+			if tc.queued {
+				if !strings.Contains(out.String(), "goal for app on box") {
+					t.Errorf("ym goal %v printed %q, want the goal sent to box", tc.args, out.String())
+				}
+				return
 			}
 			if _, err := os.Stat(log); (err == nil) != tc.ssh {
 				t.Fatalf("ssh ran %v, want %v", err == nil, tc.ssh)

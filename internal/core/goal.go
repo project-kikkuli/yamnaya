@@ -109,7 +109,11 @@ func (c *Core) goalChief(under string) (string, error) {
 	if host, rest, remote := SplitRemote(under); remote && host == c.SelfName() {
 		under = rest
 	} else if remote {
-		return c.checkRemoteChief(Manager{}, under)
+		id, err := c.checkRemoteChief(Manager{}, under)
+		if err != nil {
+			return "", err
+		}
+		return id, c.noSuchChief(id)
 	}
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -300,6 +304,33 @@ func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 		}
 	}
 	return boss.ID, nil
+}
+
+// noSuchChief refuses id, a chief on another host, when that host just answered with chiefs and id is not among them. A host that did
+// not answer, or that ym only hears through relays, has no list to check.
+func (c *Core) noSuchChief(id string) error {
+	if c.Remotes == nil {
+		return nil
+	}
+	host, rest, _ := SplitRemote(id)
+	for _, b := range c.Remotes.Boards() {
+		if !strings.EqualFold(b.Host, host) || b.Err != nil || b.At.IsZero() {
+			continue
+		}
+		var known []string
+		for _, m := range b.Managers {
+			if m.ID == rest {
+				return nil
+			}
+			if m.Role == RoleChief && !m.Retired {
+				known = append(known, m.Shown())
+			}
+		}
+		if len(known) > 0 {
+			return Final(fmt.Errorf("%s has no chief %s; its chiefs are %s", b.Host, rest, strings.Join(known, ", ")))
+		}
+	}
+	return nil
 }
 
 // lookup finds a manager or chief by its id or the id of its goal.
