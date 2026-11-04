@@ -201,6 +201,12 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if m.Version != 1 {
 			continue
 		}
+		if m.portWritten() {
+			if err = l.recoverPort(m); err != nil {
+				return err
+			}
+			continue
+		}
 		if m.State == "running" {
 			if !m.NoteRead {
 				if err = l.settleNote(m); err != nil {
@@ -257,6 +263,9 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		}
 		// Serve never resumes an ended session: an exited one keeps its queued switch, and a published handoff stays whole, for ym revive.
 		if !live && (landed || killed || m.State == "queued") {
+			continue
+		}
+		if l.core.Off(m.Source.Session) || b.ThrottleHolds(m.Source.Session) {
 			continue
 		}
 		if s, ok := b.Session(m.Source.Session); ok {

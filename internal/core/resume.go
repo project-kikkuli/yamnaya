@@ -116,11 +116,13 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 			m.Failures, m.NextAttempt = max(m.Failures-1, 0), c.now().Add(QuotaRecheck)
 		}
 		m.LastError = "resume failed: " + err.Error()
-		c.Store.SaveManager(m)
+		if saveErr := c.Store.SaveManager(m); saveErr != nil {
+			m.LastError += "; " + saveErr.Error()
+		}
 		c.note(resumeNote{who: who, session: m.Session, failure: err.Error(), settled: true})
 		if g, ok := o.Goals[m.GoalID]; ok {
 			c.RecordGoalEvent(g.ID, EventResumeFailed, fmt.Sprintf("%s could not be resumed in session %s: %v", who, Short(m.Session), err),
-				"resume-failed\x00"+m.Session+"\x00"+err.Error())
+				resumeFailedKey(m.Session, err))
 		}
 		return m, true
 	}
@@ -215,7 +217,7 @@ func (c *Core) ReviveWork(b Board) error {
 		if err != nil {
 			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,
 				fmt.Sprintf("%s's pane went and ym could not resume it: %v. Its worktree %s keeps what it wrote; ym revive %s tries again.", who, err, l.Path, l.Key),
-				"resume-failed\x00"+l.Session+"\x00"+err.Error()))
+				resumeFailedKey(l.Session, err)))
 			continue
 		}
 		how := "resumed in its own conversation"
@@ -244,7 +246,6 @@ func (c *Core) take(session string) bool {
 	c.recovery.mu.Lock()
 	tried := c.recovery.tried[session]
 	if at, waiting := c.recovery.recheck[session]; waiting && !c.now().Before(at) {
-		delete(c.recovery.recheck, session)
 		tried = false
 	}
 	c.recovery.mu.Unlock()
@@ -253,6 +254,7 @@ func (c *Core) take(session string) bool {
 	}
 	c.recovery.mu.Lock()
 	defer c.recovery.mu.Unlock()
+	delete(c.recovery.recheck, session)
 	if c.recovery.tried == nil {
 		c.recovery.tried = map[string]bool{}
 	}

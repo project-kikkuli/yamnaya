@@ -95,10 +95,10 @@ func quotaReason(harness string) string {
 	return "subscription_rate_limit"
 }
 
-// quotaEvents adds to the ledger's events one for each live session on a used-up login that has none, as a limit reached with no
-// stopped turn yet still stops the next one. A turn that recovered after the limit row was read shows the row is stale.
-func quotaEvents(b core.Board) []core.Exhaustion {
-	out := slices.Clone(b.Fleet.Exhaustions)
+// noteLimitRows files the owner's item for each login a live session runs on that a limit row shows used up, though no turn has stopped
+// on it yet; such a session stays put until it does. A turn that recovered after the row was read shows the row is stale.
+func (l launcher) noteLimitRows(dir string, ps []profile.Profile, b core.Board) error {
+	var errs []error
 	for _, s := range b.Sessions {
 		if s.Remote != "" || s.ID == "" || s.Account == "" {
 			continue
@@ -113,13 +113,15 @@ func quotaEvents(b core.Board) []core.Exhaustion {
 				seen = w.Seen
 			}
 		}
-		if !slices.ContainsFunc(b.Fleet.Exhaustions, func(e core.Exhaustion) bool {
-			return e.Session == s.ID && e.Account == s.Account && (!e.Recovered || e.Seen.After(seen))
+		if slices.ContainsFunc(b.Fleet.Exhaustions, func(e core.Exhaustion) bool {
+			return e.Session == s.ID && e.Account == s.Account && e.Recovered && e.Seen.After(seen)
 		}) {
-			out = append(out, core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("limit-%d", reset.Unix()), Seen: b.At})
+			continue
 		}
+		e := core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID}
+		errs = append(errs, l.fileQuotaItem(dir, ps, e, reset, b.Fleet.Limits, b.At))
 	}
-	return out
+	return errors.Join(errs...)
 }
 func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, pools map[string]time.Time, now time.Time, cwds ...string) (profile.Profile, error) {
 	cwd := ""
@@ -168,8 +170,8 @@ func (l launcher) Failover(b core.Board) error {
 			killed[session] = true
 		}
 	}
-	var notices []error
-	for _, e := range quotaEvents(b) {
+	notices := []error{l.noteLimitRows(dir, ps, b)}
+	for _, e := range b.Fleet.Exhaustions {
 		reset, actual := trueExhaustion(e, b.Fleet.Limits, b.At)
 		if !actual {
 			continue
@@ -242,7 +244,6 @@ func (l launcher) Failover(b core.Board) error {
 			a.State.Status = "queued"
 			a.State.Reason = out.Message
 		default:
-			a.Pools[target.Account] = reset
 			a.State.Status = "switched"
 			a.State.Profile = target.ID
 			a.State.Account = target.Account

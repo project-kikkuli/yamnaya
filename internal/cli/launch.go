@@ -822,25 +822,23 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 // Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript
 // is gone, starts it over in its worktree on start, or on its first prompt when start is empty.
 func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
+	session, err := l.portedTo(session)
+	if err != nil {
+		return "", false, err
+	}
 	rec, ok := l.records.Find(session)
 	if !ok || rec.Session != session {
 		return "", false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
 	}
 	resumed := transcript(rec) != ""
-	if !resumed && rec.Profile != "" && rec.Profile != "default" {
-		return "", false, fmt.Errorf("profile %s conversation is unavailable; refusing to replace it with a new session", rec.Profile)
-	}
 	if resumed {
 		if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
 			return l.runsAs(rec.Key, session), resumed, err
 		}
-	} else {
-		var err error
-		if rec, err = l.freshLogin(rec); err != nil {
-			return "", false, err
-		}
+	} else if rec, err = l.freshLogin(rec); err != nil {
+		return "", false, err
 	}
-	_, _, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
 			return resumeArgv(*rec, prompt)
 		}

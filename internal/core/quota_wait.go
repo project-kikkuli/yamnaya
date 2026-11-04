@@ -20,6 +20,15 @@ func (q *QuotaWait) Error() string {
 		q.Harness, q.Login, q.Until.UTC().Format(time.RFC3339), q.Key, q.Key)
 }
 
+// resumeFailedKey makes one event of a refusal however the login's recorded reset moves, and one per distinct error otherwise.
+func resumeFailedKey(session string, err error) string {
+	var wait *QuotaWait
+	if errors.As(err, &wait) {
+		return "resume-failed\x00" + session + "\x00quota\x00" + wait.Harness + "/" + wait.Login
+	}
+	return "resume-failed\x00" + session + "\x00" + err.Error()
+}
+
 // retryQuota makes a refusal for an exhausted login cost neither the resume pace nor the session's one try: it is asked again after QuotaRecheck.
 func (c *Core) retryQuota(session string, err error) {
 	var wait *QuotaWait

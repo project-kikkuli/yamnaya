@@ -61,6 +61,12 @@ func (s *Store) ContinueSession(old, next, harness, profile, root string) error 
 		{`INSERT OR IGNORE INTO ym_remote_work_aliases (session, assignment) SELECT ?, assignment FROM ym_remote_work_aliases WHERE session = ?`, []any{next, old}},
 		{`UPDATE ym_remote_work SET session = ? WHERE session = ?`, []any{next, old}},
 		{`UPDATE ym_remote_work SET bound_session = ? WHERE bound_session = ?`, []any{next, old}},
+		{`INSERT OR IGNORE INTO ym_off (target, at) SELECT ?, at FROM ym_off WHERE target = ?`, []any{next, old}},
+		{`DELETE FROM ym_off WHERE target = ?`, []any{old}},
+		{`UPDATE ym_vibes SET session = ? WHERE session = ?`, []any{next, old}},
+		{`UPDATE ym_vibes SET target = ? WHERE target = ?`, []any{next, old}},
+		{`INSERT OR IGNORE INTO ym_agent_reports (session, head, said, at) SELECT ?, head, said, at FROM ym_agent_reports WHERE session = ?`, []any{next, old}},
+		{`UPDATE OR IGNORE ym_phases SET project = ? WHERE project = ?`, []any{next, old}},
 	} {
 		if _, err = tx.Exec(q.sql, q.args...); err != nil {
 			return err
@@ -69,23 +75,16 @@ func (s *Store) ContinueSession(old, next, harness, profile, root string) error 
 	return tx.Commit()
 }
 
-// currentManagerSession keeps a save from a copy read before its session moved from undoing the move.
-func currentManagerSession(tx *sql.Tx, m *Manager) error {
-	moved := false
-	for seen := map[string]bool{}; m.Session != "" && !seen[m.Session]; {
-		seen[m.Session] = true
-		var next string
-		err := tx.QueryRow(`SELECT successor FROM ym_continued WHERE session = ?`, m.Session).Scan(&next)
-		if errors.Is(err, sql.ErrNoRows) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		m.Session, moved = next, true
-	}
-	if !moved {
+// currentManagerSession keeps a save from a copy read before its session moved from undoing the move: what the manager runs as now,
+// which may since have started fresh, stays as the row has it.
+func currentManagerSession(tx *sql.Tx, m *Manager, num int64) error {
+	var next string
+	err := tx.QueryRow(`SELECT successor FROM ym_continued WHERE session = ?`, m.Session).Scan(&next)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
-	return tx.QueryRow(`SELECT harness, profile, config_root FROM ym_managers WHERE session = ?`, m.Session).Scan(&m.Harness, &m.Profile, &m.ConfigRoot)
+	if err != nil {
+		return err
+	}
+	return tx.QueryRow(`SELECT session, harness, profile, config_root FROM ym_managers WHERE num = ?`, num).Scan(&m.Session, &m.Harness, &m.Profile, &m.ConfigRoot)
 }

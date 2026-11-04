@@ -23,14 +23,20 @@ type quotaNotice struct {
 	Item    string    `json:"item"`
 }
 
-func quotaNoticePath(dir, harness, account string) string {
-	sum := sha256.Sum256([]byte(harness + "\x00" + account))
+// quotaNoticePath is per login: its account, or its profile when no account is known yet.
+func quotaNoticePath(dir, harness, id, account string) string {
+	login := account
+	if login == "" {
+		login = "profile:" + profile.ID(id)
+	}
+	sum := sha256.Sum256([]byte(harness + "\x00" + login))
 	return filepath.Join(dir, "quota-items", harness+"-"+hex.EncodeToString(sum[:12])+".json")
 }
 
-// sameQuotaWindow allows for providers reporting one window's reset a second or so apart; a new window starts hours later.
+// sameQuotaWindow allows for providers reporting one window's reset a second or so apart; any further apart is another window, whose
+// item must state its own reset.
 func sameQuotaWindow(a, b time.Time) bool {
-	return a.Sub(b).Abs() < time.Hour
+	return a.Sub(b).Abs() < time.Minute
 }
 
 // fileQuotaItem tells the owner once per login and reset window that the login ran out, with how its work can continue.
@@ -38,7 +44,7 @@ func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaust
 	if l.core == nil {
 		return nil
 	}
-	path := quotaNoticePath(dir, e.Harness, e.Account)
+	path := quotaNoticePath(dir, e.Harness, e.Profile, e.Account)
 	raw, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err

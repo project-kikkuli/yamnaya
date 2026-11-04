@@ -27,6 +27,14 @@ func TestAContinuedSessionCarriesWhatWaitsOnItsOldID(t *testing.T) {
 			read: `SELECT session FROM ym_remote_work WHERE id = 'w'`, want: next},
 		{name: "remote work binding", seed: `INSERT INTO ym_remote_work (id, origin, goal, source, session, bound_session, state, body) VALUES ('w', 'o', 'g', 's', ?, ?, 'approved', '{}')`, args: []any{old, old},
 			read: `SELECT bound_session FROM ym_remote_work WHERE id = 'w'`, want: next},
+		{name: "ym off follows", seed: `INSERT INTO ym_off (target, at) VALUES (?, 'now')`, args: []any{old},
+			read: `SELECT target FROM ym_off`, want: next},
+		{name: "vibe follows", seed: `INSERT INTO ym_vibes (place, why, session, harness, target, at) VALUES ('p', 'w', ?, 'claude', '', 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_vibes`, want: next},
+		{name: "last report follows", seed: `INSERT INTO ym_agent_reports (session, head, said, at) VALUES (?, 'h', 's', 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_agent_reports WHERE session != '` + old + `'`, want: next},
+		{name: "phases follow", seed: `INSERT INTO ym_phases (project, phases, idx) VALUES (?, '[]', 0)`, args: []any{old},
+			read: `SELECT project FROM ym_phases`, want: next},
 		{name: "delivered message keeps its session", seed: `INSERT INTO ym_messages (session, text, state, created_at) VALUES (?, 'x', 'sent', 'now')`, args: []any{old},
 			read: `SELECT session FROM ym_messages WHERE text = 'x'`, want: old},
 		{name: "pending message moves", seed: `INSERT INTO ym_messages (session, text, state, created_at) VALUES (?, 'x', 'pending', 'now')`, args: []any{old},
@@ -180,5 +188,106 @@ func TestASessionRefusedForItsLoginIsAskedAgainWithoutCostingPaceOrFailures(t *t
 				t.Fatalf("a session refused before the reset never came back: %+v", r.resumed)
 			}
 		})
+	}
+}
+
+func TestAStaleSaveLeavesAManagerThatStartedFreshOnItsNewSession(t *testing.T) {
+	w, _ := resumeWorld(t)
+	_, m := w.goal(t, "ship the importer", "/repo/august")
+	stale := m
+	st := w.core.Store
+	if err := st.ContinueSession(m.Session, "ported", "codex", "codex-main", "/codex"); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := st.Manager(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.Session, fresh.Harness, fresh.Profile = "started-fresh", "claude", "claude-work"
+	if err = st.SaveManager(fresh); err != nil {
+		t.Fatal(err)
+	}
+	stale.Nudges = 3
+	if err = st.SaveManager(stale); err != nil {
+		t.Fatalf("a stale save failed: %v", err)
+	}
+	got, err := st.Manager(m.ID)
+	if err != nil || got.Session != "started-fresh" || got.Profile != "claude-work" || got.Nudges != 3 {
+		t.Fatalf("manager %+v, %v", got, err)
+	}
+}
+
+func TestEveryRefusedSessionComesBackOnceAfterTheReset(t *testing.T) {
+	for _, n := range []int{1, 5} {
+		t.Run(fmt.Sprintf("%d refused", n), func(t *testing.T) {
+			w, r := resumeWorld(t)
+			_, m := w.goal(t, "ship the importer", "/repo/august")
+			w.supervise(t)
+			r.state(m.Session, "running")
+			for i := range n {
+				id := fmt.Sprintf("agent-%d", i)
+				r.launched = append(r.launched, Launched{Key: "wt-" + id, Session: id, State: "gone", Parent: m.Session})
+				r.fail[id] = &QuotaWait{Harness: "claude", Login: "default", Key: id, Until: w.clock.Add(time.Hour)}
+			}
+			for range 40 {
+				w.clock = w.clock.Add(ResumePace)
+				if err := w.core.ReviveWork(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(r.resumed) != 0 {
+				t.Fatalf("resumed before the reset: %+v", r.resumed)
+			}
+			for i := range n {
+				delete(r.fail, fmt.Sprintf("agent-%d", i))
+			}
+			for range 120 {
+				w.clock = w.clock.Add(ResumePace)
+				if err := w.core.ReviveWork(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			counts := map[string]int{}
+			for _, call := range r.resumed {
+				counts[call.session]++
+			}
+			if len(counts) != n {
+				t.Fatalf("%d of %d came back: %v", len(counts), n, counts)
+			}
+			for id, got := range counts {
+				if got != 1 {
+					t.Fatalf("%s resumed %d times", id, got)
+				}
+			}
+		})
+	}
+}
+
+func TestAMovedResetMakesOneResumeFailedEvent(t *testing.T) {
+	w, r := resumeWorld(t)
+	g, m := w.goal(t, "ship the importer", "/repo/august")
+	w.supervise(t)
+	r.state(m.Session, "running")
+	r.launched = append(r.launched, Launched{Key: "wt-a", Session: "agent-a", State: "gone", Parent: m.Session})
+	until := w.clock.Add(time.Hour)
+	for i := range 4 {
+		r.fail["agent-a"] = &QuotaWait{Harness: "claude", Login: "default", Key: "wt-a", Until: until.Add(time.Duration(i) * time.Second)}
+		w.clock = w.clock.Add(QuotaRecheck + ResumePace)
+		if err := w.core.ReviveWork(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := 0
+	for _, e := range events {
+		if e.Kind == EventResumeFailed {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Fatalf("%d resume-failed events, want 1", failed)
 	}
 }
