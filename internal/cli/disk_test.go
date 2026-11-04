@@ -309,13 +309,15 @@ func TestAReapLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
 		name string
 		free float64
 		kept bool
-	}{{"healthy filesystem", 0.9, true}, {"low filesystem", 0.05, false}} {
+	}{{"healthy filesystem", 0.9, true}, {"above tier 2 itself while another is under it", 0.22, true}, {"low filesystem", 0.05, false}} {
 		t.Run(c.name, func(t *testing.T) {
 			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
 			low := 0.05
 			e := disk.Env{Paths: []string{"/small"}, Now: time.Now, Stat: func(p string) (disk.Usage, error) {
 				if p == wt {
-					return usageAt(&c.free)(p)
+					u, err := usageAt(&c.free)(p)
+					u.Dev = 2
+					return u, err
 				}
 				return usageAt(&low)(p)
 			}}
@@ -351,13 +353,15 @@ func TestStrippingLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
 		name string
 		free float64
 		kept bool
-	}{{"healthy filesystem", 0.9, true}, {"low filesystem", 0.05, false}} {
+	}{{"healthy filesystem", 0.9, true}, {"above tier 2 itself while another is under it", 0.22, true}, {"low filesystem", 0.05, false}} {
 		t.Run(c.name, func(t *testing.T) {
 			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
 			low := 0.05
 			e := disk.Env{Paths: []string{"/small"}, Now: time.Now, Stat: func(p string) (disk.Usage, error) {
 				if p == wt {
-					return usageAt(&c.free)(p)
+					u, err := usageAt(&c.free)(p)
+					u.Dev = 2
+					return u, err
 				}
 				return usageAt(&low)(p)
 			}}

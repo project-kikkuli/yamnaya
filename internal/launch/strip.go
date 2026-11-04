@@ -24,24 +24,33 @@ var regenerableDirs = map[string]bool{
 
 var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", ".eslintcache"}
 
-// targetMarkers are the build files that make a sibling target directory a build's output rather than someone's folder.
-var targetMarkers = []string{"Cargo.toml", "pom.xml"}
+// targetBuildFiles are the build files whose being tracked beside it makes a target directory a build's output: unlike the rest
+// of the allowlist, which only its tool writes to, target is a name anyone might use for a folder.
+var targetBuildFiles = []string{"Cargo.toml", "pom.xml"}
 
-// holdsGit reports whether anything at any depth under path is a .git, so it holds another repository or worktree.
-func holdsGit(path string) bool {
+var versionControl = []string{".git", ".hg", ".jj", ".svn"}
+
+// holdsRepo reports whether anything at any depth under path is a repository: a version control directory, or a bare git
+// repository's HEAD beside its objects and refs. What cannot be read counts as one.
+func holdsRepo(path string) bool {
 	found := false
-	filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			found = true
-			return filepath.SkipAll
-		}
-		if d.Name() == ".git" {
+	filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || slices.Contains(versionControl, d.Name()) || d.Name() == "HEAD" && isBareRepo(filepath.Dir(p)) {
 			found = true
 			return filepath.SkipAll
 		}
 		return nil
 	})
 	return found
+}
+
+func isBareRepo(dir string) bool {
+	for _, sub := range []string{"objects", "refs"} {
+		if fi, err := os.Stat(filepath.Join(dir, sub)); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // ignoredEntries lists the git-ignored entries of the worktree at path as git reports them, folding a virtualenv that
@@ -97,13 +106,19 @@ func regenerable(root, entry string) bool {
 	if !regenerableDirs[base] {
 		return false
 	}
-	if base == "target" && !slices.ContainsFunc(targetMarkers, func(m string) bool {
-		_, err := os.Stat(filepath.Join(root, filepath.Dir(strings.TrimSuffix(entry, "/")), m))
-		return err == nil
-	}) {
+	if base == "target" && !trackedBuildFile(root, filepath.Dir(strings.TrimSuffix(entry, "/"))) {
 		return false
 	}
-	return !holdsGit(filepath.Join(root, entry))
+	return !holdsRepo(filepath.Join(root, entry))
+}
+
+func trackedBuildFile(root, dir string) bool {
+	for _, f := range targetBuildFiles {
+		if out, err := look(root, "ls-files", "--", filepath.Join(dir, f)); err == nil && out != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // keepContents says why what lies ignored in the worktree at path must stay: a repository nested at any depth always, and with
@@ -114,7 +129,7 @@ func keepContents(path string, strict bool) (string, string) {
 		return KeepFailing, err.Error()
 	}
 	for _, e := range all {
-		if strings.HasSuffix(e, "/") && holdsGit(filepath.Join(path, e)) {
+		if strings.HasSuffix(e, "/") && holdsRepo(filepath.Join(path, e)) {
 			return KeepNested, "holds a repository under " + e
 		}
 	}

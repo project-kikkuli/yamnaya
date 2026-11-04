@@ -303,9 +303,9 @@ func TestStaleBuildDirsGoOnlyWhenOldAndUnheld(t *testing.T) {
 			os.Chtimes(other, old, old)
 			e := Env{Force: true, Now: time.Now, Stat: fixed(nil), Find: func(string) string { return "" },
 				May:     func(p string) bool { return p == root },
-				Holders: func() []string { return nil }}
+				Holders: func() ([]string, error) { return nil, nil }}
 			if c.held != nil {
-				e.Holders = func() []string { return c.held(dir) }
+				e.Holders = func() ([]string, error) { return c.held(dir), nil }
 			}
 			staleBuildDirs(context.Background(), e)
 			if _, err := os.Stat(dir); (err == nil) != c.kept {
@@ -432,5 +432,39 @@ func TestTheFloorSaysWhenAgeHeldItBack(t *testing.T) {
 				t.Fatalf("%d left, want %d", left, want)
 			}
 		})
+	}
+}
+
+func TestStaleBuildDirsStayWhenTheProcessTableCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("TMPDIR", root)
+	old := time.Now().Add(-2 * staleAge)
+	dir := filepath.Join(root, "go-build123")
+	os.MkdirAll(dir, 0o755)
+	os.Chtimes(dir, old, old)
+	e := Env{Force: true, Now: time.Now, Stat: fixed(nil), Find: func(string) string { return "" }, May: func(p string) bool { return p == root },
+		Holders: func() ([]string, error) { return nil, os.ErrPermission }}
+	if r := staleBuildDirs(context.Background(), e); !r.Blocked {
+		t.Fatalf("report %+v", r)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("removed a dir with no way to know it is unheld")
+	}
+}
+
+func TestWorktreesGoOnlyFromAFilesystemItselfUnderTier2(t *testing.T) {
+	frees := map[string]float64{"/tmp": 0.08, "/home": 0.22, "/data": 0.09, "/fine": 0.5}
+	stat := fixed(frees)
+	for _, c := range []struct {
+		path  string
+		force bool
+		want  bool
+	}{
+		{"/home", false, false}, {"/data", false, true}, {"/fine", false, false}, {"/gone", false, false}, {"/fine", true, true},
+	} {
+		e := Env{Stat: stat, Paths: []string{"/tmp", "/home"}, Force: c.force}
+		if got := e.Reapable()(c.path); got != c.want {
+			t.Errorf("Reapable(%s) force %v = %v, want %v", c.path, c.force, got, c.want)
+		}
 	}
 }

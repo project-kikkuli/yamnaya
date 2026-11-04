@@ -336,6 +336,45 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 		{"a repo inside node_modules", func(t *testing.T, repo, wt string) {
 			nested(t, wt, "node_modules/gitdep")
 		}, KeepNested, []string{"node_modules/gitdep/uncommitted.txt"}, nil},
+		{"a bare mirror inside a virtualenv", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".venv/pyvenv.cfg")
+			os.MkdirAll(filepath.Join(wt, ".venv"), 0o755)
+			run(t, filepath.Join(wt, ".venv"), "git", "init", "-q", "--bare", "mirror.git")
+		}, KeepNested, []string{".venv/mirror.git/HEAD"}, nil},
+		{"a bare mirror inside node_modules", func(t *testing.T, repo, wt string) {
+			os.MkdirAll(filepath.Join(wt, "node_modules"), 0o755)
+			run(t, filepath.Join(wt, "node_modules"), "git", "init", "-q", "--bare", "mirror.git")
+		}, KeepNested, []string{"node_modules/mirror.git/HEAD"}, nil},
+		{"a mercurial checkout inside a virtualenv", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".venv/src/pkg/.hg/store/data")
+			put(t, wt, ".venv/src/pkg/mod.py")
+		}, KeepNested, []string{".venv/src/pkg/mod.py"}, nil},
+		{"a jujutsu checkout inside node_modules", func(t *testing.T, repo, wt string) {
+			put(t, wt, "node_modules/dep/.jj/repo/store")
+			put(t, wt, "node_modules/dep/edited.js")
+		}, KeepNested, []string{"node_modules/dep/edited.js"}, nil},
+		{"a subversion checkout inside node_modules", func(t *testing.T, repo, wt string) {
+			put(t, wt, "node_modules/dep/.svn/wc.db")
+			put(t, wt, "node_modules/dep/edited.js")
+		}, KeepNested, []string{"node_modules/dep/edited.js"}, nil},
+		{"target beside a tracked build file in a subdirectory", func(t *testing.T, repo, wt string) {
+			put(t, wt, "src/Cargo.toml")
+			run(t, wt, "git", "add", "src/Cargo.toml")
+			run(t, wt, "git", "commit", "-q", "-m", "crate")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "src/target/debug/app")
+		}, "", nil, []string{"src/target/debug/app"}},
+		{"target beside an untracked build file", func(t *testing.T, repo, wt string) {
+			put(t, wt, "src/keep.rs")
+			run(t, wt, "git", "add", "src/keep.rs")
+			run(t, wt, "git", "commit", "-q", "-m", "source")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "src/Cargo.toml")
+			put(t, wt, "src/target/kept.rs")
+		}, KeepDirty, []string{"src/target/kept.rs", "src/Cargo.toml"}, nil},
+		{"a file left in a tool-owned directory goes with it", func(t *testing.T, repo, wt string) {
+			put(t, wt, "node_modules/notes.md")
+		}, "", nil, []string{"node_modules/notes.md"}},
 	} {
 		t.Run(c.name+"/reap", func(t *testing.T) {
 			repo, wt := reapRepo(t)
@@ -352,6 +391,9 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 				if !exists(wt, f) {
 					t.Errorf("%s lost", f)
 				}
+			}
+			if _, err := os.Stat(wt); (err == nil) != (c.keep != "") {
+				t.Errorf("worktree on disk %v with keep %q", err == nil, c.keep)
 			}
 		})
 		t.Run(c.name+"/ordinary gc keeps repositories", func(t *testing.T) {

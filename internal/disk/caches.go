@@ -177,7 +177,10 @@ func staleBuildDirs(ctx context.Context, e Env) Report {
 				continue
 			}
 			if held == nil {
-				held = append(e.Holders(), "")
+				if held, err = e.Holders(); err != nil {
+					return Report{Skipped: "cannot read what processes hold: " + err.Error(), Blocked: true}
+				}
+				held = append(held, "")
 			}
 			real, err := filepath.EvalSymlinks(path)
 			if err != nil {
@@ -239,8 +242,11 @@ func dirSize(path string) int64 {
 }
 
 // Holders are the paths every live process holds: its working directory, open files and absolute arguments.
-func Holders() []string {
-	procs, _ := proc.List()
+func Holders() ([]string, error) {
+	procs, err := proc.List()
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, p := range procs {
 		if d := proc.Cwd(p.PID); d != "" {
@@ -253,12 +259,15 @@ func Holders() []string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
-// Running reports whether a process runs the program name, looking past a node launcher.
+// Running reports whether a process runs the program name, looking past a node launcher; when the table cannot be read, one may.
 func Running(name string) bool {
-	procs, _ := proc.List()
+	procs, err := proc.List()
+	if err != nil {
+		return true
+	}
 	return slices.ContainsFunc(procs, func(p proc.Proc) bool { return p.Command() == name })
 }
 

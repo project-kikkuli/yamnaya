@@ -65,8 +65,8 @@ type Env struct {
 	// Exec runs a tool in dir, killing it after limit.
 	Exec func(ctx context.Context, dir string, limit time.Duration, argv ...string) (string, error)
 	// Holders are the paths live processes hold: their working directories, open files and arguments.
-	Holders func() []string
-	// Running reports whether a process runs a program; nil says none does.
+	Holders func() ([]string, error)
+	// Running reports whether a process runs a program, or may; nil says none does.
 	Running func(name string) bool
 }
 
@@ -109,6 +109,24 @@ func (e Env) Needed(path string) bool {
 	}
 	u, err := e.Stat(path)
 	return err != nil || u.Free() < TargetFree
+}
+
+// Reapable is what a pass may take worktrees from, decided as it starts: a filesystem under Tier2Free itself, until it reaches
+// TargetFree, since another filesystem being low says nothing about this one. A forced pass takes from any.
+func (e Env) Reapable() func(path string) bool {
+	under := map[uint64]bool{}
+	for _, u := range Each(e.Stat, e.Paths) {
+		if u.Free() < Tier2Free {
+			under[u.Dev] = true
+		}
+	}
+	return func(path string) bool {
+		if e.Force {
+			return true
+		}
+		u, err := e.Stat(path)
+		return err == nil && (under[u.Dev] || u.Free() < Tier2Free) && u.Free() < TargetFree
+	}
 }
 
 func (e Env) may(path string) bool { return e.May == nil || e.May(path) }
