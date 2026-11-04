@@ -240,7 +240,7 @@ func (c *Core) Wake(b Board) error {
 			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
-	return errors.Join(append(errs, c.wakeRemoteChiefs(o), c.returnUnfed(o))...)
+	return errors.Join(append(errs, c.returnUnfed(o), c.wakeRemoteChiefs(o))...)
 }
 
 func (c *Core) wakeManager(b Board, m Manager, g Goal) error {

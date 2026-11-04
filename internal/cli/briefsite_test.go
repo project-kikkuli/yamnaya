@@ -177,6 +177,9 @@ func TestARemoteGoalsBriefOpensFromItsHostsSnapshotOrTheLastOneRead(t *testing.T
 	if err := st.RecordHost("box", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.KeepBoard("relayed", time.Now(), snapshot); err != nil {
+		t.Fatal(err)
+	}
 	site := &briefSite{core: &core.Core{Store: st, StateDir: near, Procs: func() ([]proc.Proc, error) { return nil, nil }}}
 	for _, c := range []struct {
 		name, ssh, path string
@@ -189,6 +192,7 @@ func TestARemoteGoalsBriefOpensFromItsHostsSnapshotOrTheLastOneRead(t *testing.T
 		{"host down, last read kept", "exit 255", "/b/box/" + g.ID, true, 200, []string{"caesar chain is the long pole", "box: no answer"}},
 		{"no such goal there", "exec cat " + snapshotPath(far), "/b/box/goal99", false, 404, nil},
 		{"host ym never reached", "exec cat " + snapshotPath(far), "/b/elsewhere/" + g.ID, false, 404, nil},
+		{"host that only relays here", "exit 255", "/b/relayed/" + g.ID, false, 200, []string{"caesar chain is the long pole", "On relayed"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			answer(c.ssh)

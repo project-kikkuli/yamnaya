@@ -611,17 +611,23 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !slices.ContainsFunc(known, func(h core.KnownHost) bool { return h.Name == host }) {
+	st := s.core.Store
+	reads := slices.ContainsFunc(known, func(h core.KnownHost) bool { return h.Name == host })
+	at, raw, kept, _ := st.KeptBoard(host)
+	if !reads && !kept {
 		http.NotFound(w, r)
 		return
 	}
-	st := s.core.Store
 	hosts := newRemoteHosts([]string{host}, remoteRead, func(h string, at time.Time, raw []byte) { st.KeepBoard(h, at, raw) })
 	hosts.timeout, hosts.stored = remoteRead, keptBoardOf(st)
-	if at, raw, ok, _ := st.KeptBoard(host); ok {
+	if kept {
 		hosts.keep(host, at, raw)
 	}
-	rb := hosts.Boards()[0]
+	// A host that only relays here cannot be read, and the rows it last sent are all there is.
+	rb := hosts.kept[host]
+	if reads {
+		rb = hosts.Boards()[0]
+	}
 	id := strings.ToLower(ref)
 	for _, g := range rb.Goals {
 		if g.ID == id || g.Name == id {

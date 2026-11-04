@@ -329,6 +329,73 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 	}
 }
 
+func TestAChiefOnAnotherHostHearsWhatAGoalDidBeforeItEndedAtTheRealPace(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ends func(t *testing.T, w *orgWorld, g Goal, m Manager)
+	}{
+		{name: "verification passes inside the batch", ends: func(t *testing.T, w *orgWorld, g Goal, m Manager) {
+			if _, _, err := w.core.FinishGoal(m.Session, "shipped", nil); err != nil {
+				t.Fatal(err)
+			}
+			w.supervise(t)
+			v, err := w.core.Store.OpenVerification(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.core.RecordVerdict(v.Session, g.ID, VerdictPass, nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "the goal is killed inside the batch", ends: func(t *testing.T, w *orgWorld, g Goal, m Manager) {
+			if _, err := w.core.KillGoal(w.board(t), g.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.b.chief(t, "platform")
+			g, m := f.a.goal(t, "update the laptop", "/repo/app")
+			if err := f.a.core.Attach(m.ID, RemoteKey("b", chief.ID)); err != nil {
+				t.Fatal(err)
+			}
+			f.a.core.Pace, f.b.core.Pace = nil, nil
+			cycle := func() {
+				t.Helper()
+				if err := f.a.core.Loop(f.a.board(t)); err != nil {
+					t.Fatal(err)
+				}
+				cycleAll(f, 1)
+				if err := f.b.core.Loop(f.b.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cycle()
+			if _, _, err := f.a.core.RecordGoalEvent(g.ID, EventUpdate, "a real update", ""); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.a.core.Loop(f.a.board(t)); err != nil {
+				t.Fatal(err)
+			}
+			tc.ends(t, f.a, g, m)
+			for range 3 {
+				f.a.clock = f.a.clock.Add(ChiefBatch)
+				f.b.clock = f.b.clock.Add(ChiefBatch)
+				cycle()
+			}
+			waiting, err := f.b.core.Digest(chief.Session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			heard := strings.Join(append(f.b.handedTo(chief.Session), waiting...), "\n")
+			if !strings.Contains(heard, "a/"+g.Name) {
+				t.Errorf("chief heard %q, want the ended goal %s", heard, g.Name)
+			}
+		})
+	}
+}
+
 func TestAttachingUnderAChiefOnAnotherHostNamesThatChiefHoweverItIsReferred(t *testing.T) {
 	for _, tc := range []struct {
 		ref, parent, refused string

@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -43,7 +45,16 @@ func goalRun(c *core.Core, session string, args ...string) (string, error) {
 	with := func(run runFunc) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, a []string) error { return run(&env{core: c, session: session}, cmd, a) }
 	}
-	cmd := goalCmd(with, with)
+	withHosts := func(run runFunc) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, a []string) error {
+			e := &env{core: c, session: session}
+			if err := e.readRemotes(remoteWait, true); err != nil {
+				return err
+			}
+			return run(e, cmd, a)
+		}
+	}
+	cmd := goalCmd(with, withHosts)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -213,6 +224,77 @@ func TestAGoalAskedForWithHostStartsOnTheHostThatPullsOrTellsTheRequesterWhyNot(
 			}
 			if heard := told(t, b, chief.Session); !strings.Contains(heard, m.Name) {
 				t.Errorf("requester was told %q, want the started goal %s", heard, m.Name)
+			}
+
+			listed, err := goalRun(b, "", "list", "--under", chief.ID, "--json")
+			if err != nil || !strings.Contains(listed, m.Name) {
+				t.Errorf("ym goal list --under %s on b = %q, %v; want the started goal %s", chief.ID, listed, err, m.Name)
+			}
+
+			a.Pace, b.Pace = &core.WakePace{}, &core.WakePace{}
+			loopBoth := func() {
+				t.Helper()
+				board, err := a.Board()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := a.Loop(board); err != nil {
+					t.Fatal(err)
+				}
+				sync()
+				if board, err = b.Board(); err != nil {
+					t.Fatal(err)
+				}
+				if err := b.Loop(board); err != nil {
+					t.Fatal(err)
+				}
+			}
+			loopBoth()
+			if _, _, err := a.RecordGoalEvent(m.GoalID, core.EventUpdate, "halfway there", ""); err != nil {
+				t.Fatal(err)
+			}
+			loopBoth()
+			// A chief with no session running here holds it for ym digest, which prints what has not reached it.
+			waiting, err := b.Digest(chief.Session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if heard := strings.Join(waiting, "\n"); !strings.Contains(heard, m.Name) || !strings.Contains(heard, "1 update") {
+				t.Errorf("requester has %q, want the update from %s", heard, m.Name)
+			}
+		})
+	}
+}
+
+func TestAPullThatCarriesNoBoardRowsChangesNothingAndNoPullOverwritesAHostYmReads(t *testing.T) {
+	t.Setenv("YAMNAYA_NO_SERVE", "1")
+	for _, tc := range []struct {
+		name        string
+		rows, reads bool
+	}{
+		{name: "an older host sends no rows"},
+		{name: "a host ym reads over ssh sends rows", rows: true, reads: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := relayHost(t, t.TempDir())
+			chief, err := b.NewChief("platform", "", t.TempDir(), "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.reads {
+				if err := b.Store.RecordHost("a", time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snap := core.ItemSnapshot{At: time.Now(), Items: []core.Item{}}
+			if tc.rows {
+				snap.Board = json.RawMessage(`{"managers":[{"id":"mgr9","name":"from-the-pull","parent_id":"b/` + chief.ID + `"}]}`)
+			}
+			if _, err := b.ServeSync(core.RelaySync{From: "a", As: "b", Entries: []core.Relay{}, Ack: []int64{}, ItemSnapshots: map[string]core.ItemSnapshot{"a": snap}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, ok, err := b.Store.KeptBoard("a"); err != nil || ok {
+				t.Errorf("b keeps a board for a: %v, %v", ok, err)
 			}
 		})
 	}

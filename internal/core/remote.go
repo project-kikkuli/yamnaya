@@ -173,7 +173,7 @@ func (c *Core) remoteBoards() []RemoteBoard {
 			break
 		}
 		if !found {
-			boards = append(boards, snap)
+			boards = append(boards, c.Store.withRelayedRows(snap, c.now()))
 		}
 	}
 	return boards

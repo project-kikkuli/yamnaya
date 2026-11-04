@@ -924,7 +924,8 @@ func (c *Core) notify(title, body string) error {
 }
 
 // wakeRemoteChiefs hands each chief on another host the state changes of the goals below it here, once they are due: the goals of
-// every manager and chief whose chief runs there. A chief hears only what happened after this host first reported to it.
+// every manager and chief whose chief runs there, a goal that ended before its batch fell due included. A chief hears only what
+// happened after this host first reported to it.
 func (c *Core) wakeRemoteChiefs(o Org) error {
 	var errs []error
 	for _, m := range o.Ordered() {
@@ -932,7 +933,6 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 		if _, _, remote := SplitRemote(chief); !remote {
 			continue
 		}
-		ended := !o.Active(m)
 		var goals []string
 		for _, below := range o.Subtree(m.ID) {
 			if g, ok := o.Goals[below.GoalID]; ok {
@@ -945,9 +945,6 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 			continue
 		}
 		events, err := c.Store.chiefPending(chief, goals, time.Time{})
-		if ended {
-			events = slices.DeleteFunc(events, func(e GoalEvent) bool { return !endingKinds[e.Kind] })
-		}
 		if err != nil || len(events) == 0 && heard {
 			errs = append(errs, err)
 			continue

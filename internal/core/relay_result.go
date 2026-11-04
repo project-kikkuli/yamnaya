@@ -115,8 +115,8 @@ func relayTarget(args []string) string {
 	return ""
 }
 
-// feedChief is the chief on another host that m's goal's feed reaches, as this host names it: wakeRemoteChiefs passes over a retired
-// manager below it, and one with no live goal right under it, and carries on past a retired chief above it.
+// feedChief is the chief on another host that m's goal's feed tells a relayed command's outcome, as this host names it. It passes over
+// a retired manager below it, which wakeRemoteChiefs does too, and a goal that ended, whose requester returnUnfed tells directly.
 func feedChief(o Org, m Manager) string {
 	seen := map[string]bool{}
 	for !seen[m.ID] && !m.Retired {

@@ -157,6 +157,26 @@ func (s *Store) KeepBoard(host string, at time.Time, board []byte) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil
 	}
+	return s.noteBoardNames(host, board)
+}
+
+// keepRelayedBoard stores the rows a host that ym cannot read over ssh sent with its pull. They are small and change rarely, so a
+// change is stored at once, and a goal started there shows here on the pull that first carries it.
+func (s *Store) keepRelayedBoard(host string, at time.Time, board []byte) error {
+	res, err := s.db.Exec(`INSERT INTO ym_host_boards(host,at,board) VALUES(?,?,?)
+		ON CONFLICT(host) DO UPDATE SET at=excluded.at, board=excluded.board WHERE excluded.at >= ym_host_boards.at AND excluded.board != ym_host_boards.board`,
+		host, at.UnixNano(), board)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil
+	}
+	return s.noteBoardNames(host, board)
+}
+
+// noteBoardNames remembers the names of a stored board's goals and chiefs.
+func (s *Store) noteBoardNames(host string, board []byte) error {
 	var kept struct {
 		Managers []Manager `json:"managers"`
 		Goals    []Goal    `json:"goals"`
