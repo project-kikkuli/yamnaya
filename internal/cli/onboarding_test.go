@@ -198,20 +198,49 @@ func TestPortingToAClaudeProfileFinishesItsOnboarding(t *testing.T) {
 }
 
 func TestPreparingARecordWritesTheLegacyConfigClaudeReadsFirst(t *testing.T) {
-	root := t.TempDir()
-	legacy := filepath.Join(root, ".config.json")
-	if err := os.WriteFile(legacy, []byte(`{"userID":"kept"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := prepareRecord(launch.Record{Harness: claude.Name, ConfigRoot: root, ConfigExplicit: true, Worktree: launch.Worktree{Path: t.TempDir()}}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(legacy)
-	if err != nil || !strings.Contains(string(data), `"hasCompletedOnboarding": true`) || !strings.Contains(string(data), `"userID": "kept"`) {
-		t.Fatalf("legacy config %s, %v", data, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".claude.json")); !os.IsNotExist(err) {
-		t.Fatalf("wrote a config Claude does not read: %v", err)
+	const current, legacy = ".claude.json", ".config.json"
+	for _, c := range []struct {
+		name            string
+		legacy, current string
+		written         string
+	}{
+		{"legacy with content wins", `{"userID":"kept"}`, "", legacy},
+		{"legacy with content wins over a current config", `{"userID":"kept"}`, `{"userID":"other"}`, legacy},
+		{"empty legacy left by a sandbox leaves the current config in charge", "", `{"userID":"kept"}`, current},
+		{"empty legacy alone gives way to a new current config", "", "", current},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, legacy), []byte(c.legacy), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if c.current != "" {
+				if err := os.WriteFile(filepath.Join(root, current), []byte(c.current), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := prepareRecord(launch.Record{Harness: claude.Name, ConfigRoot: root, ConfigExplicit: true, Worktree: launch.Worktree{Path: t.TempDir()}}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, c.written))
+			if err != nil || !strings.Contains(string(data), `"hasCompletedOnboarding": true`) {
+				t.Fatalf("%s: %s, %v", c.written, data, err)
+			}
+			if strings.Contains(c.legacy+c.current, "kept") && !strings.Contains(string(data), `"userID": "kept"`) {
+				t.Fatalf("%s lost its other keys: %s", c.written, data)
+			}
+			other, before := current, c.current
+			if c.written == current {
+				other, before = legacy, c.legacy
+			}
+			data, err = os.ReadFile(filepath.Join(root, other))
+			if err != nil && !os.IsNotExist(err) || string(data) != before {
+				t.Fatalf("%s changed to %q, %v; want %q", other, data, err, before)
+			}
+			if c.written == legacy && c.current == "" && !os.IsNotExist(err) {
+				t.Fatalf("wrote a config Claude does not read: %v", err)
+			}
+		})
 	}
 }
 

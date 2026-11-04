@@ -56,25 +56,51 @@ func TestAPaneOnFirstRunSetupReadsAsOnboarding(t *testing.T) {
 }
 
 func TestAManagerHearsOnceThatItsAgentSitsOnOnboarding(t *testing.T) {
-	w := newOrgWorld(t)
-	_, m := w.goal(t, "make the importer handle CSV", "/repo/august")
-	w.spawn("agent", m.Session)
-	w.set("agent", func(s *Session) { s.CheckScreen = true })
-	for _, p := range w.procs {
-		if w.claude.sessions[p.PID].ID == "agent" {
-			w.tmux.ttys[p.TTY] = "%9"
-		}
-	}
-	w.tmux.screens["%9"] = "SETUP security notes"
-	w.loop(t, 3)
-	var heard []string
-	for _, text := range w.handedTo(m.Session) {
-		if strings.Contains(text, "onboarding") {
-			heard = append(heard, text)
-		}
-	}
-	if len(heard) != 1 || !strings.Contains(heard[0], "security notes") {
-		t.Fatalf("manager heard %q; want the step once", heard)
+	for _, c := range []struct {
+		name string
+		tick time.Duration
+	}{
+		{"ticks in the same instant", 0},
+		{"ticks minutes apart", 5 * time.Minute},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+			w.spawn("agent", m.Session)
+			w.set("agent", func(s *Session) { s.CheckScreen = true })
+			for _, p := range w.procs {
+				if w.claude.sessions[p.PID].ID == "agent" {
+					w.tmux.ttys[p.TTY] = "%9"
+				}
+			}
+			w.tmux.screens["%9"] = "SETUP security notes"
+			for range 3 {
+				w.loop(t, 1)
+				w.clock = w.clock.Add(c.tick)
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var recorded []string
+			for _, e := range events {
+				if e.Kind == EventAgentOnboarding {
+					recorded = append(recorded, e.Payload)
+				}
+			}
+			if len(recorded) != 1 {
+				t.Fatalf("recorded %q; want the step once", recorded)
+			}
+			var heard []string
+			for _, text := range w.handedTo(m.Session) {
+				if strings.Contains(text, "onboarding") {
+					heard = append(heard, text)
+				}
+			}
+			if len(heard) != 1 || !strings.Contains(heard[0], "security notes") {
+				t.Fatalf("manager heard %q; want the step once", heard)
+			}
+		})
 	}
 }
 

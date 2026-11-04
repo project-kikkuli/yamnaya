@@ -1,0 +1,15 @@
+  and the fresh profile stops on the screen ym has to tell apart from a prompt. It draws:
+
+  Select login method:
+
+  1. Claude account with subscription · Pro, Max, Team, or Enterprise
+  2. Anthropic Console account · API usage billing
+
+  The owner finishes it in ym open, and held messages go out afterwards.
+
+✻ Baked for 2s · done 8:35 AM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

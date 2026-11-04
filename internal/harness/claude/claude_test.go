@@ -319,6 +319,11 @@ func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
 		{"claude-onboarding-security-40-cols", "security notes", false},
 		{"claude-quoted-security-help", "", false},
 		{"claude-quoted-security-resume", "", false},
+		{"claude-quoted-login-composer", "", false},
+		{"claude-quoted-login-dialog", "", false},
+		{"claude-quoted-login-cut-off", "", false},
+		{"claude-quoted-chrome-dialog", "", false},
+		{"claude-quoted-theme-reversed", "", false},
 		{"claude-idle", "", false},
 		{"claude-busy-pasted", "", false},
 		{"claude-bash", "", true},
@@ -332,6 +337,13 @@ func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
 			}
 			if _, shown := ParsePrompt(text); shown != c.prompt {
 				t.Errorf("ParsePrompt shown = %v; want %v", shown, c.prompt)
+			}
+		})
+	}
+	for name, text := range map[string]string{"pane with nothing drawn": "", "pane of blank lines": "\n  \n\n"} {
+		t.Run(name, func(t *testing.T) {
+			if step, ok := ParseOnboarding(text); ok {
+				t.Errorf("ParseOnboarding = %q; want no step", step)
 			}
 		})
 	}

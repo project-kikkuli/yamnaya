@@ -1,0 +1,3 @@
+  The login picker draws its heading on one line, so a pane cut off at the bottom of this message ends at:
+
+  Select login
