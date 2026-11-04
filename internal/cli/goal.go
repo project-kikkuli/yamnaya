@@ -679,6 +679,9 @@ func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			"current work, or --override-verifier, recorded as finished-override with no pass or done written.",
 		Args: cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if e.session != "" {
+				return errors.New("a close comes only from the chief itself or the owner; run ym goal close there, without --session")
+			}
 			session := ""
 			c, err := e.core.Calling(os.Getpid(), os.Getenv)
 			if err == nil {

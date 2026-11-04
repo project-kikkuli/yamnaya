@@ -63,8 +63,12 @@ func closeWorld(t *testing.T, caller string) (*core.Core, core.Goal, core.Manage
 }
 
 func runGoal(c *core.Core, args ...string) (string, error) {
+	return runGoalAs(c, "", args...)
+}
+
+func runGoalAs(c *core.Core, session string, args ...string) (string, error) {
 	with := func(run runFunc) func(*cobra.Command, []string) error {
-		return func(cmd *cobra.Command, args []string) error { return run(&env{core: c}, cmd, args) }
+		return func(cmd *cobra.Command, args []string) error { return run(&env{core: c, session: session}, cmd, args) }
 	}
 	cmd := goalCmd(with, with)
 	var out bytes.Buffer
@@ -78,19 +82,24 @@ func runGoal(c *core.Core, args ...string) (string, error) {
 
 func TestGoalCloseKnowsWhoIsCalling(t *testing.T) {
 	for _, tc := range []struct {
-		name, caller, refused, actor string
+		name, caller, session, refused, actor string
 	}{
 		{name: "a plain shell is the owner", actor: "the owner"},
 		{name: "the chief above", caller: "chief-session", actor: "chief "},
 		{name: "the goal's manager", caller: "manager-session", refused: "ym goal done"},
 		{name: "any other session", caller: "worker-session", refused: "not a chief"},
+		{name: "a shell borrowing the chief's session", session: "chief-session", refused: "without --session"},
+		{name: "the chief naming itself", caller: "chief-session", session: "chief-session", refused: "without --session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, g, _, _ := closeWorld(t, tc.caller)
-			out, err := runGoal(c, "close", g.ID, "--as", "abandoned", "--why", "not needed")
+			out, err := runGoalAs(c, tc.session, "close", g.ID, "--as", "abandoned", "--why", "not needed")
 			if tc.refused != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.refused) {
 					t.Fatalf("err %v, out %q; want refused naming %q", err, out, tc.refused)
+				}
+				if now, err := c.Store.Goal(g.ID); err != nil || now.State != core.GoalActive {
+					t.Fatalf("refused close left it %s (%v)", now.State, err)
 				}
 				return
 			}
