@@ -2516,3 +2516,102 @@ func TestASessionHeldAtTheQuotaDialogWithNoEventMovesWithNoHuman(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryWayOntoANewLoginStartsPastOnboarding(t *testing.T) {
+	onboarded := func(t *testing.T, root string) {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(root, ".claude.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			Done bool `json:"hasCompletedOnboarding"`
+		}
+		if err = json.Unmarshal(raw, &config); err != nil || !config.Done {
+			t.Fatalf("the login was left at onboarding: %s, %v", raw, err)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		move func(*testing.T, queueWorld)
+	}{
+		{name: "failover", move: func(t *testing.T, w queueWorld) {
+			w.session.Status = core.Idle
+			tickFailover(t, w, time.Now(), quotaEvent(w, time.Now().Add(-time.Hour)))
+		}},
+		{name: "queued switch at the turn end", move: func(t *testing.T, w queueWorld) {
+			if out, err := w.l.QueueProfileSwitch(w.rec.Key, "claude-work", "owner"); err != nil || !out.Queued {
+				t.Fatalf("%+v, %v", out, err)
+			}
+			w.session.Status = core.Idle
+			w.serve(t)
+		}},
+		{name: "resume off the wall", move: func(t *testing.T, w queueWorld) {
+			*w.alive = false
+			if _, _, err := w.l.Resume(profileConversation, "go on", ""); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "revive off the wall", move: func(t *testing.T, w queueWorld) {
+			*w.alive = false
+			if _, err := w.l.Revive(w.rec.Key); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "start over", move: func(t *testing.T, w queueWorld) {
+			*w.alive = false
+			if err := os.Remove(filepath.Join(w.def.Root, w.rel)); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := w.l.Resume(profileConversation, "go on", "start over"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newQueueWorld(t, "claude", "")
+			reset := time.Now().Add(31 * time.Hour)
+			quotaLimits(t, w.state, limit(w.def, 100, reset), limit(w.work, 5, reset))
+			c.move(t, w)
+			if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != "claude-work" {
+				t.Fatalf("resumed as %q", got)
+			}
+			onboarded(t, w.work.Root)
+		})
+	}
+	t.Run("a port recovered onto claude", func(t *testing.T) {
+		const ported = "33333333-3333-4333-8333-333333333333"
+		w := newQueueWorld(t, "codex", "")
+		*w.alive = false
+		dir := strings.SplitN(os.Getenv("PATH"), ":", 2)[0]
+		script, err := os.ReadFile(filepath.Join(dir, "codex"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(dir, "claude"), script, 0700); err != nil {
+			t.Fatal(err)
+		}
+		dest := profile.Profile{Harness: "claude", ID: "claude-dest", Root: t.TempDir(), Explicit: true}
+		if err = profile.Add(w.state, dest); err != nil {
+			t.Fatal(err)
+		}
+		dest.Root = physicalProfileRoot(dest.Root)
+		subscriptionIdentity(t, &dest)
+		ps, err := profile.Load(w.state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dest, err = profile.Find(ps, "claude", "claude-dest"); err != nil {
+			t.Fatal(err)
+		}
+		source, _ := w.l.records.Find(w.rec.Key)
+		if err = saveMigration(w.state, migration{Version: 1, ResumeNote: "the note", Source: source, Destination: dest, Head: ported, State: "prepared", Since: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		tickFailover(t, w, time.Now())
+		if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != "claude-dest" {
+			t.Fatalf("resumed as %q", got)
+		}
+		onboarded(t, dest.Root)
+	})
+}
