@@ -56,6 +56,8 @@ type Sweep struct {
 	// Idle is how long the worktree went untouched and User a cwd inside it, whatever gc decided.
 	Idle time.Duration
 	User string
+	// Forced says it has submodules, all proven to lose nothing, so git needs --force to remove it.
+	Forced bool
 }
 
 // Swept is one repository's gc: its worktrees, the branches it deleted, and what failed.
@@ -266,7 +268,7 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 			sw.Keep, sw.Why = KeepRecord, "its session is not landed"
 		}
 		if sw.Keep == "" {
-			sw.Keep, sw.Why = keepContents(w.path, p.Ignored)
+			sw.Keep, sw.Why, sw.Forced = keepContents(w.path, p.Ignored)
 		}
 		if sw.Keep == "" && p.Enough != nil && p.Enough(w.path) {
 			sw.Keep, sw.Why = KeepEnough, "its filesystem has enough free"
@@ -288,12 +290,18 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 			sw.Size = Size(w.path)
 		}
 		if sw.Keep == "" && !dry {
-			if _, err := git(root, "worktree", "remove", w.path); err != nil {
-				sw.Keep, sw.Why = KeepFailing, err.Error()
+			if keep, why, err := removeWorktree(root, w.path, sw.PR > 0, p); err != nil {
+				if keep = KeepFailing; strings.Contains(err.Error(), "locked working tree") {
+					keep = KeepLocked
+				}
+				sw.Keep, sw.Why = keep, err.Error()
 				s.Errors = append(s.Errors, err.Error())
+			} else if keep != "" {
+				sw.Keep, sw.Why = keep, why
 			}
 		}
 		if sw.Keep != "" {
+			sw.Forced = false
 			used[w.branch] = true
 		}
 		s.Trees = append(s.Trees, sw)
@@ -329,6 +337,63 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 		s.Branches = append(s.Branches, b)
 	}
 	return s, nil
+}
+
+// submoduleRefusal is how git refuses a worktree whose only obstacle --force may lift is its submodules. It refuses that before
+// looking for dirt, so the refusal says nothing about the parent.
+const submoduleRefusal = "working trees containing submodules cannot be moved or removed"
+
+// removeWorktree removes the worktree at path, taking --force only after git's own refusal names submodules, and only once every
+// check that decided on it passes again in this step: --force would also take a dirty parent. keep says why it stayed.
+func removeWorktree(root, path string, squashed bool, p Policy) (keep, why string, err error) {
+	_, err = gitEnv(root, []string{"LC_ALL=C"}, nil, "worktree", "remove", path)
+	if err == nil || !strings.Contains(err.Error(), submoduleRefusal) {
+		return "", "", err
+	}
+	if keep, why := recheck(root, path, squashed, p); keep != "" {
+		return keep, why, nil
+	}
+	_, err = git(root, "worktree", "remove", "--force", path)
+	return "", "", err
+}
+
+func recheck(root, path string, squashed bool, p Policy) (string, string) {
+	all, err := worktrees(root)
+	if err != nil {
+		return KeepFailing, err.Error()
+	}
+	if i := slices.IndexFunc(all, func(w linked) bool { return w.path == path }); i < 0 || all[i].locked {
+		return KeepLocked, "locked or missing"
+	}
+	status, err := look(path, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
+	if err != nil {
+		return KeepFailing, err.Error()
+	}
+	if status != "" {
+		return KeepDirty, "has uncommitted or untracked changes"
+	}
+	local, err := look(path, "rev-list", "--count", "HEAD", "--not", "--remotes")
+	if err != nil {
+		return KeepFailing, err.Error()
+	}
+	if local != "0" && !squashed {
+		return KeepLocal, local + " commits on no remote"
+	}
+	if keep, why, forced := keepContents(path, p.Ignored); keep != "" {
+		return keep, why
+	} else if !forced {
+		return KeepModules, "git refused for submodules the index does not record"
+	}
+	if p.Fresh != nil {
+		now, err := p.Fresh()
+		if err != nil {
+			return KeepFailing, "cannot read what is in use: " + err.Error()
+		}
+		if user := Inside(path, now); user != "" {
+			return KeepInUse, "a process works in " + user
+		}
+	}
+	return "", ""
 }
 
 // squashedBranches are the branches in tips, "name sha" lines, that skip passes over and a merged pull request squashed,

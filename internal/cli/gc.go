@@ -156,7 +156,11 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 		if !dry {
 			for _, t := range s.Trees {
 				if t.Keep == "" {
-					if err := l.logRemoval("removed worktree", root, t.Path, t.Branch, t.Head, t.Why); err != nil {
+					what := "removed worktree"
+					if t.Forced {
+						what = "force-removed worktree"
+					}
+					if err := l.logRemoval(what, root, t.Path, t.Branch, t.Head, t.Why); err != nil {
 						s.Errors = append(s.Errors, err.Error())
 					}
 				}
@@ -225,6 +229,9 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 				how := ""
 				if t.PR > 0 {
 					how = fmt.Sprintf(", squash-merged in #%d", t.PR)
+				}
+				if t.Forced {
+					how += ", submodules proven to lose nothing, with --force"
 				}
 				fmt.Fprintf(w, "%s %s (%s%s, %s)\n", verb, t.Path, t.Branch, how, gb(t.Size))
 			case launch.KeepDirty, launch.KeepLocal:

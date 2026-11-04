@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -253,7 +254,7 @@ func TestAVirtualenvIgnoringItselfCountsAsRegenerable(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, ".venv", ".gitignore"), []byte("*\n"), 0o644)
 	put(t, repo, ".venv/pyvenv.cfg")
 	put(t, repo, ".venv/lib/x.py")
-	if keep, why := keepContents(repo, true); keep != "" {
+	if keep, why, _ := keepContents(repo, true); keep != "" {
 		t.Fatalf("kept: %s %s", keep, why)
 	}
 	StripIgnored(Sweep{Path: repo}, false)
@@ -539,16 +540,126 @@ func TestAReadOfWhatIsInUseJustBeforeRemovalDecides(t *testing.T) {
 	}
 }
 
-func TestAWorktreeWithSubmodulesIsKeptNotFailedAfterADryRunSaidOtherwise(t *testing.T) {
-	repo, wt := reapRepo(t)
-	sub := t.TempDir()
-	run(t, sub, "git", "init", "-q", "-b", "main")
-	run(t, sub, "git", "commit", "-q", "--allow-empty", "-m", "sub")
-	run(t, wt, "git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "dep")
-	run(t, wt, "git", "commit", "-q", "-m", "add submodule")
-	run(t, wt, "git", "push", "-q", "origin", "HEAD")
-	s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, true, false)
+// submoduleRepo is a worktree on a pushed branch with a clean submodule at dep, itself holding a clean submodule at deep.
+func submoduleRepo(t *testing.T) (repo, wt, dep string) {
+	t.Helper()
+	repo, wt = reapRepo(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	add := func(dir, url, name string) {
+		run(t, dir, "git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", url, name)
+		run(t, dir, "git", "commit", "-q", "-m", "add "+name)
+		run(t, dir, "git", "push", "-q", "origin", "HEAD")
+	}
+	for _, name := range []string{"deep", "dep"} {
+		run(t, base, "git", "init", "-q", "--bare", "-b", "main", name+".git")
+		run(t, base, "git", "clone", "-q", filepath.Join(base, name+".git"), name)
+		run(t, filepath.Join(base, name), "git", "commit", "-q", "--allow-empty", "-m", "first")
+		run(t, filepath.Join(base, name), "git", "push", "-q", "origin", "HEAD:main")
+	}
+	add(filepath.Join(base, "dep"), filepath.Join(base, "deep.git"), "deep")
+	add(wt, filepath.Join(base, "dep.git"), "dep")
+	run(t, wt, "git", "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", "--recursive")
+	return repo, wt, filepath.Join(wt, "dep")
+}
+
+func TestAWorktreeWithSubmodulesGoesOnlyWhenTheyAreProvenToLoseNothing(t *testing.T) {
+	commit := func(t *testing.T, dir string) { run(t, dir, "git", "commit", "-q", "--allow-empty", "-m", "local") }
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, repo, wt, dep string)
+		fresh func(t *testing.T, repo, wt string)
+		keep  string
+	}{
+		{name: "clean", setup: func(*testing.T, string, string, string) {}},
+		{name: "dirty submodule", setup: func(t *testing.T, repo, wt, dep string) { put(t, dep, "new.txt") }, keep: KeepDirty},
+		{name: "HEAD differs from recorded", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "checkout", "-q", "HEAD~1")
+		}, keep: KeepDirty},
+		{name: "detached at recorded, a branch holds an unpushed commit", setup: func(t *testing.T, repo, wt, dep string) {
+			at := Head(dep)
+			run(t, dep, "git", "checkout", "-q", "-b", "side")
+			commit(t, dep)
+			run(t, dep, "git", "checkout", "-q", "--detach", at)
+		}, keep: KeepModules},
+		{name: "detached at a recorded commit on no remote", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "checkout", "-q", "--detach")
+			commit(t, dep)
+			run(t, wt, "git", "add", "dep")
+			run(t, wt, "git", "commit", "-q", "-m", "record it")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+		}, keep: KeepModules},
+		{name: "stash in the submodule", setup: func(t *testing.T, repo, wt, dep string) {
+			os.WriteFile(filepath.Join(dep, ".gitmodules"), []byte("# changed\n"), 0o644)
+			run(t, dep, "git", "stash", "-q")
+		}, keep: KeepModules},
+		{name: "nested submodule dirty", setup: func(t *testing.T, repo, wt, dep string) {
+			put(t, filepath.Join(dep, "deep"), "new.txt")
+		}, keep: KeepDirty},
+		{name: "ignored secret in the submodule", setup: func(t *testing.T, repo, wt, dep string) {
+			gitDir, _ := git(dep, "rev-parse", "--absolute-git-dir")
+			os.MkdirAll(filepath.Join(gitDir, "info"), 0o755)
+			os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte(".env\n"), 0o644)
+			put(t, dep, ".env")
+		}, keep: KeepModules},
+		{name: "locked parent", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, repo, "git", "worktree", "lock", wt)
+		}, keep: KeepLocked},
+		{name: "dirty parent", setup: func(t *testing.T, repo, wt, dep string) { put(t, wt, "notes.txt") }, keep: KeepDirty},
+		{name: "parent locked after the decision", setup: func(*testing.T, string, string, string) {}, fresh: func(t *testing.T, repo, wt string) {
+			run(t, repo, "git", "worktree", "lock", wt)
+		}, keep: KeepLocked},
+		{name: "parent dirtied after the decision", setup: func(*testing.T, string, string, string) {}, fresh: func(t *testing.T, repo, wt string) {
+			put(t, wt, "notes.txt")
+		}, keep: KeepDirty},
+		{name: "submodule dirtied after the decision", setup: func(*testing.T, string, string, string) {}, fresh: func(t *testing.T, repo, wt string) {
+			put(t, filepath.Join(wt, "dep"), "late.txt")
+		}, keep: KeepDirty},
+	} {
+		for _, dry := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/dry %v", c.name, dry), func(t *testing.T) {
+				if dry && c.fresh != nil {
+					t.Skip("nothing changes between deciding and a dry run")
+				}
+				repo, wt, dep := submoduleRepo(t)
+				c.setup(t, repo, wt, dep)
+				p := Policy{Idle: time.Hour, Ignored: true}
+				if c.fresh != nil {
+					p.Fresh = func() ([]string, error) { c.fresh(t, repo, wt); return nil, nil }
+				}
+				s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, dry, false, p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if s.Trees[0].Keep != c.keep {
+					t.Fatalf("decided %+v, want keep %q", s.Trees[0], c.keep)
+				}
+				if c.fresh != nil && c.keep != KeepLocked && len(s.Errors) > 0 {
+					t.Fatal(s.Errors)
+				}
+				if s.Trees[0].Forced != (c.keep == "") {
+					t.Fatalf("forced %v with keep %q", s.Trees[0].Forced, c.keep)
+				}
+				if _, err := os.Stat(wt); (err == nil) != (c.keep != "" || dry) {
+					t.Fatalf("on disk %v", err == nil)
+				}
+			})
+		}
+	}
+}
+
+func TestAStraySubmoduleGitDirKeepsTheWorktree(t *testing.T) {
+	repo, wt, dep := submoduleRepo(t)
+	gitDir, _ := git(dep, "rev-parse", "--absolute-git-dir")
+	stray := filepath.Join(filepath.Dir(gitDir), "gone")
+	run(t, filepath.Dir(gitDir), "git", "init", "-q", "--bare", "gone")
+	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
 	if err != nil || s.Trees[0].Keep != KeepModules {
-		t.Fatalf("dry run decided %+v, %v", s.Trees, err)
+		t.Fatalf("decided %+v, %v", s.Trees[0], err)
+	}
+	if _, err := os.Stat(stray); err != nil {
+		t.Fatal("removed a git dir nothing proves empty")
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("removed the worktree")
 	}
 }

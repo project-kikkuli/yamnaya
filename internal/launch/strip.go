@@ -128,31 +128,128 @@ func trackedBuildFile(root, dir string) bool {
 	return false
 }
 
-// keepContents says why what lies ignored in the worktree at path must stay: a repository nested at any depth always, and with
-// strict anything off the allowlist. Removing a worktree takes its ignored files with it.
-func keepContents(path string, strict bool) (string, string) {
+// keepContents says why what lies in the worktree at path beyond its commits must stay: a repository nested at any depth under
+// an ignored directory always, with strict anything ignored off the allowlist, and a submodule not proven to lose nothing.
+// Removing a worktree takes its ignored files and its submodules' git dirs with it. forced says it has submodules, all proven.
+func keepContents(path string, strict bool) (keep, why string, forced bool) {
 	all, err := ignoredEntries(path)
 	if err != nil {
-		return KeepFailing, err.Error()
+		return KeepFailing, err.Error(), false
 	}
 	for _, e := range all {
 		if strings.HasSuffix(e, "/") && holdsRepo(filepath.Join(path, e)) {
-			return KeepNested, "holds a repository under " + e
+			return KeepNested, "holds a repository under " + e, false
 		}
 	}
 	if strict {
 		for _, e := range all {
 			if !regenerable(path, e) {
-				return KeepIgnored, "holds git-ignored " + e
+				return KeepIgnored, "holds git-ignored " + e, false
 			}
 		}
 	}
-	if stage, err := look(path, "ls-files", "--stage"); err != nil {
-		return KeepFailing, err.Error()
-	} else if strings.HasPrefix(stage, "160000 ") || strings.Contains(stage, "\n160000 ") {
-		return KeepModules, "git cannot remove a worktree with submodules"
+	links, err := gitlinks(path)
+	if err != nil {
+		return KeepFailing, err.Error(), false
 	}
-	return "", ""
+	proven := map[string]bool{}
+	for sub, recorded := range links {
+		if why := proveSubmodule(filepath.Join(path, sub), recorded, strict, proven); why != "" {
+			return KeepModules, "submodule " + sub + " " + why, false
+		}
+	}
+	if stray, err := strayModule(path, proven); err != nil {
+		return KeepFailing, err.Error(), false
+	} else if stray != "" {
+		return KeepModules, "holds a submodule git dir no submodule uses: " + stray, false
+	}
+	return "", "", len(links) > 0
+}
+
+// gitlinks maps the submodules the index of the worktree at path records to their commits.
+func gitlinks(path string) (map[string]string, error) {
+	stage, err := look(path, "ls-files", "--stage", "-z")
+	if err != nil {
+		return nil, err
+	}
+	links := map[string]string{}
+	for _, line := range strings.FieldsFunc(stage, func(r rune) bool { return r == 0 }) {
+		meta, name, ok := strings.Cut(line, "\t")
+		f := strings.Fields(meta)
+		if ok && len(f) == 3 && f[0] == "160000" {
+			links[name] = f[1]
+		}
+	}
+	return links, nil
+}
+
+// proveSubmodule says why removing the submodule checked out at path could lose something, or "". Its git dir goes with the
+// worktree, so nothing in it may exist only there: every ref, a stash and a detached HEAD included, must be on a remote.
+func proveSubmodule(path, recorded string, strict bool, proven map[string]bool) string {
+	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
+		entries, err := os.ReadDir(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) || len(entries) > 0 {
+			return "has files but no git dir"
+		}
+		return ""
+	}
+	head, err := look(path, "rev-parse", "HEAD")
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	if head != recorded {
+		return "is at " + head + ", not the commit its parent records"
+	}
+	status, err := look(path, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=none")
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	if status != "" {
+		return "is dirty"
+	}
+	local, err := look(path, "rev-list", "--count", "--all", "HEAD", "--not", "--remotes")
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	if local != "0" {
+		return "has " + local + " commits on no remote, counting branches, tags, a stash and HEAD"
+	}
+	if keep, why, _ := keepContents(path, strict); keep != "" {
+		return "has " + keep + ": " + why
+	}
+	gitDir, err := look(path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	proven[gitDir] = true
+	return ""
+}
+
+// strayModule is a git dir under the modules of the worktree at path that no proven submodule uses, or "".
+func strayModule(path string, proven map[string]bool) (string, error) {
+	admin, err := look(path, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	stray := ""
+	filepath.WalkDir(filepath.Join(admin, "modules"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				stray = p
+				return filepath.SkipAll
+			}
+			return nil
+		}
+		if !d.IsDir() || !isBareRepo(p) {
+			return nil
+		}
+		if !proven[p] {
+			stray = p
+			return filepath.SkipAll
+		}
+		return filepath.SkipDir
+	})
+	return stray, nil
 }
 
 // Stripped is what a strip took out of one worktree: how many entries of each name, and their bytes when measured.
