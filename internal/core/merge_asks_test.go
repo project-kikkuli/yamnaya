@@ -286,3 +286,160 @@ func TestAnAskBoundForTheOwnerNeedsADoLine(t *testing.T) {
 		})
 	}
 }
+
+func TestARowFromAHostGoneQuietWaitsInLaterAndReturnsWhenItIsFresh(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		showing bool
+	}{
+		{"on the page", false},
+		{"on a board showing remotes", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			f.a.spawn("asker", "")
+			it, err := f.a.core.AddOwnerItem(Item{Kind: KindGo, Question: "ship it?", DoLine: "Ship it", Rec: "yes", Session: "asker"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.sync(t)
+			f.sync(t)
+			f.b.core.ShowRemotes = tc.showing
+			read := func() Board {
+				t.Helper()
+				b := f.b.board(t)
+				b, err := f.b.core.WithHostRows(b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}
+			row := func(ns []Need) *Need {
+				for i := range ns {
+					if n := &ns[i]; n.Item != nil && n.Item.Host == "a" && n.Item.Seq == it.Seq {
+						return n
+					}
+				}
+				return nil
+			}
+			for _, step := range []struct {
+				name   string
+				at     func()
+				live   bool
+				reason string
+			}{
+				{"a fresh snapshot", func() {}, true, ""},
+				{"just inside the limit", func() { f.b.clock = f.b.clock.Add(SnapshotLate - time.Second) }, true, ""},
+				{"past the limit", func() { f.b.clock = f.b.clock.Add(7*time.Hour + 39*time.Minute) }, false, "a offline 7h"},
+				{"fresh again", func() { f.a.clock = f.b.clock; f.sync(t); f.sync(t) }, true, ""},
+			} {
+				step.at()
+				b := read()
+				got, folded := row(b.Needs), row(b.Later)
+				if (got != nil) != step.live || (folded != nil) == step.live {
+					t.Fatalf("%s: live row %v, later row %v, want live %v", step.name, got != nil, folded != nil, step.live)
+				}
+				if step.live {
+					if got.DoLine() != "Ship it" {
+						t.Fatalf("%s: row reads %q", step.name, got.DoLine())
+					}
+					continue
+				}
+				line, _ := RowLine(*folded, LaterLabel, QueueWidth, b.At)
+				if !strings.Contains(line, step.reason) || !strings.HasSuffix(line, "▸") {
+					t.Fatalf("%s: row %q, want %q and no check mark", step.name, line, step.reason)
+				}
+				if folded.Check() != CheckNone || folded.Accept() != CheckNone {
+					t.Fatalf("%s: check %d accept %d on a host out of reach", step.name, folded.Check(), folded.Accept())
+				}
+			}
+		})
+	}
+}
+
+func TestAReadThroughARelayKeepsAHostFreshWhenItsDirectReadIsOld(t *testing.T) {
+	now := time.Date(2026, 11, 4, 7, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		board  RemoteBoard
+		behind bool
+	}{
+		{"direct read recent", RemoteBoard{At: now.Add(-time.Minute)}, false},
+		{"direct read old", RemoteBoard{At: now.Add(-time.Hour)}, true},
+		{"direct read old, relay snapshot recent", RemoteBoard{At: now.Add(-time.Hour), ItemsAt: now.Add(-time.Minute)}, false},
+		{"both old", RemoteBoard{At: now.Add(-time.Hour), ItemsAt: now.Add(-time.Hour)}, true},
+		{"never read", RemoteBoard{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, behind := tc.board.rowsBehind(now); behind != tc.behind {
+				t.Fatalf("behind %v, want %v", behind, tc.behind)
+			}
+		})
+	}
+}
+
+func TestAPullRequestAskedAboutAndRequestedForReviewHasOneRow(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		ask         func(*Item)
+		snooze      bool
+		status      func(*PRStatus)
+		live, later int
+		askRow      bool
+	}{
+		{name: "a teammate's with an ask keeps the ask's row and rank", ask: func(it *Item) { it.Blocks, it.Impact = 2, ImpactProd }, status: func(s *PRStatus) { s.Merge.Author = "teammate" }, live: 1, askRow: true},
+		{name: "a snoozed ask keeps the one row in later", ask: func(*Item) {}, snooze: true, status: func(s *PRStatus) { s.Merge.Author = "teammate" }, later: 1, askRow: true},
+		{name: "an ask not read yet keeps the one row in later", ask: func(*Item) {}, later: 1, askRow: true},
+		{name: "a review request alone keeps its row", status: func(s *PRStatus) { s.Merge.Author = "teammate" }, live: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			if err := w.core.Store.SyncReviews([]ReviewRequest{{URL: askedPR, Updated: "2026-11-01T00:00:00Z", Title: "theirs", Author: "teammate"}}); err != nil {
+				t.Fatal(err)
+			}
+			var it Item
+			if tc.ask != nil {
+				it = askToMerge(t, w, tc.ask)
+			}
+			if tc.status != nil {
+				st := readyStatus(w)
+				tc.status(&st)
+				if err := w.core.Store.SavePRStatus(askedPR, st); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.snooze {
+				if _, err := w.core.SnoozeFor(it.Key(), "1h"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			b := w.board(t)
+			count := func(ns []Need) (int, *Need) {
+				n, last := 0, (*Need)(nil)
+				for i := range ns {
+					if r := &ns[i]; r.Review != nil && r.Review.URL == askedPR || r.HeldPR != nil && r.HeldPR.URL == askedPR {
+						n, last = n+1, r
+					}
+				}
+				return n, last
+			}
+			live, row := count(b.Needs)
+			later, held := count(b.Later)
+			if live != tc.live || later != tc.later {
+				t.Fatalf("live %d later %d, want %d and %d", live, later, tc.live, tc.later)
+			}
+			if row == nil {
+				row = held
+			}
+			if tc.askRow != (row.Item != nil) {
+				t.Fatalf("row %+v, want it to be the ask's %v", row, tc.askRow)
+			}
+			if tc.live == 1 && row.Verb() != "rev" || row.Check() != CheckNone {
+				t.Fatalf("row reads %s with check %d", row.Verb(), row.Check())
+			}
+			if tc.live == 1 && tc.askRow && (!row.Urgent() || row.blocked() != 2) {
+				t.Fatalf("the ask's rank was lost: urgent %v, blocked %d", row.Urgent(), row.blocked())
+			}
+		})
+	}
+}

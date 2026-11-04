@@ -411,6 +411,7 @@ func (c *Core) queue(b *Board, o Org, asks map[string][]Item) error {
 	}
 	extra, b.Later = attachMergeAsks(extra, b.Later, asks, statuses, dismissed)
 	b.Needs = append(extra, b.Needs...)
+	b.Needs, b.Later = dropAskedReviews(b.Needs, b.Later)
 	return nil
 }
 

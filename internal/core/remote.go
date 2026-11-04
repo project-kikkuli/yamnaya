@@ -31,6 +31,7 @@ type RemoteBoard struct {
 	Host      string
 	// At is when the host last answered; zero while the first read is still running.
 	At          time.Time
+	ItemsAt     time.Time
 	Err         error
 	Sessions    []Live
 	Items       []Item
@@ -80,6 +81,15 @@ const SnapshotLate = 2 * time.Minute
 // Late reports whether the host answers with a board its ym serve took longer than SnapshotLate before now.
 func (r RemoteBoard) Late(now time.Time) bool {
 	return r.Err == nil && !r.Stale && !r.At.IsZero() && now.Sub(r.At) > SnapshotLate
+}
+
+func (r RemoteBoard) rowsBehind(now time.Time) (time.Duration, bool) {
+	at := r.At
+	if r.ItemsAt.After(at) {
+		at = r.ItemsAt
+	}
+	age := now.Sub(at)
+	return age, !at.IsZero() && age > SnapshotLate
 }
 
 // StateAt is State as of now: how long a failing host has gone without an answer and when it last gave a good one, or how
@@ -155,6 +165,7 @@ func (c *Core) remoteBoards() []RemoteBoard {
 			found = true
 			if !snap.At.Before(boards[i].At) {
 				boards[i].Items, boards[i].Closed = snap.Items, snap.Closed
+				boards[i].ItemsAt = snap.At
 				boards[i].ItemParents = snap.ItemParents
 			}
 			break

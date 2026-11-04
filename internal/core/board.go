@@ -642,6 +642,7 @@ func (c *Core) Board() (Board, error) {
 	}
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Later = needs(b)
+	b.Needs, b.Later = c.foldOfflineHosts(b.Needs, b.Later, b.Remotes, b.At)
 	statuses, err := c.Store.PRStatuses()
 	if err != nil {
 		return b, err

@@ -73,7 +73,7 @@ func foldMergeAsks(live, later []Need, statuses map[string]PRStatus, b *Board) (
 	asks := map[string][]Item{}
 	var liveOut, laterOut []Need
 	for _, n := range later {
-		if n.Item != nil {
+		if n.Item != nil && n.Held == "" {
 			if pr, ok := MergeAskPR(*n.Item); ok {
 				st, known := statuses[pr.URL]
 				if known && st.State == "MERGED" {
@@ -151,6 +151,52 @@ func attachMergeAsks(rows, later []Need, asks map[string][]Item, statuses map[st
 	return rows, later
 }
 
+func (c *Core) foldOfflineHosts(live, later []Need, boards []RemoteBoard, now time.Time) ([]Need, []Need) {
+	var kept []Need
+	for _, n := range live {
+		host := ""
+		switch {
+		case n.Item != nil:
+			host = n.Item.Host
+		case n.Session != nil:
+			host = n.Session.Remote
+		}
+		i := slices.IndexFunc(boards, func(r RemoteBoard) bool { return r.Host == host })
+		if host == "" || i < 0 {
+			kept = append(kept, n)
+			continue
+		}
+		age, behind := boards[i].rowsBehind(now)
+		if !behind {
+			kept = append(kept, n)
+			continue
+		}
+		n.Held, n.NoAct = c.Store.Nicked(host)+" offline "+Span(age), true
+		later = append(later, n)
+	}
+	return kept, later
+}
+
+func dropAskedReviews(live, later []Need) ([]Need, []Need) {
+	asked := map[string]bool{}
+	for _, ns := range [][]Need{live, later} {
+		for _, n := range ns {
+			for _, it := range n.Asks {
+				if pr, ok := MergeAskPR(it); ok {
+					asked[pr.URL] = true
+				}
+			}
+			if n.Item != nil {
+				if pr, ok := MergeAskPR(*n.Item); ok {
+					asked[pr.URL] = true
+				}
+			}
+		}
+	}
+	drop := func(n Need) bool { return n.Review != nil && asked[n.Review.URL] }
+	return slices.DeleteFunc(live, drop), slices.DeleteFunc(later, drop)
+}
+
 // CloseMergedAsks closes each open ask to merge a pull request that has merged and tells the agent that filed it why.
 func (c *Core) CloseMergedAsks(b Board) error {
 	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
@@ -207,9 +253,11 @@ func (c *Core) WithHostRows(b Board) (Board, error) {
 	if err != nil {
 		return b, err
 	}
-	live, later, asks := foldMergeAsks(live, nil, statuses, &b)
+	live, later := c.foldOfflineHosts(live, nil, boards, b.At)
+	live, later, asks := foldMergeAsks(live, later, statuses, &b)
 	b.Needs = append(slices.Clone(b.Needs), collapse(live, b.Org, b)...)
 	b.Later = append(slices.Clone(b.Later), later...)
 	b.Needs, b.Later = attachMergeAsks(b.Needs, b.Later, asks, statuses, dismissed)
+	b.Needs, b.Later = dropAskedReviews(b.Needs, b.Later)
 	return b, c.foldLater(&b)
 }

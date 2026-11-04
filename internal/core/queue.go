@@ -706,6 +706,8 @@ func prLabel(pr PR, title string) string {
 // DoLine is the row's words: what its filer wrote, else the goal's name and the question, cut to fit when there is no name.
 func (n Need) DoLine() string {
 	switch {
+	case n.Held != "" && n.HeldPR == nil:
+		return n.Held
 	case n.HeldPR != nil && n.Held != "":
 		return fmt.Sprintf("%s#%d %s", prRepoName(*n.HeldPR), n.HeldPR.Number, n.Held)
 	case n.HeldPR != nil && n.HeldPR.Status != nil:
