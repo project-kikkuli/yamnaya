@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -333,5 +334,33 @@ func TestOverloadFileKeepsOlderSlotsAndOlderServesTruthful(t *testing.T) {
 				t.Fatalf("read holding %v holds slots %v, want %v %v: %v", got.Holding, got.HoldsSlots(), c.holding, c.slots, err)
 			}
 		})
+	}
+}
+
+func TestConcurrentSavesLeaveParseableFile(t *testing.T) {
+	dir := t.TempDir()
+	states := []State{
+		{Cause: "memory"},
+		{Cause: "memory", Reason: strings.Repeat("long reason ", 2000), Changed: make([]Change, 200)},
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				if err := states[(i+j)%2].Save(dir); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if _, err := Read(dir); err != nil {
+		t.Fatalf("overload.json does not parse: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "overload.json.*")); len(left) != 0 {
+		t.Fatalf("temp files left behind: %v", left)
 	}
 }

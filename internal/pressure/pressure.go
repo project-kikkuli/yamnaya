@@ -137,10 +137,21 @@ func (s State) Save(dir string) error {
 		return err
 	}
 	path := filepath.Join(dir, "overload.json")
-	if err = os.WriteFile(path+".new", raw, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dir, "overload.json.new*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(path+".new", path)
+	_, err = tmp.Write(raw)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
 }
 
 // HoldsSlots reports whether new slots wait: only for memory, which the scheduler cannot share out. The slot cap and
