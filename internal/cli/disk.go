@@ -371,7 +371,7 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	}
 	return core.Item{Kind: core.KindChore, DoLine: "Free disk on this host", Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
-		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %.0f%% free new ym slot admissions wait, and ym also trims Go's build cache down to entries under 10 minutes old, so builds may fail on missing cache entries while that lasts; rerun them.",
+		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %.0f%% free new ym slot admissions wait, and ym also trims Go's build cache towards 1 GiB, sparing only the last 10 minutes, so builds may fail on missing cache entries while that lasts; rerun them.",
 			largest, disk.Tier3Free*100),
 		Evidence: []string{log},
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
@@ -394,7 +394,7 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 	}
 	for _, b := range st.Risky {
 		if low {
-			fmt.Fprintln(w, "last pass, at under 5% free:", b)
+			fmt.Fprintln(w, "last pass, at tier 3:", b)
 		}
 	}
 	if st.Filed != "" {

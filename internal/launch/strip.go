@@ -28,15 +28,19 @@ var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", 
 // of the allowlist, which only its tool writes to, target is a name anyone might use for a folder.
 var targetBuildFiles = []string{"Cargo.toml", "pom.xml"}
 
-// versionControl names what marks a checkout of each system; Fossil's is a file, .fslckout or _FOSSIL_.
-var versionControl = []string{".git", ".hg", ".jj", ".svn", ".bzr", ".fslckout", "_FOSSIL_", "_darcs", ".pijul", ".sl", "CVS"}
+// checkoutFiles name what marks a checkout and may be a file: a linked git worktree's .git, and Fossil's checkout database.
+var checkoutFiles = []string{".git", ".fslckout", "_FOSSIL_"}
+
+// checkoutDirs name what marks a checkout only as a directory.
+var checkoutDirs = []string{".hg", ".jj", ".svn", ".bzr", "_darcs", ".pijul", ".sl", "CVS"}
 
 // holdsRepo reports whether anything at any depth under path is a repository: a version control directory, or a bare git
 // repository's HEAD beside its objects and refs. What cannot be read counts as one.
 func holdsRepo(path string) bool {
 	found := false
 	filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || slices.Contains(versionControl, d.Name()) || d.Name() == "HEAD" && isBareRepo(filepath.Dir(p)) {
+		if err != nil || slices.Contains(checkoutFiles, d.Name()) || d.IsDir() && slices.Contains(checkoutDirs, d.Name()) ||
+			d.Name() == "HEAD" && isBareRepo(filepath.Dir(p)) {
 			found = true
 			return filepath.SkipAll
 		}

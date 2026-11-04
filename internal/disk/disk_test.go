@@ -385,7 +385,7 @@ func TestWaitingOnUvHoldsUpNoOtherStepAndCleanReplacesPrune(t *testing.T) {
 	for _, c := range []struct {
 		tier int
 		want string
-	}{{1, "uv prune"}, {2, "uv clean"}, {3, "uv clean"}} {
+	}{{1, "uv prune"}, {2, "uv clean"}, {3, "go cache floor, recent entries too"}} {
 		var ran []string
 		Run(context.Background(), steps, c.tier, func() bool { return false }, func(r Report) { ran = append(ran, r.Step) })
 		if last := ran[len(ran)-1]; last != c.want {
@@ -393,6 +393,9 @@ func TestWaitingOnUvHoldsUpNoOtherStepAndCleanReplacesPrune(t *testing.T) {
 		}
 		if n := len(slices.DeleteFunc(slices.Clone(ran), func(s string) bool { return !strings.HasPrefix(s, "uv ") })); n != 1 {
 			t.Errorf("tier %d runs %d uv steps: %v", c.tier, n, ran)
+		}
+		if c.tier == 3 && ran[len(ran)-2] != "uv clean" {
+			t.Errorf("tier 3 reaches the step that can fail a build before uv clean: %v", ran)
 		}
 	}
 }
@@ -511,5 +514,43 @@ func TestOnlyTier3TakesGoEntriesARunningBuildMayHold(t *testing.T) {
 				t.Errorf("tier %d says risky %q", c.tier, risky)
 			}
 		})
+	}
+}
+
+func TestTier3WaitsOnUvOnlyBriefly(t *testing.T) {
+	var ran [][]string
+	e := Env{Force: true, Find: func(n string) string { return n }, Stat: fixed(nil), May: func(string) bool { return true }, Now: time.Now,
+		Exec: func(_ context.Context, _ string, _ time.Duration, argv ...string) (string, error) {
+			ran = append(ran, argv)
+			return "/c", nil
+		}}
+	for _, s := range HardSteps(e) {
+		if s.Name == "uv clean" {
+			ran = nil
+			s.Run(context.Background())
+			last := strings.Join(ran[len(ran)-1], " ")
+			if (s.Tier == 3) != strings.Contains(last, "UV_LOCK_TIMEOUT=120") {
+				t.Errorf("tier %d ran %q", s.Tier, last)
+			}
+		}
+	}
+}
+
+func TestADryRunDoesNotCountTheSameGoEntriesTwice(t *testing.T) {
+	names := []time.Duration{3 * time.Hour, 3 * time.Hour, 30 * time.Minute, 30 * time.Minute}
+	dir, files := goCache(t, len(names), 1<<10, func(i int) time.Duration { return names[i] })
+	for i, f := range files {
+		at := time.Now().Add(-names[i])
+		if err := os.Truncate(f, goFloor); err != nil {
+			t.Fatal(err)
+		}
+		os.Chtimes(f, at, at)
+	}
+	e := goEnvFor(dir, map[string]float64{dir: 0.01})
+	e.Dry = true
+	trim := goTrim(context.Background(), e, 0, goMinAge)
+	recent := goTrim(context.Background(), e, goFloor, goDesperateMinAge)
+	if trim.Freed != 2*goFloor || recent.Freed != goFloor {
+		t.Fatalf("trim %d, then recent %d", trim.Freed, recent.Freed)
 	}
 }

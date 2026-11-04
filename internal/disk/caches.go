@@ -28,6 +28,9 @@ const (
 	// uvLimit bounds uv cache prune and clean. uv itself gives up on its cache lock after five minutes, so past that it was
 	// removing, not waiting.
 	uvLimit = 30 * time.Minute
+	// uvTier3Wait, in seconds, is how long tier 3 waits on uv's lock before the Go step: measured here, two minutes found the
+	// lock free 95% of the time, and below 5% free the disk cannot wait out uv's own five minutes.
+	uvTier3Wait = "120"
 	// toolLimit bounds any other tool's run.
 	toolLimit = 10 * time.Minute
 	// enoughEvery is how many bytes a trim frees between reading free space.
@@ -49,11 +52,15 @@ func CacheSteps(e Env) []Step {
 	}
 }
 
-// HardSteps come after tier 2's worktree steps. uv goes last because waiting for its lock holds up whatever follows, and
-// clean, which takes everything prune would, replaces prune at tier 2.
+// HardSteps come after tier 2's worktree steps. uv comes after what never waits, because waiting for its lock holds up whatever
+// follows, and clean, which takes everything prune would, replaces prune at tier 2. At tier 3 it still comes before the one step
+// that can fail a build, on a shorter wait.
 func HardSteps(e Env) []Step {
 	return []Step{
 		{Name: "go cache floor", Tier: 2, Until: 2, Run: func(ctx context.Context) Report { return goTrim(ctx, e, goFloor, goMinAge) }},
+		{Name: "uv prune", Tier: 1, Until: 1, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "prune") }},
+		{Name: "uv clean", Tier: 2, Until: 2, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean") }},
+		{Name: "uv clean", Tier: 3, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean", "UV_LOCK_TIMEOUT="+uvTier3Wait) }},
 		{Name: "go cache floor, recent entries too", Tier: 3, Run: func(ctx context.Context) Report {
 			r := goTrim(ctx, e, goFloor, goDesperateMinAge)
 			if r.Freed > 0 && !e.Dry {
@@ -61,8 +68,6 @@ func HardSteps(e Env) []Step {
 			}
 			return r
 		}},
-		{Name: "uv prune", Tier: 1, Until: 1, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "prune") }},
-		{Name: "uv clean", Tier: 2, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean") }},
 	}
 }
 
@@ -125,6 +130,14 @@ func goTrim(ctx context.Context, e Env, floor int64, minAge time.Duration) Repor
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].at.Before(files[j].at) })
 	cutoff := e.Now().Add(-minAge)
+	if e.Dry && floor > 0 {
+		// a dry run removes nothing, so leave out what the pass's earlier trim already said it would take
+		trimmed := e.Now().Add(-goMinAge)
+		for len(files) > 0 && files[0].at.Before(trimmed) {
+			total -= files[0].size
+			files = files[1:]
+		}
+	}
 	var freed, since int64
 	removed := 0
 	for _, f := range files {
@@ -283,7 +296,7 @@ func Running(name string) bool {
 
 // uvCache runs uv cache prune or clean. uv takes its cache lock exclusively and every running uv holds it shared for its whole
 // life; new holders overtake a waiter, so uv needs an instant with none, and reports a timeout when it finds none.
-func uvCache(ctx context.Context, e Env, verb string) Report {
+func uvCache(ctx context.Context, e Env, verb string, env ...string) Report {
 	uv := e.Find("uv")
 	if uv == "" {
 		return Report{Skipped: "uv not installed"}
@@ -300,7 +313,11 @@ func uvCache(ctx context.Context, e Env, verb string) Report {
 	case e.Dry:
 		return Report{Did: "would run uv cache " + verb + " on " + dir}
 	}
-	out, err := e.Exec(ctx, "", uvLimit, uv, "cache", verb)
+	argv := []string{uv, "cache", verb}
+	if len(env) > 0 {
+		argv = append(append([]string{"env"}, env...), argv...)
+	}
+	out, err := e.Exec(ctx, "", uvLimit, argv...)
 	if err != nil && strings.Contains(out, "Timeout") {
 		return Report{Skipped: "another uv held the cache lock throughout", Blocked: true}
 	}

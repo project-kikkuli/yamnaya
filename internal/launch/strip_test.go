@@ -408,6 +408,10 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 			run(t, wt, "git", "push", "-q", "origin", "HEAD")
 			put(t, wt, "src/target/kept.rs")
 		}, KeepIgnored, []string{"src/target/kept.rs"}, nil},
+		{"plain files named like checkout directories", func(t *testing.T, repo, wt string) {
+			put(t, wt, "node_modules/a/CVS")
+			put(t, wt, "node_modules/a/.sl")
+		}, "", nil, []string{"node_modules/a/CVS"}},
 		{"a file left in a tool-owned directory goes with it", func(t *testing.T, repo, wt string) {
 			put(t, wt, "node_modules/notes.md")
 		}, "", nil, []string{"node_modules/notes.md"}},
