@@ -209,9 +209,8 @@ func TestAQueuedSwitchKeepsThePanelOnTheCurrentLoginUntilItApplies(t *testing.T)
 		next, _ := m.openPanel(panelProfiles, row{session: &s})
 		m = next.(Model)
 		m = press(t, toPanelRow(t, m, "claude/two"), "enter")
-		b := m.board
 		s.Profile, s.ConfigRoot = "two", "/root/two"
-		b.Sessions = []core.Live{s}
+		b := core.Board{At: m.board.At, Profiles: m.board.Profiles, Sessions: []core.Live{s}}
 		next, _ = m.Update(boardMsg{board: b})
 		m = next.(Model)
 		if m.pn.target.profile != "two" || m.pn.target.ref != "claude:two@same-id" {
@@ -408,12 +407,12 @@ func TestASessionShowsTheLoginItRunsOnWhenTheHarnessHasMoreThanOne(t *testing.T)
 			if got := m.loginName("claude", c.profile); got != c.want {
 				t.Fatalf("login %q, want %q", got, c.want)
 			}
-			row := ansi.Strip(m.missionLine(0, p, m.missionCols(2)))
-			if c.mission != "" && !strings.Contains(row, c.mission) {
-				t.Fatalf("mission row lacks %q:\n%s", c.mission, row)
+			line := ansi.Strip(m.missionLine(0, p, m.missionCols(2)))
+			if c.mission != "" && !strings.Contains(line, c.mission) {
+				t.Fatalf("mission row lacks %q:\n%s", c.mission, line)
 			}
-			if c.mission == "" && strings.Contains(row, "claude/") {
-				t.Fatalf("mission row names a login needlessly:\n%s", row)
+			if c.mission == "" && strings.Contains(line, "claude/") {
+				t.Fatalf("mission row names a login needlessly:\n%s", line)
 			}
 			m.detail = p.Key
 			page := func(v viewPage) string {
@@ -423,8 +422,8 @@ func TestASessionShowsTheLoginItRunsOnWhenTheHarnessHasMoreThanOne(t *testing.T)
 				}
 				return strings.Join(lines, "\n")
 			}
-			if got := page(m.detailView()); !strings.Contains(got, c.want+" ") || strings.Contains(got, "claude…") {
-				t.Fatalf("session rows lack %q:\n%s", c.want, got)
+			if got := ansi.Strip(m.treeRowText(0, row{session: &p.Sessions[0], project: &p}, nil, nil)); !strings.Contains(got, c.want+" ") || strings.Contains(got, "claude…") {
+				t.Fatalf("session row lacks %q:\n%s", c.want, got)
 			}
 			m.sess = sessionKey(p.Sessions[0])
 			if got := page(m.sessionView()); !strings.Contains(got, c.want+" ") {
