@@ -39,14 +39,22 @@ func (l launcher) sweepSoon() {
 
 // cwds are the working directories of every process.
 func cwds() []string {
-	procs, _ := proc.List()
+	out, _ := cwdsNow()
+	return out
+}
+
+func cwdsNow() ([]string, error) {
+	procs, err := proc.List()
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, p := range procs {
 		if d := proc.Cwd(p.PID); d != "" {
 			out = append(out, d)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // gc sweeps the repositories of launch records and, when l.everywhere, every repository in repos and with linked worktrees
@@ -66,6 +74,18 @@ func (l launcher) liveWorktrees(recs []launch.Record) []string {
 			continue
 		}
 		if pane, ok := panes[tmux.SessionName(rec.Key)]; err != nil || ok && !pane.Dead {
+			out = append(out, rec.Worktree.Path)
+		}
+	}
+	return out
+}
+
+// recordedWorktrees are the worktrees of every non-landed record: right after a restart none has a pane, yet ym means to
+// resume each, so a short idle must not take them.
+func recordedWorktrees(recs []launch.Record) []string {
+	var out []string
+	for _, rec := range recs {
+		if !rec.IsLanded() && rec.Worktree.Path != "" {
 			out = append(out, rec.Worktree.Path)
 		}
 	}
@@ -93,13 +113,28 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 			repos = append(repos, filepath.Dir(rec.Worktree.GitDir))
 		}
 	}
-	dirs, now := cwds(), time.Now()
+	dirs, now := []string(nil), time.Now()
+	if live, err := cwdsNow(); err == nil {
+		dirs = live
+	}
 	for _, rec := range recs {
 		if rec.PreviousWorktree.Path != "" {
 			dirs = append(dirs, rec.PreviousWorktree.Path)
 		}
 	}
 	dirs = append(dirs, l.liveWorktrees(recs)...)
+	if p.Ignored {
+		dirs = append(dirs, recordedWorktrees(recs)...)
+	}
+	if p.Fresh == nil {
+		p.Fresh = func() ([]string, error) {
+			now, err := cwdsNow()
+			if err != nil {
+				return nil, err
+			}
+			return append(append(now, dirs...), l.liveWorktrees(recs)...), nil
+		}
+	}
 	var out []launch.Swept
 	for _, root := range repos {
 		if seen[root] {
@@ -211,8 +246,8 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 	if pruned > 0 {
 		fmt.Fprintf(w, "%s %d landed launch records older than %d days whose conversations are gone\n", del, pruned, int(landedKeep.Hours()/24))
 	}
-	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d with ignored files, %d active, %d in use, %d locked or missing, %d unreadable\n",
-		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepIgnored], kept[launch.KeepActive],
+	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d with ignored files, %d with nested repositories or submodules, %d active, %d in use, %d locked or missing, %d unreadable\n",
+		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepIgnored], kept[launch.KeepNested]+kept[launch.KeepModules], kept[launch.KeepActive],
 		kept[launch.KeepInUse], kept[launch.KeepLocked], kept[launch.KeepFailing])
 }
 

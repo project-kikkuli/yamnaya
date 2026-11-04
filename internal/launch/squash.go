@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"sync"
 	"time"
 )
+
+// ghLimit bounds one gh call; one that runs out counts as a failure, which proves nothing merged.
+var ghLimit = 2 * time.Minute
 
 // Unmerged is how long gc trusts that a commit is in no merged pull request before asking GitHub again.
 const Unmerged = 24 * time.Hour
@@ -43,7 +47,10 @@ var errMissing = errors.New("not on GitHub")
 
 func gh(args ...string) ([]byte, error) {
 	var stderr strings.Builder
-	cmd := exec.Command("gh", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), ghLimit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {

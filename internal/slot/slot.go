@@ -299,6 +299,11 @@ func (p Pool) Status() (Status, error) {
 		return st, err
 	}
 	st.Waiters = append(st.Waiters, onLanes...)
+	for _, c := range st.Waiters {
+		if u, low := p.low(c.Cwd); low && st.Disk == nil {
+			st.Disk = &u
+		}
+	}
 	sort.Slice(st.Holders, func(i, j int) bool { return st.Holders[i].Slot < st.Holders[j].Slot })
 	sort.Slice(st.Waiters, func(i, j int) bool { return st.Waiters[i].Since.Before(st.Waiters[j].Since) })
 	return st, nil

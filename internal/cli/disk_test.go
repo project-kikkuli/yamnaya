@@ -126,12 +126,24 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 		t.Fatalf("the same episode filed again: %+v", got)
 	}
 	free = 0.15
-	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, start: func() error { return nil }}
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, start: func() error { return nil }, dismiss: diskDismiss(c.Store)}
 	if err := w.tick(); err != nil {
 		t.Fatal(err)
 	}
 	if readDiskState(dir).Filed == "" {
 		t.Fatal("15% free ended the episode; only above 20% does")
+	}
+	open := func() int {
+		n := 0
+		for _, it := range ownerItems(t, c) {
+			if it.State == core.ItemOpen {
+				n++
+			}
+		}
+		return n
+	}
+	if open() != 1 {
+		t.Fatalf("%d open during the episode", open())
 	}
 	free = 0.21
 	if err := w.tick(); err != nil {
@@ -139,6 +151,9 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 	}
 	if readDiskState(dir).Filed != "" {
 		t.Fatal("21% free did not end the episode")
+	}
+	if open() != 0 {
+		t.Fatal("the item outlived the episode")
 	}
 	free = 0.08
 	pass(diskCore(t, dir), 0)
@@ -228,7 +243,7 @@ func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
 		want   string
 	}{
 		{"a live pane with its cwd elsewhere", true, false, launch.KeepInUse},
-		{"no pane", false, false, ""},
+		{"no pane yet, as right after a restart", false, false, launch.KeepInUse},
 		{"landed record with a pane of the same name", true, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -308,5 +323,56 @@ func TestACacheAPassCouldNotFreeShowsInTheStateAndTheOwnerItem(t *testing.T) {
 	}
 	if st := readDiskState(dir); len(st.Blocked) != 0 {
 		t.Fatalf("a pass that got through left %+v", st.Blocked)
+	}
+}
+
+func TestTheWatcherRemembersItsLastStartWhenTheStateCannotBeSaved(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(diskStatePath(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	free := 0.15
+	started := 0
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: func() time.Time { return now }, log: &strings.Builder{},
+		start: func() error { started++; return nil }}
+	for range 3 {
+		if err := w.tick(); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	if started != 1 {
+		t.Fatalf("started %d passes in 3 minutes", started)
+	}
+	now = now.Add(diskRetryAfter)
+	if err := w.tick(); err != nil || started != 2 {
+		t.Fatalf("started %d, %v", started, err)
+	}
+}
+
+func TestAReapLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	state := t.TempDir()
+	l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}}
+	low := 0.05
+	healthy := 0.9
+	e := disk.Env{Paths: []string{"/tmp-small"}, Now: time.Now, Stat: func(p string) (disk.Usage, error) {
+		if p == wt {
+			return usageAt(&healthy)(p)
+		}
+		return usageAt(&low)(p)
+	}}
+	steps := l.worktreeSteps([]string{repo}, e)
+	steps[0].Run(context.Background())
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("reaped a worktree on a healthy filesystem")
 	}
 }

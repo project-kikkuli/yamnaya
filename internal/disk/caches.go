@@ -2,7 +2,6 @@ package disk
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,9 +24,9 @@ const (
 	goFloor = 1 << 30
 	// staleAge is how long a temp build dir or DerivedData entry goes unchanged before it counts as abandoned.
 	staleAge = 6 * time.Hour
-	// uvWait bounds how long uv waits for its cache lock, which every running uv holds shared for its whole life. New holders
-	// overtake a waiter, so it needs an instant with none. It stays under uv's own five-minute lock timeout.
-	uvWait = 290 * time.Second
+	// uvLimit bounds uv cache prune and clean. uv itself gives up on its cache lock after five minutes, so past that it was
+	// removing, not waiting.
+	uvLimit = 30 * time.Minute
 	// toolLimit bounds any other tool's run.
 	toolLimit = 10 * time.Minute
 	// enoughEvery is how many bytes a trim frees between reading free space.
@@ -89,7 +88,7 @@ func goTrim(ctx context.Context, e Env, floor int64, minAge time.Duration) Repor
 		return Report{Skipped: "go not installed or its cache is off"}
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
 	}
 	var files []goFile
@@ -158,7 +157,7 @@ func staleBuildDirs(ctx context.Context, e Env) Report {
 	var freed int64
 	cutoff := e.Now().Add(-staleAge)
 	for _, root := range roots {
-		if root == "" || seen[root] || !e.may(root) || !e.needed(root) {
+		if root == "" || seen[root] || !e.may(root) || !e.Needed(root) {
 			continue
 		}
 		seen[root] = true
@@ -177,7 +176,13 @@ func staleBuildDirs(ctx context.Context, e Env) Report {
 			if held == nil {
 				held = append(e.Holders(), "")
 			}
-			if slices.ContainsFunc(held, func(h string) bool { return h == path || strings.HasPrefix(h, path+"/") }) {
+			real, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				real = path
+			}
+			if slices.ContainsFunc(held, func(h string) bool {
+				return h == path || strings.HasPrefix(h, path+"/") || h == real || strings.HasPrefix(h, real+"/")
+			}) {
 				continue
 			}
 			size := dirSize(path)
@@ -254,8 +259,8 @@ func Running(name string) bool {
 	return slices.ContainsFunc(procs, func(p proc.Proc) bool { return p.Command() == name })
 }
 
-// uvCache runs uv cache prune or clean. uv takes its cache lock exclusively and every running uv holds it shared, so a
-// busy machine can make it wait; past uvWait the step gives up for this pass.
+// uvCache runs uv cache prune or clean. uv takes its cache lock exclusively and every running uv holds it shared for its whole
+// life; new holders overtake a waiter, so uv needs an instant with none, and reports a timeout when it finds none.
 func uvCache(ctx context.Context, e Env, verb string) Report {
 	uv := e.Find("uv")
 	if uv == "" {
@@ -268,13 +273,13 @@ func uvCache(ctx context.Context, e Env, verb string) Report {
 	switch {
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
 	case e.Dry:
 		return Report{Did: "would run uv cache " + verb + " on " + dir}
 	}
-	out, err := e.Exec(ctx, "", uvWait, uv, "cache", verb)
-	if errors.Is(err, context.DeadlineExceeded) {
+	out, err := e.Exec(ctx, "", uvLimit, uv, "cache", verb)
+	if err != nil && strings.Contains(out, "Timeout") {
 		return Report{Skipped: "another uv held the cache lock throughout", Blocked: true}
 	}
 	return Report{Did: lastLine(out), Err: err, Quiet: strings.HasPrefix(lastLine(out), "No ")}
@@ -287,7 +292,7 @@ func pnpmPrune(ctx context.Context, e Env) Report {
 		return Report{Skipped: "pnpm not installed"}
 	}
 	if e.Running != nil && e.Running("pnpm") {
-		return Report{Skipped: "a pnpm is running, and an install racing a prune can fail"}
+		return Report{Skipped: "a pnpm is running, and an install racing a prune can fail", Blocked: true}
 	}
 	dirs := []string{e.Home}
 	for _, d := range e.Dirs {
@@ -303,7 +308,7 @@ func pnpmPrune(ctx context.Context, e Env) Report {
 		switch {
 		case !e.may(store):
 			return Report{Skipped: "not this ym's store: " + store}
-		case !e.needed(store):
+		case !e.Needed(store):
 			return Report{Skipped: store + " has enough free"}
 		case e.Dry:
 			return Report{Did: "would run pnpm store prune on " + store}
@@ -326,7 +331,7 @@ func brewCleanup(ctx context.Context, e Env) Report {
 	switch {
 	case !e.may(cache):
 		return Report{Skipped: "not this ym's cache: " + cache}
-	case !e.needed(cache):
+	case !e.Needed(cache):
 		return Report{Skipped: cache + " has enough free"}
 	case e.Dry:
 		return Report{Did: "would run brew cleanup --prune=all on " + cache}
@@ -360,8 +365,10 @@ func derivedData(ctx context.Context, e Env) Report {
 		return Report{Skipped: "no DerivedData"}
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
+	case e.Running != nil && (e.Running("xcodebuild") || e.Running("Xcode")):
+		return Report{Skipped: "Xcode is building", Blocked: true}
 	}
 	type project struct {
 		path string

@@ -260,7 +260,7 @@ func TestUvGivesUpForThisPassWhenAnotherUvHoldsItsCache(t *testing.T) {
 		if argv[2] == "dir" {
 			return "/c", nil
 		}
-		return "", fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
+		return "error: Timeout (300s) when waiting for lock on `/c` at `/c/.lock`, is another uv process running?", errors.New("exit status 2")
 	}}
 	r := uvCache(context.Background(), e, "clean")
 	if r.Err != nil || !r.Blocked || !strings.Contains(r.Skipped, "lock") {
@@ -394,5 +394,17 @@ func TestWaitingOnUvHoldsUpNoOtherStepAndCleanReplacesPrune(t *testing.T) {
 		if n := len(slices.DeleteFunc(slices.Clone(ran), func(s string) bool { return !strings.HasPrefix(s, "uv ") })); n != 1 {
 			t.Errorf("tier %d runs %d uv steps: %v", c.tier, n, ran)
 		}
+	}
+}
+
+func TestAUvKilledWhileRemovingIsAFailureNotALockWait(t *testing.T) {
+	e := Env{Force: true, Find: func(n string) string { return n }, Stat: fixed(nil), Exec: func(_ context.Context, _ string, _ time.Duration, argv ...string) (string, error) {
+		if argv[2] == "dir" {
+			return "/c", nil
+		}
+		return "Clearing cache at: /c", context.DeadlineExceeded
+	}}
+	if r := uvCache(context.Background(), e, "clean"); r.Err == nil || r.Blocked {
+		t.Fatalf("report %+v", r)
 	}
 }

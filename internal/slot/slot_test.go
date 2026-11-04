@@ -172,3 +172,24 @@ func TestALowDiskHoldsNewSlotsUntilItRecoversAndStatusSaysWhy(t *testing.T) {
 		t.Fatalf("status %+v %v after recovery", st, err)
 	}
 }
+
+func TestStatusNamesADiskOnlyAWaitersCwdIsLowOn(t *testing.T) {
+	p := pool(t)
+	u := disk.Usage{Path: "/work", Total: 100, Avail: 4}
+	p.Low = func(extra ...string) (disk.Usage, bool) { return u, len(extra) == 1 && extra[0] == "/work" }
+	waiting := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.Acquire(ctx, Claim{PID: os.Getpid(), Command: []string{"make"}, Cwd: "/work", Since: time.Now()}, func() { close(waiting) })
+	}()
+	<-waiting
+	st, err := p.Status()
+	if err != nil || st.Disk == nil || st.Disk.Path != "/work" {
+		t.Fatalf("status %+v %v", st.Disk, err)
+	}
+	cancel()
+	<-done
+}

@@ -25,14 +25,18 @@ const (
 	KeepFailing = "unreadable"
 	KeepIgnored = "ignored files"
 	KeepEnough  = "enough free"
+	KeepNested  = "nested repository"
+	KeepModules = "submodules"
 )
 
 // Policy is how hard a gc reaps: Idle replaces the default idle time, Ignored also keeps a worktree holding git-ignored
-// files outside the regenerable allowlist, and Enough stops further removals once it reports true.
+// files outside the regenerable allowlist, Enough keeps a worktree whose filesystem has enough free, and Fresh reads what
+// is in use again just before a removal, keeping the worktree when it cannot.
 type Policy struct {
 	Idle    time.Duration
 	Ignored bool
-	Enough  func() bool
+	Enough  func(path string) bool
+	Fresh   func() ([]string, error)
 }
 
 // Sweep is what gc decided about one linked worktree: Keep is empty when it removes it.
@@ -255,15 +259,18 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 		default:
 			sw.Keep, sw.Why = Keep(status != "", local, idle, p.Idle, sw.User)
 		}
-		if sw.Keep == "" && p.Ignored {
-			if held, err := unregenerable(w.path); err != nil {
-				sw.Keep, sw.Why = KeepFailing, err.Error()
-			} else if len(held) > 0 {
-				sw.Keep, sw.Why = KeepIgnored, "holds git-ignored "+held[0]
-			}
+		if sw.Keep == "" {
+			sw.Keep, sw.Why = keepContents(w.path, p.Ignored)
 		}
-		if sw.Keep == "" && p.Enough != nil && p.Enough() {
-			sw.Keep, sw.Why = KeepEnough, "the disk has enough free"
+		if sw.Keep == "" && p.Enough != nil && p.Enough(w.path) {
+			sw.Keep, sw.Why = KeepEnough, "its filesystem has enough free"
+		}
+		if sw.Keep == "" && !dry && p.Fresh != nil {
+			if now, err := p.Fresh(); err != nil {
+				sw.Keep, sw.Why = KeepFailing, "cannot read what is in use: "+err.Error()
+			} else if sw.User = Inside(w.path, now); sw.User != "" {
+				sw.Keep, sw.Why = KeepInUse, "a process works in "+sw.User
+			}
 		}
 		if sw.Keep == "" {
 			sw.Why = "clean, every commit on a remote, untouched " + idle.Round(time.Hour).String() + ", unused"
