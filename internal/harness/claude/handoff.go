@@ -51,9 +51,10 @@ func (a *Adapter) QuotaDialog(text string) bool {
 	if end[0] != "What do you want to do?" || end[1] != "1. Stop and wait for limit to reset" || !strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") || end[3] != "3. Switch to usage credits" || end[4] != "Enter to confirm · Esc to cancel" {
 		return false
 	}
-	for _, line := range lines[max(0, len(lines)-9) : len(lines)-5] {
-		line = strings.TrimSpace(strings.TrimPrefix(line, "⎿"))
-		if strings.HasPrefix(line, "You've hit your weekly limit") || strings.HasPrefix(line, "You've hit your limit") {
+	above := lines[max(0, len(lines)-9) : len(lines)-5]
+	for i := range above {
+		joined := strings.Join(strings.Fields(strings.TrimPrefix(strings.TrimSpace(strings.Join(above[i:], "")), "⎿")), "")
+		if strings.HasPrefix(joined, "You'vehityourweeklylimit") || strings.HasPrefix(joined, "You'vehityourlimit") {
 			return true
 		}
 	}

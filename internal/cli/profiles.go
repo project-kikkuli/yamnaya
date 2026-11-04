@@ -228,20 +228,9 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 	if pref := profile.Preferred(dir)[harness]; pref != "" {
 		sort.SliceStable(ps, func(i, j int) bool { return ps[i].ID == pref && ps[j].ID != pref })
 	}
-	limits := l.limits()
-	exhausted := map[string]bool{}
-	blocked := map[string]bool{}
-	for _, w := range limits {
-		if w.Harness == harness && w.Used >= 100 && w.ResetsAt.After(time.Now()) {
-			if w.Account == "" {
-				blocked[profile.ID(w.Profile)] = true
-			} else {
-				exhausted[w.Account] = true
-			}
-		}
-	}
+	limits, now := l.limits(), l.now()
 	for _, p := range ps {
-		if p.Harness != harness || p.DefaultConstraint() != nil || blocked[p.ID] || exhausted[p.Account] {
+		if p.Harness != harness || p.DefaultConstraint() != nil || !barredUntil(dir, p, limits, now).IsZero() {
 			continue
 		}
 		if p.ID == "default" || p.Account != "" {

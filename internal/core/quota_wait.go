@@ -19,7 +19,7 @@ type QuotaWait struct {
 }
 
 func (q *QuotaWait) Error() string {
-	return fmt.Sprintf("%s login %s is out of its subscription limit until %s and no other login ym can verify as usable; ym resumes it after that. ym switch %s --profile <id> moves it now, ym revive %s --anyway resumes it if the limit reset early",
+	return fmt.Sprintf("%s login %s is out of its subscription limit until %s and no other login ym can verify as usable; ym resumes it after that. ym switch %s --profile <id> moves it now; once it is stopped, ym revive %s --anyway resumes it if the limit reset early",
 		q.Harness, q.Login, q.Until.UTC().Format(time.RFC3339), q.Key, q.Key)
 }
 

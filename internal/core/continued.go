@@ -2,6 +2,7 @@ package core
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 )
 
@@ -103,5 +104,20 @@ func (s *Store) RetireItem(ref, reason string) error {
 	}
 	defer s.invalidate()
 	_, err = s.db.Exec(`UPDATE ym_items SET delivered_at = ? WHERE seq = ?`, now(), it.Seq)
+	return err
+}
+
+// RewordItem restates an open item whose facts have moved, so it never needs a second one.
+func (s *Store) RewordItem(ref, question, rec string, options []Option) error {
+	it, err := s.Item(ref)
+	if err != nil {
+		return err
+	}
+	opts, err := json.Marshal(options)
+	if err != nil {
+		return err
+	}
+	defer s.invalidate()
+	_, err = s.db.Exec(`UPDATE ym_items SET question = ?, rec = ?, options = ? WHERE seq = ?`, question, rec, string(opts), it.Seq)
 	return err
 }

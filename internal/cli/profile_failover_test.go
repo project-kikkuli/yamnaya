@@ -49,12 +49,12 @@ func TestAutomaticFailoverRequiresBoundActualSubscriptionExhaustion(t *testing.T
 		})
 	}
 }
-func TestAutomaticFailoverNeverUsesAnAliasUnknownOrAttemptedPool(t *testing.T) {
+func TestAutomaticFailoverNeverUsesAnAliasUnknownOrFailedLogin(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
 	e := core.Exhaustion{Harness: "claude", Account: "claude/u/a"}
 	ps := []profile.Profile{{Harness: "claude", ID: "alias", Account: e.Account}, {Harness: "claude", ID: "unknown"}, {Harness: "codex", ID: "other", Account: "codex/u/c"}, {Harness: "claude", ID: "b", Account: "claude/u/b"}, {Harness: "claude", ID: "c", Account: "claude/u/c"}}
-	a := failoverAttempt{State: core.FailoverState{Session: profileConversation}, Pools: map[string]time.Time{e.Account: now.Add(time.Hour), "claude/u/b": now.Add(time.Hour)}}
+	a := failoverAttempt{State: core.FailoverState{Session: profileConversation}, Failed: map[string]time.Time{"claude/u/b": now.Add(time.Hour)}}
 	if err := saveFailover(dir, "claude", a); err != nil {
 		t.Fatal(err)
 	}
@@ -62,13 +62,13 @@ func TestAutomaticFailoverNeverUsesAnAliasUnknownOrAttemptedPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := failoverTarget(ps, e, nil, restarted.Pools, now)
+	target, err := failoverTarget(usableLogins(dir, restarted, ps, nil, now), e, nil, now)
 	if err != nil || target.ID != "c" {
 		t.Fatalf("target=%#v %v", target, err)
 	}
-	restarted.Pools[target.Account] = now.Add(time.Hour)
-	if _, err = failoverTarget(ps, e, nil, restarted.Pools, now); err == nil {
-		t.Fatal("pool loop permitted after restart")
+	restarted.failed(target.Account, now.Add(time.Hour))
+	if _, err = failoverTarget(usableLogins(dir, restarted, ps, nil, now), e, nil, now); err == nil {
+		t.Fatal("a login that failed was chosen again")
 	}
 }
 func TestNativeLifecycleRejectsPendingAndSharedResumersWithoutPublication(t *testing.T) {

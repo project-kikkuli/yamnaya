@@ -496,3 +496,15 @@ func TestRealScreensThatOnlyMentionAQuotaStopAreNotOne(t *testing.T) {
 		})
 	}
 }
+
+func TestAHitLimitDialogIsReadHoweverAPaneWrapsIt(t *testing.T) {
+	a := New()
+	for _, width := range []int{80, 30, 20, 15} {
+		if !a.QuotaDialog(rewrap(quotaDialog, width)) {
+			t.Errorf("width %d: not read as the quota dialog", width)
+		}
+		if a.QuotaDialog(rewrap(strings.ReplaceAll(quotaDialog, "You've hit your weekly limit", "Your weekend has been great"), width)) {
+			t.Errorf("width %d: read another heading as the quota dialog", width)
+		}
+	}
+}

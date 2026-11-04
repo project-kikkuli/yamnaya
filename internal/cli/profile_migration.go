@@ -342,6 +342,12 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 			if err != nil {
 				return err
 			}
+			if m.State != "queued" && l.core != nil {
+				text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s that has not finished: %v. ym keeps trying; ym revive %s brings it back by hand.", core.Short(m.Source.Session), m.Source.Key, m.Destination.ID, attemptErr, m.Source.Key)
+				if err = l.core.NoticeStuckSwitch(b, m.Source.Session, text); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -372,8 +378,8 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 	if err != nil {
 		return err
 	}
-	now, limits := time.Now(), l.limits()
-	target, err := failoverDestination(a.candidates(ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, limits, nil, now, m.Source.Worktree.Path)
+	now, limits := l.now(), l.limits()
+	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, limits, now, m.Source.Worktree.Path)
 	if err != nil {
 		return block()
 	}
@@ -452,12 +458,8 @@ func atStopReasons(dir string) map[string]core.Switching {
 		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" {
 			continue
 		}
-		why := "stopped at its limit: " + a.State.Reason
-		if a.State.Reason == errNoUsablePool.Error() {
-			why = "stopped at its limit, no usable login, resets " + quotaReset(a.State.Reset)
-		}
 		harness, _, _ := strings.Cut(filepath.Base(path), "-")
-		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: why}
+		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: atStopReason(dir, a, harness)}
 	}
 	return out
 }
