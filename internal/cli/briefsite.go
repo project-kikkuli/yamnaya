@@ -161,8 +161,8 @@ type queueView struct {
 // does, empty when the row has nothing to do; Check says the closed row's mark does it.
 type queueRowView struct {
 	Line, Mark, Side, Command, Link, LinkText string
-	ID, Token, Act                            string
-	Check                                     bool
+	ID, Token, Act, CheckLabel                string
+	Check, Later, Reply, Done                 bool
 	Detail                                    []string
 }
 
@@ -170,17 +170,20 @@ func queueRow(n core.Need, label, token string, now time.Time) queueRowView {
 	line, side := core.RowLine(n, label, 200, now)
 	body, mark := line[:len(line)-len("▸")], line[len(line)-len("▸"):]
 	v := queueRowView{Line: body, Mark: mark, Side: side, Detail: core.RowDetail(n, core.QueueWidth, now), Check: n.Check() != core.CheckNone}
+	v.ID, v.Token = n.RowID(), token
 	switch n.Accept() {
 	case core.CheckGo:
-		v.ID, v.Token, v.Act = n.RowID(), token, "go ahead"
+		v.Act = "go ahead"
 	case core.CheckAccept:
-		v.ID, v.Token, v.Act = n.RowID(), token, "accept rec"
-		if n.Check() == core.CheckAccept {
-			v.Act = n.DoLine()
-		}
+		v.Act = "accept rec"
 	case core.CheckMerge:
-		v.ID, v.Token, v.Act = n.RowID(), token, "merge"
+		v.Act = "merge"
 	}
+	v.CheckLabel = v.Act
+	if n.Check() == core.CheckAccept {
+		v.CheckLabel = n.DoLine()
+	}
+	v.Later, v.Reply, v.Done = canLater(n, now), canReply(n), canDone(n)
 	switch {
 	case n.Item != nil:
 		v.Link, v.LinkText = fmt.Sprintf("/i/%d", n.Item.Seq), "full item"
@@ -271,6 +274,17 @@ func (s *briefSite) queue() (queueView, error) {
 	return v, nil
 }
 
+func canLater(n core.Need, now time.Time) bool {
+	if n.Item != nil {
+		return n.Item.State == core.ItemOpen && !n.Unrouted
+	}
+	return !n.Mark.Until.After(now)
+}
+
+func canReply(n core.Need) bool { return n.Item != nil && !n.Unrouted }
+
+func canDone(n core.Need) bool { return canReply(n) && n.Check() == core.CheckNone }
+
 // sameOrigin reports whether the browser says the form came from this site: the address the request reached, or the public URL a
 // proxy publishes it at, port included.
 func (s *briefSite) sameOrigin(r *http.Request) bool {
@@ -298,9 +312,11 @@ func hostPort(scheme, host string) string {
 	return strings.ToLower(net.JoinHostPort(strings.Trim(host, "[]"), port))
 }
 
-// serveDo carries out what the row named id says, through the path the board's check mark takes. id binds the row's words and head,
-// so a page older than the queue acts on the same row as it read or on nothing.
-func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
+var errBadForm = errors.New("bad form")
+
+// serveRow does act to the row named id, which binds the row's words and head, so a page older than the queue acts on the same row as it
+// read or on nothing.
+func (s *briefSite) serveRow(w http.ResponseWriter, r *http.Request, id string, can func(core.Need) bool, act func(core.Board, core.Need) error) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "post only", http.StatusMethodNotAllowed)
@@ -323,7 +339,7 @@ func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
 	var need *core.Need
 	for _, ns := range [][]core.Need{s.unacted(b.Needs, b.At), s.unacted(b.Later, b.At)} {
 		for i := range ns {
-			if ns[i].RowID() == id && ns[i].Accept() != core.CheckNone {
+			if ns[i].RowID() == id && can(ns[i]) {
 				need = &ns[i]
 			}
 		}
@@ -332,8 +348,12 @@ func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "this row changed since you read it, so nothing was done; go back and reload", http.StatusConflict)
 		return
 	}
-	if _, err := s.core.DoCheck(b, *need); err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+	if err := act(b, *need); err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, errBadForm) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	s.mu.Lock()
@@ -343,6 +363,53 @@ func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
 	s.acted[id] = time.Now()
 	s.mu.Unlock()
 	http.Redirect(w, r, s.prefix()+"/", http.StatusSeeOther)
+}
+
+// serveRowAction answers the forms of a queue row; each takes the path the board's key for the same act takes.
+func (s *briefSite) serveRowAction(w http.ResponseWriter, r *http.Request, path string) bool {
+	if id, ok := strings.CutPrefix(path, "/do/"); ok {
+		s.serveRow(w, r, id, func(n core.Need) bool { return n.Check() != core.CheckNone }, func(b core.Board, n core.Need) error {
+			_, err := s.core.DoCheck(b, n)
+			return err
+		})
+		return true
+	}
+	if id, ok := strings.CutPrefix(path, "/accept/"); ok {
+		s.serveRow(w, r, id, func(n core.Need) bool { return n.Accept() != core.CheckNone }, func(b core.Board, n core.Need) error {
+			_, err := s.core.DoAccept(b, n)
+			return err
+		})
+		return true
+	}
+	if id, ok := strings.CutPrefix(path, "/later/"); ok {
+		s.serveRow(w, r, id, func(n core.Need) bool { return canLater(n, time.Now()) }, func(_ core.Board, n core.Need) error {
+			when := r.PostFormValue("when")
+			if when != "1h" && when != "tonight" && when != "tomorrow" {
+				return fmt.Errorf("%w: later takes 1h, tonight or tomorrow", errBadForm)
+			}
+			return s.core.SnoozeNeed(n, when)
+		})
+		return true
+	}
+	if id, ok := strings.CutPrefix(path, "/reply/"); ok {
+		s.serveRow(w, r, id, canReply, func(b core.Board, n core.Need) error {
+			text := strings.TrimSpace(r.PostFormValue("text"))
+			if text == "" {
+				return fmt.Errorf("%w: a reply needs words", errBadForm)
+			}
+			_, _, err := s.core.Answer(b, n.Item.Key(), text)
+			return err
+		})
+		return true
+	}
+	if id, ok := strings.CutPrefix(path, "/done/"); ok {
+		s.serveRow(w, r, id, canDone, func(b core.Board, n core.Need) error {
+			_, _, err := s.core.Answer(b, n.Item.Key(), "done")
+			return err
+		})
+		return true
+	}
+	return false
 }
 
 func (n briefNode) Age(t time.Time) string {
@@ -369,8 +436,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, siteScript)
 		return
 	}
-	if id, ok := strings.CutPrefix(path, "/do/"); ok {
-		s.serveDo(w, r, id)
+	if s.serveRowAction(w, r, path) {
 		return
 	}
 	o, err := s.core.LoadOrg()
@@ -630,7 +696,7 @@ a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacin
 .copy:hover{color:var(--fg)}
 .q{font:min(14px,calc((100vw - 32px)/24.6))/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px;overflow-wrap:normal}.q .line{white-space:pre}.q summary{list-style:none;cursor:pointer;white-space:pre;overflow:hidden}.q summary::-webkit-details-marker{display:none}
 .q .side{display:none;color:var(--dim)}@media (min-width:800px){.q .side{display:inline}}.q .open{border-left:3px solid var(--line);padding-left:8px;margin:2px 0 8px;color:var(--dim);white-space:normal}.q .open div{margin:2px 0}
-.q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;padding:2px 10px;margin:4px 0;cursor:pointer}
+.q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;min-height:44px;min-width:44px;padding:0 12px;cursor:pointer}.q .alt{color:var(--fg);border-color:var(--line)}.q .open form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}.q .say{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;min-height:44px;min-width:0;flex:1 1 60%;padding:0 8px;box-sizing:border-box}
 ul{padding-left:18px}li{margin:6px 0}
 </style>
 <script src="{{at "/site.js"}}"></script>`
@@ -664,7 +730,7 @@ const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
 <h1>Needs you</h1>
-{{define "queuerow"}}<details name="queue"><summary><span class="line">{{.Line}}</span>{{if .Check}}<button class="check" type="submit" form="do-{{.ID}}" aria-label="{{.Act}}">{{.Mark}}</button>{{else}}<span class="line">{{.Mark}}</span>{{end}}<span class="side">{{.Side}}</span></summary><div class="open">{{range .Detail}}<div>{{.}}</div>{{end}}{{if .Act}}<form id="do-{{.ID}}" method="post" action="{{at "/do/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">{{.Act}}</button></form>{{end}}{{if .Command}}<div><code>{{.Command}}</code>{{template "copy" (copy "command" .Command)}}</div>{{end}}{{if .Link}}<div><a href="{{if eq (slice .Link 0 1) "/"}}{{at .Link}}{{else}}{{.Link}}{{end}}">{{.LinkText}}</a></div>{{end}}</div></details>{{end}}
+{{define "queuerow"}}<details name="queue"><summary><span class="line">{{.Line}}</span>{{if .Check}}<button class="check" type="submit" form="do-{{.ID}}" aria-label="{{.CheckLabel}}">{{.Mark}}</button>{{else}}<span class="line">{{.Mark}}</span>{{end}}<span class="side">{{.Side}}</span></summary><div class="open">{{range .Detail}}<div>{{.}}</div>{{end}}{{if .Check}}<form id="do-{{.ID}}" method="post" action="{{at "/do/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"></form>{{end}}{{if .Act}}<form method="post" action="{{at "/accept/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">{{.Act}}</button></form>{{end}}{{if .Done}}<form method="post" action="{{at "/done/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">done</button></form>{{end}}{{if .Later}}<form method="post" action="{{at "/later/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><span>later</span><button class="act alt" type="submit" name="when" value="1h">1h</button><button class="act alt" type="submit" name="when" value="tonight">tonight</button><button class="act alt" type="submit" name="when" value="tomorrow">tomorrow</button></form>{{end}}{{if .Reply}}<form method="post" action="{{at "/reply/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><input class="say" type="text" name="text" required aria-label="reply" placeholder="reply"><button class="act alt" type="submit">reply</button></form>{{end}}{{if .Command}}<div><code>{{.Command}}</code>{{template "copy" (copy "command" .Command)}}</div>{{end}}{{if .Link}}<div><a href="{{if eq (slice .Link 0 1) "/"}}{{at .Link}}{{else}}{{.Link}}{{end}}">{{.LinkText}}</a></div>{{end}}</div></details>{{end}}
 <div class="q"><div class="line">{{.Queue.Header}}</div>{{range .Queue.Rows}}{{template "queuerow" .}}{{end}}
 {{if .Queue.Later}}<details><summary>later {{len .Queue.Later}} ▾</summary>{{range .Queue.Later}}{{template "queuerow" .}}{{end}}</details>{{end}}</div>
 <h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected and no row is open.</p>

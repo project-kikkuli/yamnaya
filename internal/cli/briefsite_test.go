@@ -364,7 +364,12 @@ func (w *doWorld) action(t *testing.T, has string) (id, token string) {
 
 func (w *doWorld) post(t *testing.T, id, token, origin string) int {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, w.srv.URL+"/do/"+id, strings.NewReader(url.Values{"token": {token}}.Encode()))
+	return w.postTo(t, "/do/", id, url.Values{"token": {token}}, origin)
+}
+
+func (w *doWorld) postTo(t *testing.T, route, id string, form url.Values, origin string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, w.srv.URL+route+id, strings.NewReader(form.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,8 +468,13 @@ func TestThePagesCheckMarkActsOnlyOnTheRowTheOwnerRead(t *testing.T) {
 func TestAPageOffersNoActionOnATeammatesPullRequestAndGetDoesNothing(t *testing.T) {
 	w := newDoWorld(t)
 	for _, row := range strings.Split(w.page(t), "<details")[1:] {
-		if strings.Contains(row, "repo#2") && strings.Contains(row, "<form") {
-			t.Fatalf("a teammate's row has a form:\n%s", row)
+		if !strings.Contains(row, "repo#2") {
+			continue
+		}
+		for _, route := range []string{"/do/", "/accept/", "/reply/", "/done/"} {
+			if strings.Contains(row, route) {
+				t.Fatalf("a teammate's row offers %s:\n%s", route, row)
+			}
 		}
 	}
 	id, _ := w.action(t, "repo#1")
@@ -579,14 +589,172 @@ func TestTheCliAndPageDrawTheSameRowAndTheButtonNamesWhatItDoes(t *testing.T) {
 			if line == nil || html.UnescapeString(line[1])+tc.mark != cli {
 				t.Fatalf("page row %q, cli row %q", line, cli)
 			}
-			if !strings.Contains(row, `class="act" type="submit">`+tc.button+`</button>`) {
-				t.Fatalf("row %s has no button named %q", row, tc.button)
+			if !strings.Contains(row, `class="act" type="submit">accept rec</button>`) {
+				t.Fatalf("row %s has no accept rec button", row)
 			}
 			if tc.mark == "✓" && !strings.Contains(row, `aria-label="`+tc.button+`"`) {
 				t.Fatalf("check mark does not name %q: %s", tc.button, row)
 			}
 			if strings.Contains(row, `class="check"`) != (tc.mark == "✓") {
 				t.Fatalf("mark %s disagrees with the page's button: %s", tc.mark, row)
+			}
+		})
+	}
+}
+
+func (w *doWorld) rowOf(t *testing.T, has string) string {
+	t.Helper()
+	for _, row := range strings.Split(w.page(t), "<details")[1:] {
+		if strings.Contains(row, has) {
+			return row
+		}
+	}
+	t.Fatalf("no row %q", has)
+	return ""
+}
+
+func TestAnOpenedRowsFormsActThroughTheSamePathsAndGuards(t *testing.T) {
+	const chore, decision = "Wake the laptop", "Use the new store"
+	for _, tc := range []struct {
+		name, row, route string
+		form             url.Values
+		origin           string
+		badToken         bool
+		stale            func(t *testing.T, w *doWorld, it core.Item)
+		want             int
+		state, answer    string
+		snoozed, pr      bool
+	}{
+		{name: "reply answers the item", row: chore, route: "/reply/", form: url.Values{"text": {"it is up"}}, want: http.StatusSeeOther, state: core.ItemAnswered, answer: "it is up"},
+		{name: "a reply needs words", row: chore, route: "/reply/", form: url.Values{"text": {"  "}}, want: http.StatusBadRequest, state: core.ItemOpen},
+		{name: "done answers the item", row: chore, route: "/done/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "done"},
+		{name: "done is not for a row with a check mark", row: decision, route: "/done/", want: http.StatusConflict, state: core.ItemOpen},
+		{name: "later snoozes an item", row: chore, route: "/later/", form: url.Values{"when": {"1h"}}, want: http.StatusSeeOther, state: core.ItemSnoozed, snoozed: true},
+		{name: "later takes only its three", row: chore, route: "/later/", form: url.Values{"when": {"forever"}}, want: http.StatusBadRequest, state: core.ItemOpen},
+		{name: "later snoozes a pull request row", row: "repo#1", route: "/later/", form: url.Values{"when": {"tonight"}}, want: http.StatusSeeOther, pr: true},
+		{name: "accept answers with the rec on show", row: decision, route: "/accept/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "the long rec"},
+		{name: "the check mark answers with the row's words", row: decision, route: "/do/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: decision},
+		{name: "another port does nothing", row: chore, route: "/done/", origin: "http://127.0.0.1:9999", want: http.StatusForbidden, state: core.ItemOpen},
+		{name: "a wrong token does nothing", row: chore, route: "/reply/", form: url.Values{"text": {"x"}}, badToken: true, want: http.StatusForbidden, state: core.ItemOpen},
+		{name: "a row changed since the page does nothing", row: chore, route: "/done/", want: http.StatusConflict, state: core.ItemOpen, stale: func(t *testing.T, w *doWorld, it core.Item) {
+			if _, err := w.c.Prepare(w.observe(t), it.Key(), core.Prepared{Do: "Wake it now"}); err != nil {
+				t.Fatal(err)
+			}
+			w.observe(t)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newDoWorld(t)
+			file := func(it core.Item) core.Item {
+				it.Scope, it.Rec = w.item.Scope, "the long rec"
+				got, err := w.c.Store.AddItem(it)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return got
+			}
+			target := file(core.Item{Kind: core.KindChore, Question: "wake it", DoLine: chore, Session: "chore-session"})
+			if tc.row == decision {
+				target = file(core.Item{Kind: core.KindDecision, Question: "which store?", DoLine: decision, Session: "decision-session"})
+			}
+			w.observe(t)
+			row := w.rowOf(t, tc.row)
+			m := regexp.MustCompile(`name="token" value="([0-9a-f]+)"`).FindStringSubmatch(row)
+			id := regexp.MustCompile(`action="/(?:accept|later)/([0-9a-f]+)"`).FindStringSubmatch(row)
+			if m == nil || id == nil {
+				t.Fatalf("row has no forms: %s", row)
+			}
+			form := url.Values{"token": {m[1]}}
+			if tc.badToken {
+				form.Set("token", "nope")
+			}
+			for k, v := range tc.form {
+				form[k] = v
+			}
+			if tc.stale != nil {
+				tc.stale(t, w, target)
+			}
+			origin := tc.origin
+			if origin == "" {
+				origin = w.srv.URL
+			}
+			if got := w.postTo(t, tc.route, id[1], form, origin); got != tc.want {
+				t.Fatalf("POST answered %d, want %d", got, tc.want)
+			}
+			if tc.pr {
+				w.observe(t)
+				b, err := w.c.Board()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.ContainsFunc(b.Later, func(n core.Need) bool { return n.PR != nil && n.PR.URL == ownPR }) {
+					t.Fatalf("the pull request row did not fold: later %d", len(b.Later))
+				}
+				if len(w.merger.merged) != 0 {
+					t.Fatalf("later merged %v", w.merger.merged)
+				}
+				return
+			}
+			got, err := w.c.Store.Item(target.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.state || got.Answer != tc.answer {
+				t.Fatalf("item %s answered %q, want %s %q", got.State, got.Answer, tc.state, tc.answer)
+			}
+			if tc.snoozed && got.SnoozeUntil.IsZero() {
+				t.Fatal("snoozed with no time to return")
+			}
+		})
+	}
+}
+
+func TestARowsFormsMatchWhatItCanDo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		item func(dir string) core.Item
+		end  bool
+		has  []string
+		not  []string
+	}{
+		{"a decision with a check mark", func(dir string) core.Item {
+			return core.Item{Kind: core.KindDecision, Scope: dir, Question: "q", DoLine: "Use the store", Rec: "r", Session: "a"}
+		}, false, []string{`aria-label="Use the store"`, ">accept rec<", `/later/`, `/reply/`}, []string{`/done/`}},
+		{"an arrow chore", func(dir string) core.Item {
+			return core.Item{Kind: core.KindChore, Scope: dir, Question: "q", DoLine: "Use the store", Session: "a"}
+		}, false, []string{`/done/`, `/later/`, `/reply/`}, []string{`class="check"`, ">accept rec<", `action="/do/`}},
+		{"an item whose goal ended keeps reply and done, not the one tap", func(dir string) core.Item {
+			return core.Item{Kind: core.KindDecision, Scope: dir, Question: "q", DoLine: "Use the store", Rec: "r", Session: "a", Impact: core.ImpactProd}
+		}, true, []string{`/done/`, `/later/`, `/reply/`}, []string{`class="check"`, `action="/do/`, `/accept/`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newDoWorld(t)
+			it := tc.item(w.item.Scope)
+			if tc.end {
+				g, _, err := w.c.NewGoal("ship", w.c.StateDir, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				it.Dossier.Goal = g.ID
+				g.State = core.GoalDone
+				if err := w.c.Store.SaveGoal(g); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := w.c.Store.AddItem(it); err != nil {
+				t.Fatal(err)
+			}
+			w.observe(t)
+			row := w.rowOf(t, "Use the store")
+			for _, want := range tc.has {
+				if !strings.Contains(row, want) {
+					t.Errorf("row lacks %s: %s", want, row)
+				}
+			}
+			for _, not := range tc.not {
+				if strings.Contains(row, not) {
+					t.Errorf("row has %s: %s", not, row)
+				}
 			}
 		})
 	}

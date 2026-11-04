@@ -1182,7 +1182,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if n != nil && n.Accept() != core.CheckNone {
 			need, board := *n, m.board
-			return m, m.do(func() (string, error) { return m.core.DoCheck(board, need) })
+			return m, m.do(func() (string, error) { return m.core.DoAccept(board, need) })
 		}
 	case "f", ",", ".":
 		if r.need != nil {

@@ -239,7 +239,7 @@ func (c *Core) WithHostRows(b Board) (Board, error) {
 				continue
 			}
 			_, _, routed := c.RemoteRef(it.Key())
-			live = append(live, Need{Item: it, Project: sessionOn(it.Host, it.Session), Read: r.At, NoAct: !routed})
+			live = append(live, Need{Item: it, Project: sessionOn(it.Host, it.Session), Read: r.At, NoAct: !routed, Unrouted: !routed})
 		}
 	}
 	if len(live) == 0 {

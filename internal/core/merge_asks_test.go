@@ -455,6 +455,11 @@ func TestACheckMarkOnlyDoesWhatTheRowSays(t *testing.T) {
 		{"review the plan", CheckNone},
 		{"Which store to use", CheckNone},
 		{"Ship it?", CheckNone},
+		{"Look at the options", CheckNone},
+		{"See the plan", CheckNone},
+		{"Read the doc first", CheckNone},
+		{"Do you want this", CheckNone},
+		{"Do the rollout", CheckAccept},
 		{"Ship QA-51 fix to prod", CheckAccept},
 		{"Rotate the 3 exposed creds", CheckAccept},
 		{"Confirm G8 and G12 were you", CheckAccept},
@@ -554,4 +559,61 @@ func TestAnAnswerNobodyWouldActOnGetsNoCheckMark(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAClosedRowAnswersWithItsWordsAndAnOpenedRowWithItsRec(t *testing.T) {
+	item := func(kind string) Item {
+		return Item{Kind: kind, Question: "which store?", DoLine: "Use CAS", Rec: "use CAS because the rest was tried", Options: picks, Session: "asker"}
+	}
+	for _, tc := range []struct {
+		name   string
+		item   Item
+		do     func(*Core, Board, Need) (string, error)
+		answer string
+	}{
+		{"decision, check mark", item(KindDecision), (*Core).DoCheck, "Use CAS"},
+		{"decision, opened row", item(KindDecision), (*Core).DoAccept, "use CAS because the rest was tried"},
+		{"default, check mark", item(KindDefault), (*Core).DoCheck, "Use CAS"},
+		{"default, opened row", item(KindDefault), (*Core).DoAccept, "use CAS because the rest was tried"},
+		{"go, check mark", item(KindGo), (*Core).DoCheck, GoAhead},
+		{"go, opened row", item(KindGo), (*Core).DoAccept, GoAhead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.spawn("asker", "")
+			it, err := w.core.AddOwnerItem(tc.item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tc.do(w.core, w.board(t), Need{Item: &it}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := w.core.Store.Item(it.Key())
+			if err != nil || got.State != ItemAnswered || got.Answer != tc.answer {
+				t.Fatalf("item %s answered %q, %v; want %q", got.State, got.Answer, err, tc.answer)
+			}
+			if told := notice(got); !strings.Contains(told, got.Spoken()) || !strings.Contains(told, tc.answer) {
+				t.Fatalf("the agent is told %q; want the item's key and the answer", told)
+			}
+			if got.Rec != tc.item.Rec {
+				t.Fatalf("the rec changed to %q", got.Rec)
+			}
+		})
+	}
+	t.Run("an asking do-line has nothing for its check mark to do", func(t *testing.T) {
+		w := newOrgWorld(t)
+		w.spawn("asker", "")
+		ask := item(KindDecision)
+		ask.DoLine = "Look at the options"
+		it, err := w.core.AddOwnerItem(ask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.core.DoCheck(w.board(t), Need{Item: &it}); err == nil {
+			t.Fatal("a check mark took an answer on a row that asks")
+		}
+		if got, _ := w.core.Store.Item(it.Key()); got.State != ItemOpen {
+			t.Fatalf("item is %s", got.State)
+		}
+	})
 }

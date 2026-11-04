@@ -231,6 +231,8 @@ type Need struct {
 	// Read is when another host's snapshot showed this row, zero for a row of this host; NoAct is a row whose answer would reach no one.
 	Read  time.Time
 	NoAct bool
+	// Unrouted is a row of a host this one has no way to reach, so nothing done to it can arrive.
+	Unrouted bool
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.

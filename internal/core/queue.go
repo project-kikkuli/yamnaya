@@ -325,7 +325,7 @@ const (
 	CheckMerge
 )
 
-// Check is what the check mark does for this row. An item answers with its rec only when its do-line states that rec, so nothing hidden
+// Check is what the check mark does for this row. An item answers with its do-line, and only a do-line that answers, so nothing hidden
 // is answered; a pull request merges only when the owner's account wrote it.
 func (n Need) Check() Check {
 	switch {
@@ -366,9 +366,22 @@ func (n Need) Accept() Check {
 	return CheckNone
 }
 
-// DoCheck carries out what the row's accept key says, through the same paths ym item go and ym item answer take.
+// DoCheck carries out what a closed row's check mark says: a decision answers with the words the owner read, never a rec they did not.
 func (c *Core) DoCheck(b Board, n Need) (string, error) {
-	switch n.Accept() {
+	if n.Check() == CheckAccept {
+		it, d, err := c.Answer(b, n.Item.Key(), n.Item.DoLine)
+		return it.ID + " answered as its row reads, " + d.String(), err
+	}
+	return c.actOnRow(b, n, n.Check())
+}
+
+// DoAccept carries out what an opened row's accept says: there the rec is on show, so a decision answers with it.
+func (c *Core) DoAccept(b Board, n Need) (string, error) {
+	return c.actOnRow(b, n, n.Accept())
+}
+
+func (c *Core) actOnRow(b Board, n Need, check Check) (string, error) {
+	switch check {
 	case CheckGo:
 		it, d, err := c.Go(b, n.Item.Key())
 		return it.ID + " answered go ahead, " + d.String(), err
@@ -608,12 +621,13 @@ func rank(ns []Need, now time.Time) {
 var askingWords = map[string]bool{
 	"pick": true, "choose": true, "decide": true, "select": true, "review": true, "answer": true, "consider": true, "weigh": true, "compare": true,
 	"how": true, "which": true, "what": true, "whether": true, "should": true, "where": true, "who": true, "when": true, "why": true,
+	"look": true, "see": true, "read": true,
 }
 
 func doLineAsks(do string) bool {
-	do = strings.TrimSpace(do)
+	do = strings.ToLower(strings.TrimSpace(do))
 	first, _, _ := strings.Cut(do, " ")
-	return strings.HasSuffix(do, "?") || askingWords[strings.ToLower(strings.TrimRight(first, ":,"))]
+	return strings.HasSuffix(do, "?") || strings.HasPrefix(do, "do you ") || askingWords[strings.TrimRight(first, ":,")]
 }
 
 func nobodyActs(o Org, it Item) bool {
