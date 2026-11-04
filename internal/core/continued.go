@@ -113,9 +113,6 @@ func (s *Store) RewordItem(ref string, next Item, told string) error {
 	if err != nil {
 		return err
 	}
-	if it.State != ItemOpen && it.State != ItemSnoozed {
-		return nil
-	}
 	opts, err := json.Marshal(next.Options)
 	if err != nil {
 		return err

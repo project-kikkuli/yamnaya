@@ -1241,6 +1241,31 @@ func TestWireItemsStayTrueWhenAnotherLoginChanges(t *testing.T) {
 	}
 }
 
+func TestAResetBeyondTheLongestWindowIsNotBelieved(t *testing.T) {
+	now := time.Date(2026, 11, 4, 3, 1, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name  string
+		reset time.Duration
+		want  time.Duration
+		known bool
+	}{
+		{name: "a week ahead", reset: longestWindow, want: longestWindow, known: true},
+		{name: "a year ahead", reset: 365 * 24 * time.Hour, want: unknownResetBar},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := profile.Profile{Harness: "claude", ID: "default", Account: "claude/u/a"}
+			if err := recordStop(dir, p, now, now.Add(c.reset), nil); err != nil {
+				t.Fatal(err)
+			}
+			b, err := readBar(barPath(dir, p))
+			if err != nil || !b.Until.Equal(now.Add(c.want)) || b.Known != c.known {
+				t.Fatalf("%+v, %v", b, err)
+			}
+		})
+	}
+}
+
 func TestOneLandingClaimsTheAttemptAfterAStop(t *testing.T) {
 	dir := t.TempDir()
 	p := profile.Profile{Harness: "claude", ID: "default", Account: "claude/u/a"}
