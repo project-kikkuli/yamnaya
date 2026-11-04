@@ -136,10 +136,14 @@ func (l launcher) portRecord(rec launch.Record, live core.Live, m migration) (la
 		}
 		defer plan.Close()
 		if live.ID != "" {
+			m.StopAt = time.Now()
+			if err = saveMigration(dir, m); err != nil {
+				return rec, err
+			}
 			if _, err = l.core.Stop(live); err != nil {
 				return rec, fmt.Errorf("%w: %w", errPortRefused, err)
 			}
-			m.Since = time.Now()
+			m.Since, m.StopAt = time.Now(), time.Time{}
 		}
 		m.State = "prepared"
 		if err = saveMigration(dir, m); err != nil {

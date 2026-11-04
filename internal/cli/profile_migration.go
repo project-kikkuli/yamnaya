@@ -55,7 +55,13 @@ type migration struct {
 	Crew      []busyCrew `json:"crew,omitempty"`
 	// Since is when the record began, or the switch's own stop: a kill stamp past it is the owner's, not the switch's.
 	Since time.Time `json:"since,omitzero"`
+	// StopAt is a stop of this switch's under way, saved before it, so a kill mark just after it is the switch's own if ym dies right there.
+	StopAt time.Time `json:"stop_at,omitzero"`
 }
+
+// ownStopWindow is how soon after a switch's stop began a kill mark is that stop's: a stop gives its processes seconds to end. An owner's own
+// stop later than that, or a kill that lands the session, stands.
+const ownStopWindow = 30 * time.Second
 
 // inherit keeps the reason and note a queued switch to the same login was saved with when the attempt applying it brings none.
 func (m *migration) inherit(prior migration) {
@@ -288,6 +294,21 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		}
 		rec, recorded := l.records.Find(m.Source.Key)
 		_, live := b.Session(m.Source.Session)
+		if recorded && !live && !m.StopAt.IsZero() && !rec.IsLanded() {
+			switch {
+			case rec.Killed.IsZero():
+				m.Since = time.Now()
+			case !rec.Killed.Before(m.StopAt) && rec.Killed.Before(m.StopAt.Add(ownStopWindow)):
+				if err = l.forgetOwnStop(rec.Key); err != nil {
+					return err
+				}
+				rec.Killed, m.Since = time.Time{}, time.Now()
+			}
+			m.StopAt = time.Time{}
+			if err = saveMigration(dir, m); err != nil {
+				return err
+			}
+		}
 		landed := recorded && rec.IsLanded()
 		killed := recorded && rec.Killed.After(m.Since)
 		early := m.State == "queued" || m.State == "prepared"

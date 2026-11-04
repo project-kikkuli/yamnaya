@@ -2899,6 +2899,113 @@ func TestWireADeliveryInTheBoxIsNoDraft(t *testing.T) {
 	}
 }
 
+// ym dying between a port's stop and its write leaves a kill mark that is ym's: the session is not ended by it. An owner's kill stands.
+func TestWireACrashBetweenAPortsStopAndItsWrite(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		owner  func(*testing.T, *wireWorld, core.Live)
+		closed bool
+	}{
+		{name: "the mark is ym's own"},
+		{name: "the owner kills it while the record is in flight", closed: true, owner: func(t *testing.T, w *wireWorld, s core.Live) {
+			if _, err := w.l.End(s.Key(), ""); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "the owner stops it later", closed: true, owner: func(t *testing.T, w *wireWorld, s core.Live) {
+			rec, _ := w.l.records.Find(w.rec.Key)
+			m, err := loadMigration(w.state, "claude", profileConversation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A stop past the window: the record's clock says it was a later act.
+			m.StopAt = m.StopAt.Add(-time.Minute)
+			m.Since = m.StopAt
+			if err = saveMigration(w.state, m); err != nil {
+				t.Fatal(err)
+			}
+			rec.Killed = m.StopAt.Add(ownStopWindow + time.Second)
+			if err := w.l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.addCodex(t)
+			ports := countPorts(w)
+			w.exhaust(t, w.work, w.other)
+			w.screen(t, w.def, wireDialog(t), "waiting")
+			w.land(t)
+			w.landed = false
+			ps, err := profile.Load(w.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cx, err := profile.Find(ps, "codex", "codex-main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.pass(t, time.Minute)
+			var saved migration
+			signal := w.c.Signal
+			w.c.Signal = func(pid int, sig syscall.Signal) error {
+				saved, _ = loadMigration(w.state, "claude", profileConversation)
+				if signal != nil {
+					return signal(pid, sig)
+				}
+				return syscall.Kill(pid, sig)
+			}
+			b, err := w.c.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s, _ := b.Session(profileConversation)
+			rec, _ := w.l.records.Find(w.rec.Key)
+			plan := core.PortPlan{Close: func() {}, Write: func() (string, error) { return "", errors.New("unreachable") }}
+			w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) { return plan, nil }
+			crash := errors.New("ym died here")
+			plan.Write = func() (string, error) { return "", crash }
+			m := migration{Version: 1, Source: rec, Destination: cx, State: "prepared", Since: time.Now()}
+			if err = saveMigration(w.state, m); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = w.l.portRecord(rec, s, m); !errors.Is(err, crash) {
+				t.Fatalf("portRecord: %v", err)
+			}
+			if saved.StopAt.IsZero() {
+				t.Fatalf("the stop was not on record before it happened: %+v", saved)
+			}
+			// What the crash leaves: the record as it stood at the stop, and the stop's kill mark.
+			if err = saveMigration(w.state, saved); err != nil {
+				t.Fatal(err)
+			}
+			if c.owner != nil {
+				c.owner(t, w, s)
+			}
+			w.restartServe(t)
+			*ports = 0
+			w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) {
+				*ports++
+				return core.PortPlan{}, errors.New("counted, not written")
+			}
+			w.row(t, w.def, -1, 5, w.clock.Add(24*time.Hour))
+			w.screen(t, w.def, wireIdle, "idle")
+			if err = updateBar(w.state, w.def, func(b *loginBar) error { b.Showing = false; return nil }); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				w.pass(t, time.Minute)
+			}
+			time.Sleep(300 * time.Millisecond)
+			starts := len(w.starts(t))
+			if c.closed && starts != 1 || !c.closed && starts != 2 {
+				t.Fatalf("starts %q, want closed %v", w.starts(t), c.closed)
+			}
+		})
+	}
+}
+
 func TestLoginRecordKeepsEveryConcurrentWrite(t *testing.T) {
 	dir := t.TempDir()
 	p := profile.Profile{Harness: "claude", ID: "default", Account: "claude/u/a"}
