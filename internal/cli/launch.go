@@ -301,7 +301,7 @@ func (l launcher) find(ref string) (launch.Record, error) {
 	// A record holding a bundle keeps the head it was bundled at, whatever now sits at its path.
 	if head := launch.Head(rec.Worktree.Path); head != "" && head != rec.Head && rec.Recovery == (launch.Recovery{}) {
 		rec.Head = head
-		if err := l.records.Save(rec); err != nil {
+		if err := l.saveRead(rec); err != nil {
 			return rec, err
 		}
 	}
@@ -757,7 +757,7 @@ func (l launcher) Launched() []core.Launched {
 	for _, rec := range all {
 		if rec.IsLanded() {
 			out = append(out, core.Launched{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, Session: rec.Session, State: "landed", Path: rec.Worktree.Path, Landed: rec.Landed,
-				Killed: rec.Killed, Recovered: rec.Recovery.Bundle != ""})
+				Killed: rec.Killed, Recovered: rec.Recovery.Bundle != "" || len(rec.Shelved) > 0})
 			continue
 		}
 		if !rec.Seen.IsZero() {
@@ -778,7 +778,7 @@ func (l launcher) Launched() []core.Launched {
 			_, st = l.state(rec)
 		}
 		if was := rec; !reflect.DeepEqual(mark(&rec, st), was) {
-			if err := l.records.Save(rec); err != nil {
+			if err := l.saveRead(rec); err != nil {
 				if l.core != nil && l.core.Log != nil {
 					l.core.Log(fmt.Sprintf("save launch %s: %v", rec.Key, err))
 				}
@@ -950,6 +950,14 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 
 // restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
 func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, string, error) {
+	unlock, err := l.waitEnd(rec.Key)
+	if err != nil {
+		return nil, "", err
+	}
+	defer unlock()
+	if now, ok := l.records.Find(rec.Key); ok {
+		rec = now
+	}
 	if err := recordProfile(rec).DefaultConstraint(); err != nil {
 		return nil, "", err
 	}
@@ -985,6 +993,10 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	was := rec
 	clones := l.clones(rec)
 	kept := ""
+	if rec.Recovery == (launch.Recovery{}) && len(rec.Shelved) > 0 && launch.Head(rec.Worktree.Path) != "" && !launch.SameCheckout(rec.Worktree) {
+		return nil, "", fmt.Errorf("%s holds another checkout than %s's, so ym did not resume there and keeps its saved work in %s; move that checkout aside and revive again",
+			rec.Worktree.Path, rec.Key, rec.Shelved[0].Bundle)
+	}
 	if rec.Recovery != (launch.Recovery{}) && launch.Head(rec.Worktree.Path) != "" {
 		switch rec.Recovery.Standing(rec.Worktree, rec.Key) {
 		case launch.WorkHere:
@@ -994,7 +1006,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 			rec.Recovery = launch.Recovery{}
 		case launch.WorkChanged:
 			kept = fmt.Sprintf("ym cannot show its worktree still holds what ym saved at its end, so that work stays in %s, not applied", rec.Recovery.Bundle)
-			if _, err := os.Stat(rec.Recovery.Bundle); err != nil {
+			if _, err := os.Stat(rec.Recovery.Bundle); errors.Is(err, os.ErrNotExist) {
 				kept = fmt.Sprintf("its worktree differs from the work ym saved, and the bundle that held it, %s, is gone", rec.Recovery.Bundle)
 			}
 		case launch.WorkElsewhere:
@@ -1157,7 +1169,7 @@ func (l launcher) Sweep(seen map[string]string) error {
 		if rec.Repo == "" && rec.Worktree.GitDir != "" {
 			if _, err := os.Stat(rec.Worktree.GitDir); err == nil {
 				rec.Repo = core.RepoID(rec.Worktree.GitDir)
-				l.records.Save(rec)
+				l.saveRead(rec)
 			}
 		}
 		was, ok := seen[rec.Key]
@@ -1180,17 +1192,34 @@ func (l launcher) Sweep(seen map[string]string) error {
 		if err = l.unused(rec, dirs); err != nil {
 			continue
 		}
+		// Serve's pass moves on from a record another process is ending, and looks again next pass.
+		unlock, free, lockErr := l.tryEnd(rec.Key)
+		if lockErr != nil {
+			errs = append(errs, lockErr)
+			continue
+		}
+		if !free {
+			continue
+		}
+		now, ok := l.records.Find(rec.Key)
+		if !ok || now.IsLanded() {
+			unlock()
+			continue
+		}
+		rec = now
 		if rec.Adopted {
 			_, err = l.land(rec)
 		} else {
-			_, err = l.end(rec, "", st+", cleaned up by ym serve; ym revive "+rec.Key+" restores it")
+			_, err = l.endHeld(rec, "", st+", cleaned up by ym serve; ym revive "+rec.Key+" restores it")
 		}
 		if err == nil {
+			unlock()
 			continue
 		}
 		rec, _ = l.records.Find(rec.Key)
 		rec.Blocked, rec.Stamp = err.Error(), launch.Stamp(rec.Worktree.Path)
 		errs = append(errs, l.records.Save(rec))
+		unlock()
 		if !errors.As(err, &unlandable{}) {
 			errs = append(errs, err)
 		}
@@ -1307,9 +1336,86 @@ func (l launcher) End(ref, goal string) (string, error) {
 	return l.end(rec, goal, "killed")
 }
 
-// end closes rec's pane, bundles the worktree's work no remote holds, removes the worktree unless gc would keep it for what it
-// holds, and marks rec landed for why. A worktree that stays is gc's from then on, whatever the record says.
+// endWait bounds waiting on another process ending or reviving the same record; an end with a hung remote takes over a minute.
+var endWait = 5 * time.Minute
+
+func (l launcher) endLock(key string) (*os.File, error) {
+	dir := filepath.Join(filepath.Dir(l.records.Dir), "end-locks")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(filepath.Join(dir, key+".lock"), os.O_CREATE|os.O_RDWR, 0o644)
+}
+
+// tryEnd takes the lock ending or reviving the record key holds, which a holder's death releases; free is false while another holds it.
+func (l launcher) tryEnd(key string) (unlock func(), free bool, err error) {
+	f, err := l.endLock(key)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, false, nil
+	}
+	return func() { f.Close() }, true, nil
+}
+
+// waitEnd takes the lock tryEnd does, waiting up to endWait and saying so.
+func (l launcher) waitEnd(key string) (func(), error) {
+	deadline := time.Now().Add(endWait)
+	for said := false; ; time.Sleep(100 * time.Millisecond) {
+		unlock, free, err := l.tryEnd(key)
+		if err != nil || free {
+			return unlock, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another ym is still ending or reviving %s after %s; try again", key, endWait)
+		}
+		if !said {
+			said = true
+			line := "waiting for another ym ending or reviving " + key
+			if l.core != nil && l.core.Log != nil {
+				l.core.Log(line)
+			} else {
+				fmt.Fprintln(os.Stderr, line)
+			}
+		}
+	}
+}
+
+// saveRead saves rec, read a while ago, unless an end holds its lock or has since landed it or changed what it bundled.
+func (l launcher) saveRead(rec launch.Record) error {
+	unlock, free, err := l.tryEnd(rec.Key)
+	if err != nil || !free {
+		return err
+	}
+	defer unlock()
+	if now, ok := l.records.Find(rec.Key); ok && (now.IsLanded() != rec.IsLanded() || now.Recovery != rec.Recovery || !slices.Equal(now.Shelved, rec.Shelved)) {
+		return nil
+	}
+	return l.records.Save(rec)
+}
+
+// end is endHeld under the record's lock, on the record as it stands once the lock is held: an end that lost the race is done.
 func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
+	unlock, err := l.waitEnd(rec.Key)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	now, ok := l.records.Find(rec.Key)
+	if !ok {
+		return "", fmt.Errorf("%s: %w", rec.Key, core.ErrNotFound)
+	}
+	if now.IsLanded() {
+		return fmt.Sprintf("%s already ended %s", now.Key, now.Landed.Format(time.DateTime)), nil
+	}
+	return l.endHeld(now, goal, why)
+}
+
+// endHeld closes rec's pane, bundles the worktree's work no remote holds, removes the worktree unless gc would keep it for what it
+// holds, and marks rec landed for why. A worktree that stays is gc's from then on, whatever the record says.
+func (l launcher) endHeld(rec launch.Record, goal, why string) (string, error) {
 	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 		return "", err
 	}
@@ -1322,11 +1428,18 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 			stays = reason
 		}
 		if rec.Recovery != (launch.Recovery{}) {
-			earlier, err := rec.Recovery.Shelve(rec.Worktree.GitDir, rec.Key)
+			original := rec.Recovery
+			earlier, err := original.Shelve(rec.Worktree.GitDir, rec.Key)
 			if err != nil {
 				return "", fmt.Errorf("keep the earlier work of %s: %w", rec.Key, err)
 			}
 			rec.Shelved, rec.Recovery = append(rec.Shelved, earlier), launch.Recovery{}
+			if err := l.records.Save(rec); err != nil {
+				return "", err
+			}
+			if err := original.Release(rec.Worktree.GitDir, rec.Key); err != nil {
+				return "", err
+			}
 		}
 		// A worktree that stays keeps its work whether or not the bundle could take it.
 		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {

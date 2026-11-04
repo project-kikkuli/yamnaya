@@ -20,6 +20,8 @@ type Recovery struct {
 	Files   int    `json:"files,omitempty"`
 	// Origin is the repository's origin URL, so the work can be rebuilt once the repository is gone.
 	Origin string `json:"origin,omitempty"`
+	// Ref is the ref a shelved bundle's commits stay reachable by.
+	Ref string `json:"ref,omitempty"`
 }
 
 // Toll is what removing a worktree would take with it: commits no remote or default branch holds, and changed or untracked files.
@@ -130,12 +132,7 @@ const (
 // stays w. Only its commits being in that HEAD and its tree matching prove the bundle holds nothing more, because a worktree added
 // again by hand, amended, rebased or reset on the same branch is w by every other measure.
 func (r Recovery) Standing(w Worktree, key string) int {
-	common, err := git(w.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || !samePath(common, w.GitDir) {
-		return WorkElsewhere
-	}
-	branch, _ := git(w.Path, "symbolic-ref", "--short", "-q", "HEAD")
-	if branch != w.Branch {
+	if !SameCheckout(w) {
 		return WorkElsewhere
 	}
 	base := recoveryRef(key)
@@ -145,7 +142,7 @@ func (r Recovery) Standing(w Worktree, key string) int {
 	fetched := r.Fetch(w.GitDir, key) == nil
 	head := Head(w.Path)
 	behind := fetched && local("--git-dir="+w.GitDir, "merge-base", "--is-ancestor", base, head) == nil
-	if branch == "" && !behind {
+	if w.Branch == "" && !behind {
 		return WorkElsewhere
 	}
 	if !behind {
@@ -172,41 +169,67 @@ func (r Recovery) Standing(w Worktree, key string) int {
 	return WorkChanged
 }
 
+// SameCheckout reports whether what sits at w's path shares w's repository and is on w's branch.
+func SameCheckout(w Worktree) bool {
+	common, err := git(w.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || !samePath(common, w.GitDir) {
+		return false
+	}
+	branch, _ := git(w.Path, "symbolic-ref", "--short", "-q", "HEAD")
+	return branch == w.Branch
+}
+
 func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
 }
 
-// Shelve moves this bundle and its ref to a name of their own, so a later Stash of key cannot touch them.
+// Shelve copies this bundle and its ref to a place of their own, in a space no key's bundle or ref can reach, so a later Stash of
+// key cannot touch them. The original goes with Release only once the record names the copy, so no crash leaves work nothing names.
 func (r Recovery) Shelve(gitDir, key string) (Recovery, error) {
-	dir, name := filepath.Dir(r.Bundle), key
+	gd := "--git-dir=" + gitDir
+	dir := filepath.Join(filepath.Dir(r.Bundle), "shelved", key)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return r, err
+	}
+	shelved := r
 	for n := 1; ; n++ {
-		name = fmt.Sprintf("%s-%d", key, n)
-		if _, err := os.Stat(filepath.Join(dir, name+".bundle")); err != nil {
+		shelved.Bundle = filepath.Join(dir, strconv.Itoa(n)+".bundle")
+		shelved.Ref = "refs/ym-recovery-shelved/" + key + "/" + strconv.Itoa(n)
+		_, err := os.Lstat(shelved.Bundle)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return r, err
+		}
+		if err != nil && gitCommand(gd, "rev-parse", "--verify", "--quiet", shelved.Ref).Run() != nil {
 			break
 		}
 	}
-	shelved := r
-	shelved.Bundle = filepath.Join(dir, name+".bundle")
-	if err := os.Rename(r.Bundle, shelved.Bundle); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Link(r.Bundle, shelved.Bundle); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return r, err
 	}
-	gd := "--git-dir=" + gitDir
 	if tip, err := gitCommand(gd, "rev-parse", "--verify", "--quiet", recoveryRef(key)).Output(); err == nil {
-		if err := gitCommand(gd, "update-ref", recoveryRef(name), strings.TrimSpace(string(tip))).Run(); err != nil {
+		if err := gitCommand(gd, "update-ref", shelved.Ref, strings.TrimSpace(string(tip))).Run(); err != nil {
 			return r, err
 		}
-		gitCommand(gd, "update-ref", "-d", recoveryRef(key)).Run()
 	}
 	return shelved, nil
+}
+
+// Release removes the original of a bundle Shelve copied.
+func (r Recovery) Release(gitDir, key string) error {
+	gitCommand("--git-dir="+gitDir, "update-ref", "-d", recoveryRef(key)).Run()
+	if err := os.Remove(r.Bundle); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // Settled drops a shelved bundle of commits alone once the worktree at path holds them all, or when its file is gone, and says so.
 // Any other shelved bundle stays: its files were never put back, and nothing but the owner can say they are no longer wanted.
 func (r Recovery) Settled(path string) bool {
 	if _, err := os.Stat(r.Bundle); err != nil {
-		return true
+		return errors.Is(err, fs.ErrNotExist)
 	}
 	if r.Work != "" {
 		return false
@@ -216,7 +239,8 @@ func (r Recovery) Settled(path string) bool {
 	if err != nil || !ok || local("-C", path, "merge-base", "--is-ancestor", tip, "HEAD") != nil {
 		return false
 	}
-	return r.Drop(path, strings.TrimSuffix(filepath.Base(r.Bundle), ".bundle")) == nil
+	git(path, "update-ref", "-d", r.Ref)
+	return os.Remove(r.Bundle) == nil
 }
 
 // Fetch brings the bundled commits of key into the repository at gitDir, so its worktree can be recreated at them.

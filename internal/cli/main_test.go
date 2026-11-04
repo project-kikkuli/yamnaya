@@ -24,6 +24,10 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if os.Getenv(endHelper) != "" {
+		runEndHelper()
+		os.Exit(0)
+	}
 	if os.Getenv(testChild) != "" {
 		os.Exit(0)
 	}

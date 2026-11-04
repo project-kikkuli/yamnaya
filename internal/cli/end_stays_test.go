@@ -702,6 +702,251 @@ func TestALaterEndNeverLosesABundleReviveKept(t *testing.T) {
 	}
 }
 
+// keptBundle is a session with a .env, killed with a commit nothing else holds, then revived with that commit collected from its
+// branch, so its record holds the only bundle of it.
+func keptBundle(t *testing.T, base, key, branch string, l launcher) (rec launch.Record, repo, wt, only string) {
+	t.Helper()
+	repo = filepath.Join(base, "repo")
+	if _, err := os.Stat(repo); err != nil {
+		git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+		git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+		plant(t, repo, ".gitignore", ".env\n")
+		git(t, repo, "add", ".")
+		git(t, repo, "commit", "-q", "-m", "root")
+		git(t, repo, "push", "-q", "origin", "main")
+	}
+	wt = launch.WorktreePath(repo, branch)
+	git(t, repo, "worktree", "add", "-q", "-b", branch, wt)
+	plant(t, wt, ".env", "SECRET=1")
+	git(t, wt, "commit", "-q", "--allow-empty", "-m", "only here: "+key)
+	only = launch.Head(wt)
+	rec = launch.Record{Key: key, Harness: "claude", Session: "s-" + key, Prompt: "fix it", Started: time.Now(), Head: only,
+		Worktree: launch.Worktree{Path: wt, Branch: branch, GitDir: filepath.Join(repo, ".git")}}
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.End(key, ""); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "reset", "-q", "--hard", "origin/main")
+	collect(t, repo)
+	if msg, err := l.Revive(key); err != nil || !strings.Contains(msg, "stays in") {
+		t.Fatalf("revive said %q, %v", msg, err)
+	}
+	return rec, repo, wt, only
+}
+
+func collect(t *testing.T, repo string) {
+	t.Helper()
+	matches, _ := filepath.Glob(filepath.Join(repo, ".git", "worktrees", "*", "ORIG_HEAD"))
+	for _, m := range matches {
+		os.Remove(m)
+	}
+	git(t, repo, "reflog", "expire", "--expire=now", "--all")
+	git(t, repo, "gc", "-q", "--prune=now")
+}
+
+func holdsCommit(t *testing.T, repo, bundle, commit string) {
+	t.Helper()
+	heads, err := exec.Command("git", "-C", repo, "bundle", "list-heads", bundle).Output()
+	if err != nil || !strings.Contains(string(heads), commit) {
+		t.Fatalf("%s lists %q, %v; want %s", bundle, heads, err, commit)
+	}
+	git(t, repo, "cat-file", "-e", commit)
+}
+
+func TestAShelfNeverCollidesWithAnotherSessionsBundle(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	l := testLauncher(t, base)
+	_, repo, _, only := keptBundle(t, base, "co", "co", l)
+	if _, err := l.End("co", ""); err != nil {
+		t.Fatal(err)
+	}
+	shelf := func() string {
+		rec, _ := l.records.Find("co")
+		if len(rec.Shelved) != 1 {
+			t.Fatalf("co shelved %+v", rec.Shelved)
+		}
+		return rec.Shelved[0].Bundle
+	}
+	keptBundle(t, base, "co-1", "co-1", l)
+	if _, err := l.End("co-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Revive("co-1"); err != nil {
+		t.Fatal(err)
+	}
+	collect(t, repo)
+	holdsCommit(t, repo, shelf(), only)
+}
+
+func TestAShelfSurvivesAnEndThatFailsAndACrashInTheWindow(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	t.Run("a stash that fails after the shelve", func(t *testing.T) {
+		fakeAgent(t)
+		base, _ := filepath.EvalSymlinks(t.TempDir())
+		l := testLauncher(t, base)
+		rec, repo, wt, only := keptBundle(t, base, "co", "co", l)
+		os.Remove(filepath.Join(wt, ".env"))
+		secret := filepath.Join(wt, "secret.txt")
+		plant(t, wt, "secret.txt", "only here")
+		os.Chmod(secret, 0)
+		t.Cleanup(func() { os.Chmod(secret, 0o644) })
+		if _, err := l.End(rec.Key, ""); err == nil {
+			t.Fatal("ended a session whose work it could not bundle")
+		}
+		after, _ := l.records.Find(rec.Key)
+		if after.Recovery != (launch.Recovery{}) || len(after.Shelved) != 1 {
+			t.Fatalf("saved recovery %+v, shelved %+v", after.Recovery, after.Shelved)
+		}
+		holdsCommit(t, repo, after.Shelved[0].Bundle, only)
+		msg, err := l.Revive(rec.Key)
+		if err != nil || !strings.Contains(msg, after.Shelved[0].Bundle) || strings.Contains(msg, "that held it") {
+			t.Fatalf("revive said %q, %v", msg, err)
+		}
+	})
+	t.Run("a crash before the record names the shelf", func(t *testing.T) {
+		fakeAgent(t)
+		base, _ := filepath.EvalSymlinks(t.TempDir())
+		l := testLauncher(t, base)
+		rec, repo, _, only := keptBundle(t, base, "co", "co", l)
+		held, _ := l.records.Find(rec.Key)
+		orphan, err := held.Recovery.Shelve(held.Worktree.GitDir, held.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		holdsCommit(t, repo, held.Recovery.Bundle, only)
+		if _, err := l.End(rec.Key, ""); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := l.records.Find(rec.Key)
+		if len(after.Shelved) != 1 || after.Shelved[0].Bundle == orphan.Bundle {
+			t.Fatalf("shelved %+v over the crash's copy %s", after.Shelved, orphan.Bundle)
+		}
+		holdsCommit(t, repo, after.Shelved[0].Bundle, only)
+		holdsCommit(t, repo, orphan.Bundle, only)
+	})
+	t.Run("a crash once the record names the shelf", func(t *testing.T) {
+		fakeAgent(t)
+		base, _ := filepath.EvalSymlinks(t.TempDir())
+		l := testLauncher(t, base)
+		rec, repo, wt, only := keptBundle(t, base, "co", "co", l)
+		held, _ := l.records.Find(rec.Key)
+		shelved, err := held.Recovery.Shelve(held.Worktree.GitDir, held.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held.Shelved, held.Recovery = []launch.Recovery{shelved}, launch.Recovery{}
+		if err := l.records.Save(held); err != nil {
+			t.Fatal(err)
+		}
+		plant(t, wt, "new.txt", "later")
+		if _, err := l.End(rec.Key, ""); err != nil {
+			t.Fatal(err)
+		}
+		collect(t, repo)
+		holdsCommit(t, repo, shelved.Bundle, only)
+		if msg, err := l.Revive(rec.Key); err != nil || !strings.Contains(msg, shelved.Bundle) {
+			t.Fatalf("revive said %q, %v", msg, err)
+		}
+	})
+}
+
+func TestAShelfNameIsNeverReusedWhileItsRefOrFileRemains(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	l := testLauncher(t, base)
+	rec, repo, wt, only := keptBundle(t, base, "co", "co", l)
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := l.records.Find(rec.Key)
+	os.Remove(first.Shelved[0].Bundle)
+	if _, err := l.Revive(rec.Key); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "commit", "-q", "--allow-empty", "-m", "second, only here")
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "reset", "-q", "--hard", "origin/main")
+	if _, err := l.Revive(rec.Key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := l.records.Find(rec.Key)
+	if len(second.Shelved) != 1 || second.Shelved[0].Ref == first.Shelved[0].Ref {
+		t.Fatalf("second shelf %+v took the first's ref %s", second.Shelved, first.Shelved[0].Ref)
+	}
+	collect(t, repo)
+	git(t, repo, "cat-file", "-e", only)
+}
+
+func TestAShelfStaysThroughAnUnreadableRecoveryDirectory(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	l := testLauncher(t, base)
+	rec, _, wt, _ := keptBundle(t, base, "co", "co", l)
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := l.records.Find(rec.Key)
+	dir := filepath.Dir(after.Shelved[0].Bundle)
+	os.Chmod(dir, 0)
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if after.Shelved[0].Settled(wt) {
+		t.Fatal("dropped a shelf it could not look at")
+	}
+	os.Chmod(dir, 0o755)
+	os.Remove(after.Shelved[0].Bundle)
+	if !after.Shelved[0].Settled(wt) {
+		t.Fatal("kept a shelf whose file is truly gone")
+	}
+}
+
+func TestAShelfAloneStillRefusesAForeignCheckoutAndCountsAsSavedWork(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	l := testLauncher(t, base)
+	rec, repo, wt, _ := keptBundle(t, base, "co", "co", l)
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := l.records.Find(rec.Key)
+	if after.Recovery != (launch.Recovery{}) || len(after.Shelved) != 1 {
+		t.Fatalf("recovery %+v, shelved %+v", after.Recovery, after.Shelved)
+	}
+	if rows := l.Launched(); len(rows) != 1 || !rows[0].Recovered {
+		t.Fatalf("rows %+v; want a shelf to count as saved work", rows)
+	}
+	git(t, repo, "worktree", "remove", "--force", "--force", wt)
+	git(t, base, "init", "-q", "-b", "co", wt)
+	git(t, wt, "commit", "-q", "--allow-empty", "-m", "unrelated")
+	if _, err := l.Revive(rec.Key); err == nil || !strings.Contains(err.Error(), after.Shelved[0].Bundle) {
+		t.Fatalf("revive into a foreign checkout said %v; want a refusal naming the shelf", err)
+	}
+	if _, err := os.Stat(after.Shelved[0].Bundle); err != nil {
+		t.Fatalf("the shelf went: %v", err)
+	}
+}
+
 func TestALaterGCRemovesAWorktreeThatStayedOnceNothingHoldsIt(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
