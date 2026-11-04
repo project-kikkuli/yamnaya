@@ -507,9 +507,14 @@ func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profil
 	usable := usableLogins(dir, a, ps, limits, now)
 	same := slices.DeleteFunc(slices.Clone(usable), func(p profile.Profile) bool { return p.Harness != e.Harness })
 	_, unanswered := l.loginChecks(same, e.Account)
-	answering := slices.DeleteFunc(same, func(p profile.Profile) bool { return unanswered[loginKey(p)] })
+	answering := slices.DeleteFunc(slices.Clone(same), func(p profile.Profile) bool { return unanswered[loginKey(p)] })
 	if target, err := failoverTarget(answering, e, cwd); err == nil {
 		return target, nil
+	}
+	for _, p := range same {
+		if unanswered[loginKey(p)] {
+			return profile.Profile{}, errors.New(l.unansweredReason(p))
+		}
 	}
 	other, err := failoverTarget(usable, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, cwd)
 	if err != nil {
