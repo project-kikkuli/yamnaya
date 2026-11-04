@@ -355,7 +355,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(frameTime, func(time.Time) tea.Msg { return mountainFrame{} })
 		}
 		m.peaks.ticking = false
-		m.peaks.frame = int(time.Since(m.peaks.start) / scene.Step)
+		// A frame stands until the screen reaches it, or on a link slower than the scene the top rows never arrive.
+		if sc := m.peaks.screen; sc == nil || sc.left == 0 {
+			m.peaks.frame = int(time.Since(m.peaks.start) / scene.Step)
+		}
 		m.settle(true)
 		return m, m.animate()
 	case tea.BlurMsg:
