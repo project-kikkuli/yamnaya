@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,17 +46,36 @@ func TestKillUsesTheMutationResultAndOnlyAcceptsConfirmedAbsence(t *testing.T) {
 	}
 }
 
-func TestPaneAsksAgainWhenTheServerEndsMidAnswer(t *testing.T) {
-	dir := t.TempDir()
-	count := filepath.Join(dir, "count")
-	t.Setenv("YM_PANE_FIXTURE_COUNT", count)
-	script := "#!/bin/sh\nif [ -e \"$YM_PANE_FIXTURE_COUNT\" ]; then echo 'no server running on /tmp/fixture' >&2; else : > \"$YM_PANE_FIXTURE_COUNT\"; echo 'server exited unexpectedly' >&2; fi\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	h := Host{Socket: "fixture"}
-	if _, err := h.Pane("work"); !errors.Is(err, core.ErrNotFound) {
-		t.Fatalf("Pane error=%v, expected the session to be gone", err)
+func TestReadingPanesAsksAgainWhenTheServerEndsMidAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		read func(h *Host) error
+	}{
+		{"Pane says the session is gone", func(h *Host) error {
+			if _, err := h.Pane("work"); !errors.Is(err, core.ErrNotFound) {
+				return fmt.Errorf("Pane = %v, want the session gone", err)
+			}
+			return nil
+		}},
+		{"Panes says there are none", func(h *Host) error {
+			if all, err := h.Panes(); err != nil || len(all) != 0 {
+				return fmt.Errorf("Panes = %v, %v, want none", all, err)
+			}
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			count := filepath.Join(dir, "count")
+			t.Setenv("YM_PANE_FIXTURE_COUNT", count)
+			script := "#!/bin/sh\nif [ -e \"$YM_PANE_FIXTURE_COUNT\" ]; then echo 'no server running on /tmp/fixture' >&2; else : > \"$YM_PANE_FIXTURE_COUNT\"; echo 'server exited unexpectedly' >&2; fi\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := tc.read(&Host{Socket: "fixture"}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -164,7 +164,7 @@ func TestServerKeepsExitedAgentsAndRespawnsThem(t *testing.T) {
 		t.Errorf("Pane after Kill = %v, want ErrNotFound", err)
 	}
 	if all, err := h.Panes(); err != nil || all["repo-wt-x"] != (Pane{}) {
-		t.Error("Panes still lists the killed session")
+		t.Errorf("Panes after Kill = %+v, %v; want the session gone", all["repo-wt-x"], err)
 	}
 	if err := h.Kill("repo-wt-x"); err != nil {
 		t.Errorf("Kill of a gone session = %v", err)

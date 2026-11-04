@@ -128,7 +128,14 @@ func (h *Host) table() (map[string]pane, map[string]Pane, error) {
 		return h.panes, h.sessions, nil
 	}
 	at, listed := time.Now(), h.stamp
-	out, err := h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t"+paneFormat)
+	list := func() (string, error) {
+		return h.run("list-panes", "-a", "-F", "#{pane_tty}\t#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{session_name}\t"+paneFormat)
+	}
+	out, err := list()
+	if ending(err) {
+		// As in Pane: asked again, the server says whether it is still there.
+		out, err = list()
+	}
 	if err != nil && !gone(err) {
 		h.panes, h.sessions = nil, nil
 		return map[string]pane{}, map[string]Pane{}, err
