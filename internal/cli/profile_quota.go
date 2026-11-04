@@ -194,7 +194,7 @@ func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg strin
 		if err == nil {
 			return true, out.Message, nil
 		}
-		if pending, loadErr := loadMigration(dir, rec.Harness, rec.Session); errors.Is(err, profile.ErrOperationBusy) || loadErr != nil || pending.Version != 0 && pending.State != "running" {
+		if pending, loadErr := loadMigration(dir, rec.Harness, rec.Session); errors.Is(err, profile.ErrOperationBusy) || errors.Is(err, errStatusUnanswered) || loadErr != nil || pending.Version != 0 && pending.State != "running" {
 			return true, "", err
 		}
 		failure = err

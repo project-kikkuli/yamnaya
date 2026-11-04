@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"syscall"
 	"time"
 
@@ -235,7 +238,7 @@ func (l launcher) noteLogin(dir string, ps []profile.Profile, p profile.Profile,
 	if open && current.Said == said || !open && current.Filing.After(now) {
 		return nil
 	}
-	signedOut, unanswered := loginChecks(usable, p.Account)
+	signedOut, unanswered := l.loginChecks(usable, p.Account)
 	usable = slices.DeleteFunc(usable, func(q profile.Profile) bool { return signedOut[q.Account] })
 	it := quotaItem(ps, usable, unanswered, core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account, Session: session}, reset, current.Until)
 	if open {
@@ -334,32 +337,142 @@ func (l launcher) closeLoginItem(dir string, p profile.Profile, why string) erro
 // authBudget is how long ym waits on native status checks, as one can hang for its whole timeout inside serve's cycle.
 const authBudget = 2 * time.Second
 
-// loginChecks asks the logins' native status at once, but for the account given. A check that does not answer in time says nothing either way.
-func loginChecks(ps []profile.Profile, except string) (signedOut, unanswered map[string]bool) {
-	signedOut, unanswered = map[string]bool{}, map[string]bool{}
-	type result struct {
-		account string
-		out     bool
+// statusChecks keeps what native status checks answered: one slower than a pass waits still answers the next pass, however long it took.
+type statusChecks struct {
+	mu      sync.Mutex
+	answers map[string]statusAnswer
+	running map[string]chan struct{}
+}
+
+type statusAnswer struct {
+	out bool
+	at  time.Time
+}
+
+// statusFresh is how long an answer stands, so a pass does not spawn a native process for every login it looks at.
+const statusFresh = time.Minute
+
+// ask starts q's check unless an answer stands or one is under way, and returns what closes when it is known.
+func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if done, running := c.running[q.Account]; running {
+		return done
 	}
-	results := make(chan result, len(ps))
-	for _, q := range ps {
-		if q.Account == "" || q.Account == except {
-			continue
+	done := make(chan struct{})
+	if a, known := c.answers[q.Account]; known && time.Since(a.at) < statusFresh {
+		close(done)
+		return done
+	}
+	if c.running == nil {
+		c.running, c.answers = map[string]chan struct{}{}, map[string]statusAnswer{}
+	}
+	c.running[q.Account] = done
+	go func() {
+		started := time.Now()
+		err := switchAuthentication(q, "")
+		if took := time.Since(started); took > authBudget {
+			log.Printf("ym: status check of %s/%s took %s: %v", q.Harness, q.ID, took.Round(time.Millisecond), err)
 		}
-		unanswered[q.Account] = true
-		go func() { results <- result{q.Account, switchAuthentication(q, "") != nil} }()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		delete(c.running, q.Account)
+		if !errors.Is(err, errStatusUnanswered) {
+			c.answers[q.Account] = statusAnswer{err != nil, time.Now()}
+		}
+		close(done)
+	}()
+	return done
+}
+
+func (c *statusChecks) answer(q profile.Profile) (statusAnswer, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	a, known := c.answers[q.Account]
+	return a, known && time.Since(a.at) < statusFresh
+}
+
+// loginChecks asks the logins' native status at once, but for the account given, waiting at most authBudget. One that does not answer in
+// time is unanswered: that says nothing about the login, so it costs it no place among the candidates.
+func (l launcher) loginChecks(ps []profile.Profile, except string) (signedOut, unanswered map[string]bool) {
+	checks := l.statuses
+	if checks == nil {
+		checks = &statusChecks{}
 	}
+	signedOut, unanswered = map[string]bool{}, map[string]bool{}
 	wait := time.After(authBudget)
-	for len(unanswered) > 0 {
-		select {
-		case r := <-results:
-			delete(unanswered, r.account)
-			signedOut[r.account] = r.out
-		case <-wait:
-			return signedOut, unanswered
+	waiting := false
+	var asked []profile.Profile
+	dones := []<-chan struct{}{}
+	for _, q := range ps {
+		if q.Account != "" && q.Account != except {
+			asked = append(asked, q)
+			dones = append(dones, checks.ask(q))
+		}
+	}
+	for _, done := range dones {
+		if !waiting {
+			select {
+			case <-done:
+			case <-wait:
+				waiting = true
+			}
+		}
+	}
+	for _, q := range asked {
+		if a, known := checks.answer(q); !known {
+			unanswered[q.Account] = true
+		} else if a.out {
+			signedOut[q.Account] = true
 		}
 	}
 	return signedOut, unanswered
+}
+
+// checkedDestination is where a stopped session goes, counting only logins whose check answered. A login of its harness that has not answered
+// still counts, so the session waits for it, and only with none left does the last resort, which has no way back, come into it.
+func (l launcher) checkedDestination(usable []profile.Profile, e core.Exhaustion, cwd string, hung map[string]bool) (target profile.Profile, unanswered string, err error) {
+	var asking []profile.Profile
+	for _, p := range usable {
+		if _, asked := hung[p.Account]; !asked && p.Harness == e.Harness {
+			asking = append(asking, p)
+		}
+	}
+	first := func(pool []profile.Profile, e core.Exhaustion) (profile.Profile, error) {
+		pool = slices.Clone(pool)
+		for {
+			p, err := failoverTarget(pool, e, cwd)
+			if err != nil {
+				return p, err
+			}
+			if _, asked := hung[p.Account]; !asked {
+				_, un := l.loginChecks([]profile.Profile{p}, "")
+				hung[p.Account] = un[p.Account]
+			}
+			if !hung[p.Account] {
+				return p, nil
+			}
+			unanswered = cmp.Or(unanswered, p.ID)
+			pool = slices.DeleteFunc(pool, func(q profile.Profile) bool { return q.Account == p.Account })
+		}
+	}
+	_, un := l.loginChecks(asking, "")
+	for _, p := range asking {
+		hung[p.Account] = un[p.Account]
+	}
+	if target, err = first(usable, e); err == nil {
+		return target, "", nil
+	}
+	if unanswered != "" {
+		return profile.Profile{}, unanswered, nil
+	}
+	if target, err = first(usable, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}); err == nil {
+		return target, "", nil
+	}
+	if unanswered != "" {
+		return profile.Profile{}, unanswered, nil
+	}
+	return profile.Profile{}, "", err
 }
 
 // barredText says how the login a session stopped on stands.

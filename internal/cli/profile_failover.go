@@ -441,7 +441,7 @@ func (l launcher) Failover(b core.Board) error {
 			}
 			continue
 		}
-		target, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path)
+		_, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path)
 		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
 			continue
 		}
@@ -458,14 +458,14 @@ func (l launcher) Failover(b core.Board) error {
 		if l.core != nil && !l.core.CanResume() {
 			continue
 		}
-		if _, known := hung[target.Account]; !known {
-			_, unanswered := loginChecks([]profile.Profile{target}, "")
-			hung[target.Account] = unanswered[target.Account]
-		}
-		if hung[target.Account] {
+		target, unanswered, checkErr := l.checkedDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, hung)
+		if unanswered != "" || checkErr != nil {
 			a.State.Status = "blocked"
-			a.State.Reason = fmt.Sprintf("the status check of login %s has not answered, so ym tries it again shortly", target.ID)
-			a.failed(target.Account, b.At.Add(core.QuotaRecheck))
+			a.State.Target = ""
+			a.State.Reason = fmt.Sprintf("the status check of login %s has not answered, so ym tries it again shortly", unanswered)
+			if checkErr != nil {
+				a.State.Reason = checkErr.Error()
+			}
 			if err = saveFailover(dir, e.Harness, a); err != nil {
 				return err
 			}
@@ -487,7 +487,7 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		out, switchErr := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", e.Harness, profile.ID(e.Profile), when))
 		switch {
-		case errors.Is(switchErr, profile.ErrOperationBusy):
+		case errors.Is(switchErr, profile.ErrOperationBusy), errors.Is(switchErr, errStatusUnanswered):
 			a.State.Status = "blocked"
 			a.State.Target = ""
 			a.State.Reason = switchErr.Error()

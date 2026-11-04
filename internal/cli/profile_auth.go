@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
+
+// errStatusUnanswered is a native status check that did not answer in time: it says nothing about the login, unlike one that answered no.
+var errStatusUnanswered = errors.New("native status check did not answer")
 
 func switchAuthentication(p profile.Profile, cwd string) error {
 	login := fmt.Sprintf("native login required for %s/%s; press i in B or run ym profiles login %s %s", p.Harness, p.ID, p.Harness, p.ID)
@@ -38,8 +42,11 @@ func switchAuthentication(p profile.Profile, cwd string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env, cmd.Dir = p.Environment(os.Environ()), p.Root
+	cmd.Env, cmd.Dir, cmd.WaitDelay = p.Environment(os.Environ()), p.Root, time.Second
 	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: %w", login, errStatusUnanswered)
+	}
 	if err != nil {
 		return fmt.Errorf("%s (native status unavailable or logged out)", login)
 	}

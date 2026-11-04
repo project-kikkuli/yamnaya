@@ -35,6 +35,8 @@ type launcher struct {
 	queuedTo string
 	// anyway resumes onto a login whose recorded limit has not reset yet: the owner knows it reset early.
 	anyway bool
+	// statuses keeps native status checks' answers across serve's passes, nil to ask afresh.
+	statuses *statusChecks
 	// idleScreens is when each idle session's pane was last captured for a quota stop, nil to always capture.
 	idleScreens *sync.Map
 	// toHarness is the harness a switch moves to, the session's own when empty.
@@ -65,7 +67,7 @@ func newLauncher(dir string) (launcher, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return l, err
 	}
-	l.everywhere, l.idleScreens = core.OwnerStateDir(dir), &sync.Map{}
+	l.everywhere, l.idleScreens, l.statuses = core.OwnerStateDir(dir), &sync.Map{}, &statusChecks{}
 	if !l.everywhere {
 		l.records.Scope = func(rec launch.Record) bool {
 			return (rec.Worktree.Path == "" || core.InRehearsal(dir, rec.Worktree.Path)) && (rec.Worktree.GitDir == "" || core.InRehearsal(dir, rec.Worktree.GitDir))
