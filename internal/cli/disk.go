@@ -371,23 +371,30 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
 }
 
+// printDisk shows each filesystem and the episode. What the last pass could not free matters only while a filesystem is still low.
+func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
+	low := false
+	for _, u := range usages {
+		fmt.Fprintf(w, "%s  %.1f%% free  %s of %s  tier %d\n", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(int64(u.Total)), disk.TierOf(u.Free()))
+		low = low || disk.TierOf(u.Free()) > 0
+	}
+	if !st.LastPass.IsZero() {
+		fmt.Fprintf(w, "last automatic pass: tier %d, %s\n", st.LastTier, st.LastPass.Format(time.RFC3339))
+	}
+	for _, b := range st.Blocked {
+		if low {
+			fmt.Fprintln(w, "last pass could not free", b)
+		}
+	}
+	if st.Filed != "" {
+		fmt.Fprintf(w, "this episode's owner item: %s, filed %s\n", st.Filed, st.FiledAt.Format(time.RFC3339))
+	}
+}
+
 func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "disk", Short: "Show free space on the filesystems ym watches, the tier each is in and the current low-disk episode", Args: cobra.NoArgs}
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
-		w := cmd.OutOrStdout()
-		for _, u := range disk.Each(disk.Stat, diskPaths(cmd.Context())) {
-			fmt.Fprintf(w, "%s  %.1f%% free  %s of %s  tier %d\n", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(int64(u.Total)), disk.TierOf(u.Free()))
-		}
-		st := readDiskState(e.core.StateDir)
-		if !st.LastPass.IsZero() {
-			fmt.Fprintf(w, "last automatic pass: tier %d, %s\n", st.LastTier, st.LastPass.Format(time.RFC3339))
-		}
-		for _, b := range st.Blocked {
-			fmt.Fprintln(w, "last pass could not free", b)
-		}
-		if st.Filed != "" {
-			fmt.Fprintf(w, "this episode's owner item: %s, filed %s\n", st.Filed, st.FiledAt.Format(time.RFC3339))
-		}
+		printDisk(cmd.OutOrStdout(), disk.Each(disk.Stat, diskPaths(cmd.Context())), readDiskState(e.core.StateDir))
 		return nil
 	})
 	reclaim := &cobra.Command{

@@ -463,3 +463,20 @@ func TestTheWatcherRemembersItsLastStartWhenTheStateCannotBeSaved(t *testing.T) 
 		t.Fatalf("started %d, %v", started, err)
 	}
 }
+
+func TestYmDiskNamesWhatAPassCouldNotFreeOnlyWhileTheDiskIsLow(t *testing.T) {
+	st := diskState{Blocked: []string{"uv clean: another uv held the cache lock throughout"}}
+	for _, c := range []struct {
+		name string
+		free uint64
+		want bool
+	}{{"low", 150, true}, {"exactly at the tier", 200, false}, {"recovered", 400, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			var b strings.Builder
+			printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: c.free}}, st)
+			if got := strings.Contains(b.String(), "could not free uv clean"); got != c.want {
+				t.Fatalf("printed %q, want the line %v", b.String(), c.want)
+			}
+		})
+	}
+}

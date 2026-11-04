@@ -28,7 +28,8 @@ var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", 
 // of the allowlist, which only its tool writes to, target is a name anyone might use for a folder.
 var targetBuildFiles = []string{"Cargo.toml", "pom.xml"}
 
-var versionControl = []string{".git", ".hg", ".jj", ".svn"}
+// versionControl names what marks a checkout of each system; Fossil's is a file, .fslckout or _FOSSIL_.
+var versionControl = []string{".git", ".hg", ".jj", ".svn", ".bzr", ".fslckout", "_FOSSIL_", "_darcs", ".pijul", ".sl", "CVS"}
 
 // holdsRepo reports whether anything at any depth under path is a repository: a version control directory, or a bare git
 // repository's HEAD beside its objects and refs. What cannot be read counts as one.
@@ -87,7 +88,7 @@ func selfIgnoringVenv(root, entry string) (string, bool) {
 	if rule, err := os.ReadFile(filepath.Join(root, venv, ".gitignore")); err != nil || strings.TrimSpace(string(rule)) != "*" {
 		return "", false
 	}
-	if tracked, err := look(root, "ls-files", "--", venv); err != nil || tracked != "" {
+	if tracked, err := look(root, "--literal-pathspecs", "ls-files", "--", venv); err != nil || tracked != "" {
 		return "", false
 	}
 	return venv, true
@@ -112,9 +113,11 @@ func regenerable(root, entry string) bool {
 	return !holdsRepo(filepath.Join(root, entry))
 }
 
+// trackedBuildFile reports whether HEAD holds one of targetBuildFiles as a file in dir; staged, a directory or a link do not count.
 func trackedBuildFile(root, dir string) bool {
 	for _, f := range targetBuildFiles {
-		if out, err := look(root, "ls-files", "--", filepath.Join(dir, f)); err == nil && out != "" {
+		out, err := look(root, "--literal-pathspecs", "ls-tree", "HEAD", "--", filepath.Join(dir, f))
+		if err == nil && (strings.HasPrefix(out, "100644 blob ") || strings.HasPrefix(out, "100755 blob ")) {
 			return true
 		}
 	}

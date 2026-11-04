@@ -372,6 +372,42 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 			put(t, wt, "src/Cargo.toml")
 			put(t, wt, "src/target/kept.rs")
 		}, KeepDirty, []string{"src/target/kept.rs", "src/Cargo.toml"}, nil},
+		{"a bazaar checkout inside a virtualenv", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".venv/src/a/.bzr/branch-format")
+			put(t, wt, ".venv/src/a/mod.py")
+		}, KeepNested, []string{".venv/src/a/mod.py"}, nil},
+		{"a fossil checkout inside a virtualenv", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".venv/src/a/.fslckout")
+			put(t, wt, ".venv/src/a/mod.py")
+		}, KeepNested, []string{".venv/src/a/mod.py"}, nil},
+		{"a fossil checkout under its other name", func(t *testing.T, repo, wt string) {
+			put(t, wt, "node_modules/a/_FOSSIL_")
+			put(t, wt, "node_modules/a/mod.js")
+		}, KeepNested, []string{"node_modules/a/mod.js"}, nil},
+		{"target beside a build file staged but never committed", func(t *testing.T, repo, wt string) {
+			put(t, wt, "src/keep.rs")
+			run(t, wt, "git", "add", "src/keep.rs")
+			run(t, wt, "git", "commit", "-q", "-m", "source")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "src/Cargo.toml")
+			run(t, wt, "git", "add", "src/Cargo.toml")
+			put(t, wt, "src/target/kept.rs")
+		}, KeepDirty, []string{"src/target/kept.rs"}, nil},
+		{"target whose directory name is a glob matching another's build file", func(t *testing.T, repo, wt string) {
+			put(t, wt, "pkgs/Cargo.toml")
+			put(t, wt, "pkg*/x.rs")
+			run(t, wt, "git", "add", ".")
+			run(t, wt, "git", "commit", "-q", "-m", "packages")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "pkg*/target/kept.rs")
+		}, KeepIgnored, []string{"pkg*/target/kept.rs"}, nil},
+		{"target beside a tracked directory named like a build file", func(t *testing.T, repo, wt string) {
+			put(t, wt, "src/Cargo.toml/x")
+			run(t, wt, "git", "add", ".")
+			run(t, wt, "git", "commit", "-q", "-m", "odd directory")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "src/target/kept.rs")
+		}, KeepIgnored, []string{"src/target/kept.rs"}, nil},
 		{"a file left in a tool-owned directory goes with it", func(t *testing.T, repo, wt string) {
 			put(t, wt, "node_modules/notes.md")
 		}, "", nil, []string{"node_modules/notes.md"}},
