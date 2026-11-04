@@ -26,10 +26,11 @@ const gib = 1 << 30
 type Claim struct {
 	Slot int    `json:"slot,omitempty"`
 	Lane string `json:"lane,omitempty"`
-	// LaneHolder and LanePlace are filled in by Status: the job that has its lane, and a lane waiter's place in line from 1.
-	// Neither is set for a waiter from a ym older than lane tickets, which cannot be told apart.
+	// Status fills in LaneHolder, the job that has its lane, and LanePlace and SlotPlace, a waiter's place in line from 1.
+	// None is set for a waiter from a ym older than tickets, which takes no place.
 	LaneHolder bool      `json:"lane_holder,omitempty"`
 	LanePlace  int       `json:"lane_place,omitempty"`
+	SlotPlace  int       `json:"slot_place,omitempty"`
 	PID        int       `json:"pid"`
 	Command    []string  `json:"command"`
 	Cwd        string    `json:"cwd,omitempty"`
@@ -118,24 +119,31 @@ func (p Pool) lockPath(n int) string  { return filepath.Join(p.Dir, strconv.Itoa
 func (p Pool) claimPath(n int) string { return filepath.Join(p.Dir, strconv.Itoa(n)+".json") }
 func (p Pool) waitDir() string        { return filepath.Join(p.Dir, "waiting") }
 func (p Pool) ticketDir() string      { return filepath.Join(p.Dir, "lanes") }
+func (p Pool) slotLineDir() string    { return filepath.Join(p.Dir, "slot-line") }
 
-// Acquire waits until it holds a slot and the disk is not too low, then records c as its holder. Waiting, c is listed among the waiters; onWait
-// runs once, the first time it gets none. A claim on no lane waits while a live lane holder waits for a slot, which is
-// where Lane's ticket lists a lane claim. Release gives the slot back.
+// Acquire waits until it holds a slot and the disk is not too low, then records c as its holder. onWait runs once, the first
+// time it gets none. A claim on no lane takes its turn by a ticket, oldest first, behind any live lane holder waiting for a
+// slot; a lane's holder is already listed by the ticket Lane gave it, and a lane's other waiters never come here. A job held
+// for its own filesystem keeps its place without holding up those behind it. Release gives the slot back.
 func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func(), slot int, err error) {
-	if err = os.MkdirAll(p.waitDir(), 0o755); err != nil {
-		return nil, 0, err
+	var place *ticket
+	if c.Lane == "" {
+		if err = os.MkdirAll(p.slotLineDir(), 0o755); err != nil {
+			return nil, 0, err
+		}
+		if place, err = takeTicket(p.slotLineDir(), c); err != nil {
+			return nil, 0, err
+		}
+		defer place.drop()
 	}
-	waiting := filepath.Join(p.waitDir(), strconv.Itoa(c.PID)+".json")
-	defer os.Remove(waiting)
 	for first := true; ; first = false {
 		state, readErr := pressure.Read(p.Dir)
 		if readErr != nil {
 			return nil, 0, readErr
 		}
 		deferring := false
-		if c.Lane == "" {
-			if deferring, err = p.laneHolderWaits(); err != nil {
+		if place != nil {
+			if deferring, err = p.behind(place); err != nil {
 				return nil, 0, err
 			}
 		}
@@ -176,15 +184,8 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 				f.Close()
 			}, n, nil
 		}
-		if first {
-			if c.Lane == "" {
-				if err = writeJSON(waiting, c); err != nil {
-					return nil, 0, err
-				}
-			}
-			if onWait != nil {
-				onWait()
-			}
+		if first && onWait != nil {
+			onWait()
 		}
 		select {
 		case <-ctx.Done():
@@ -192,6 +193,38 @@ func (p Pool) Acquire(ctx context.Context, c Claim, onWait func()) (release func
 		case <-time.After(p.Poll):
 		}
 	}
+}
+
+// behind reports whether a slot goes to someone else first: a live lane holder, or an older plain waiter. A job its own
+// filesystem holds back can take no slot, so nobody waits for it.
+func (p Pool) behind(place *ticket) (bool, error) {
+	waits, err := p.laneHolderWaits()
+	if err != nil || waits {
+		return waits, err
+	}
+	line, err := liveTickets(p.slotLineDir(), queuedTicket)
+	if err != nil {
+		return false, err
+	}
+	for _, path := range line {
+		if path == place.path {
+			return false, nil
+		}
+		if !p.diskHolds(path) {
+			return true, nil
+		}
+	}
+	return true, nil
+}
+
+// diskHolds reports whether the job with the ticket at path waits for its filesystem.
+func (p Pool) diskHolds(path string) bool {
+	c, err := readClaim(path)
+	if err != nil {
+		return false
+	}
+	_, low := p.low(c.Cwd)
+	return low
 }
 
 // tryLock returns slot n's lock file held, or nil when another process holds it.
@@ -296,17 +329,27 @@ func (p Pool) Status() (Status, error) {
 		}
 		st.Waiters = append(st.Waiters, c)
 	}
-	st.SlotsWait = st.Pressure.HoldsSlots() && len(st.Holders) > 0
 	onLanes, err := p.laneClaims()
 	if err != nil {
 		return st, err
 	}
 	st.Waiters = append(st.Waiters, onLanes...)
+	line, err := liveTickets(p.slotLineDir(), queuedTicket)
+	if err != nil {
+		return st, err
+	}
+	for i, path := range line {
+		if c, err := readClaim(path); err == nil {
+			c.SlotPlace = i + 1
+			st.Waiters = append(st.Waiters, c)
+		}
+	}
 	for _, c := range st.Waiters {
 		if u, low := p.low(c.Cwd); low && st.Disk == nil {
 			st.Disk = &u
 		}
 	}
+	st.SlotsWait = st.Pressure.HoldsSlots() && len(st.Holders) > 0 || st.Disk != nil
 	sort.Slice(st.Holders, func(i, j int) bool { return st.Holders[i].Slot < st.Holders[j].Slot })
 	sort.Slice(st.Waiters, func(i, j int) bool { return st.Waiters[i].Since.Before(st.Waiters[j].Since) })
 	return st, nil

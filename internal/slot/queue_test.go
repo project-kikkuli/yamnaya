@@ -10,19 +10,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 	"github.com/project-kikkuli/yamnaya/internal/pressure"
 )
 
 const (
-	jobPrefix = "slot job: "
-	settle    = 300 * time.Millisecond
-	patience  = 20 * time.Second
+	jobPrefix  = "slot job: "
+	lowDiskCwd = "/low-disk"
+	settle     = 300 * time.Millisecond
+	patience   = 20 * time.Second
 )
 
 // TestSlotJob is one real ym slot queue member run by the tests below: it takes its lane and a slot, says so, and holds
@@ -39,7 +42,13 @@ func TestSlotJob(t *testing.T) {
 		pid = claimed
 	}
 	p := Pool{Dir: dir, Capacity: capacity, Cores: 4, Poll: 10 * time.Millisecond}
-	c := Claim{PID: pid, Command: []string{name}, Since: time.Now(), Lane: lane}
+	if low := os.Getenv("SLOT_JOB_LOW_WHILE"); low != "" {
+		p.Low = func(extra ...string) (disk.Usage, bool) {
+			_, err := os.Stat(low)
+			return disk.Usage{Path: "low"}, err == nil && slices.Contains(extra, lowDiskCwd)
+		}
+	}
+	c := Claim{PID: pid, Command: []string{name}, Since: time.Now(), Lane: lane, Cwd: os.Getenv("SLOT_JOB_CWD")}
 	leave, seated, err := p.Lane(context.Background(), lane, c, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +62,12 @@ func TestSlotJob(t *testing.T) {
 	}
 	defer release()
 	fmt.Println(jobPrefix + "slot " + name)
+	if command := os.Getenv("SLOT_JOB_COMMAND"); command != "" {
+		if _, err := Run([]string{"sh", "-c", command}, 0, nil); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	io.Copy(io.Discard, os.Stdin)
 }
 
@@ -76,7 +91,11 @@ func newQueue(t *testing.T, capacity int) *queue {
 
 func (q *queue) start(name, lane string, env ...string) *job {
 	q.t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSlotJob$")
+	return q.startCmd(name, lane, exec.Command(os.Args[0], "-test.run=^TestSlotJob$"), env...)
+}
+
+func (q *queue) startCmd(name, lane string, cmd *exec.Cmd, env ...string) *job {
+	q.t.Helper()
 	cmd.Env = append(os.Environ(), "SLOT_JOB_DIR="+q.pool.Dir, "SLOT_JOB_NAME="+name, "SLOT_JOB_LANE="+lane, "SLOT_JOB_CAPACITY="+strconv.Itoa(q.pool.Capacity))
 	cmd.Env = append(cmd.Env, env...)
 	stdin, err := cmd.StdinPipe()
@@ -485,5 +504,248 @@ func TestStatusLeavesAWaiterWritingItsClaimAlone(t *testing.T) {
 		if _, _, err := p.Acquire(ctx, Claim{PID: os.Getpid()}, cancel); err != context.Canceled {
 			t.Fatalf("a waiter failed while status read its claim: %v", err)
 		}
+	}
+}
+
+func TestPlainWaitersTakeSlotsInArrivalOrder(t *testing.T) {
+	q := newQueue(t, 1)
+	release := q.occupy(1)
+	var line []*job
+	for _, n := range rand.Perm(6) {
+		name := "job" + strconv.Itoa(n)
+		line = append(line, q.start(name, ""))
+		q.next("lane " + name)
+		q.waiting(name)
+	}
+	st, err := q.pool.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, j := range line {
+		place := i + 1
+		if !listed(st, j.name, func(c Claim) bool { return c.SlotPlace == place }) {
+			t.Fatalf("%s is not #%d in %+v", j.name, place, st.Waiters)
+		}
+	}
+	release[0]()
+	for _, j := range line {
+		q.next("slot " + j.name)
+		q.quiet()
+		j.finish()
+	}
+}
+
+func TestADeadPlainWaiterBlocksNoOneBehindIt(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		env  []string
+	}{
+		{"its pid is gone", nil},
+		{"its pid was reused", []string{"SLOT_JOB_PID=" + strconv.Itoa(os.Getpid())}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newQueue(t, 1)
+			release := q.occupy(1)
+			dead := q.start("dead", "", c.env...)
+			q.next("lane dead")
+			q.waiting("dead")
+			q.start("next", "")
+			q.next("lane next")
+			q.waiting("next")
+			dead.kill()
+			q.gone("dead")
+			release[0]()
+			q.next("slot next")
+		})
+	}
+}
+
+func TestALaneHolderBeatsAnOlderPlainWaiterAndTheMemoryHoldStillRules(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		cause string
+	}{
+		{"no pressure", ""},
+		{"memory hold", "memory"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newQueue(t, 2)
+			release := q.occupy(2)
+			if c.cause != "" {
+				if err := (pressure.State{Active: true, Holding: true, Cause: c.cause}).Save(q.pool.Dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			older := q.start("older", "")
+			q.next("lane older")
+			q.waiting("older")
+			suite := q.start("suite", "yamnaya-test")
+			q.laneHolder("suite")
+			release[0]()
+			if c.cause == "" {
+				q.next("slot suite")
+				release[1]()
+				q.next("slot older")
+				return
+			}
+			q.quiet()
+			release[1]()
+			q.next("slot suite")
+			q.quiet()
+			suite.finish()
+			q.next("slot older")
+			older.finish()
+		})
+	}
+}
+
+// oldWaiters race for slots as queued ym processes from before tickets do: any free slot, no line, held briefly.
+func (q *queue) oldWaiters() (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for {
+			for n := 1; n <= q.pool.Capacity; n++ {
+				if f, err := q.pool.tryLock(n); err == nil && f != nil {
+					time.Sleep(5 * time.Millisecond)
+					f.Close()
+				}
+			}
+			select {
+			case <-done:
+				return
+			case <-time.After(q.pool.Poll):
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
+}
+
+func TestNewWaitersAreServedInOrderWhileOldWaitersRaceThem(t *testing.T) {
+	q := newQueue(t, 1)
+	release := q.occupy(1)
+	first := q.start("first", "")
+	q.next("lane first")
+	q.waiting("first")
+	second := q.start("second", "")
+	q.next("lane second")
+	q.waiting("second")
+	defer q.oldWaiters()()
+	release[0]()
+	q.next("slot first")
+	first.finish()
+	q.next("slot second")
+	second.finish()
+}
+
+// The real throttle stop path over a real tree: agent stand-in, then sh, then a ym slot waiter at the head of the line. ym's
+// throttle spares a process by its kernel name, so a ym keeps its place moving; a build under another name is stopped there.
+func TestThrottlingASessionWithAQueuedSlotWaiter(t *testing.T) {
+	for _, c := range []struct {
+		binary string
+		spared bool
+	}{
+		{"ym", true},
+		{"ym.new", false},
+		{"ym-new", false},
+	} {
+		t.Run(c.binary, func(t *testing.T) {
+			q := newQueue(t, 1)
+			release := q.occupy(1)
+			bin := filepath.Join(t.TempDir(), c.binary)
+			self, err := os.ReadFile(os.Args[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(bin, self, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ran := filepath.Join(t.TempDir(), "ran")
+			tree := exec.Command("sh", "-c", "sh -c '\"$YM_BIN\" -test.run=^TestSlotJob$; true'; true")
+			head := q.startCmd("head", "", tree, "YM_BIN="+bin,
+				"SLOT_JOB_COMMAND=i=0; while [ $i -lt 20 ]; do echo $i >> "+ran+"; i=$((i+1)); sleep 0.02; done")
+			q.next("lane head")
+			q.waiting("head")
+			q.start("other", "")
+			q.next("lane other")
+			q.waiting("other")
+
+			var throttle pressure.Throttle
+			list := func() ([]pressure.Process, error) { return pressure.Processes(context.Background()) }
+			if _, err := throttle.Pause(time.Now(), list, map[int]string{head.cmd.Process.Pid: "agent"}, pressure.Signal); err != nil {
+				t.Fatal(err)
+			}
+			resume := func() {
+				if _, err := throttle.Resume(time.Now(), func(string) bool { return true }, pressure.Signal); err != nil {
+					t.Error(err)
+				}
+			}
+			defer resume()
+			stopped := map[string]bool{}
+			for _, p := range throttle.Paused {
+				stopped[filepath.Base(p.Command)] = true
+			}
+			if !stopped["sh"] || stopped[c.binary] == c.spared {
+				t.Fatalf("stopped %v, want sh, and %s spared %v", stopped, c.binary, c.spared)
+			}
+
+			release[0]()
+			if !c.spared {
+				q.quiet()
+				resume()
+				q.next("slot head")
+				return
+			}
+			// the paused session's job takes its turn, runs to its end with its agent stopped, and passes the slot on
+			q.next("slot head")
+			q.next("slot other")
+			lines, err := os.ReadFile(ran)
+			if err != nil || strings.Count(string(lines), "\n") != 20 {
+				t.Fatalf("the job's output %q, %v, want all 20 lines", lines, err)
+			}
+		})
+	}
+}
+
+func TestAJobItsOwnDiskHoldsBackHoldsUpNobodyAndKeepsItsPlace(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		lane string
+	}{
+		{"the head of the plain line", ""},
+		{"a lane holder waiting for a slot", "yamnaya-test"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := newQueue(t, 1)
+			release := q.occupy(1)
+			low := filepath.Join(t.TempDir(), "low")
+			if err := os.WriteFile(low, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			env := []string{"SLOT_JOB_LOW_WHILE=" + low}
+			q.start("held", c.lane, append(env, "SLOT_JOB_CWD="+lowDiskCwd)...)
+			q.next("lane held")
+			q.waiting("held")
+			other := q.start("other", "", env...)
+			q.next("lane other")
+			q.waiting("other")
+			release[0]()
+			q.next("slot other")
+			q.quiet()
+			if err := os.Remove(low); err != nil {
+				t.Fatal(err)
+			}
+			third := q.start("third", "", env...)
+			q.next("lane third")
+			q.waiting("third")
+			other.finish()
+			q.next("slot held")
+			q.quiet()
+			third.kill()
+		})
 	}
 }

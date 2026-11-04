@@ -8,7 +8,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
-func TestSlotStatusTellsALaneHolderFromItsWaitersInOrder(t *testing.T) {
+func TestSlotStatusShowsLaneHoldersAndPlacesInLine(t *testing.T) {
 	now := time.Now()
 	for _, c := range []struct {
 		name  string
@@ -19,6 +19,7 @@ func TestSlotStatusTellsALaneHolderFromItsWaitersInOrder(t *testing.T) {
 		{"first in line", slot.Claim{Lane: "yamnaya-test", LanePlace: 1}, "lane yamnaya-test #1 in line"},
 		{"third in line", slot.Claim{Lane: "yamnaya-test", LanePlace: 3}, "lane yamnaya-test #3 in line"},
 		{"a waiter from a ym older than tickets", slot.Claim{Lane: "yamnaya-test"}, "lane yamnaya-test "},
+		{"second for a slot", slot.Claim{SlotPlace: 2}, "#2 for a slot"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			c.claim.Command = []string{"go", "test"}

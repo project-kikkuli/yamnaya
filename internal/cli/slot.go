@@ -33,7 +33,7 @@ func slotCmd() *cobra.Command {
 		Long: "slot waits for one of the machine-wide slots agent-slot also uses (capacity from physical cores and memory), " +
 			"runs the command at niceness --nice while holding it, and releases it when the command and everything it left in its process group have ended. " +
 			"Common runtime and build worker pools share the available cores across slots. " +
-			"--lane serializes commands with the same name, oldest first, before they take a slot; the one holding a lane takes the next free slot ahead of commands on no lane. " +
+			"--lane serializes commands with the same name, oldest first, before they take a slot; the one holding a lane takes the next free slot ahead of commands on no lane, which take slots oldest first. " +
 			"An interrupt or termination passes to the whole group. --status lists capacity, load, holders and waiters.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pool, err := slot.Machine()
@@ -84,7 +84,7 @@ func slotCmd() *cobra.Command {
 				case st.Pressure.HoldsSlots() && len(st.Holders) > 0:
 					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: memory pressure holds new slots, waiting (ym slot --status shows load and consumers)")
 				case len(st.Holders) < st.Capacity:
-					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: a lane's job takes the next free slot, waiting (ym slot --status shows it)")
+					fmt.Fprintln(cmd.ErrOrStderr(), "ym slot: older jobs take the next free slot first, waiting (ym slot --status shows the line)")
 				default:
 					fmt.Fprintf(cmd.ErrOrStderr(), "ym slot: all %d slots taken, waiting (ym slot --status shows who holds them)\n", st.Capacity)
 				}
@@ -146,6 +146,8 @@ func claimLine(c slot.Claim, now time.Time) string {
 		parts = append(parts, fmt.Sprintf("lane %s #%d in line", c.Lane, c.LanePlace))
 	case c.Lane != "":
 		parts = append(parts, "lane "+c.Lane)
+	case c.SlotPlace > 0:
+		parts = append(parts, fmt.Sprintf("#%d for a slot", c.SlotPlace))
 	}
 	if c.PID > 0 {
 		parts = append(parts, fmt.Sprintf("pid %d", c.PID))

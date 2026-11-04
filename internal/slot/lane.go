@@ -87,7 +87,7 @@ func (p Pool) laneDirs() ([]string, error) {
 	return dirs, nil
 }
 
-// laneHolderWaits reports whether any lane's live holder is still waiting for a slot.
+// laneHolderWaits reports whether any lane's live holder is still waiting for a slot it could take.
 func (p Pool) laneHolderWaits() (bool, error) {
 	dirs, err := p.laneDirs()
 	if err != nil {
@@ -98,8 +98,10 @@ func (p Pool) laneHolderWaits() (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if len(holders) > 0 {
-			return true, nil
+		for _, path := range holders {
+			if !p.diskHolds(path) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil

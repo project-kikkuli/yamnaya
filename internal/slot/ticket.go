@@ -17,7 +17,7 @@ const (
 	holderTicket = ".holder"
 )
 
-// ticket is a lane claim in a file its owner keeps flock'd, so a ticket is live exactly while its owner runs, even past
+// ticket is a place in a line, a claim in a file its owner keeps flock'd, so a ticket is live exactly while its owner runs, even past
 // SIGKILL or a reused pid. Its name sorts by arrival and is never reused, so anyone may remove a dead one.
 type ticket struct {
 	f    *os.File
@@ -68,6 +68,9 @@ func (t *ticket) drop() {
 // liveTickets are the tickets in dir with the given suffix whose owners live, oldest first; it removes dead ones.
 func liveTickets(dir, suffix string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
