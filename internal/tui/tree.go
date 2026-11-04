@@ -275,7 +275,7 @@ func (m Model) boardTree() []treeNode {
 			repos = append(repos, treeNode{row: row{repo: r, group: "repo " + r.Key}, children: missions})
 		}
 	}
-	out := []treeNode{heading("needs", strings.TrimSpace(core.QueueHeader(m.shownNeeds(), len(m.board.Later))), needs), heading("goals", "GOALS", groups), heading("sessions", "SESSIONS YOU STARTED", repos)}
+	out := []treeNode{heading("needs", strings.TrimSpace(core.QueueHeaderIn(m.shownNeeds(), len(m.board.Later), min(core.QueueWidth, m.width-treeChrome))), needs), heading("goals", "GOALS", groups), heading("sessions", "SESSIONS YOU STARTED", repos)}
 	for i := range out {
 		out[i].row.sectionID = i + 1
 	}
@@ -505,6 +505,8 @@ func (m Model) sceneNodeRows(ns []core.Node, group string, depth int) []row {
 
 func (m Model) treePage() viewPage { return m.renderTree(m.rows()) }
 
+const treeChrome = 5
+
 func (m Model) renderTree(rows []row) viewPage {
 	b := viewPage{}
 	var items []core.Item
@@ -522,8 +524,8 @@ func (m Model) renderTree(rows []row) viewPage {
 	for i, r := range rows {
 		rowModel := m
 		rowModel.width = max(20, m.width-2*r.depth-2)
-		flush := (r.need != nil && !strings.HasPrefix(r.key, "doc-ask:") || r.key == "heading:needs") && m.width < core.QueueWidth+2*r.depth+5
-		if flush && r.need != nil {
+		flush := r.need != nil && !strings.HasPrefix(r.key, "doc-ask:") && m.width < core.QueueWidth+2*r.depth+treeChrome
+		if flush {
 			rowModel.width = m.width + 3
 		}
 		text := rowModel.treeRowText(i, r, ids, labels)
@@ -544,7 +546,7 @@ func (m Model) renderTree(rows []row) viewPage {
 				}
 				line = mark + indent + indicator + ansi.Cut(line, 3, ansi.StringWidth(line))
 				if flush {
-					line = ansi.Cut(line, 5+len(indent), ansi.StringWidth(line))
+					line = ansi.Cut(line, treeChrome+len(indent), ansi.StringWidth(line))
 				}
 			} else if !flush {
 				line = indent + "  " + line

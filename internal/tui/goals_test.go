@@ -1216,9 +1216,8 @@ func TestAFullDoLineDrawsWholeOnTheBoardAsOnTheOtherSurfaces(t *testing.T) {
 						DoLine: fmt.Sprintf("%s%02d", do[:core.MaxDoLine-2], i+1), Rec: "r", Impact: tc.impact}})
 				}
 				content := ansi.Strip(m.View().Content)
-				header := core.QueueHeader(m.board.Needs, len(m.board.Later))
-				if !strings.Contains(content, header) {
-					t.Fatalf("header %q missing at width %d:\n%s", header, width, content)
+				if line := headerLine(content); ansi.StringWidth(line) > width || !strings.Contains(line, "NEXT ") || !strings.HasSuffix(strings.TrimRight(line, " "), "later 10 ▾") {
+					t.Fatalf("header %q at width %d:\n%s", line, width, content)
 				}
 				labels := core.RankLabels(tc.rows)
 				for i := range m.board.Needs {
@@ -1269,5 +1268,59 @@ func TestARelayRowNamesWhatItCarries(t *testing.T) {
 	got := m.shownRelay(core.Relay{Kind: core.RelayYM, Dest: "box", Body: string(body)})
 	if got != "ym goal send --relayed far-chief see mgr51 too" {
 		t.Fatalf("relay row reads %q", got)
+	}
+}
+
+func headerLine(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "NEXT ") {
+			return line
+		}
+	}
+	return ""
+}
+
+func TestTheCursorAndTheFoldShowOnTheQueueAtEveryWidth(t *testing.T) {
+	for _, width := range []int{40, 41, 44, 45, 46, 60, 99} {
+		for _, later := range []int{0, 10} {
+			t.Run(fmt.Sprintf("%d later %d", width, later), func(t *testing.T) {
+				m := treeModel()
+				m.width, m.page = width, nil
+				m.board.Later = make([]core.Need, later)
+				for i := range m.board.Later {
+					m.board.Later[i] = core.Need{Project: "mission", Item: &core.Item{Seq: int64(100 + i), ID: fmt.Sprintf("D%d", 100+i), Kind: core.KindDecision, Question: "q", State: core.ItemSnoozed}}
+				}
+				m.board.Needs = []core.Need{{Project: "mission", Item: &core.Item{Seq: 1, ID: "D1", Kind: core.KindDecision, Question: "q", DoLine: strings.Repeat("x", core.MaxDoLine), Rec: "r"}}}
+				rows := m.rows()
+				heading := slices.IndexFunc(rows, func(r row) bool { return strings.HasPrefix(r.header, "NEXT ") })
+				queue := slices.IndexFunc(rows, func(r row) bool { return r.need != nil })
+				if heading < 0 || queue < 0 {
+					t.Fatalf("heading %d queue %d", heading, queue)
+				}
+				wantEnd := "later 10 ▾"
+				if later == 0 {
+					wantEnd = "NEXT 1 · ~3m"
+				}
+				m.cursor = heading
+				if line := headerLine(ansi.Strip(m.View().Content)); !strings.HasPrefix(line, " > ▾ NEXT ") || !strings.HasSuffix(strings.TrimRight(line, " "), wantEnd) || ansi.StringWidth(line) > width {
+					t.Fatalf("selected, open heading reads %q", line)
+				}
+				m.page = nil
+				m.cursor = queue
+				if line := headerLine(ansi.Strip(m.View().Content)); !strings.HasPrefix(line, "   ▾ NEXT ") {
+					t.Fatalf("heading off the cursor reads %q", line)
+				}
+				m.page = nil
+				if !strings.Contains(m.View().Content, "\x1b[7m") {
+					t.Fatalf("a selected queue row shows no reverse video at width %d", width)
+				}
+				m.page = nil
+				m.setFold(rows[heading], true)
+				m.cursor = slices.IndexFunc(m.rows(), func(r row) bool { return strings.HasPrefix(r.header, "NEXT ") })
+				if line := headerLine(ansi.Strip(m.View().Content)); !strings.HasPrefix(line, " > ▸ NEXT ") || !strings.HasSuffix(strings.TrimRight(line, " "), wantEnd) {
+					t.Fatalf("collapsed heading reads %q", line)
+				}
+			})
+		}
 	}
 }

@@ -973,7 +973,10 @@ func QueueMinutes(m int) string {
 }
 
 // QueueHeader is the line over the rows: how many, how long the known ones take, and what later holds.
-func QueueHeader(rows []Need, later int) string {
+func QueueHeader(rows []Need, later int) string { return QueueHeaderIn(rows, later, QueueWidth) }
+
+// QueueHeaderIn is QueueHeader within width columns, closing the gap before it cuts either end.
+func QueueHeaderIn(rows []Need, later, width int) string {
 	total := 0
 	for _, n := range rows {
 		total += n.Minutes()
@@ -986,7 +989,7 @@ func QueueHeader(rows []Need, later int) string {
 		return left
 	}
 	right := fmt.Sprintf("later %d ▾", later)
-	return left + strings.Repeat(" ", max(1, QueueWidth-ansi.StringWidth(left)-ansi.StringWidth(right))) + right
+	return left + strings.Repeat(" ", max(1, width-ansi.StringWidth(left)-ansi.StringWidth(right))) + right
 }
 
 // RowLine draws one row within width columns: rank, verb, minutes, ! for prod or clinical, the do-line, then ✓ or ▸, with the mark in the last column.
