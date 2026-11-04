@@ -128,9 +128,10 @@ func (r Rollup) text() string {
 	return sb.String()
 }
 
-var prNumber = regexp.MustCompile(`/pull/(\d+)`)
+var prNumber = regexp.MustCompile(`https?://[^/\s]+/([^/\s]+/[^/\s]+)/pull/(\d+)`)
 
-// actionText names an event that needs a chief, by the number ym goal event prints it with.
+// actionText names an event that needs a chief, by the number ym goal event prints it with; a ready pull request by its repository and
+// its own number instead, so a new head of the same one stays one action.
 func actionText(e GoalEvent, host string) string {
 	id := strconv.FormatInt(e.Seq, 10)
 	if host != "" {
@@ -138,8 +139,9 @@ func actionText(e GoalEvent, host string) string {
 	}
 	switch e.Kind {
 	case EventPRReady:
-		if m := prNumber.FindStringSubmatch(e.Payload); m != nil {
-			return "PR #" + m[1] + " ready"
+		if ms := prNumber.FindAllStringSubmatch(e.Payload, -1); ms != nil {
+			m := ms[len(ms)-1]
+			return m[1] + " PR " + m[2] + " ready"
 		}
 		return "PR ready #" + id
 	case EventFailedVerify:
@@ -258,14 +260,22 @@ func stuckBefore(history []GoalEvent, e GoalEvent) bool {
 
 var attemptWord = regexp.MustCompile(`^attempt \d+ `)
 
+// failedFindings is a failed verification's findings, without its attempt or what it tells the manager to do.
+func failedFindings(payload string) string {
+	if _, list, ok := strings.Cut(payload, "\n  - "); ok {
+		return strings.TrimSuffix(list, failedVerifyEnd)
+	}
+	return attemptWord.ReplaceAllString(payload, "")
+}
+
 // failedBefore reports whether an earlier failed verification of the goal had e's findings.
 func failedBefore(history []GoalEvent, e GoalEvent) bool {
-	cause := attemptWord.ReplaceAllString(e.Payload, "")
+	cause := failedFindings(e.Payload)
 	for _, h := range history {
 		if h.Seq >= e.Seq {
 			break
 		}
-		if h.Kind == EventFailedVerify && attemptWord.ReplaceAllString(h.Payload, "") == cause {
+		if h.Kind == EventFailedVerify && failedFindings(h.Payload) == cause {
 			return true
 		}
 	}

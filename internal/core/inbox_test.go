@@ -162,6 +162,7 @@ func TestAnAgentsReplyThatAddsNothingIsCountedNotDelivered(t *testing.T) {
 		{"a reply that says itself nothing is new", nil, "The implementer's idle message repeats its push report for `f750d8e`, so there's nothing new to act on. Its CI is green and I am waiting.", false},
 		{"a reply that repeats but adds a fact", nil, "The implementer's idle message repeats its earlier report, but it adds one fact: the shard hung on a mutant.", true},
 		{"a short answer that is not a wait", nil, "CSV only; TSV handling is gone.", true},
+		{"a short failure with still in it", nil, "The DB test failed, and the leftover lines are still there.", true},
 		{"a still-waiting note after a new commit", func(t *testing.T, w *orgWorld) { commit("second") }, "Full suite still running. Push happens when it passes.", true},
 		{"a still-waiting note after an ask", func(t *testing.T, w *orgWorld) { w.ask(t, "agent", "may I skip the flaky test?") }, "Waiting on your answer.", true},
 	} {
@@ -187,6 +188,9 @@ func TestAnAgentsReplyThatAddsNothingIsCountedNotDelivered(t *testing.T) {
 			last := events[len(events)-1]
 			if got := last.Kind == EventFinished; got != tc.news || (!got && last.Kind != EventIdleAgain) {
 				t.Fatalf("second reply recorded as %s, want news=%v", last.Kind, tc.news)
+			}
+			if !tc.news && (!strings.HasPrefix(last.Payload, "agent ") || !strings.Contains(last.Payload, " is idle, counted: ") || !strings.Contains(last.Payload, tc.second)) {
+				t.Fatalf("counted reply reads %q, want why it was counted and its words", last.Payload)
 			}
 			if heard := strings.Join(w.handedTo(m.Session)[before:], "\n"); strings.Contains(heard, tc.second) != tc.news {
 				t.Fatalf("manager heard %q; want the second reply delivered=%v", heard, tc.news)

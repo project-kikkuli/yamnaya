@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS ym_agent_reports (
 `
 
 // ForwardIdle records the last reply of every idle agent a manager or chief runs, once per reply, as an event in its inbox; a reply
-// that adds nothing is recorded as idle-again, which ym only counts.
+// that adds nothing is recorded as idle-again with why, which ym only counts.
 func (c *Core) ForwardIdle(b Board) error {
 	for i := range b.Sessions {
 		s := &b.Sessions[i]
@@ -47,21 +47,23 @@ func (c *Core) ForwardIdle(b Board) error {
 			c.fw.add(id)
 			continue
 		}
-		fresh, err := c.news(*s)
+		counted, err := c.news(*s)
 		if err != nil {
 			return err
 		}
+		fresh := counted == ""
 		kind := EventFinished
+		text := idleText(*s, "")
 		if !fresh {
 			kind = EventIdleAgain
+			text = idleText(*s, ", counted: "+counted)
 		}
-		text := strings.TrimPrefix(idleText(*s), "ym: ")
 		inbox := m.GoalID
 		if _, ok := b.Org.Goals[inbox]; !ok {
 			inbox = b.Org.Recipient(key, b.parents)
 		}
 		if _, _, remote := SplitRemote(inbox); remote && fresh {
-			if err := c.tellManager(b, b.Org, inbox, "ym: "+clip(text, lineMax)); err != nil {
+			if err := c.tellManager(b, b.Org, inbox, "ym: "+clip(text, lineMax-len("ym: "))); err != nil {
 				return err
 			}
 		} else if inbox != Owner && !remote {
@@ -78,12 +80,12 @@ func (c *Core) ForwardIdle(b Board) error {
 }
 
 // idleText is how an idle agent's last reply reaches its manager.
-func idleText(s Live) string {
+func idleText(s Live, note string) string {
 	from := "agent " + Short(s.Key())
 	if s.Title != "" {
 		from += " (" + oneLine(s.Title) + ")"
 	}
-	return "ym: " + from + " is idle. Its last message, verbatim: " + strings.TrimSpace(s.Result)
+	return from + " is idle" + note + ". Its last message, verbatim: " + strings.TrimSpace(s.Result)
 }
 
 // forwardedSet remembers replies known forwarded, so a reply already handed on costs no query on later cycles.

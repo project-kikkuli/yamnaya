@@ -279,7 +279,7 @@ func (s *Store) commitVerdict(g Goal, v Verification, verdict string, findings [
 		kind, payload = EventVerified, fmt.Sprintf("attempt %d passed:%s", v.Attempt, list)
 	case VerdictFail:
 		g.State, g.Evidence, g.LastMovedAt = GoalActive, "", at
-		kind, payload = EventFailedVerify, fmt.Sprintf("attempt %d failed, so the goal is active again. Fix each finding, then run ym goal done again:%s", v.Attempt, list)
+		kind, payload = EventFailedVerify, fmt.Sprintf("attempt %d failed:%s%s", v.Attempt, list, failedVerifyEnd)
 	default:
 		g.State, g.Evidence, g.AckedAt = GoalStuck, verifyEvidence+strings.Join(findings, "; "), time.Time{}
 		kind, payload = EventStuck, fmt.Sprintf("verification attempt %d could not finish, so the goal shows stuck to the owner. Once the cause is fixed, run ym goal done again:%s", v.Attempt, list)
@@ -428,3 +428,6 @@ func (s *Store) prepareVerifier(v Verification) (Verification, error) {
 	v.Version++
 	return v, tx.Commit()
 }
+
+// failedVerifyEnd closes a failed verification's event, after its findings so a wake line shows the first of them.
+const failedVerifyEnd = "\nThe goal is active again. Fix each finding, then run ym goal done again."

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // wakeKinds are the events that wake a manager or chief: something needs it now. Every other event waits in its inbox for the next
@@ -77,7 +78,7 @@ func inboxText(head string, events []GoalEvent, host string, label func(GoalEven
 		if label != nil {
 			line = label(e) + " " + line
 			if !wholeKinds[e.Kind] {
-				line = clip(line, lineMax-2)
+				line = fitLine(e, line)
 			}
 		}
 		switch {
@@ -120,6 +121,14 @@ func eventLine(e GoalEvent, host string) string {
 	line := "#" + id + " " + e.Kind + ": " + text
 	if wholeKinds[e.Kind] {
 		return line
+	}
+	return fitLine(e, line)
+}
+
+// fitLine cuts an event's line to the cap; an ask keeps the key at its end that answers it.
+func fitLine(e GoalEvent, line string) string {
+	if i := strings.LastIndex(line, " "); e.Kind == EventAsked && i >= 0 {
+		return clip(line[:i], lineMax-2-utf8.RuneCountInString(line[i:])) + line[i:]
 	}
 	return clip(line, lineMax-2)
 }

@@ -61,6 +61,90 @@ func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T)
 	}
 }
 
+func TestAWakeLineKeepsItsUsefulEnd(t *testing.T) {
+	const pr = "https://github.com/august-innovations/august/pull/18854"
+	title := `"Arbiter: carry delivered charts' QA allergy changes on the next chart and verify the SP handoff" ` + pr
+	longCommand := "cat /tmp/claude-1000/-home-exedev-src-yamnaya-wt-goal17-relay-diag/29f19122-a266-4c45-b938-5f977a4182e0/tasks/bsh10a2wq.output | tail -12 | cut -c1-200; ym slot --status 2>&1 | grep -E yamnaya-test | cut -c1-125; git log --oneline -1"
+	const key = "august-wt-goal20-fix-stale-window-clear"
+	event := func(t *testing.T, w *orgWorld, goal, kind string) GoalEvent {
+		t.Helper()
+		events, err := w.core.Store.GoalEvents(goal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range events {
+			if e.Kind == kind {
+				return e
+			}
+		}
+		t.Fatalf("no %s event in %v", kind, kinds(events))
+		return GoalEvent{}
+	}
+	for _, tc := range []struct {
+		name string
+		line func(t *testing.T) string
+		want string
+	}{
+		{"a stopped agent's revive key", func(t *testing.T) string {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+			w.spawn("agent", m.Session)
+			w.stop("agent")
+			w.launches.launched = []Launched{{Key: key, Harness: "claude", Session: "agent", State: "exited 143", Path: "/home/exedev/" + key}}
+			w.loop(t, 3)
+			return eventLine(event(t, w, g.ID, EventAgentStopped), "")
+		}, "ym revive " + key + "."},
+		{"a hung agent's advice past a long command", func(t *testing.T) string {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
+			w.spawn("agent-with-a-long-id", m.Session)
+			w.clock = w.clock.Add(time.Hour)
+			w.set("agent-with-a-long-id", func(s *Session) {
+				s.Status, s.Since = Busy, w.clock.Add(-45*time.Minute)
+				s.Doing = Action{Tool: "Bash", Detail: longCommand, At: w.clock.Add(-45 * time.Minute)}
+			})
+			w.loop(t, 3)
+			return eventLine(event(t, w, g.ID, EventAgentHung), "")
+		}, "ym kill agent-wi --yes ends it"},
+		{"an unresolved count past a long title", func(t *testing.T) string {
+			for _, e := range prEvents(pr, title, "", PRStatus{State: "OPEN", Threads: 17}, true, time.Time{}) {
+				if e.Kind == EventReview {
+					return eventLine(e, "")
+				}
+			}
+			return ""
+		}, "17 review threads, 0 unresolved on"},
+		{"changes requested past a long title", func(t *testing.T) string {
+			for _, e := range prEvents(pr, title, "", PRStatus{State: "OPEN", Review: "CHANGES_REQUESTED"}, true, time.Time{}) {
+				if e.Kind == EventReview {
+					return eventLine(e, "")
+				}
+			}
+			return ""
+		}, "review: changes requested on"},
+		{"a failed verification's first finding", func(t *testing.T) string {
+			w := newVerifyWorld(t)
+			w.done(t, "importer reads CSV")
+			w.tick(t, time.Second)
+			if _, err := w.core.RecordVerdict(w.verifiers()[0], w.goal.ID, VerdictFail, []string{"fail merged https://github.com/project-kikkuli/yamnaya/pull/9: closed without merging"}); err != nil {
+				t.Fatal(err)
+			}
+			e := event(t, w.orgWorld, w.goal.ID, EventFailedVerify)
+			if !strings.Contains(e.Payload, "run ym goal done again") {
+				t.Fatalf("the event lost its instruction: %q", e.Payload)
+			}
+			return eventLine(e, "")
+		}, "closed without merging"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			line := tc.line(t)
+			if n := len([]rune(line)); n > lineMax-2 || !strings.Contains(line, tc.want) {
+				t.Fatalf("%d runes, want %q in it: %q", n, tc.want, line)
+			}
+		})
+	}
+}
+
 func TestAHungManagerIsEndedAndRelaunched(t *testing.T) {
 	for _, c := range []struct {
 		name         string

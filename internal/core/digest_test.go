@@ -166,6 +166,7 @@ func TestStuckAndFailedVerifyWakeOnce(t *testing.T) {
 		{"stuck again without moving", [][2]string{{EventStuck, "a"}, {EventNudge, "n"}, {EventResumed, "r"}, {EventStuck, "b"}}, []string{"stuck"}},
 		{"stuck again after moving", [][2]string{{EventStuck, "a"}, {EventUpdate, "moved"}, {EventStuck, "b"}}, []string{"stuck", "stuck"}},
 		{"verification retried on the same cause", [][2]string{{EventFailedVerify, findings(1, "ci red")}, {EventFailedVerify, findings(2, "ci red")}, {EventFailedVerify, findings(3, "ci red")}}, []string{"failed verify"}},
+		{"the same cause across the old and new wording", [][2]string{{EventFailedVerify, findings(1, "ci red")}, {EventFailedVerify, "attempt 2 failed:\n  - ci red" + failedVerifyEnd}}, []string{"failed verify"}},
 		{"verification failed on a new cause", [][2]string{{EventFailedVerify, findings(1, "ci red")}, {EventFailedVerify, findings(2, "thread open")}}, []string{"failed verify", "failed verify"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -268,7 +269,17 @@ func TestADigestIsOneCompactLinePerGoal(t *testing.T) {
 	}{
 		{"counts collapse", nil, []GoalEvent{{Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}}, []string{"goal15: 3 updates"}},
 		{"a ready pull request by its number", []GoalEvent{{Goal: "goal15", Kind: EventPRReady, Seq: 9, Payload: `"T" https://github.com/acme/august/pull/19637 is green and ready to merge`}},
-			[]GoalEvent{{Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}}, []string{"goal15: PR #19637 ready, 3 updates"}},
+			[]GoalEvent{{Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}, {Goal: "goal15", Kind: EventUpdate}}, []string{"goal15: acme/august PR 19637 ready, 3 updates"}},
+		{"two repositories' pull request 19 stay apart", []GoalEvent{
+			{Goal: "goal15", Kind: EventPRReady, Seq: 9, Payload: `"T" https://github.com/acme/august/pull/19 is green and ready to merge`},
+			{Goal: "goal15", Kind: EventPRReady, Seq: 10, Payload: `"U" https://github.com/acme/yamnaya/pull/19 is green and ready to merge`}},
+			nil, []string{"goal15: acme/august PR 19 ready, acme/yamnaya PR 19 ready"}},
+		{"a title quoting another pull request", []GoalEvent{{Goal: "goal15", Kind: EventPRReady, Seq: 9, Payload: `"Backport of https://github.com/acme/a/pull/5" https://github.com/acme/b/pull/19 is green and ready to merge`}},
+			nil, []string{"goal15: acme/b PR 19 ready"}},
+		{"a new head of one pull request stays one action", []GoalEvent{
+			{Goal: "goal15", Kind: EventPRReady, Seq: 9, Payload: `"T" https://github.com/acme/august/pull/19 is green and ready to merge`},
+			{Goal: "goal15", Kind: EventPRReady, Seq: 12, Payload: `"T" https://github.com/acme/august/pull/19 is green and ready to merge`}},
+			nil, []string{"goal15: acme/august PR 19 ready"}},
 		{"what needs the chief sorts first", []GoalEvent{{Goal: "goal9", Kind: EventStuck, Seq: 4}},
 			[]GoalEvent{{Goal: "goal1", Kind: EventCIGreen}, {Goal: "goal1", Kind: EventPROpened}}, []string{"goal9: stuck #4", "goal1: 1 green CI run, 1 opened PR"}},
 		{"a long payload stays out of the line", []GoalEvent{{Goal: "goal2", Kind: EventFailedVerify, Seq: 7, Payload: strings.Repeat("finding ", 500)}}, nil, []string{"goal2: failed verify #7"}},
@@ -281,6 +292,26 @@ func TestADigestIsOneCompactLinePerGoal(t *testing.T) {
 			}
 			if strings.Contains(strings.Join(got, ""), "…") {
 				t.Fatalf("a line was cut: %q", got)
+			}
+		})
+	}
+}
+
+func TestADigestOffersYmGoalEventOnlyForEventNumbers(t *testing.T) {
+	ready := GoalEvent{Goal: "goal15", Kind: EventPRReady, Seq: 9, Payload: `"T" https://github.com/acme/august/pull/19 is green and ready to merge`}
+	failed := GoalEvent{Goal: "goal15", Kind: EventFailedVerify, Seq: 812}
+	label := func(e GoalEvent) string { return e.Goal }
+	for _, tc := range []struct {
+		name   string
+		events []GoalEvent
+		footer bool
+	}{
+		{"a ready pull request alone", []GoalEvent{ready}, false},
+		{"beside a failed verification", []GoalEvent{ready, failed}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := actionRollup(tc.events, label, "").text(); strings.Contains(got, "ym goal event") != tc.footer || strings.Contains(got, "#19") {
+				t.Fatalf("digest %q, want footer=%v and no #19", got, tc.footer)
 			}
 		})
 	}
