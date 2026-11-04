@@ -122,8 +122,8 @@ func (m *Model) newChief(r row) {
 
 // detach asks y/n, then has n report to the owner instead of its chief.
 func (m *Model) detach(n core.Node) {
-	id, chief := n.Manager.ID, n.Manager.ParentID
-	if c, ok := m.board.Node(chief); ok {
+	id, chief := n.Manager.ID, m.board.Org.RefOf(n.Manager.ParentID)
+	if c, ok := m.board.Node(n.Manager.ParentID); ok {
 		chief = c.Manager.Label()
 	}
 	m.confirm("detach "+n.Manager.Label()+" from "+chief+"? it reports to you", m.do(func() (string, error) {
@@ -162,7 +162,7 @@ func (m Model) ownerName(id string) string {
 	n, ok := m.board.Node(id)
 	switch {
 	case !ok:
-		return id
+		return m.board.Org.RefOf(id)
 	case n.Goal != nil:
 		return m.goalName(*n.Goal)
 	}

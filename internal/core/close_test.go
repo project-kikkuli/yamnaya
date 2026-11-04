@@ -323,8 +323,8 @@ func TestAChiefOnAnotherHostClosesAGoalDirectlyOrThroughAVouch(t *testing.T) {
 				return
 			}
 			cl := f.b.closure(t, g.ID)
-			if now.State != GoalDropped || cl == nil || cl.Reason != "folded into goal9" || !strings.Contains(cl.Actor, top.ID) {
-				t.Fatalf("goal %s closure %+v, want dropped by %s", now.State, cl, top.ID)
+			if now.State != GoalDropped || cl == nil || cl.Reason != "folded into goal9" || !strings.Contains(cl.Actor, top.Name) {
+				t.Fatalf("goal %s closure %+v, want dropped by %s", now.State, cl, top.Name)
 			}
 		})
 	}

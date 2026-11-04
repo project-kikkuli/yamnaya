@@ -987,7 +987,15 @@ func (m Model) pickLabel() string {
 }
 
 // shownRelay is what a relay carries as a person reads it: by the names the board has for the host it goes to.
-func (m Model) shownRelay(r core.Relay) string { return m.board.Org.NameIDs(r.Dest, relayWhat(r)) }
+func (m Model) shownRelay(r core.Relay) string {
+	var y struct {
+		Args []string `json:"args"`
+	}
+	if r.Kind == core.RelayYM && json.Unmarshal([]byte(r.Body), &y) == nil && len(y.Args) > 0 {
+		return "ym " + strings.Join(m.board.Org.NameArgs(r.Dest, y.Args), " ")
+	}
+	return relayWhat(r)
+}
 
 // relayWhat names what a relay carries, as its owner would recognize it.
 func relayWhat(r core.Relay) string {

@@ -1262,12 +1262,12 @@ func TestAChiefsItemDetailShowsNoIdAsItsRepository(t *testing.T) {
 func TestARelayRowNamesWhatItCarries(t *testing.T) {
 	m, _, _ := setup(t)
 	m.board.Org.Managers = map[string]core.Manager{"box/mgr51": {ID: "box/mgr51", Name: "far-chief", Host: "box"}}
-	body, err := json.Marshal(map[string]any{"args": []string{"goal", "send", "--relayed", "mgr51", "hello"}})
+	body, err := json.Marshal(map[string]any{"args": []string{"goal", "send", "--relayed", "mgr51", "see mgr51 too"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := m.shownRelay(core.Relay{Kind: core.RelayYM, Dest: "box", Body: string(body)})
-	if got != "ym goal send --relayed far-chief hello" {
+	if got != "ym goal send --relayed far-chief see mgr51 too" {
 		t.Fatalf("relay row reads %q", got)
 	}
 }

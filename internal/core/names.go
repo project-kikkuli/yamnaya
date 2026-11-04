@@ -146,9 +146,9 @@ func (o Org) SteerBy(st Steer) string {
 		return "chief " + m.Ref()
 	}
 	if st.AuthorName != "" {
-		return "chief " + st.AuthorName
+		return chiefPhrase(st.AuthorName)
 	}
-	return "chief " + st.Author
+	return chiefPhrase(o.RefOf(st.Author))
 }
 
 // Shown is how a manager or chief shows: its name when that is a name, else its id.
@@ -613,7 +613,8 @@ func (c *Core) settleParents(o Org) error {
 	return errors.Join(errs...)
 }
 
-// RefOf is how the goal, manager or chief with this id is named across hosts; the id itself when o does not know it.
+// RefOf is how a person reads the goal, manager or chief with this id: its name, under its host when that is another one. A
+// chief on another host with no name known anywhere reads as "chief on <host>", never as its id.
 func (o Org) RefOf(id string) string {
 	if g, ok := o.Goals[id]; ok {
 		return g.Ref()
@@ -621,7 +622,101 @@ func (o Org) RefOf(id string) string {
 	if m, ok := o.Managers[id]; ok {
 		return m.Ref()
 	}
-	return id
+	host, rest, remote := SplitRemote(id)
+	if !remote || !idShaped.MatchString(rest) {
+		return id
+	}
+	if name, ok := o.hostNames[id]; ok {
+		return RemoteKey(host, name)
+	}
+	if strings.HasPrefix(rest, "goal") {
+		return "goal on " + host
+	}
+	return "chief on " + host
+}
+
+// chiefPhrase is a chief as RefOf reads it, with the word chief once.
+func chiefPhrase(ref string) string {
+	if strings.HasPrefix(ref, "chief on ") {
+		return ref
+	}
+	return "chief " + ref
+}
+
+// noteHostNames remembers what other hosts' managers, chiefs and goals are called, by host/id: a board or a relay may not come again.
+func (s *Store) noteHostNames(names map[string]string) error {
+	changed := false
+	for ref, name := range names {
+		_, id, remote := SplitRemote(ref)
+		if !remote || !idShaped.MatchString(id) || CheckName(name) != nil {
+			continue
+		}
+		res, err := s.db.Exec(`INSERT INTO ym_host_names (ref, name) VALUES (?, ?) ON CONFLICT(ref) DO UPDATE SET name = excluded.name WHERE name != excluded.name`, ref, name)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			changed = true
+		}
+	}
+	if changed {
+		s.invalidate()
+	}
+	return nil
+}
+
+func (s *Store) hostNames() (map[string]string, error) {
+	return remembered(s, "host names", cloneMap[string, string], func() (map[string]string, error) {
+		rows, err := s.db.Query(`SELECT ref, name FROM ym_host_names`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var ref, name string
+			if err := rows.Scan(&ref, &name); err != nil {
+				return nil, err
+			}
+			out[ref] = name
+		}
+		return out, rows.Err()
+	})
+}
+
+var chiefFrom = regexp.MustCompile(`\bchief (.+?) \((mgr[0-9]+)\)`)
+
+// namesInSnapshot is what host's item snapshot says its goals and chiefs are called: the names it sends, and those its items carry.
+func namesInSnapshot(host string, snap ItemSnapshot) map[string]string {
+	out := map[string]string{}
+	for id, name := range snap.Names {
+		out[RemoteKey(host, id)] = name
+	}
+	for _, it := range snap.Items {
+		d := it.Dossier
+		if m := chiefFrom.FindStringSubmatch(d.From); m != nil {
+			out[RemoteKey(host, m[2])] = Slug(m[1], 6)
+		}
+		if d.GoalName != "" && d.Chief != "" {
+			out[RemoteKey(host, d.Chief)] = d.GoalName
+		} else if d.GoalName != "" && d.Goal != "" {
+			out[RemoteKey(host, d.Goal)] = d.GoalName
+		}
+	}
+	return out
+}
+
+// LearnHostNames remembers every name the item snapshots this host holds carry.
+func (c *Core) LearnHostNames() error {
+	snapshots, err := c.Store.itemSnapshots()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for host, snap := range snapshots {
+		errs = append(errs, c.Store.noteHostNames(namesInSnapshot(host, snap)))
+	}
+	return errors.Join(errs...)
 }
 
 // RefName is how a person reads the goal, manager or chief with this id, here or on another host whose board this one has.
@@ -686,25 +781,42 @@ func (c *Core) actorName(author, name string) string {
 		return c.RefName(author)
 	}
 	if host, _, remote := SplitRemote(author); remote && !strings.Contains(name, "/") {
+		if CheckName(name) == nil {
+			c.Store.noteHostNames(map[string]string{author: name})
+		}
 		return RemoteKey(host, name)
 	}
 	return name
 }
 
+// NameArgs is a ym command for host as a person reads it: each argument that is only an id, known there, as its name. A person's words
+// stay as they wrote them.
+func (o Org) NameArgs(host string, args []string) []string {
+	out := slices.Clone(args)
+	free := map[string]bool{"--text": true, "--why": true, "--reason": true, "--summary": true, "--remit": true, "--by": true, "--by-name": true}
+	last := len(args) - 1
+	send := len(args) > 1 && args[1] == "send" || len(args) > 0 && args[0] == "send"
+	for i, a := range args {
+		if !idShaped.MatchString(a) || i > 0 && free[args[i-1]] || send && i == last {
+			continue
+		}
+		ref := a
+		if host != "" {
+			ref = RemoteKey(host, a)
+		}
+		if shown := o.RefOf(ref); !strings.HasPrefix(shown, "chief on ") && !strings.HasPrefix(shown, "goal on ") {
+			_, name, remote := SplitRemote(shown)
+			if !remote {
+				name = shown
+			}
+			out[i] = name
+		}
+	}
+	return out
+}
+
 // IDShaped reports whether s reads as a goalNN or mgrNN id.
 func IDShaped(s string) bool { return idShaped.MatchString(s) }
-
-var anyID = regexp.MustCompile(`\b(goal|mgr)[0-9]+\b`)
-
-// NameIDs is text, a ym command for host or what it answered, with each id o knows there as its name.
-func (o Org) NameIDs(host, text string) string {
-	return anyID.ReplaceAllStringFunc(text, func(id string) string {
-		if shown := o.ShownOf(RemoteKey(host, id)); shown != RemoteKey(host, id) {
-			return shown
-		}
-		return id
-	})
-}
 
 // ActorShown is who a goal's closure says closed it, a chief by its name.
 func (o Org) ActorShown(actor string) string {

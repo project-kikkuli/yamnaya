@@ -84,6 +84,8 @@ type relayYM struct {
 	Args []string `json:"args"`
 	// Requester is the session that asked for the command on its origin, which hears there how it turned out.
 	Requester string `json:"requester,omitempty"`
+	// ByName is how the chief in --by shows; the host that runs the command hands it to --by-name.
+	ByName string `json:"by_name,omitempty"`
 }
 
 type relayVouch struct {
@@ -690,7 +692,11 @@ func (c *Core) act(b Board, berr error, r Relay) (string, error) {
 	if c.RunSelf == nil {
 		return "", fmt.Errorf("ym cannot run itself here: %w", errUnusable)
 	}
-	out, err := c.RunSelf(y.Args...)
+	args := y.Args
+	if y.ByName != "" {
+		args = append(slices.Clone(args), "--by-name", y.ByName)
+	}
+	out, err := c.RunSelf(args...)
 	if errors.Is(err, ErrGone) {
 		return err.Error(), nil
 	}

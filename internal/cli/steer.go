@@ -97,7 +97,8 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				return err
 			}
 			if st.Pending != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.Shown(), e.core.RefName(st.Pending), e.core.RefName(author), e.core.RefName(author))
+				host, _, _ := core.SplitRemote(st.Pending)
+				fmt.Fprintf(cmd.OutOrStdout(), "the steer of %s lands once %s confirms you are above it; you hear if not\n", m.Shown(), host)
 				return nil
 			}
 			if st.Sent {

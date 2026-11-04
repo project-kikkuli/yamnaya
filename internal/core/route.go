@@ -24,10 +24,17 @@ type Org struct {
 	// Sessions maps each session a manager has run as to the manager.
 	Sessions map[string]string
 	order    []string
+	// hostNames are names other hosts' managers, chiefs and goals were last known by, by host/id.
+	hostNames map[string]string
 }
 
 func (c *Core) LoadOrg() (Org, error) {
 	o := Org{Managers: map[string]Manager{}, Goals: map[string]Goal{}}
+	names, err := c.Store.hostNames()
+	if err != nil {
+		return o, err
+	}
+	o.hostNames = names
 	ms, err := c.Store.Managers()
 	if err != nil {
 		return o, err

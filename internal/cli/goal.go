@@ -271,8 +271,12 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return printArchived(cmd.OutOrStdout(), b, asJSON)
 			}
 			if under != "" {
-				if _, err := b.Org.Lookup(under); err != nil {
+				m, err := b.Org.Lookup(under)
+				if err != nil {
 					return err
+				}
+				if m.Role != core.RoleChief {
+					return fmt.Errorf("%s is a goal, not a chief; --under takes a chief", m.Ref())
 				}
 			} else if !all {
 				if cl, err := e.caller(); err == nil {
@@ -721,7 +725,8 @@ func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				return err
 			}
 			if closed.Pending != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the close lands once that host confirms %s is above it, and %s hears if not\n", closed.Goal, e.core.RefName(closed.Pending), e.core.RefName(order.Author), e.core.RefName(order.Author))
+				host, _, _ := core.SplitRemote(closed.Pending)
+				fmt.Fprintf(cmd.OutOrStdout(), "the close of %s lands once %s confirms you are above it; you hear if not\n", closed.Goal, host)
 				return nil
 			}
 			if line := closed.String(); line != "" {

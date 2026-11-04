@@ -39,7 +39,7 @@ func closerOf(e GoalEvent) string {
 func closureText(disposition, author, why string, prs []string) string {
 	by := "the owner"
 	if author != Owner {
-		by = "chief " + author
+		by = chiefPhrase(author)
 	}
 	text := fmt.Sprintf("%s%s by %s: %s", closedPrefix, disposition, by, why)
 	for _, pr := range prs {
@@ -74,7 +74,7 @@ func (c *Core) SettleClosures() (int, error) {
 		if author == Owner {
 			continue
 		}
-		payload := strings.Replace(e.Payload, " by chief "+author+": ", " by chief "+c.RefName(author)+": ", 1)
+		payload := strings.Replace(e.Payload, " by chief "+author+": ", " by "+chiefPhrase(c.RefName(author))+": ", 1)
 		_, err := c.Store.db.Exec(`UPDATE ym_goal_events SET payload = ?, key = ? WHERE seq = ?`, payload, closureKey(author, e.Created, e.Seq), e.Seq)
 		if errs = append(errs, err); err == nil {
 			settled++

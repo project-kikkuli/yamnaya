@@ -71,10 +71,17 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 			args = append(args, "--override-verifier")
 		}
 		if order.Author != Owner {
-			args = append(args, "--by", RemoteKey(c.SelfName(), order.Author), "--by-name", c.RefName(order.Author))
+			args = append(args, "--by", RemoteKey(c.SelfName(), order.Author))
 		}
-		out, err := c.RunOrRelay(host, args...)
-		return Closed{Goal: order.Ref, Output: out}, err
+		y := relayYM{Args: args}
+		if order.Author != Owner {
+			y.ByName = c.RefName(order.Author)
+		}
+		out, err := c.runOrRelay(host, y)
+		if err != nil {
+			return Closed{Goal: order.Ref}, fmt.Errorf("%s: %w", c.RefName(order.Ref), err)
+		}
+		return Closed{Goal: order.Ref, Output: out}, nil
 	}
 	o, err := c.LoadOrg()
 	if err != nil {

@@ -33,7 +33,7 @@ func (c *Core) noteRelayed(r Relay, out string, err error, ref *RelayRef) error 
 	if !ok {
 		return nil
 	}
-	what := "ym " + clip(oneLine(strings.Join(y.Args, " ")), commandMax) + " from " + r.Origin
+	what := "ym " + clip(oneLine(strings.Join(o.NameArgs("", y.Args), " ")), commandMax) + " from " + r.Origin
 	kind, outcome, text := EventRelayed, "done", what+": done"
 	if out != "" {
 		text = what + ": " + oneLine(out)

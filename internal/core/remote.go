@@ -249,12 +249,25 @@ func (c *Core) RunOrRelay(host string, args ...string) (string, error) {
 	return c.runOrRelay(host, relayYM{Args: args})
 }
 
+// runDirect runs y on host over ssh with the name it carries. A host on an older ym refuses the flag that carries it, so it hears the
+// command again without; a relay carries the name in its JSON, which such a host ignores.
+func (c *Core) runDirect(host string, y relayYM) (string, error) {
+	if y.ByName == "" {
+		return c.Remotes.Run(host, y.Args...)
+	}
+	out, err := c.Remotes.Run(host, append(slices.Clone(y.Args), "--by-name", y.ByName)...)
+	if err != nil && strings.Contains(err.Error(), "unknown flag: --by-name") {
+		return c.Remotes.Run(host, y.Args...)
+	}
+	return out, err
+}
+
 // runOrRelay is RunOrRelay for the command y names, keeping who asked for it with a relay.
 func (c *Core) runOrRelay(host string, y relayYM) (string, error) {
 	args := y.Args
 	if c.Remotes != nil && slices.Contains(c.Remotes.Hosts(), host) {
 		if c.Silent(host) == nil {
-			out, err := c.Remotes.Run(host, args...)
+			out, err := c.runDirect(host, y)
 			if !errors.Is(err, ErrUnreachable) {
 				return out, err
 			}

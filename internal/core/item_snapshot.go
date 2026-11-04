@@ -11,6 +11,8 @@ type ItemSnapshot struct {
 	At      time.Time         `json:"at"`
 	Items   []Item            `json:"items"`
 	Parents map[string]string `json:"parents,omitempty"`
+	// Names are this host's goals and chiefs by name, so a host that only hears from it through relays can name them.
+	Names map[string]string `json:"names,omitempty"`
 }
 
 func (c *Core) itemSnapshot() (*ItemSnapshot, error) {
@@ -37,11 +39,19 @@ func (c *Core) itemSnapshot() (*ItemSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	parents := map[string]string{}
+	parents, names := map[string]string{}, map[string]string{}
 	for id, m := range o.Managers {
 		parents[id] = m.ParentID
+		if m.Shown() != id {
+			names[id] = m.Shown()
+		}
 	}
-	return &ItemSnapshot{At: c.now(), Items: items, Parents: parents}, nil
+	for id, g := range o.Goals {
+		if g.Shown() != id {
+			names[id] = g.Shown()
+		}
+	}
+	return &ItemSnapshot{At: c.now(), Items: items, Parents: parents, Names: names}, nil
 }
 
 func (c *Core) itemSnapshots() (map[string]ItemSnapshot, error) {
@@ -61,6 +71,9 @@ func (c *Core) keepItemSnapshots(snapshots map[string]ItemSnapshot) error {
 	for host, snap := range snapshots {
 		if host == c.SelfName() {
 			continue
+		}
+		if err := c.Store.noteHostNames(namesInSnapshot(host, snap)); err != nil {
+			return err
 		}
 		raw, err := json.Marshal(snap)
 		if err != nil {

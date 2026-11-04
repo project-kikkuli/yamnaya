@@ -93,6 +93,10 @@ type Manager struct {
 }
 
 const orgSchema = `
+CREATE TABLE IF NOT EXISTS ym_host_names (
+	ref TEXT PRIMARY KEY,
+	name TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ym_goals (
 	num INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL DEFAULT '',

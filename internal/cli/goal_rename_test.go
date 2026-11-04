@@ -463,6 +463,7 @@ func TestGoalListUnderRefusesAnUnknownRefAndDefaultsToTheCallingChief(t *testing
 	}{
 		{name: "by name", args: []string{"--under", "ops-lead"}, want: []string{"ship-it"}, absent: "other-goal"},
 		{name: "an unknown ref", args: []string{"--under", "nosuch-chief"}, err: "no manager, chief or goal"},
+		{name: "a goal", args: []string{"--under", "ship-it"}, err: "is a goal, not a chief"},
 		{name: "an old name", args: []string{"--under", "old-lead"}, err: "no manager, chief or goal"},
 		{name: "from the chief's session", session: "chief-session", want: []string{"ship-it"}, absent: "other-goal"},
 		{name: "from the chief's session, --all", session: "chief-session", args: []string{"--all"}, want: []string{"ship-it", "other-goal"}},
@@ -563,4 +564,61 @@ func (r *steerRemote) Run(host string, args ...string) (string, error) {
 		return string(raw), err
 	}
 	return r.itemRemote.Run(host, args...)
+}
+
+func TestAStepThatWaitsOnAnotherHostAddressesItsReaderWithNoIds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a steer", []string{"steer", "--text", "new plan", "--by", "away/mgr9", "ship-it"}, "the steer of ship-it lands once box confirms you are above it; you hear if not"},
+		{"a close", []string{"close", "ship-it", "--as", "abandoned", "--why", "x", "--by", "away/mgr9"}, "the close of ship-it lands once box confirms you are above it; you hear if not"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+			r := boxBoard(k)
+			r.board.Managers = []core.Manager{{ID: "mgr5", Role: core.RoleChief, Name: "box-chief"}}
+			_, m, err := k.NewGoalNamed("ship-it", "ship the thing", dir, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := k.Attach(m.ID, "box/mgr5"); err != nil {
+				t.Fatal(err)
+			}
+			with := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+			}
+			cmd := goalCmd(with, with)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%v: %v\n%s", tc.args, err, out.String())
+			}
+			if got := strings.TrimSpace(out.String()); got != tc.want {
+				t.Fatalf("printed %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestARemoteFailureNamesTheCommandNotItsIds(t *testing.T) {
+	stub := filepath.Join(t.TempDir(), "ssh")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho 'ym: name taken' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRemoteHosts([]string{"box"}, time.Second, nil)
+	r.ssh, r.timeout = stub, 5*time.Second
+	_, err := r.Run("box", "goal", "steer", "--text", "see mgr1", "--by", "home/mgr2", "mgr1")
+	if err == nil || !strings.Contains(err.Error(), "ym goal steer on box") || !strings.Contains(err.Error(), "name taken") || strings.Contains(err.Error(), "mgr") {
+		t.Fatalf("error %v", err)
+	}
 }

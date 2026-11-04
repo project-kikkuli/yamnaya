@@ -262,7 +262,7 @@ func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing
 		{func() error { return w.core.Attach("box/mgr1", "") }, "box chief detach mgr1"},
 		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", Owner); return err }, "box goal steer --text ship it smaller mgr1"},
 		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", chief.ID); return err },
-			"box goal steer --text ship it smaller --by a/" + chief.ID + " --by-name platform mgr1"},
+			"box goal steer --text ship it smaller --by a/" + chief.ID + " mgr1 --by-name platform"},
 	} {
 		r.ran = nil
 		if err := act.do(); err != nil {
@@ -694,12 +694,12 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 		final bool
 		want  []string
 	}{
-		{name: "it ran", want: []string{"relayed: ym goal relaunch MGR from b: MGR relaunched as 0badc0de" + long}},
+		{name: "it ran", want: []string{"relayed: ym goal relaunch NAME from b: MGR relaunched as 0badc0de" + long}},
 		{name: "it failed, then ran", fails: 2, want: []string{
-			"relay-failed: ym goal relaunch MGR from b failed: git ls-remote --heads origin: Connection closed" + long,
-			"relayed: ym goal relaunch MGR from b: MGR relaunched as 0badc0de" + long}},
+			"relay-failed: ym goal relaunch NAME from b failed: git ls-remote --heads origin: Connection closed" + long,
+			"relayed: ym goal relaunch NAME from b: MGR relaunched as 0badc0de" + long}},
 		{name: "it was refused for good", fails: 1, final: true, want: []string{
-			"relay-failed: ym goal relaunch MGR from b refused: git ls-remote --heads origin: Connection closed" + long}},
+			"relay-failed: ym goal relaunch NAME from b refused: git ls-remote --heads origin: Connection closed" + long}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFleet(t)
@@ -749,7 +749,7 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 			}
 			var want []string
 			for _, w := range tc.want {
-				want = append(want, strings.ReplaceAll(w, "MGR", mgr.ID))
+				want = append(want, strings.ReplaceAll(strings.ReplaceAll(w, "MGR", mgr.ID), "NAME", mgr.Name))
 			}
 			if !slices.Equal(heard, want) {
 				t.Errorf("chief heard %q, want %q", heard, want)

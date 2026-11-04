@@ -2,8 +2,10 @@ package core
 
 import (
 	"encoding/json"
+	stderrors "errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1132,7 +1134,9 @@ func TestEveryProcessNamesAChiefFromTheBoardsItStored(t *testing.T) {
 		{name: "another host's goal", id: "box/mgr9", want: "box/far-chief"},
 		{name: "this host's under its own relay name", self: "home", id: "home/LOCAL", want: "boss-chief"},
 		{name: "this host's", id: "LOCAL", want: "boss-chief"},
-		{name: "a host with no board", id: "far/mgr9", want: "far/mgr9"},
+		{name: "a host with no board", id: "far/mgr9", want: "chief on far"},
+		{name: "a goal on a host with no board", id: "far/goal3", want: "goal on far"},
+		{name: "a name typed under its host stays", id: "far/some-chief", want: "far/some-chief"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -1184,7 +1188,7 @@ func TestASteerOrCloseFromAnotherHostShowsItsChiefsNameAndKeepsItsId(t *testing.
 	}{
 		{name: "the relay carried a name", carried: "ops-lead", want: "chief home/ops-lead"},
 		{name: "the name came whole", carried: "home/ops-lead", want: "chief home/ops-lead"},
-		{name: "an older host sent none", carried: "", want: "chief home/mgr2"},
+		{name: "an older host sent none", carried: "", want: "chief on home"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -1236,18 +1240,163 @@ func TestAVerdictNeedsNoRefFromItsVerifierSession(t *testing.T) {
 	}
 }
 
-func TestNameIDsNamesWhatABoardKnowsOnThatHost(t *testing.T) {
+func TestNameArgsRenamesRefsAndLeavesAPersonsWords(t *testing.T) {
 	o := Org{Goals: map[string]Goal{"box/goal3": {ID: "box/goal3", Name: "fix-export", Host: "box"}},
-		Managers: map[string]Manager{"box/mgr51": {ID: "box/mgr51", Name: "far-chief", Host: "box"}}}
-	for _, tc := range []struct{ host, text, want string }{
-		{"box", "ym goal send --relayed mgr51 hello", "ym goal send --relayed far-chief hello"},
-		{"box", "ym goal close goal3 --as abandoned", "ym goal close fix-export --as abandoned"},
-		{"box", "ym goal send mgr99 hi", "ym goal send mgr99 hi"},
-		{"far", "ym goal send mgr51 hi", "ym goal send mgr51 hi"},
-		{"box", "ym item answer #4 mgr5100x", "ym item answer #4 mgr5100x"},
+		Managers: map[string]Manager{"box/mgr51": {ID: "box/mgr51", Name: "far-chief", Host: "box"}, "mgr7": {ID: "mgr7", Name: "here-chief"}}}
+	for _, tc := range []struct {
+		host string
+		args []string
+		want string
+	}{
+		{"box", []string{"goal", "send", "--relayed", "mgr51", "see goal3 and mgr51 too"}, "goal send --relayed far-chief see goal3 and mgr51 too"},
+		{"box", []string{"goal", "send", "mgr51", "mgr51"}, "goal send far-chief mgr51"},
+		{"box", []string{"goal", "close", "goal3", "--as", "abandoned", "--why", "goal3"}, "goal close fix-export --as abandoned --why goal3"},
+		{"box", []string{"goal", "steer", "--text", "mgr51", "--by", "home/mgr2", "goal3"}, "goal steer --text mgr51 --by home/mgr2 fix-export"},
+		{"box", []string{"goal", "relaunch", "mgr99"}, "goal relaunch mgr99"},
+		{"far", []string{"goal", "relaunch", "mgr51"}, "goal relaunch mgr51"},
+		{"", []string{"goal", "relaunch", "mgr7"}, "goal relaunch here-chief"},
 	} {
-		if got := o.NameIDs(tc.host, tc.text); got != tc.want {
-			t.Errorf("NameIDs(%q, %q) = %q, want %q", tc.host, tc.text, got, tc.want)
+		if got := strings.Join(o.NameArgs(tc.host, tc.args), " "); got != tc.want {
+			t.Errorf("NameArgs(%q, %q) = %q, want %q", tc.host, tc.args, got, tc.want)
 		}
+	}
+}
+
+// olderHost refuses the flag an older ym does not have, or fails some other way.
+type olderHost struct {
+	fakeRemotes
+	refuse error
+	calls  [][]string
+}
+
+func (r *olderHost) Run(_ string, args ...string) (string, error) {
+	r.calls = append(r.calls, args)
+	if slices.Contains(args, "--by-name") {
+		return "", r.refuse
+	}
+	return "ok", nil
+}
+
+func TestASteerOrCloseFromAChiefReachesAHostOnAnOlderYm(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		act    func(*testing.T, *orgWorld, Manager) error
+		refuse error
+		calls  int
+		fails  bool
+	}{
+		{"a steer, the host has the flag", func(t *testing.T, w *orgWorld, boss Manager) error {
+			_, err := w.core.SteerContext(w.board(t), "box/mgr1", "new plan", boss.ID)
+			return err
+		}, nil, 1, false},
+		{"a steer, an older host", func(t *testing.T, w *orgWorld, boss Manager) error {
+			_, err := w.core.SteerContext(w.board(t), "box/mgr1", "new plan", boss.ID)
+			return err
+		}, stderrors.New("exit status 1: ym: unknown flag: --by-name"), 2, false},
+		{"a close, an older host", func(t *testing.T, w *orgWorld, boss Manager) error {
+			_, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: "box/goal1", As: CloseAbandoned, Why: "x", Author: boss.ID})
+			return err
+		}, stderrors.New("exit status 1: ym: unknown flag: --by-name"), 2, false},
+		{"another refusal is not sent again", func(t *testing.T, w *orgWorld, boss Manager) error {
+			_, err := w.core.SteerContext(w.board(t), "box/mgr1", "new plan", boss.ID)
+			return err
+		}, stderrors.New("exit status 1: ym: no such goal"), 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			boss := w.chief(t, "boss-chief")
+			r := &olderHost{refuse: tc.refuse}
+			r.boards = []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr1", Role: RoleManager, Name: "far-goal", GoalID: "goal1"}},
+				Goals: []Goal{{ID: "goal1", Name: "far-goal", ManagerID: "mgr1"}}}}
+			w.core.Remotes = r
+			err := tc.act(t, w, boss)
+			if (err != nil) != tc.fails {
+				t.Fatalf("err %v, want failing %v", err, tc.fails)
+			}
+			if len(r.calls) != tc.calls {
+				t.Fatalf("ran %v, want %d calls", r.calls, tc.calls)
+			}
+			if tc.fails && (!strings.Contains(err.Error(), "box/far-goal") || !strings.Contains(err.Error(), "no such goal")) {
+				t.Fatalf("error %q, want the goal's name and the far side's words", err)
+			}
+		})
+	}
+}
+
+func TestAChiefOnAnotherHostIsNamedFromWhatLasts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(*testing.T, *orgWorld)
+		want string
+	}{
+		{"a board that has since gone", func(t *testing.T, w *orgWorld) {
+			keepBoard(t, w, "peer", Manager{ID: "mgr51", Role: RoleChief, Name: "master"})
+			if _, err := w.core.Store.db.Exec(`DELETE FROM ym_host_boards`); err != nil {
+				t.Fatal(err)
+			}
+			w.core.Store.invalidate()
+		}, "peer/master"},
+		{"the names a snapshot sends", func(t *testing.T, w *orgWorld) {
+			if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"peer": {At: w.clock, Names: map[string]string{"mgr51": "master"}}}); err != nil {
+				t.Fatal(err)
+			}
+		}, "peer/master"},
+		{"an older snapshot's item line", func(t *testing.T, w *orgWorld) {
+			snap := ItemSnapshot{At: w.clock, Items: []Item{{Seq: 1, ID: "D1", Dossier: Dossier{From: "chief master (mgr51)"}}}}
+			raw, _ := json.Marshal(snap)
+			if _, err := w.core.Store.db.Exec(`INSERT INTO ym_host_items(host,at,items) VALUES('peer',1,?)`, raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.LearnHostNames(); err != nil {
+				t.Fatal(err)
+			}
+		}, "peer/master"},
+		{"nothing", func(*testing.T, *orgWorld) {}, "chief on peer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "named-goal" }
+			g, m := w.goal(t, "anything", "/repo/august")
+			tc.seed(t, w)
+			if got := w.core.RefName("peer/mgr51"); got != tc.want {
+				t.Fatalf("RefName = %q, want %q", got, tc.want)
+			}
+			if err := w.core.Attach(m.ID, "peer/mgr51"); err != nil {
+				t.Fatal(err)
+			}
+			o, _ := w.core.LoadOrg()
+			if got := w.core.boss(o, o.Managers[m.ID]); got != "your "+chiefPhrase(tc.want) {
+				t.Fatalf("prompt says %q", got)
+			}
+			if _, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which way?", Session: m.Session}); err != nil {
+				t.Fatal(err)
+			}
+			events, _ := w.core.Store.GoalEvents(g.ID)
+			at := slices.IndexFunc(events, func(e GoalEvent) bool { return e.Kind == EventAsked })
+			if at < 0 || !strings.Contains(events[at].Payload, "to "+tc.want) || strings.Contains(events[at].Payload, "mgr51") {
+				t.Fatalf("feed %+v, want the ask to %q", events, tc.want)
+			}
+			if got := o.SteerBy(Steer{Author: "peer/mgr51"}); got != chiefPhrase(tc.want) {
+				t.Fatalf("SteerBy = %q", got)
+			}
+		})
+	}
+}
+
+func TestAPromptNamesItsChiefOnceAndNeverItsOwnId(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "named-goal" }
+	_, m := w.goal(t, "anything", "/repo/august")
+	boss := w.chief(t, "named-chief", m.ID)
+	o, _ := w.core.LoadOrg()
+	if got := w.core.boss(o, o.Managers[m.ID]); got != "your chief named-chief" {
+		t.Fatalf("boss = %q", got)
+	}
+	var prompt strings.Builder
+	w.core.managerPrompt(&prompt, o, o.Managers[m.ID])
+	w.core.chiefPrompt(&prompt, o, o.Managers[boss.ID])
+	paths := regexp.MustCompile(`\S*/(chiefs|goals)/\S+`)
+	if ids := regexp.MustCompile(`\b(goal|mgr)[0-9]+\b`).FindAllString(paths.ReplaceAllString(prompt.String(), ""), -1); len(ids) != 0 {
+		t.Fatalf("prompts show ids %v outside paths:\n%s", ids, prompt.String())
 	}
 }

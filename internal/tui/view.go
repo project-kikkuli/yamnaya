@@ -788,7 +788,7 @@ func (m Model) recipientName(it core.Item) string {
 	if mg, ok := m.board.Org.Managers[it.Recipient]; ok {
 		return m.tagged(mg.Host, mg.Label())
 	}
-	return it.Recipient
+	return m.board.Org.RefOf(it.Recipient)
 }
 
 func copiesText(p core.Project) string {

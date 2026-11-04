@@ -162,9 +162,9 @@ func (c *Core) planNow(sb *strings.Builder, o Org, m Manager) {
 func (c *Core) boss(o Org, m Manager) string {
 	if up := o.Above(m.ParentID); up != Owner {
 		if _, _, remote := SplitRemote(up); remote {
-			return "your chief " + c.RefName(up)
+			return "your " + chiefPhrase(c.RefName(up))
 		}
-		return "your chief " + o.Managers[up].Label()
+		return "your chief " + o.Managers[up].Shown()
 	}
 	return "the owner"
 }

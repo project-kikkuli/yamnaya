@@ -205,10 +205,16 @@ func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string) (St
 	if host, rest, ok := c.remoteHost(ref); ok {
 		args := []string{"goal", "steer", "--text", text}
 		if author != Owner {
-			args = append(args, "--by", RemoteKey(c.SelfName(), author), "--by-name", c.RefName(author))
+			args = append(args, "--by", RemoteKey(c.SelfName(), author))
 		}
-		_, err := c.RunOrRelay(host, append(args, rest)...)
-		return Steer{Manager: ref, Text: text, Author: author, Sent: true}, err
+		y := relayYM{Args: append(args, rest)}
+		if author != Owner {
+			y.ByName = c.RefName(author)
+		}
+		if _, err := c.runOrRelay(host, y); err != nil {
+			return Steer{}, fmt.Errorf("%s: %w", c.RefName(ref), err)
+		}
+		return Steer{Manager: ref, Text: text, Author: author, Sent: true}, nil
 	}
 	o, err := c.LoadOrg()
 	if err != nil {

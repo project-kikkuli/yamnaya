@@ -655,11 +655,6 @@ func (c *Core) foldLater(b *Board) error {
 	for _, ns := range [][]Need{b.Needs, b.Later} {
 		for i := range ns {
 			ns[i].Name = ns[i].nameIn(b.Org)
-			if r := ns[i].Relay; r != nil {
-				shown := *r
-				shown.Error = b.Org.NameIDs(r.Dest, r.Error)
-				ns[i].Relay = &shown
-			}
 			if ns[i].Item != nil && nobodyActs(b.Org, *ns[i].Item) {
 				ns[i].NoAct = true
 			}
