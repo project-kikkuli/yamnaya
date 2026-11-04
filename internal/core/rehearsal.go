@@ -49,6 +49,20 @@ func nearestRoot(dir string) string {
 	return root
 }
 
+// InRehearsal reports whether path, resolved, lies inside the rehearsal root holding stateDir. With no such root, nothing does.
+func InRehearsal(stateDir, path string) bool {
+	root := RehearsalRoot(stateDir)
+	if root == "" {
+		return false
+	}
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	p, err := filepath.EvalSymlinks(path)
+	return err == nil && under(p, r)
+}
+
 // DefaultStateDir reports whether dir is the owner's own state dir, ~/.local/state/yamnaya.
 func DefaultStateDir(dir string) bool {
 	home, err := os.UserHomeDir()

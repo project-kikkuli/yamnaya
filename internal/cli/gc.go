@@ -83,6 +83,12 @@ func (l launcher) liveWorktrees(recs []launch.Record) []string {
 	return out
 }
 
+// ownsPath reports whether this ym may touch a repository or worktree its records name: the owner's own ym may, and any other only
+// inside its rehearsal root, since a copy of real records must not reach real worktrees.
+func (l launcher) ownsPath(path string) bool {
+	return l.everywhere || core.InRehearsal(filepath.Dir(l.records.Dir), path)
+}
+
 // recordedWorktrees are the worktrees of every non-landed record: right after a restart none has a pane, yet ym means to
 // resume each, so a short idle must not take them.
 func recordedWorktrees(recs []launch.Record) []string {
@@ -103,7 +109,7 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 	if !l.everywhere {
 		repos, own = nil, &launch.Owned{Paths: map[string]bool{}, Branches: map[string]bool{}}
 		for _, rec := range recs {
-			if !rec.Adopted {
+			if !rec.Adopted && l.ownsPath(rec.Worktree.Path) {
 				own.Paths[rec.Worktree.Path] = true
 				own.Branches[rec.Worktree.Branch] = rec.Worktree.Branch != ""
 			}
@@ -112,7 +118,7 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 		repos = append(repos, launch.Discovered(core.RepoRoots(), l.repos, time.Now())...)
 	}
 	for _, rec := range recs {
-		if rec.Worktree.GitDir != "" {
+		if rec.Worktree.GitDir != "" && l.ownsPath(rec.Worktree.GitDir) {
 			repos = append(repos, filepath.Dir(rec.Worktree.GitDir))
 		}
 	}
