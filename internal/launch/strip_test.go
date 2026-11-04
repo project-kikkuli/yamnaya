@@ -601,6 +601,49 @@ func TestAWorktreeWithSubmodulesGoesOnlyWhenTheyAreProvenToLoseNothing(t *testin
 			os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte(".env\n"), 0o644)
 			put(t, dep, ".env")
 		}, keep: KeepModules},
+		{name: "commit only on a remote-tracking ref whose branch the server deleted", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "checkout", "-q", "-b", "gone")
+			commit(t, dep)
+			run(t, dep, "git", "push", "-q", "origin", "gone")
+			origin, _ := git(dep, "remote", "get-url", "origin")
+			run(t, origin, "git", "update-ref", "-d", "refs/heads/gone")
+			run(t, dep, "git", "checkout", "-q", "--detach")
+			run(t, dep, "git", "branch", "-q", "-D", "gone")
+			run(t, wt, "git", "add", "dep")
+			run(t, wt, "git", "commit", "-q", "-m", "record it")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+		}, keep: KeepModules},
+		{name: "commit left only in the reflog", setup: func(t *testing.T, repo, wt, dep string) {
+			commit(t, dep)
+			run(t, dep, "git", "reset", "-q", "--hard", "HEAD~1")
+		}, keep: KeepModules},
+		{name: "annotated tag never pushed", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "tag", "-a", "v1", "-m", "the only copy of this message")
+		}, keep: KeepModules},
+		{name: "lightweight tag never pushed", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "tag", "v1")
+		}, keep: KeepModules},
+		{name: "edit hidden by assume-unchanged in the submodule", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "update-index", "--assume-unchanged", ".gitmodules")
+			os.WriteFile(filepath.Join(dep, ".gitmodules"), []byte("# hidden edit\n"), 0o644)
+		}, keep: KeepModules},
+		{name: "edit hidden by skip-worktree in the submodule", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "update-index", "--skip-worktree", ".gitmodules")
+			os.WriteFile(filepath.Join(dep, ".gitmodules"), []byte("# hidden edit\n"), 0o644)
+		}, keep: KeepModules},
+		{name: "edit hidden by assume-unchanged in the parent", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, wt, "git", "update-index", "--assume-unchanged", "pkg/mod.py")
+			os.WriteFile(filepath.Join(wt, "pkg", "mod.py"), []byte("# hidden edit\n"), 0o644)
+		}, keep: KeepDirty},
+		{name: "a worktree linked from the submodule's git dir", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "worktree", "add", "-q", "--detach", filepath.Join(t.TempDir(), "linked"))
+		}, keep: KeepModules},
+		{name: "a remote that cannot be reached", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+		}, keep: KeepModules},
+		{name: "no remote at all", setup: func(t *testing.T, repo, wt, dep string) {
+			run(t, dep, "git", "remote", "remove", "origin")
+		}, keep: KeepModules},
 		{name: "locked parent", setup: func(t *testing.T, repo, wt, dep string) {
 			run(t, repo, "git", "worktree", "lock", wt)
 		}, keep: KeepLocked},
@@ -661,5 +704,51 @@ func TestAStraySubmoduleGitDirKeepsTheWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Fatal("removed the worktree")
+	}
+}
+
+func TestForcingTakesTheStrictIgnoredRuleEvenInAnOrdinaryGC(t *testing.T) {
+	excluded := func(t *testing.T, dir string) {
+		t.Helper()
+		gitDir, _ := git(dir, "rev-parse", "--absolute-git-dir")
+		os.MkdirAll(filepath.Join(gitDir, "info"), 0o755)
+		os.WriteFile(filepath.Join(gitDir, "info", "exclude"), []byte(".env\n"), 0o644)
+		put(t, dir, ".env")
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, wt, dep string)
+		keep  string
+	}{
+		{"nothing ignored", func(*testing.T, string, string) {}, ""},
+		{"ignored file in the submodule", func(t *testing.T, wt, dep string) { excluded(t, dep) }, KeepModules},
+		{"ignored file in the nested submodule", func(t *testing.T, wt, dep string) { excluded(t, filepath.Join(dep, "deep")) }, KeepModules},
+		{"ignored file in the parent", func(t *testing.T, wt, dep string) { put(t, wt, ".env") }, KeepIgnored},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo, wt, dep := submoduleRepo(t)
+			c.setup(t, wt, dep)
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, false, false)
+			if err != nil || s.Trees[0].Keep != c.keep {
+				t.Fatalf("decided %+v, %v, want %q", s.Trees[0], err, c.keep)
+			}
+		})
+	}
+}
+
+func TestAnOrdinaryGCKeepsAParentEditAFlagHides(t *testing.T) {
+	for _, flag := range []string{"--assume-unchanged", "--skip-worktree"} {
+		t.Run(flag, func(t *testing.T) {
+			repo, wt := reapRepo(t)
+			run(t, wt, "git", "update-index", flag, "pkg/mod.py")
+			os.WriteFile(filepath.Join(wt, "pkg", "mod.py"), []byte("# hidden edit\n"), 0o644)
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, false, false)
+			if err != nil || s.Trees[0].Keep != KeepDirty {
+				t.Fatalf("decided %+v, %v", s.Trees[0], err)
+			}
+			if !exists(wt, "pkg/mod.py") {
+				t.Fatal("lost the edit")
+			}
+		})
 	}
 }

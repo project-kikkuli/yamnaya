@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -132,6 +133,17 @@ func trackedBuildFile(root, dir string) bool {
 // an ignored directory always, with strict anything ignored off the allowlist, and a submodule not proven to lose nothing.
 // Removing a worktree takes its ignored files and its submodules' git dirs with it. forced says it has submodules, all proven.
 func keepContents(path string, strict bool) (keep, why string, forced bool) {
+	if hidden, err := hiddenEdits(path); err != nil {
+		return KeepFailing, err.Error(), false
+	} else if hidden != "" {
+		return KeepDirty, "a flag hides any edit to " + hidden + " from git status", false
+	}
+	links, err := gitlinks(path)
+	if err != nil {
+		return KeepFailing, err.Error(), false
+	}
+	// --force takes everything ignored with it, so forcing always takes the strict rule
+	strict = strict || len(links) > 0
 	all, err := ignoredEntries(path)
 	if err != nil {
 		return KeepFailing, err.Error(), false
@@ -148,13 +160,9 @@ func keepContents(path string, strict bool) (keep, why string, forced bool) {
 			}
 		}
 	}
-	links, err := gitlinks(path)
-	if err != nil {
-		return KeepFailing, err.Error(), false
-	}
 	proven := map[string]bool{}
 	for sub, recorded := range links {
-		if why := proveSubmodule(filepath.Join(path, sub), recorded, strict, proven); why != "" {
+		if why := proveSubmodule(filepath.Join(path, sub), recorded, proven); why != "" {
 			return KeepModules, "submodule " + sub + " " + why, false
 		}
 	}
@@ -183,9 +191,89 @@ func gitlinks(path string) (map[string]string, error) {
 	return links, nil
 }
 
-// proveSubmodule says why removing the submodule checked out at path could lose something, or "". Its git dir goes with the
-// worktree, so nothing in it may exist only there: every ref, a stash and a detached HEAD included, must be on a remote.
-func proveSubmodule(path, recorded string, strict bool, proven map[string]bool) string {
+// hiddenEdits names a tracked file git status cannot vouch for, because --assume-unchanged or --skip-worktree is set on it, or "".
+func hiddenEdits(path string) (string, error) {
+	out, err := look(path, "ls-files", "-v", "-z")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
+		if flag, name, ok := strings.Cut(line, " "); ok && flag != "" && (flag == "S" || flag[0] >= 'a' && flag[0] <= 'z') {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
+// remoteLimit bounds asking one remote what it holds.
+const remoteLimit = time.Minute
+
+// remoteRefs asks every remote of the repository at path what it holds now, ref by ref, since a local remote-tracking ref may
+// outlive the branch it names. It only reads, so a worktree it keeps stays exactly as it was. No remote or any failure is an error.
+func remoteRefs(path string) (map[string]string, error) {
+	remotes, err := look(path, "remote")
+	if err != nil {
+		return nil, err
+	}
+	names := strings.Fields(remotes)
+	if len(names) == 0 {
+		return nil, errors.New("no remote")
+	}
+	refs := map[string]string{}
+	for _, name := range names {
+		ctx, cancel := context.WithTimeout(context.Background(), remoteLimit)
+		cmd := exec.CommandContext(ctx, "git", "-C", path, "ls-remote", name)
+		cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+		cmd.WaitDelay = 5 * time.Second
+		out, err := cmd.Output()
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("git ls-remote %s: %w", name, err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if sha, ref, ok := strings.Cut(line, "\t"); ok {
+				refs[ref] = sha
+			}
+		}
+	}
+	return refs, nil
+}
+
+// unprovenCommits says what, in the repository at path, is on no remote per refs: every local ref but remote-tracking ones, HEAD,
+// and everything in the reflogs of HEAD and the branches. A tip this repository lacks proves nothing and is left out.
+func unprovenCommits(path string, refs map[string]string) (string, error) {
+	var check strings.Builder
+	for _, sha := range refs {
+		check.WriteString(sha + "\n")
+	}
+	have, err := gitEnv(path, nil, []byte(check.String()), "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	if err != nil {
+		return "", err
+	}
+	var revs strings.Builder
+	for _, line := range strings.Split(have, "\n") {
+		if sha, kind, ok := strings.Cut(line, " "); ok && kind != "missing" {
+			revs.WriteString("^" + sha + "\n")
+		}
+	}
+	logged, err := look(path, "log", "--walk-reflogs", "--format=%H", "HEAD", "--branches")
+	if err != nil {
+		return "", err
+	}
+	revs.WriteString(logged + "\n")
+	count, err := gitEnv(path, nil, []byte(revs.String()), "rev-list", "--count", "--stdin", "--exclude=refs/remotes/*", "--all", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if count != "0" {
+		return count + " commits on no remote's current refs, counting HEAD, branches, tags and reflogs", nil
+	}
+	return "", nil
+}
+
+// proveSubmodule says why removing the submodule checked out at path could lose something, or "". Its git dir and objects go with
+// the worktree and exist nowhere else, so everything in them must be on a remote as the remote says now.
+func proveSubmodule(path, recorded string, proven map[string]bool) string {
 	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
 		entries, err := os.ReadDir(path)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) || len(entries) > 0 {
@@ -207,19 +295,42 @@ func proveSubmodule(path, recorded string, strict bool, proven map[string]bool) 
 	if status != "" {
 		return "is dirty"
 	}
-	local, err := look(path, "rev-list", "--count", "--all", "HEAD", "--not", "--remotes")
+	stash, err := look(path, "stash", "list")
 	if err != nil {
 		return "cannot be read: " + err.Error()
 	}
-	if local != "0" {
-		return "has " + local + " commits on no remote, counting branches, tags, a stash and HEAD"
-	}
-	if keep, why, _ := keepContents(path, strict); keep != "" {
-		return "has " + keep + ": " + why
+	if stash != "" {
+		return "has a stash"
 	}
 	gitDir, err := look(path, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return "cannot be read: " + err.Error()
+	}
+	if linked, err := os.ReadDir(filepath.Join(gitDir, "worktrees")); err != nil && !errors.Is(err, fs.ErrNotExist) || len(linked) > 0 {
+		return "has linked worktrees of its own"
+	}
+	if keep, why, _ := keepContents(path, true); keep != "" {
+		return "has " + keep + ": " + why
+	}
+	refs, err := remoteRefs(path)
+	if err != nil {
+		return "cannot be checked against its remote: " + err.Error()
+	}
+	tags, err := look(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags")
+	if err != nil {
+		return "cannot be read: " + err.Error()
+	}
+	for _, line := range strings.Split(tags, "\n") {
+		if ref, sha, ok := strings.Cut(line, " "); ok && refs[ref] != sha {
+			return "has tag " + ref + " its remote does not"
+		}
+	}
+	unproven, err := unprovenCommits(path, refs)
+	if err != nil {
+		return "cannot be checked against its remote: " + err.Error()
+	}
+	if unproven != "" {
+		return "has " + unproven
 	}
 	proven[gitDir] = true
 	return ""
