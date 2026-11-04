@@ -3,6 +3,8 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -400,7 +402,7 @@ func (a *Adapter) read(db *sql.DB, p proc.Proc, id string, now time.Time, claime
 		}
 		return s
 	}
-	s.ID, s.Title, s.Cwd, s.Branch = t.id, t.title, t.cwd, t.branch
+	s.ID, s.Title, s.Cwd, s.Branch = t.id, cmp.Or(a.threadName(t.id), core.PromptTitle(t.title)), t.cwd, t.branch
 	if s.Cwd == "" && a.Cwd != nil {
 		s.Cwd = a.Cwd(p.PID)
 	}
@@ -500,4 +502,27 @@ func (a *Adapter) ConversationArtifacts(id string) map[string]string {
 		}
 	}
 	return out
+}
+
+// threadName is the name Codex generated for thread id, kept in its session index: resuming a thread puts its first prompt back in the
+// database's title.
+func (a *Adapter) threadName(id string) string {
+	raw, err := os.ReadFile(filepath.Join(a.Home, "session_index.jsonl"))
+	if err != nil {
+		return ""
+	}
+	name := ""
+	for line := range bytes.Lines(raw) {
+		if !bytes.Contains(line, []byte(id)) {
+			continue
+		}
+		var entry struct {
+			ID   string `json:"id"`
+			Name string `json:"thread_name"`
+		}
+		if json.Unmarshal(line, &entry) == nil && entry.ID == id && entry.Name != "" {
+			name = entry.Name
+		}
+	}
+	return name
 }

@@ -1069,6 +1069,7 @@ func (l launcher) Dormant() []core.Dormant {
 	all, _ := l.records.All()
 	panes, listErr := l.srv.Panes()
 	var out []core.Dormant
+	var down []launch.Record
 	for _, rec := range all {
 		if rec.IsLanded() {
 			continue
@@ -1081,9 +1082,11 @@ func (l launcher) Dormant() []core.Dormant {
 		}
 		if st != "running" && st != core.LaunchUnknown {
 			out = append(out, core.Dormant{Key: rec.Key, Harness: rec.Harness, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Session: rec.Session, Parent: rec.Parent, Cwd: rec.Worktree.Path,
-				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started})
+				RepoKey: cleanDir(rec.Worktree.GitDir), Branch: rec.Worktree.Branch, Title: oneLine(rec.Prompt), State: st, Started: rec.Started, Unreadable: unreadable.of(rec)})
+			down = append(down, rec)
 		}
 	}
+	unreadable.refresh(down)
 	return out
 }
 

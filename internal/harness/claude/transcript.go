@@ -177,7 +177,7 @@ type scan struct {
 }
 
 func (t scan) title() string {
-	for _, s := range []string{t.Custom, t.AgentName, t.AI, t.First} {
+	for _, s := range []string{t.Custom, t.AgentName, t.AI, core.PromptTitle(t.First)} {
 		if s != "" {
 			return s
 		}

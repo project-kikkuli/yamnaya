@@ -305,3 +305,28 @@ func TestMissionActivityAndSpendRemainVisible(t *testing.T) {
 		}
 	}
 }
+
+func TestAnExitedRowSaysWhyItsConversationCannotComeBack(t *testing.T) {
+	usePalette(t, true)
+	m := Model{core: &core.Core{}, loaded: true, width: 200, cursor: -1}
+	for _, c := range []struct {
+		name string
+		d    core.Dormant
+		want bool
+	}{
+		{name: "unreadable", d: core.Dormant{Key: "gone", Unreadable: "cannot read its conversation: permission denied"}, want: true},
+		{name: "readable", d: core.Dormant{Key: "gone"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			row := ansi.Strip(m.missionLine(0, core.Project{Key: "gone", Name: "Gone", Dormant: []core.Dormant{c.d}}, m.missionCols(2)))
+			if got := strings.Contains(row, "cannot read its conversation: permission denied"); got != c.want {
+				t.Fatalf("row %q, want reason=%v", row, c.want)
+			}
+			m.width = 60
+			if narrow := ansi.Strip(m.missionLine(0, core.Project{Key: "gone", Name: "Gone", Dormant: []core.Dormant{c.d}}, m.missionCols(2))); ansi.StringWidth(strings.TrimRight(narrow, "\n")) > 60 {
+				t.Fatalf("row wider than the pane: %q", narrow)
+			}
+			m.width = 200
+		})
+	}
+}

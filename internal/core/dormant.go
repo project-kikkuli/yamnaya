@@ -28,6 +28,8 @@ type Dormant struct {
 	// State is how its pane stands, such as "exited 1" or "gone", or why landing it after a clean exit failed.
 	State   string
 	Started time.Time
+	// Unreadable is why its conversation cannot be opened, so why it cannot come back.
+	Unreadable string
 }
 
 // ID is the session's key on the board: its session id, else its launch key.

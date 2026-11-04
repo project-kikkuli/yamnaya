@@ -606,6 +606,14 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
+// PromptTitle is a title from a session's first prompt, on one line and without the block a port puts ahead of what it was asked.
+func PromptTitle(prompt string) string {
+	if _, rest, ported := strings.Cut(prompt, "</picked_up_session>"); ported {
+		prompt = rest
+	}
+	return oneLine(prompt)
+}
+
 // Inbox returns the answered and dismissed items the session has not received, including those filed under sessions it continues, and marks them received.
 func (c *Core) Inbox(session string) ([]Item, error) {
 	items, err := c.Store.Items(ItemFilter{Undelivered: true})

@@ -83,7 +83,7 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				width = max(width, len(core.LoginName(b.Profiles, j.Harness, j.Profile)))
 			}
 			for _, j := range out {
-				line := fmt.Sprintf("%-*s %-8s %-8s %-22s %s", width, core.LoginName(b.Profiles, j.Harness, j.Profile), core.Short(j.ID), j.Status, j.Host, j.Title)
+				line := fmt.Sprintf("%-*s %-8s %-8s %-22s %s", width, core.LoginName(b.Profiles, j.Harness, j.Profile), core.Short(j.ID), j.Status, j.Host, oneLine(j.Title))
 				if j.Copies > 1 {
 					line += fmt.Sprintf("  [%d COPIES %v]", j.Copies, j.CopyPIDs)
 				}

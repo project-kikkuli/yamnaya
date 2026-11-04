@@ -355,3 +355,35 @@ func TestComposerReadsParagraphsAndIdleDetectionUsesTheLiveTurn(t *testing.T) {
 		})
 	}
 }
+
+func TestAThreadIsTitledByItsNameThenItsPromptWithoutAPortsBlock(t *testing.T) {
+	ported := "<picked_up_session>\nThis is a session from an earlier date.\n</picked_up_session>\n\nYou are mgr1,\na manager."
+	for _, c := range []struct {
+		name, index, want string
+	}{
+		{name: "no index, a port's first prompt", want: "You are mgr1, a manager."},
+		{name: "the name Codex generated", index: `{"id":"` + busyID + `","thread_name":"Old name"}` + "\n" + `{"id":"` + busyID + `","thread_name":"Inspect state"}` + "\n", want: "Inspect state"},
+		{name: "another thread's name", index: `{"id":"` + idleID + `","thread_name":"Other"}` + "\n", want: "You are mgr1, a manager."},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setup(t)
+			found, _ := filepath.Glob(filepath.Join(f.sqliteHome(), "state_*.sqlite"))
+			db, err := sql.Open("sqlite", found[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err = db.Exec(`UPDATE threads SET name = NULL, title = ?, first_user_message = ? WHERE id = ?`, ported, ported, busyID); err != nil {
+				t.Fatal(err)
+			}
+			if c.index != "" {
+				if err = os.WriteFile(filepath.Join(f.Home, "session_index.jsonl"), []byte(c.index), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := f.Discover([]proc.Proc{cp(1, time.Hour, "codex", "resume", busyID)})[0].Title; got != c.want {
+				t.Fatalf("title %q, want %q", got, c.want)
+			}
+		})
+	}
+}

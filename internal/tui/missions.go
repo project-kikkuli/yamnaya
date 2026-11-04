@@ -151,7 +151,16 @@ func (m Model) missionLine(i int, p core.Project, c cols) string {
 			cells = append(cells, doingCell(m.board.At, p.Sessions[0], c.doing))
 		}
 	}
-	return strings.TrimRight(m.mark(i)+strings.Repeat(" ", c.indent)+strings.Join(cells, " "), " ") + "\n"
+	line := m.mark(i) + strings.Repeat(" ", c.indent) + strings.Join(cells, " ")
+	if room := m.width - ansi.StringWidth(line) - 1; exited && room > 0 {
+		for _, d := range p.Dormant {
+			if d.Unreadable != "" {
+				line += " " + pal.red.Render(pad(d.Unreadable, room))
+				break
+			}
+		}
+	}
+	return strings.TrimRight(line, " ") + "\n"
 }
 
 // missionLogin is the login the mission's lead runs on, empty when the host has only the one its harness implies.
