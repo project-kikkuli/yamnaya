@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -69,6 +70,14 @@ func (s *Store) remoteOwner(session string) (RemoteAssignment, error) {
 }
 
 func (c *Core) remoteOwner(session string) (RemoteAssignment, error) {
+	return c.remoteOwnerVia(session, func() map[string]string {
+		b, _ := c.Board()
+		return b.parents
+	})
+}
+
+// remoteOwnerVia is remoteOwner with the native harness edges parents gives, which it asks for only when lineage does not settle it.
+func (c *Core) remoteOwnerVia(session string, parents func() map[string]string) (RemoteAssignment, error) {
 	session = c.Resolve(session)
 	w, err := c.Store.remoteOwner(session)
 	if err == nil && w.Host != c.SelfName() {
@@ -105,12 +114,15 @@ func (c *Core) remoteOwner(session string) (RemoteAssignment, error) {
 			return candidate, readErr
 		}
 	}
+	if len(candidates) == 0 {
+		return RemoteAssignment{}, sql.ErrNoRows
+	}
 	lin, err := c.Store.Lineage()
 	if err != nil {
 		return w, err
 	}
 	// Native harness edges are also present in the board before ym spawn records them.
-	b, _ := c.Board()
+	native := parents()
 	seen := map[string]bool{}
 	for at := session; at != "" && !seen[at]; {
 		seen[at] = true
@@ -122,7 +134,7 @@ func (c *Core) remoteOwner(session string) (RemoteAssignment, error) {
 		}
 		next := lin.Parent[at]
 		if next == "" {
-			next = b.parents[at]
+			next = native[at]
 		}
 		at = next
 	}
@@ -338,6 +350,7 @@ func (c *Core) reportForeign(session, id, summary string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	events = slices.DeleteFunc(events, func(e GoalEvent) bool { return !prKind(e.Kind) })
 	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return 0, err
@@ -546,13 +559,13 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 			return err
 		}
 		host, _, remote := SplitRemote(a.Session)
-		if !remote || host != w.Host || a.Goal != w.Goal || a.Generation != w.Assignment.Generation || w.Origin != c.SelfName() || !prKind(m.Event.Kind) {
-			return errors.New("remote PR event changed assignment identity")
+		if !remote || host != w.Host || a.Goal != w.Goal || a.Generation != w.Assignment.Generation || w.Origin != c.SelfName() || !prKind(m.Event.Kind) && !agentKind(m.Event.Kind) {
+			return errors.New("remote event changed assignment identity")
 		}
 		e := m.Event
 		e.Goal = a.Goal
 		if !strings.HasPrefix(e.Key, RemoteKey(w.Origin, w.Goal)+":") {
-			return errors.New("remote PR event changed goal key")
+			return errors.New("remote event changed goal key")
 		}
 		e.Key = strings.TrimPrefix(e.Key, w.Origin+"/")
 		_, _, err = c.Store.AddGoalEvent(e)

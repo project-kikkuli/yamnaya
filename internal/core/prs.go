@@ -144,7 +144,7 @@ func (c *Core) RefreshPRs(b Board) (int, error) {
 		return 0, err
 	}
 	for id, urls := range tracked {
-		if g, ok := b.Org.Goals[id]; ok && b.Org.Active(b.Org.Managers[g.ManagerID]) {
+		if b.Org.watchesPRs(id) {
 			for _, url := range urls {
 				goal[url] = true
 			}

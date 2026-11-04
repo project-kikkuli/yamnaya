@@ -158,9 +158,9 @@ func actionText(e GoalEvent, host string) string {
 	return e.Kind + " #" + id
 }
 
-// chiefSort is a chief's pending events split by whether each needs it now. Events still settling are in neither: they wait to be judged.
+// chiefSort is a chief's pending events split by whether each needs it now. Events still settling wait to be judged, and stay pending.
 type chiefSort struct {
-	action, quiet []GoalEvent
+	action, quiet, settling []GoalEvent
 }
 
 // sortChief judges events for chief: what needs its action, and what it may read when it likes.
@@ -221,12 +221,28 @@ func (c *Core) sortChief(chief string, events []GoalEvent) (chiefSort, error) {
 			case strings.Contains(e.Payload, "exited with status 0") || cameBack(h, e):
 				out.quiet = append(out.quiet, e)
 			case c.now().Before(e.Created.Add(deathGrace)):
+				out.settling = append(out.settling, e)
 			default:
 				out.action = append(out.action, e)
 			}
 		}
 	}
 	return out, nil
+}
+
+// judgedChief is what a chief can be handed now: its pending events less those still settling, which stay pending until they are judged.
+func (c *Core) judgedChief(o Org, m Manager) ([]GoalEvent, error) {
+	events, err := c.chiefEvents(o, m)
+	if err != nil {
+		return nil, err
+	}
+	split, err := c.sortChief(m.ID, events)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(events, func(e GoalEvent) bool {
+		return slices.ContainsFunc(split.settling, func(s GoalEvent) bool { return s.Seq == e.Seq })
+	}), nil
 }
 
 // managerAdrift reports whether what is going nowhere is the goal's manager, which only a chief can step in on.
@@ -538,10 +554,18 @@ func (c *Core) chiefChanges(session string, force bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.Quiet = r.Quiet.merged(quietRollup(split.quiet, chiefLabel(o, "")))
-	lines := r.Quiet.lines()
+	label := chiefLabel(o, "")
+	r.Quiet = r.Quiet.merged(quietRollup(split.quiet, label))
+	handed := split.quiet
+	body := r.Quiet
+	if force {
+		body = r.Action.merged(actionRollup(split.action, label, "")).merged(r.Quiet)
+		handed = append(slices.Clone(split.action), split.quiet...)
+		r.Action = Rollup{}
+	}
+	lines := body.lines()
 	if len(lines) == 0 && !force {
-		if err := c.Store.markHeard(m.ID, split.quiet, now); err != nil {
+		if err := c.Store.markHeard(m.ID, handed, now); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -550,5 +574,5 @@ func (c *Core) chiefChanges(session string, force bool) ([]string, error) {
 	if err := c.Store.saveDigest(m.ID, r); err != nil {
 		return nil, err
 	}
-	return lines, c.Store.markHeard(m.ID, split.quiet, now)
+	return lines, c.Store.markHeard(m.ID, handed, now)
 }

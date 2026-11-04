@@ -203,19 +203,18 @@ func (c *Core) ReviveWork(b Board) error {
 		if _, killed := kills[l.Session]; killed || (!ok && (!l.Revive || m.ID != "")) || (ok && m.Session == l.Session) || c.Off(l.Session) || b.throttle.Holds(l.Session) || !c.take(l.Session) {
 			continue
 		}
-		if !ok {
-			who := "session " + Short(l.Session) + " (" + l.Key + ")"
-			_, resumed, err := r.Resume(l.Session, workResumeText, "")
-			c.noteResult(who, l.Session, resumed, err)
-			c.retryResume(l.Session, err)
-			continue
-		}
 		who := "agent " + Short(l.Session) + " (" + l.Key + ")"
+		noted := who
+		tell := func(kind, text, key string) error { return c.tellWork(b, m, l.Session, kind, text, key) }
+		if !ok {
+			noted = "session " + Short(l.Session) + " (" + l.Key + ")"
+			tell = func(kind, text, key string) error { return c.noticeForeignAgent(b, l.Session, kind, text, key) }
+		}
 		_, resumed, err := r.Resume(l.Session, workResumeText, "")
-		c.noteResult(who, l.Session, resumed, err)
+		c.noteResult(noted, l.Session, resumed, err)
 		c.retryResume(l.Session, err)
 		if err != nil {
-			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,
+			errs = append(errs, tell(EventResumeFailed,
 				fmt.Sprintf("%s's pane went and ym could not resume it: %v. Its worktree %s keeps what it wrote; ym revive %s tries again.", who, err, l.Path, l.Key),
 				resumeFailedKey(l.Session, err)))
 			continue
@@ -224,7 +223,7 @@ func (c *Core) ReviveWork(b Board) error {
 		if !resumed {
 			how = "started over on its first prompt, since its conversation was gone"
 		}
-		errs = append(errs, c.tellWork(b, m, l.Session, EventResumed, fmt.Sprintf("%s's pane went and ym %s.", who, how),
+		errs = append(errs, tell(EventResumed, fmt.Sprintf("%s's pane went and ym %s.", who, how),
 			"resumed\x00"+l.Session+"\x00"+c.now().Format(time.RFC3339)))
 	}
 	c.recovery.mu.Lock()

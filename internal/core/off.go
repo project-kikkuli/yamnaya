@@ -260,7 +260,7 @@ func (c *Core) flush(b Board, session string) (bool, error) {
 				done = append(done, func() error { return c.Store.markDelivered(events, c.now()) })
 			}
 		} else if m.Role == RoleChief {
-			events, err := c.chiefEvents(o, m)
+			events, err := c.judgedChief(o, m)
 			if err != nil {
 				return false, err
 			}

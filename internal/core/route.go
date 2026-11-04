@@ -141,6 +141,15 @@ func (o Org) Managed(session string, parents map[string]string) (Manager, bool) 
 	return Manager{}, false
 }
 
+// watchesPRs reports whether id is an inbox whose pull requests ym keeps watching: a goal with its manager active, or an active chief.
+func (o Org) watchesPRs(id string) bool {
+	if g, ok := o.Goals[id]; ok {
+		return o.Active(o.Managers[g.ManagerID])
+	}
+	m, ok := o.Managers[id]
+	return ok && m.Role == RoleChief && o.Active(m)
+}
+
 // Subtree lists id and every manager and chief below it, the reports of a retired chief included and the retired chief not.
 func (o Org) Subtree(id string) []Manager { return o.subtree(o.reports(), id) }
 

@@ -588,7 +588,7 @@ func (c *Core) missed(o Org, m Manager) ([]GoalEvent, func(time.Time)) {
 		events, _ := c.Store.undelivered(g.ID)
 		return events, func(at time.Time) { c.Store.markDelivered(events, at) }
 	}
-	events, _ := c.chiefEvents(o, m)
+	events, _ := c.judgedChief(o, m)
 	return events, func(at time.Time) { c.Store.markHeard(m.ID, events, at) }
 }
 

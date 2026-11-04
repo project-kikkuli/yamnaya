@@ -1,6 +1,8 @@
 package core
 
 import (
+	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -28,12 +30,20 @@ func (c *Core) ForwardIdle(b Board) error {
 		if s.Status != Idle || s.Prompt != nil || s.Result == "" {
 			continue
 		}
-		m, managed := b.Org.Managed(key, b.parents)
-		if !managed {
-			continue
-		}
 		if _, isManager := b.Org.ManagerOf(key); isManager {
 			continue
+		}
+		m, managed := b.Org.Managed(key, b.parents)
+		var foreign RemoteAssignment
+		if !managed {
+			var err error
+			foreign, err = c.remoteOwnerVia(key, func() map[string]string { return b.parents })
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 		}
 		id := key + "\x00" + s.ResultAt.UTC().Format(time.RFC3339Nano) + "\x00" + replyKey(s.Result)
 		if c.fw.has(id) {
@@ -56,17 +66,24 @@ func (c *Core) ForwardIdle(b Board) error {
 			kind = EventIdleAgain
 		}
 		text := strings.TrimPrefix(idleText(*s), "ym: ")
-		inbox := m.GoalID
-		if _, ok := b.Org.Goals[inbox]; !ok {
-			inbox = b.Org.Recipient(key, b.parents)
-		}
-		if _, _, remote := SplitRemote(inbox); remote && fresh {
-			if err := c.tellManager(b, b.Org, inbox, "ym: "+clip(text, lineMax)); err != nil {
+		if !managed {
+			from, said, _ := strings.Cut(text, "verbatim: ")
+			if err := c.recordForeign(foreign, GoalEvent{Kind: kind, Payload: c.foreignText(key, from) + "verbatim: " + said, Key: id}); err != nil {
 				return err
 			}
-		} else if inbox != Owner && !remote {
-			if _, _, err := c.RecordGoalEvent(inbox, kind, text, ""); err != nil {
-				return err
+		} else {
+			inbox := m.GoalID
+			if _, ok := b.Org.Goals[inbox]; !ok {
+				inbox = b.Org.Recipient(key, b.parents)
+			}
+			if _, _, remote := SplitRemote(inbox); remote && fresh {
+				if err := c.tellManager(b, b.Org, inbox, "ym: "+clip(text, lineMax)); err != nil {
+					return err
+				}
+			} else if inbox != Owner && !remote {
+				if _, _, err := c.RecordGoalEvent(inbox, kind, text, ""); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := c.Store.db.Exec(`INSERT INTO ym_forwarded (id, at) VALUES (?, ?)`, id, now()); err != nil {

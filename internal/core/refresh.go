@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -234,14 +235,19 @@ func (c *Core) wakeWaits(o Org, m Manager, timers []Timer) (bool, error) {
 			return true, nil
 		}
 	}
-	var events []GoalEvent
-	var err error
 	if g, ok := o.Goals[m.GoalID]; ok {
-		events, err = c.Store.undelivered(g.ID)
-	} else if m.Role == RoleChief {
-		events, err = c.chiefEvents(o, m)
+		events, err := c.Store.undelivered(g.ID)
+		return err == nil && c.wakeDue(events), err
 	}
-	return err == nil && c.wakeDue(events), err
+	if m.Role != RoleChief {
+		return false, nil
+	}
+	events, err := c.chiefEvents(o, m)
+	if err != nil {
+		return false, err
+	}
+	split, err := c.sortChief(m.ID, events)
+	return err == nil && c.actionDue(split, m.ID), err
 }
 
 // bringBack brings a manager or chief that is down back: fresh from its brief when resuming would read a large transcript cold,
@@ -330,8 +336,9 @@ func (c *Core) restartText(b Board, o Org, m Manager, r restart, waiting []Messa
 	if len(events) > 0 {
 		head := ""
 		if len(events) > refreshEvents {
-			head = fmt.Sprintf(" (the latest %d of %d; ym goal feed shows the rest)", refreshEvents, len(events))
-			events = events[len(events)-refreshEvents:]
+			total := len(events)
+			events = c.restartEvents(o, m, events, missed)
+			head = fmt.Sprintf(" (%d of %d, all that waits on you and the latest of the rest; ym goal feed shows the others)", len(events), total)
 		}
 		sb.WriteString("\n\nSince your brief" + head + ", " + wakeOrChief(o, m, events))
 	}
@@ -343,6 +350,29 @@ func (c *Core) capOrDefault() int64 {
 		return n
 	}
 	return ContextCap
+}
+
+// restartEvents cuts events, oldest first, to refreshEvents without losing any of missed that needs m: those are marked handed once
+// the prompt carries them, so no wake would bring them back.
+func (c *Core) restartEvents(o Org, m Manager, events, missed []GoalEvent) []GoalEvent {
+	needed := missed
+	if _, ok := o.Goals[m.GoalID]; ok {
+		needed = slices.DeleteFunc(slices.Clone(missed), func(e GoalEvent) bool { return !wakeKinds[e.Kind] })
+	} else if split, err := c.sortChief(m.ID, missed); err == nil {
+		needed = split.action
+	}
+	kept := map[int64]bool{}
+	for _, e := range needed {
+		kept[e.Seq] = true
+	}
+	room := refreshEvents - len(kept)
+	for i := len(events) - 1; i >= 0 && room > 0; i-- {
+		if !kept[events[i].Seq] {
+			kept[events[i].Seq] = true
+			room--
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(events), func(e GoalEvent) bool { return !kept[e.Seq] })
 }
 
 // sinceBrief is what a fresh session of m has not seen: its goal's events after since and every one never handed to it, oldest
@@ -407,7 +437,7 @@ func (c *Core) goalState(sb *strings.Builder, b Board, o Org, m Manager) {
 		fmt.Fprintf(sb, "\n- and %d more; ym sessions lists them", len(sessions)-refreshAgents)
 	}
 	if tracked, err := c.Store.GoalPRs(); err == nil {
-		for _, url := range tracked[m.GoalID] {
+		for _, url := range slices.Concat(tracked[m.GoalID], tracked[m.ID]) {
 			add(PR{URL: url})
 		}
 	}
