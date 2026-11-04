@@ -74,14 +74,14 @@ func (l launcher) ChiefWorkspaces(b core.Board) error {
 				continue
 			}
 			if _, err := l.core.Stop(s); err != nil {
-				return fmt.Errorf("workspace for %s: %w", m.ID, err)
+				return fmt.Errorf("workspace for %s: %w", m.Shown(), err)
 			}
 		} else if _, state := l.state(rec); state == "running" || state == core.LaunchUnknown {
 			continue
 		}
 		l.resumeNote = "ym: your coordination workspace is now " + dir + ". Your conversation, reports, brief and login are unchanged. This workspace is not a repository. Use the original item and ym item escalate for requests from reports; do not refile them under your own identity."
 		if _, err := l.revive(rec); err != nil {
-			return fmt.Errorf("workspace for %s: %w", m.ID, err)
+			return fmt.Errorf("workspace for %s: %w", m.Shown(), err)
 		}
 	}
 	return nil

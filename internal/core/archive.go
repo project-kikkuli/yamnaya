@@ -12,6 +12,7 @@ import (
 type ArchivedGoal struct {
 	Host        string    `json:"host,omitempty"`
 	ID          string    `json:"id"`
+	Name        string    `json:"name,omitempty"`
 	Ask         string    `json:"ask"`
 	State       string    `json:"state"`
 	Disposition string    `json:"disposition"`
@@ -22,7 +23,7 @@ type ArchivedGoal struct {
 }
 
 func archivedGoal(host string, g Goal) ArchivedGoal {
-	a := ArchivedGoal{Host: host, ID: g.ID, Ask: g.Ask, State: g.State, Disposition: g.State, At: g.DoneAt, Reopens: g.Reopenable()}
+	a := ArchivedGoal{Host: host, ID: g.ID, Name: g.Shown(), Ask: g.Ask, State: g.State, Disposition: g.State, At: g.DoneAt, Reopens: g.Reopenable()}
 	switch {
 	case g.Closure != nil:
 		a.Disposition, a.Reason, a.Actor, a.At = g.Closure.Disposition, g.Closure.Reason, g.Closure.Actor, g.Closure.At
@@ -39,7 +40,9 @@ func (b Board) ArchivedGoals() []ArchivedGoal {
 	var out []ArchivedGoal
 	for _, g := range b.Org.Goals {
 		if g.Ended() && g.Host == "" {
-			out = append(out, archivedGoal("", g))
+			a := archivedGoal("", g)
+			a.Actor = b.Org.ActorShown(a.Actor)
+			out = append(out, a)
 		}
 	}
 	for _, r := range b.Remotes {
@@ -104,11 +107,11 @@ func (c *Core) archiveDone(b Board) error {
 		}
 		toll := c.Weigh(targets)
 		if err := c.teardown(m, g.ID, targets); err != nil {
-			errs = append(errs, fmt.Errorf("archive %s: %w", g.ID, err))
+			errs = append(errs, fmt.Errorf("archive %s: %w", g.Shown(), err))
 			continue
 		}
 		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalArchived, Created: now, Delivered: now,
-			Payload: fmt.Sprintf("%s done and quiet for %s, so its leftover sessions ended: %s; ym revive %s reopens the goal with them, ym revive <key> brings back one session", g.ID, DoneShown, toll, g.ID)})
+			Payload: fmt.Sprintf("%s done and quiet for %s, so its leftover sessions ended: %s; ym revive %s reopens the goal with them, ym revive <key> brings back one session", g.Shown(), DoneShown, toll, g.Shown())})
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

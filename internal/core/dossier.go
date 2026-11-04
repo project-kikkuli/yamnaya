@@ -14,7 +14,11 @@ import (
 // Dossier is the evidence ym attaches to an item on its own: where it came from, the work's pull requests, what its agents did
 // last, and what changed in the goal since the owner last looked.
 type Dossier struct {
-	Goal    string `json:"goal,omitempty"`
+	Goal string `json:"goal,omitempty"`
+	// GoalName is the name of the goal, or of the chief when it works for no goal, that the item comes from, as of its last refresh.
+	GoalName string `json:"goal_name,omitempty"`
+	// Chief is the chief the item comes from when it works for no goal.
+	Chief   string `json:"chief,omitempty"`
 	GoalAsk string `json:"goal_ask,omitempty"`
 	Repo    string `json:"repo,omitempty"`
 	// From names who filed the item and, for an agent, the manager it works for.
@@ -267,6 +271,11 @@ func (c *Core) dossier(b Board, o Org, it Item) (Dossier, error) {
 	}
 	if g, ok := o.Goals[m.GoalID]; managed && ok {
 		d.Goal, d.GoalAsk, d.Repo = g.ID, g.Ask, g.Repo
+		if g.Name != "" {
+			d.GoalName = g.Ref()
+		}
+	} else if managed && validName.MatchString(m.Name) {
+		d.Chief, d.GoalName = m.ID, m.Ref()
 	}
 	seenPR := map[string]bool{}
 	for _, s := range sessions {
@@ -324,12 +333,24 @@ func (c *Core) Brief(b Board) error {
 		}
 	}
 	for _, it := range items {
+		if _, _, remote := SplitRemote(it.Dossier.Goal); remote && it.State == ItemOpen && it.Recipient != Owner {
+			if name := foreignGoalName(o, it.Dossier); name != it.Dossier.GoalName {
+				d := it.Dossier
+				d.GoalName = name
+				if err := c.Store.SaveDossier(it.Seq, d); err != nil {
+					return err
+				}
+			}
+		}
 		if it.State != ItemOpen || it.Recipient != Owner {
 			continue
 		}
 		d, err := c.dossier(b, o, it)
 		if err != nil {
 			return err
+		}
+		if _, _, remote := SplitRemote(it.Dossier.Goal); remote {
+			d.Goal, d.GoalName, d.GoalAsk, d.Repo = it.Dossier.Goal, foreignGoalName(o, it.Dossier), it.Dossier.GoalAsk, it.Dossier.Repo
 		}
 		d.At = it.Dossier.At
 		if same(d, it.Dossier) {
@@ -358,7 +379,11 @@ func DossierLines(d Dossier) [][2]string {
 		}
 	}
 	if d.Goal != "" {
-		add("goal", d.Goal+" "+oneLine(d.GoalAsk))
+		name := d.GoalName
+		if name == "" {
+			name = d.Goal
+		}
+		add("goal", name+" "+oneLine(d.GoalAsk))
 	}
 	add("repository", d.Repo)
 	add("from", d.From)
@@ -514,4 +539,12 @@ func prepareText(it Item, missing []string) string {
 		"ym item prepare '%s' --rec \"<what you recommend and why>\" --option \"<label>=<effect>\" --option \"<label>=<effect>\" --evidence <PR, CI run, commit or file> --tried \"<what was tried>\". "+
 		"If you can settle it yourself, tell the owner your call in --rec.",
 		it.Key(), it.ID, oneLine(it.Question), strings.Join(missing, " and "), it.Key())
+}
+
+// foreignGoalName is the name the goal's own host gives the goal d comes from, or the last one read when that host is not on the board.
+func foreignGoalName(o Org, d Dossier) string {
+	if g, ok := o.Goals[d.Goal]; ok && g.Name != "" {
+		return g.Ref()
+	}
+	return d.GoalName
 }

@@ -57,13 +57,6 @@ type Steer struct {
 func (s Steer) Adopted() bool { return !s.AdoptedAt.IsZero() }
 
 // By names who steered, for messages.
-func (s Steer) By() string {
-	if s.Author == Owner {
-		return "the owner"
-	}
-	return "chief " + s.Author
-}
-
 func (s *Store) addSteer(manager, text, author string, at time.Time) (Steer, error) {
 	defer s.invalidate()
 	st := Steer{Manager: manager, Text: text, Author: author, CreatedAt: at}
@@ -217,7 +210,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		return Steer{}, err
 	}
 	if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
-		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.ID))
+		return Steer{}, Final(fmt.Errorf("%s has ended; only a running goal or chief takes a steer", m.Shown()))
 	}
 	if author != Owner {
 		reports, via := climb(o, author, m.ID)
@@ -227,7 +220,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
-			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.ID, author))
+			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), author))
 		}
 	}
 	return c.applySteer(b, o, m, text, author)
@@ -238,7 +231,7 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer
 	if latest, err := c.Store.LatestSteers(); err != nil {
 		return Steer{}, err
 	} else if st, ok := latest[m.ID]; ok && st.Text == text {
-		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.ID, st.Revision))
+		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.Shown(), st.Revision))
 	}
 	st, err := c.Store.addSteer(m.ID, text, author, c.now())
 	if err != nil {
@@ -305,9 +298,9 @@ func climb(o Org, chief, id string) (reports bool, via string) {
 
 func subject(o Org, m Manager) string {
 	if g, ok := o.Goals[m.GoalID]; ok {
-		return "goal " + g.ID
+		return "goal " + g.Shown()
 	}
-	return "chief " + m.ID
+	return "chief " + m.Shown()
 }
 
 func steerText(o Org, m Manager, st Steer) string {
@@ -316,7 +309,7 @@ func steerText(o Org, m Manager, st Steer) string {
 		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."
 	}
 	return fmt.Sprintf("%s steered %s.%s Revision %d of what it is about replaces earlier direction where they differ:\n\n%s\n\nRework your plan to fit it: change course for your agents and pull requests as it needs, then run ym goal adopt %s --revision %d and record the change with ym goal brief.",
-		st.By(), subject(o, m), reopened, st.Revision, st.Text, m.ID, st.Revision)
+		o.SteerBy(st), subject(o, m), reopened, st.Revision, st.Text, m.Shown(), st.Revision)
 }
 
 // Adopt records that the calling manager or chief took revision of its own plan on; only its newest revision can be adopted.
@@ -336,7 +329,7 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 			return Steer{}, err
 		}
 		if m.ID != me.ID {
-			return Steer{}, fmt.Errorf("%s runs %s, not %s; only the one steered adopts its steer", Short(session), me.ID, m.ID)
+			return Steer{}, fmt.Errorf("%s runs %s, not %s; only the one steered adopts its steer", Short(session), me.Shown(), m.Shown())
 		}
 	}
 	all, err := c.Store.Steers(m.ID)
@@ -344,11 +337,11 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return Steer{}, err
 	}
 	if len(all) == 0 {
-		return Steer{}, fmt.Errorf("%s has never been steered: %w", m.ID, ErrNotFound)
+		return Steer{}, fmt.Errorf("%s has never been steered: %w", m.Shown(), ErrNotFound)
 	}
 	st := all[len(all)-1]
 	if revision != st.Revision {
-		return st, fmt.Errorf("revision %d is not %s's newest; adopt revision %d, which replaces it", revision, m.ID, st.Revision)
+		return st, fmt.Errorf("revision %d is not %s's newest; adopt revision %d, which replaces it", revision, m.Shown(), st.Revision)
 	}
 	if st.Adopted() {
 		return st, nil
@@ -358,7 +351,7 @@ func (c *Core) Adopt(session, ref string, revision int) (Steer, error) {
 		return st, err
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
-		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.ID, st.Revision),
+		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventAdopted, Payload: fmt.Sprintf("%s adopted revision %d of the plan", m.Shown(), st.Revision),
 			Key: fmt.Sprintf("%s:adopt:%d", g.ID, st.Revision), Created: st.AdoptedAt, Delivered: st.AdoptedAt})
 	}
 	return st, err
@@ -387,7 +380,7 @@ func (c *Core) watchSteers(b Board, o Org) error {
 		}
 		if st.Nudges < Nudges {
 			text := fmt.Sprintf("ym: you have not adopted revision %d of %s, which %s sent %s ago. Read it with ym goal context %s, rework your plan to fit, then run ym goal adopt %s --revision %d.",
-				st.Revision, subject(o, m), st.By(), now.Sub(st.CreatedAt).Round(time.Minute), m.ID, m.ID, st.Revision)
+				st.Revision, subject(o, m), o.SteerBy(st), now.Sub(st.CreatedAt).Round(time.Minute), m.Shown(), m.Shown(), st.Revision)
 			if err := c.tell(b, m.Session, text, false); err != nil {
 				errs = append(errs, err)
 				continue
@@ -397,16 +390,16 @@ func (c *Core) watchSteers(b Board, o Org) error {
 			continue
 		}
 		if up := raisedTo(o, st); up != Owner {
-			shown, about := m, subject(o, m)
+			shown, about := m.Shown(), subject(o, m)
 			if _, _, remote := SplitRemote(up); remote {
-				shown.ID = RemoteKey(c.SelfName(), m.ID)
-				about = "chief " + shown.ID
+				shown = RemoteKey(c.SelfName(), m.Shown())
+				about = "chief " + shown
 				if g, ok := o.Goals[m.GoalID]; ok {
-					about = "goal " + RemoteKey(c.SelfName(), g.ID)
+					about = "goal " + RemoteKey(c.SelfName(), g.Shown())
 				}
 			}
 			text := fmt.Sprintf("ym: %s has not adopted revision %d of %s, which %s sent, after %d nudges. Open it, relaunch it with ym goal relaunch %s, or steer again.",
-				shown.Label(), st.Revision, about, st.By(), st.Nudges, shown.ID)
+				m.Role+" "+shown, st.Revision, about, o.SteerBy(st), st.Nudges, shown)
 			if err := c.tellManager(b, o, up, text); err != nil {
 				errs = append(errs, err)
 				continue

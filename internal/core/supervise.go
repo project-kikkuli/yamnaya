@@ -81,7 +81,7 @@ func (c *Core) Supervise(b Board) error {
 			continue
 		}
 		if err := c.supervise(b, o, act, m, g, hasGoal); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
+			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
 	if o, err = c.LoadOrg(); err != nil {
@@ -154,7 +154,7 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		return nil
 	}
 	if m.Stuck() {
-		evidence := fmt.Sprintf("manager %s did not stay up after %d launches in a row", m.ID, m.Failures)
+		evidence := fmt.Sprintf("manager %s did not stay up after %d launches in a row", m.Shown(), m.Failures)
 		if m.LastError != "" {
 			evidence += "; last launch failed: " + m.LastError
 		}

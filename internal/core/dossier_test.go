@@ -72,7 +72,7 @@ func TestAnEscalationArrivesWithItsGoalPullRequestsAndActivity(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := got.Dossier
-	if d.Goal != g.ID || d.GoalAsk != g.Ask || !strings.Contains(d.From, m.ID) {
+	if d.Goal != g.ID || d.GoalAsk != g.Ask || !strings.Contains(d.From, m.Name) {
 		t.Fatalf("dossier goal %q %q from %q; want the goal and its manager", d.Goal, d.GoalAsk, d.From)
 	}
 	if len(d.PRs) != 1 || d.PRs[0].URL != url || d.PRs[0].CI != "failing" || d.PRs[0].Title != "Rotate keys" {

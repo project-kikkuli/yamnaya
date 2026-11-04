@@ -61,7 +61,7 @@ func (c *Core) FinishGoal(session, summary string, evidence []string) (Goal, Ver
 		return g, Verification{}, err
 	}
 	if g.Ended() {
-		return g, Verification{}, fmt.Errorf("%s is %s already", g.ID, g.State)
+		return g, Verification{}, fmt.Errorf("%s is %s already", g.Shown(), g.State)
 	}
 	var lines []string
 	for _, e := range evidence {
@@ -97,7 +97,7 @@ func (c *Core) verify(b Board, o Org) error {
 			err = c.verifyOne(b, o, m, g, v)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("verify %s: %w", g.ID, err))
+			errs = append(errs, fmt.Errorf("verify %s: %w", g.Shown(), err))
 		}
 	}
 	return errors.Join(append(errs, c.endVerifiers(b))...)
@@ -148,7 +148,7 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 		if s.Status != Idle || s.Prompt != nil || !v.NudgedAt.IsZero() || starting {
 			return nil
 		}
-		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict %s --pass or --fail with a --finding for each concrete gap.", g.ID, g.ID)
+		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict %s --pass or --fail with a --finding for each concrete gap.", g.Shown(), g.Shown())
 		if err := c.tell(b, v.Session, text, false); err != nil {
 			return err
 		}
@@ -183,7 +183,7 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 		return err
 	}
 	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
-		Slug: fmt.Sprintf("verify-%s-%d", g.ID, v.Attempt), Session: v.Session, Await: true})
+		Slug: fmt.Sprintf("verify-%s-%d", g.Shown(), v.Attempt), Session: v.Session, Await: true})
 	if err != nil {
 		v.Session, v.LastError = "", err.Error()
 	} else {
@@ -200,7 +200,7 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 
 // RecordVerdict takes the verdict of goal's verifier, which only the verifier session itself may give.
 func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (Verification, error) {
-	g, err := c.Store.Goal(goal)
+	g, err := c.GoalByRef(goal)
 	if err != nil {
 		return Verification{}, err
 	}
@@ -213,7 +213,7 @@ func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (
 		return v, err
 	}
 	if session == "" || (session != v.Session && c.Resolve(session) != v.Session) {
-		return v, fmt.Errorf("only %s's verifier session %s may record its verdict", g.ID, Short(v.Session))
+		return v, fmt.Errorf("only %s's verifier session %s may record its verdict", g.Shown(), Short(v.Session))
 	}
 	var lines []string
 	for _, f := range findings {
@@ -284,7 +284,7 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 	}
 	if verdict == VerdictPass {
 		if m, ok := o.Managers[current.ManagerID]; ok && m.Session != "" {
-			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.ID, v.Attempt), false)
+			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.Shown(), v.Attempt), false)
 		}
 	}
 	return nil
@@ -431,11 +431,11 @@ func shortSHA(sha string) string {
 
 func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "You are the verifier of goal %s in yamnaya (ym), attempt %d. You did not do this work and you are not its manager. Decide independently whether the goal is really done as the owner asked. Do not trust the claims below: check them against the repository, GitHub and the code's actual behaviour.\n\n", g.ID, v.Attempt)
+	fmt.Fprintf(&sb, "You are the verifier of goal %s in yamnaya (ym), attempt %d. You did not do this work and you are not its manager. Decide independently whether the goal is really done as the owner asked. Do not trust the claims below: check them against the repository, GitHub and the code's actual behaviour.\n\n", g.Shown(), v.Attempt)
 	fmt.Fprintf(&sb, "The owner's ask, in their own words:\n%s\n\n", g.Ask)
 	if steers, err := c.Store.Steers(g.ManagerID); err == nil && len(steers) > 0 {
 		st := steers[len(steers)-1]
-		fmt.Fprintf(&sb, "The plan was steered since: revision %d by %s replaces the ask where they differ. Judge the work against it:\n%s\n\n", st.Revision, st.By(), st.Text)
+		fmt.Fprintf(&sb, "The plan was steered since: revision %d by %s replaces the ask where they differ. Judge the work against it:\n%s\n\n", st.Revision, o.SteerBy(st), st.Text)
 	}
 	fmt.Fprintf(&sb, "The manager's summary:\n%s\n\n", v.Summary)
 	sb.WriteString("Evidence the manager claims:\n")
@@ -461,7 +461,7 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	sb.WriteString("- Read only: do not edit, commit, push, merge, comment, or message anyone. Running tests, builds and the program to check behaviour is fine.\n")
 	sb.WriteString("- Check every part of the ask, not only what the summary mentions. A part not done, done differently than asked, or not shown to work is a failure.\n")
 	sb.WriteString("- A pull request marked as someone else's to land is context: whether it merged or has open threads is never a reason to fail.\n")
-	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.ID, g.ID)
+	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.Shown(), g.Shown())
 	sb.WriteString("  Each finding is one concrete, checkable line: what is missing or wrong, and where.\n")
 	sb.WriteString("- Then stop. ym ends this session.")
 	return sb.String()

@@ -340,3 +340,14 @@ func TestYmRemoteRemembersOnlyAHostSshReached(t *testing.T) {
 		})
 	}
 }
+
+func TestAOneShotCommandWaitsForAHungHostOnlyOnce(t *testing.T) {
+	r := newRemoteHosts([]string{"slow"}, 300*time.Millisecond, nil)
+	r.ssh, r.timeout = fakeSSH(t), 5*time.Second
+	r.Boards()
+	start := time.Now()
+	r.Boards()
+	if took := time.Since(start); took > 150*time.Millisecond {
+		t.Fatalf("the second Boards waited %s more", took)
+	}
+}

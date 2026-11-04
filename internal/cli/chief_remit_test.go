@@ -43,7 +43,7 @@ func TestGoalContextAndTheBriefSiteShowAChiefsRemitAsRevisionZero(t *testing.T) 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("ym goal context: %v\n%s", err, out.String())
 	}
-	if want := chief.ID + " revision 0, the ask it started with:\n\n" + remit + "\n"; out.String() != want {
+	if want := chief.Name + " revision 0, the ask it started with:\n\n" + remit + "\n"; out.String() != want {
 		t.Fatalf("ym goal context %s = %q, want %q", chief.ID, out.String(), want)
 	}
 	srv := httptest.NewServer(&briefSite{core: c})

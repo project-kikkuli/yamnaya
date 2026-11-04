@@ -23,7 +23,7 @@ func TestItemsShowWhoOwesAnAnswerAndEscalateWithoutDuplicating(t *testing.T) {
 			}
 			m = press(t, refresh(t, m), "I")
 			m = to(t, m, func(r row) bool { return r.item != nil && r.item.Seq == it.Seq })
-			if v := ansi.Strip(m.View().Content); !strings.Contains(v, "to chief platform ("+manager.ID+")") {
+			if v := ansi.Strip(m.View().Content); !strings.Contains(v, "to chief platform") {
 				t.Fatalf("recipient is invisible:\n%s", v)
 			}
 			m = press(t, m, keys...)
@@ -97,14 +97,14 @@ func TestManagedRequestsNameTheirSourceRepositoryAndGoalEvenWhenAlone(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Store.SaveDossier(it.Seq, core.Dossier{Goal: "goal24", Repo: "/src/vibe-apps"}); err != nil {
+	if err := c.Store.SaveDossier(it.Seq, core.Dossier{Goal: "goal24", GoalName: "workplane-launch", Repo: "/src/vibe-apps"}); err != nil {
 		t.Fatal(err)
 	}
 	m = to(t, refresh(t, m), func(r row) bool { return r.item != nil && r.item.Seq == it.Seq })
 	for _, keys := range [][]string{nil, {"enter"}, {"esc", "I"}} {
 		m = press(t, m, keys...)
 		text := ansi.Strip(m.View().Content)
-		if !strings.Contains(text, "vibe-apps") || !strings.Contains(text, "goal24") {
+		if !strings.Contains(text, "vibe-apps") || !strings.Contains(text, "workplane-launch") {
 			t.Fatalf("source context missing:\n%s", text)
 		}
 	}

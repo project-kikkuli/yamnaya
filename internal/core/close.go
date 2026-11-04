@@ -43,7 +43,7 @@ func (c *Core) CloseAuthor(session, by string) (string, error) {
 		return "", Final(fmt.Errorf("session %s is not a chief; only a chief above a goal or the owner closes it", Short(session)))
 	}
 	if m.Role != RoleChief {
-		return "", Final(fmt.Errorf("%s is a manager; a manager finishes its goal with ym goal done, and only a chief above a goal or the owner closes it", m.ID))
+		return "", Final(fmt.Errorf("%s is a manager; a manager finishes its goal with ym goal done, and only a chief above a goal or the owner closes it", m.Shown()))
 	}
 	return m.ID, nil
 }
@@ -83,13 +83,13 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	}
 	g, isGoal := o.Goals[m.GoalID]
 	if !isGoal {
-		return Closed{}, Final(fmt.Errorf("%s is a chief, not a goal; ym kill retires a chief", m.ID))
+		return Closed{}, Final(fmt.Errorf("%s is a chief, not a goal; ym kill retires a chief", m.Shown()))
 	}
 	var via string
 	if order.Author != Owner {
 		var reports bool
 		if reports, via = climb(o, order.Author, m.ID); !reports && via == "" {
-			return Closed{}, Final(fmt.Errorf("%s does not report to %s; a chief closes only goals below it", g.ID, order.Author))
+			return Closed{}, Final(fmt.Errorf("%s does not report to %s; a chief closes only goals below it", g.Shown(), o.ShownOf(order.Author)))
 		}
 	}
 	if err := c.closable(g); err != nil {
@@ -102,7 +102,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 		host, rest, _ := SplitRemote(via)
 		close := order
 		v := relayVouch{Chief: rest, Author: c.fromHere(order.Author), Target: RemoteKey(c.SelfName(), m.ID), Close: &close}
-		return Closed{Goal: g.ID, Pending: via}, c.Relay(host, RelayVouchClose, v)
+		return Closed{Goal: g.Shown(), Pending: via}, c.Relay(host, RelayVouchClose, v)
 	}
 	return c.applyClose(b, m, g, order)
 }
@@ -110,7 +110,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 // closable refuses a goal that ended some other way than a close and cannot take one: one dropped because it moved host.
 func (c *Core) closable(g Goal) error {
 	if g.State == GoalDropped && g.Closure == nil {
-		return Final(fmt.Errorf("%s was dropped without a close: %s", g.ID, g.Evidence))
+		return Final(fmt.Errorf("%s was dropped without a close: %s", g.Shown(), g.Evidence))
 	}
 	return nil
 }
@@ -130,7 +130,7 @@ func (c *Core) closeDisposition(g Goal, order CloseOrder) (string, error) {
 	if order.Override {
 		return CloseFinishedOverride, nil
 	}
-	return "", Final(fmt.Errorf("%s has no verifier pass at work revision %d; --override-verifier records it as %s and writes no pass", g.ID, g.WorkRevision, CloseFinishedOverride))
+	return "", Final(fmt.Errorf("%s has no verifier pass at work revision %d; --override-verifier records it as %s and writes no pass", g.Shown(), g.WorkRevision, CloseFinishedOverride))
 }
 
 // applyClose records order on g, unless a close already did and this one only finishes its teardown, then ends g's sessions.
@@ -148,9 +148,9 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 	}
 	already := g.Ended() && g.Closure != nil
 	if already && len(targets) == 0 {
-		return Closed{}, Final(fmt.Errorf("%s is closed already, as %s by %s", g.ID, g.Closure.Disposition, g.Closure.Actor))
+		return Closed{}, Final(fmt.Errorf("%s is closed already, as %s by %s", g.Shown(), g.Closure.Disposition, g.Closure.Actor))
 	}
-	out := Closed{Goal: g.ID, Disposition: disposition, State: g.State, Toll: c.Weigh(targets)}
+	out := Closed{Goal: g.Shown(), Disposition: disposition, State: g.State, Toll: c.Weigh(targets)}
 	if already {
 		out.Disposition, out.PRs = g.Closure.Disposition, g.Closure.PRs
 	} else {
@@ -202,7 +202,7 @@ func (c *Core) dismissGoalItems(g Goal, disposition, why string) (int, error) {
 		return 0, err
 	}
 	n := 0
-	reason := fmt.Sprintf("%s closed as %s: %s", g.ID, disposition, why)
+	reason := fmt.Sprintf("%s closed as %s: %s", g.Shown(), disposition, why)
 	var errs []error
 	for _, it := range items {
 		if it.GoalOwner != g.ID {

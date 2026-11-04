@@ -70,7 +70,7 @@ func (c *Core) Notice(b Board) error {
 		}
 		who := "agent " + Short(s.Key())
 		if s.Key() == m.Session {
-			who = "manager " + m.ID
+			who = "manager " + m.Shown()
 		} else if s.Title != "" {
 			who += " (" + oneLine(s.Title) + ")"
 		}
@@ -237,7 +237,7 @@ func (c *Core) Wake(b Board) error {
 			err = c.wakeChief(b, o, m)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
+			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
 	return errors.Join(append(errs, c.wakeRemoteChiefs(o))...)
@@ -265,11 +265,12 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	return c.Store.saveDigest(m.ID, r)
 }
 
-// holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake of its goal is still pending,
+// holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake is still pending in its session,
+// whose only goal it can be about whatever name the goal had then,
 // it cannot take a message now, or one already reached the turn it is taking.
 func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
 	var pending int
-	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ?`, m.Session, MsgPending, "ym: goal "+g.ID+" %").Scan(&pending); err != nil || pending > 0 {
+	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE 'ym: goal %'`, m.Session, MsgPending).Scan(&pending); err != nil || pending > 0 {
 		return pending > 0, err
 	}
 	s, ok := b.Session(m.Session)
@@ -282,7 +283,7 @@ func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
 
 // wakeText lists a goal's new events for its manager, one line each, those that need it first.
 func wakeText(g Goal, events []GoalEvent) string {
-	return inboxText(fmt.Sprintf("goal %s %q", g.ID, shortName(g.Ask)), events, "", nil)
+	return inboxText(fmt.Sprintf("goal %s %q", g.Shown(), shortName(g.Ask)), events, "", nil)
 }
 
 func (c *Core) chiefEvents(o Org, m Manager) ([]GoalEvent, error) {
@@ -346,7 +347,7 @@ func chiefText(o Org, events []GoalEvent) string {
 		if !ok {
 			return "your agent"
 		}
-		return g.ID + " (" + g.ManagerID + ")"
+		return g.Ref()
 	})
 }
 
@@ -565,7 +566,7 @@ func (c *Core) NotifyOwner() error {
 			errs = append(errs, err)
 			continue
 		}
-		if err := c.notify(fmt.Sprintf("ym: %s %s", g.ID, e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
+		if err := c.notify(fmt.Sprintf("ym: %s %s", g.Shown(), e.Kind), shortName(g.Ask)+": "+e.Payload); err != nil {
 			errs = append(errs, err)
 			continue
 		}

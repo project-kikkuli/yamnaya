@@ -218,7 +218,7 @@ func (c *Core) refreshSwollen(b Board, o Org) (map[string]bool, error) {
 			errs = append(errs, c.Store.noteBriefAsk(m.ID, now), c.Store.noteBriefNudge(m.ID, behind))
 		case restartFresh:
 			if _, err := c.refresh(b, o, m, s, s.Context, false); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", m.ID, err))
+				errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 			}
 		}
 		held[m.ID] = true

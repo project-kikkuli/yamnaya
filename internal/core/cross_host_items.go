@@ -56,6 +56,7 @@ func (c *Core) FindItem(scope, ref string) (Item, error) {
 	}
 	r := c.ParseItemRef(ref)
 	if r.Host != "" {
+		r.Project = c.chiefScope(r.Host, r.Project)
 		found := c.mirrored(r)
 		if len(found) == 0 {
 			return Item{}, Final(fmt.Errorf("item %s: not found on %s: %w", ref, r.Host, ErrNotFound))
@@ -88,16 +89,34 @@ func (c *Core) FindItem(scope, ref string) (Item, error) {
 func ambiguousItems(ref string, found []Item) error {
 	var names []string
 	for _, f := range found {
-		names = append(names, f.Ref())
+		names = append(names, f.Key())
 	}
-	return Final(fmt.Errorf("item %s is ambiguous across hosts: %s; name it with its host, as %s", ref, strings.Join(names, ", "), names[len(names)-1]))
+	return Final(fmt.Errorf("item %s is ambiguous across hosts: %s; name it by one of those", ref, strings.Join(names, ", ")))
 }
 
+// Ref is the item's trailing reference, which ym item answer and the other item commands take: never a goal's or chief's id.
 func (it Item) Ref() string {
+	if idShaped.MatchString(ScopeName(it.Scope)) {
+		return it.Key()
+	}
 	if it.Host != "" {
 		return RemoteKey(it.Host, it.Qualified())
 	}
 	return it.Qualified()
+}
+
+// chiefScope is project, in an item ref on host, as the scope it names there: a chief's id for a chief named by its name.
+func (c *Core) chiefScope(host, project string) string {
+	if project == "" || c.Remotes == nil {
+		return project
+	}
+	o := Org{Goals: map[string]Goal{}, Managers: map[string]Manager{}, Sessions: map[string]string{}}
+	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	if m, err := o.lookup(RemoteKey(host, project)); err == nil && m.Role == RoleChief {
+		_, id, _ := SplitRemote(m.ID)
+		return id
+	}
+	return project
 }
 
 func (c *Core) numberedHere(project string) bool {
@@ -108,8 +127,8 @@ func (c *Core) numberedHere(project string) bool {
 	if err != nil {
 		return false
 	}
-	_, ok := o.Managers[strings.ToLower(project)]
-	return ok
+	m, err := o.lookup(project)
+	return err == nil && m.Role == RoleChief
 }
 
 func (c *Core) mirrored(r ItemRef) []Item {

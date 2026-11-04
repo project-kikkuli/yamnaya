@@ -49,6 +49,8 @@ const (
 	inAnswer inputKind = iota
 	inDismiss
 	inRename
+	// inName renames a goal or chief.
+	inName
 	inFilter
 	inDismissLater
 	inLater
@@ -281,6 +283,12 @@ type reposMsg struct {
 	done  bool
 }
 
+// renamedMsg is how another host answered a rename of the goal or chief with this row id; a refusal shows in the input still open.
+type renamedMsg struct {
+	id, from, to string
+	err          error
+}
+
 type doneMsg struct {
 	message string
 	err     error
@@ -504,6 +512,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.acts, msg.key)
 		t := msg.t
 		return m, tea.Exec(attached{msg.open, m.out}, func(err error) tea.Msg { return doneMsg{"back from " + t.String(), err} })
+	case renamedMsg:
+		open := m.mode == modeInput && m.inKind == inName && m.inItem == msg.id
+		if msg.err != nil {
+			why := msg.err.Error()
+			if i := strings.LastIndex(why, ": "); i >= 0 {
+				why = why[i+2:]
+			}
+			if open {
+				m.pickErr = why
+				return m, nil
+			}
+			m.message = "error: " + msg.err.Error()
+			return m, nil
+		}
+		if open {
+			m.mode, m.pickErr = m.back, ""
+		}
+		m.message = msg.from + " is now " + msg.to
+		return m, m.refresh(false)
 	case doneMsg:
 		if msg.err != nil {
 			m.message = "error: " + msg.err.Error()
@@ -803,7 +830,7 @@ func (m Model) hostText(host string) string {
 func needText(n core.Need) string {
 	switch {
 	case n.Goal != nil:
-		return n.Goal.ID + " " + n.Goal.State + " " + n.Goal.Ask
+		return n.Goal.Shown() + " " + n.Goal.State + " " + n.Goal.Ask
 	case n.PR != nil:
 		return "merge " + n.PR.URL
 	case n.Review != nil:
@@ -1655,6 +1682,32 @@ func (m Model) inputKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				return fmt.Sprintf("dismissed %d items of ended goals", len(ids)), nil
 			})
+		case inName:
+			if text == "" {
+				return m, nil
+			}
+			if host, _, ok := core.SplitRemote(m.inItem); ok {
+				if err := core.CheckName(text); err != nil {
+					m.mode, m.pickErr = modeInput, err.Error()
+					return m, nil
+				}
+				m.mode, m.pickErr = modeInput, "asking "+host
+				c, id, from := m.core, m.inItem, m.inLabel
+				if _, rest, ok := core.SplitRemote(from); ok {
+					from = rest
+				}
+				return m, func() tea.Msg {
+					_, err := c.RunRemote(host, "goal", "rename", from, text)
+					return renamedMsg{id, from, text, err}
+				}
+			}
+			old, err := m.core.Rename(m.inItem, text)
+			if err != nil {
+				m.mode, m.pickErr = modeInput, err.Error()
+				return m, nil
+			}
+			m.message = old + " is now " + text
+			return m, nil
 		case inRename:
 			key := m.inProj
 			return m, m.projectAction(m.inHost, []string{"project", "rename", key, text}, func() (string, error) { return "renamed", m.core.Store.Rename(key, text) })

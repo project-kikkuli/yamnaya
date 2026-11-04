@@ -35,9 +35,9 @@ func (c *Core) launchPrompt(m Manager, o Org) string {
 func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 	g := o.Goals[m.GoalID]
 	repo := RepoName(m.Repo)
-	fmt.Fprintf(sb, "You are %s, a manager in yamnaya (ym). You own one goal outright and drive it to done.\n\n", m.ID)
-	fmt.Fprintf(sb, "Goal %s, in the owner's own words:\n%s\n\nRepository: %s (%s)\n\n", g.ID, g.Ask, repo, m.Repo)
-	c.planNow(sb, m)
+	fmt.Fprintf(sb, "You are %s, a manager in yamnaya (ym). You own one goal outright and drive it to done.\n\n", m.Shown())
+	fmt.Fprintf(sb, "Goal %s, in the owner's own words:\n%s\n\nRepository: %s (%s)\n\n", g.Shown(), g.Ask, repo, m.Repo)
+	c.planNow(sb, o, m)
 	sb.WriteString("Your authority:\n")
 	sb.WriteString("- The goal is yours: go-aheads, decisions, design calls and fixes are your calls. Do not wait for the owner's sign-off; nobody else will make them.\n")
 	if ok, _ := c.Store.CanMerge(repo); ok {
@@ -66,18 +66,18 @@ func (c *Core) managerPrompt(sb *strings.Builder, o Org, m Manager) {
 }
 
 func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
-	fmt.Fprintf(sb, "You are %s, a chief in yamnaya (ym) named %q. You oversee managers and other chiefs and keep them moving.\n\n", m.ID, m.Name)
+	fmt.Fprintf(sb, "You are %s, a chief in yamnaya (ym). You oversee managers and other chiefs and keep them moving.\n\n", m.Shown())
 	if m.Remit != "" {
 		fmt.Fprintf(sb, "Your mission, in the owner's own words:\n%s\n\n", m.Remit)
 		sb.WriteString("Act on it right away; do not wait for instructions. Plan how to carry it out, start a goal for each piece of work with ym goal --repo <repo> \"<ask>\", " +
 			"and write your first brief with ym goal brief. If goals already report to you, build on them rather than starting them again.\n\n")
 	}
-	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.ID)
+	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.Shown())
 	fmt.Fprintf(sb, "Coordination workspace: %s. This directory is not a repository. Your reports retain their own repositories; use an explicit --repo when starting implementation agents.\n\n", m.Directory)
 	if m.Repo != "" {
 		fmt.Fprintf(sb, "Reference repository: %s. This is access for your work, not the repository identity of your reports or their requests.\n\n", m.Repo)
 	}
-	c.planNow(sb, m)
+	c.planNow(sb, o, m)
 	sb.WriteString("How you work:\n")
 	sb.WriteString("- ym goal --repo <repo> \"<ask>\" starts a goal that reports to you.\n")
 	sb.WriteString("- Read your reports' briefs often. Message one with ym goal send <id> <text>; a stuck or dead one you can relaunch with ym goal relaunch <id>.\n")
@@ -130,7 +130,7 @@ func (c *Core) briefRules(sb *strings.Builder, m Manager) {
 		rollup = " Your page rolls your reports' briefs up under yours, so yours carries the themes across them and what needs attention, not a copy of theirs."
 	}
 	fmt.Fprintf(sb, "- Keep your brief with ym goal brief --assessment \"<where it stands>\" --changed \"<since your last brief>\" --uncertainty \"<what you are unsure of, or none>\" --next \"<what comes next>\" --waiting-on \"<agents, CI, reviews, people, or none>\". Each call records a new version, rewrites %s, and is served at %s.%s Write one as soon as you have a plan, and again whenever something meaningful happens; ym marks it stale and nudges you when it falls behind. Do not edit the markdown file by hand. If you also publish a richer page, such as an artifact, register its URL with ym goal artifact <url>.\n",
-		m.BriefPath, c.BriefURL(m.ID), rollup)
+		m.BriefPath, c.BriefURL(m.Shown()), rollup)
 }
 
 // steerRules tells m how a steer reaches it and that it must adopt it.
@@ -140,21 +140,21 @@ func (c *Core) steerRules(sb *strings.Builder, m Manager) {
 		who = "The owner or a chief above you"
 	}
 	fmt.Fprintf(sb, "- %s may steer you: a numbered revision of what you are about arrives as a message and replaces earlier direction where they differ. Rework your plan and your agents' course to fit, then run ym goal adopt %s --revision <N>; until you do, the board shows it not adopted and ym nudges you, then tells whoever steered. ym goal context %s prints the current revision.\n",
-		who, m.ID, m.ID)
+		who, m.Shown(), m.Shown())
 }
 
 // planNow carries m's newest steer into its prompt, so a relaunch works to the plan as it stands.
-func (c *Core) planNow(sb *strings.Builder, m Manager) {
+func (c *Core) planNow(sb *strings.Builder, o Org, m Manager) {
 	steers, err := c.Store.Steers(m.ID)
 	if err != nil || len(steers) == 0 {
 		return
 	}
 	st := steers[len(steers)-1]
-	fmt.Fprintf(sb, "The plan was steered since: revision %d by %s replaces earlier direction where they differ:\n%s\n", st.Revision, st.By(), st.Text)
+	fmt.Fprintf(sb, "The plan was steered since: revision %d by %s replaces earlier direction where they differ:\n%s\n", st.Revision, o.SteerBy(st), st.Text)
 	if st.Adopted() {
 		sb.WriteString("You adopted it already.\n\n")
 	} else {
-		fmt.Fprintf(sb, "It is not adopted yet: rework your plan to fit it, then run ym goal adopt %s --revision %d.\n\n", m.ID, st.Revision)
+		fmt.Fprintf(sb, "It is not adopted yet: rework your plan to fit it, then run ym goal adopt %s --revision %d.\n\n", m.Shown(), st.Revision)
 	}
 }
 

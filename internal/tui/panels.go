@@ -850,7 +850,7 @@ func (m Model) launchRows() ([]prow, []pdo) {
 	rows = append(rows, running...)
 	var goals []prow
 	for _, a := range m.board.ArchivedGoals() {
-		text := pad(m.hostTag(a.Host), 6) + " " + pad(a.ID, 10) + " " + pad(a.Disposition, 18) + " " + pad(a.Actor, 16) + " " + pad(core.Span(m.board.At.Sub(a.At)), 6) + " " + oneLine(a.Ask)
+		text := pad(m.hostTag(a.Host), 6) + " " + pad(a.Name, 24) + " " + pad(a.Disposition, 18) + " " + pad(a.Actor, 16) + " " + pad(core.Span(m.board.At.Sub(a.At)), 6) + " " + oneLine(a.Ask)
 		if a.Reason != "" {
 			text += pal.dim.Render("  why: " + oneLine(a.Reason))
 		}

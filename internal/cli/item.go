@@ -586,7 +586,7 @@ func printItems(w io.Writer, items []core.Item, asJSON bool) error {
 	for _, it := range items {
 		id := it.ID
 		if len(scopes) > 1 {
-			id = it.Qualified()
+			id = it.Ref()
 		}
 		if it.Host != "" {
 			id = it.Key()

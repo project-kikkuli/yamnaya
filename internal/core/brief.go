@@ -199,7 +199,7 @@ func (o Org) BriefPage(m Manager, b Brief) string {
 
 // BriefPage is b as the page kept at the brief path of g's manager: titled by the goal's short name, with the ask in full, as written, last.
 func (g Goal) BriefPage(b Brief) string {
-	return b.Markdown(g.ID+": "+shortName(g.Ask)) + askSection(g.Ask)
+	return b.Markdown(g.Shown()+": "+shortName(g.Ask)) + askSection(g.Ask)
 }
 
 // askSection is the ask as written, when the short name leaves some of it out.
@@ -275,7 +275,7 @@ func (c *Core) BriefPage(ref string) (string, error) {
 	}
 	page, err := os.ReadFile(m.BriefPath)
 	if err != nil {
-		return "", fmt.Errorf("%s has no brief yet: %w", m.ID, err)
+		return "", fmt.Errorf("%s has no brief yet: %w", m.Shown(), err)
 	}
 	return string(page), nil
 }
@@ -332,7 +332,7 @@ func freshness(o Org, reports map[string][]string, m Manager, briefs map[string]
 	if m.Role == RoleChief {
 		for _, r := range o.subtree(reports, m.ID) {
 			if b, ok := briefs[r.ID]; ok && r.ID != m.ID {
-				note(b.CreatedAt, fmt.Sprintf("%s brief v%d", r.ID, b.Version))
+				note(b.CreatedAt, fmt.Sprintf("%s brief v%d", r.Shown(), b.Version))
 			}
 		}
 	}

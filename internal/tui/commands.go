@@ -71,6 +71,7 @@ var Commands = map[string]string{
 	"ym goal feed":        "enter",
 	"ym goal ack":         "x",
 	"ym goal close":       "d",
+	"ym goal rename":      "N",
 	"ym goal pr drop":     "X",
 	"ym chief":            "c",
 	"ym chief attach":     "c",

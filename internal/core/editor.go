@@ -25,8 +25,8 @@ const planMark = "#ym "
 
 // PlanDraft is the file the owner edits to steer m: its plan now, under marked lines ParsePlan drops.
 func PlanDraft(m Manager, text string, revision int) string {
-	return fmt.Sprintf(planMark+"Steer %s (%s). Edit what it is about below and save; this saves revision %d.\n"+planMark+"Lines starting with %q are dropped. Save it unchanged or empty to steer nothing.\n%s\n",
-		m.ID, m.Name, revision+1, planMark, text)
+	return fmt.Sprintf(planMark+"Steer %s. Edit what it is about below and save; this saves revision %d.\n"+planMark+"Lines starting with %q are dropped. Save it unchanged or empty to steer nothing.\n%s\n",
+		m.Shown(), revision+1, planMark, text)
 }
 
 // ParsePlan is the plan in an edited PlanDraft, without its marked lines.

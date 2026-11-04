@@ -301,13 +301,16 @@ func (m Model) footer() []string {
 	}
 	if m.mode == modeInput {
 		repo := filepath.Base(m.newL.Repo)
-		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inFilter: "filter",
+		label := map[inputKind]string{inAnswer: "answer " + m.inLabel, inDismiss: "dismiss " + m.inLabel + " because", inRename: "rename to", inName: "rename " + m.inLabel + " to", inFilter: "filter",
 			inDismissLater: "dismiss every item of an ended goal because", inLater: "later (1h, t tonight, m tomorrow)", inPanel: m.panelLabel(), inSend: "send " + m.inLabel, inBroadcast: "broadcast to " + m.inLabel,
 			inNew: "new " + m.newL.Harness + " session in " + repo + ", prompt", inNewRepo: m.pickLabel(),
 			inPhases: "phases of " + m.inLabel + " (a, b, c)", inVibe: "vibe of " + m.inLabel + " (any fitting place: why)",
 			inGoal: "new " + m.newL.Harness + " goal in " + repo + ", in your words", inChief: "new " + m.newL.Harness + " " + m.inLabel + ", its name",
 			inRemit: "new " + m.newL.Harness + " chief " + m.chiefName + ", its remit in your words (empty: none)",
 			inSteer: "send to " + m.inLabel}[m.inKind]
+		if m.inKind == inName && m.pickErr != "" {
+			label += pal.red.Render(" (" + m.pickErr + ")")
+		}
 		if m.inKind == inSteer && m.steerHasChief() {
 			if m.subtree {
 				label += pal.dim.Render(" and everyone below [tab: just them]")
@@ -734,12 +737,30 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 	return core.Spend{}.Dollars()
 }
 
-func (m Model) needLines(i int, n core.Need) string {
+// needLead is what a Needs You row opens with: the goal or chief its item comes from by name, else its project.
+func (m Model) needLead(n core.Need) string {
 	where := m.projectName(n.Project)
-	if n.Item != nil && n.Item.Dossier.Goal != "" {
-		where = n.Item.Dossier.Goal + " " + oneLine(n.Item.Dossier.GoalAsk)
+	if n.Item != nil {
+		if lead := m.board.Org.ItemName(*n.Item); lead != "" {
+			where = lead
+		}
 	}
-	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
+	return m.tagged(m.needHost(n), where)
+}
+
+// leadColumn is the width of a row's first column: its longest lead, as far as other leaves room on the row.
+func (m Model) leadColumn(longest, other int) int {
+	return max(minLead, min(longest, m.width-other))
+}
+
+func (m Model) needLines(i int, n core.Need) string {
+	longest := 0
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Later} {
+		for _, other := range ns {
+			longest = max(longest, ansi.StringWidth(m.needLead(other)))
+		}
+	}
+	name := pad(m.needLead(n), m.leadColumn(longest, needRest))
 	sel := i == m.cursor
 	var b strings.Builder
 	it := n.Item
@@ -761,13 +782,15 @@ func (m Model) needLines(i int, n core.Need) string {
 		q += pal.dim.Render(fmt.Sprintf("  +%d more", more))
 		keys = "enter list all   " + strings.TrimPrefix(keys, "enter expand   ")
 	}
-	b.WriteString(m.mark(i) + m.hue(n.Project).Render(pad(m.itemID(*it), m.idWidth())) + " " + name + " " + q + "\n")
+	head, ref := m.mark(i)+m.hue(n.Project).Render(name)+" ", m.itemID(*it)
+	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
+	b.WriteString(head + ansi.Truncate(oneLine(q), room, "…") + "  " + pal.dim.Render(ref) + "\n")
 	var meta []string
 	if it.Rec != "" {
 		meta = append(meta, "rec: "+it.Rec)
 	}
 	if it.Dossier.Goal != "" {
-		meta = append(meta, "goal: "+it.Dossier.Goal)
+		meta = append(meta, "goal: "+oneLine(it.Dossier.GoalAsk))
 	}
 	meta = append(meta, fmt.Sprintf("blocks %d", it.Blocks), "src: "+m.sourceName(*it), age(m.board.At, it.CreatedAt))
 	if sel {
@@ -775,7 +798,7 @@ func (m Model) needLines(i int, n core.Need) string {
 		if line := m.unprepared(*it); line != "" {
 			b.WriteString(pal.yellow.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
 		}
-		if line := evidenceLine(*it); line != "" {
+		if line := evidenceLine(m.board.Org, *it); line != "" {
 			b.WriteString(pal.dim.Render("         "+ansi.Truncate(line, max(10, m.width-10), "…")) + "\n")
 		}
 		b.WriteString(pal.dim.Render("         "+keys) + "\n")
@@ -783,10 +806,23 @@ func (m Model) needLines(i int, n core.Need) string {
 	return b.String()
 }
 
+const (
+	minLead = 16
+	// needRest is what a Needs You row keeps beside its lead: the mark, the key and the start of the question.
+	needRest = 39
+	// itemFixed is an item row's state, gaps and margin. Its key stays whole: the question gives way to minQuestion, then the recipient to
+	// minRecipient, then the question to minItemQuestion, then the lead to minItemLead.
+	itemFixed       = 1 + 10 + 4 + 2 + 2 + 1
+	minRecipient    = 6
+	minQuestion     = 20
+	minItemQuestion = 8
+	minItemLead     = 8
+)
+
 // itemID names an item, with its project where the needs list mixes projects.
 func (m Model) itemID(it core.Item) string {
 	if m.mixed() || it.Dossier.Goal != "" {
-		return it.Qualified()
+		return it.Ref()
 	}
 	return it.ID
 }
@@ -801,18 +837,6 @@ func (m Model) mixed() bool {
 		}
 	}
 	return len(scopes) > 1
-}
-
-func (m Model) idWidth() int {
-	w := 5
-	for _, ns := range [][]core.Need{m.board.Needs, m.board.Later} {
-		for _, n := range ns {
-			if n.Item != nil {
-				w = max(w, len(m.itemID(*n.Item)))
-			}
-		}
-	}
-	return min(w, 24)
 }
 
 func (m Model) sourceName(it core.Item) string {
@@ -1016,7 +1040,7 @@ func itemIDs(items []core.Item) map[string]string {
 	label := func(it core.Item) string { return it.ID }
 	for _, it := range items {
 		if it.Scope != items[0].Scope || it.Dossier.Goal != "" {
-			label = core.Item.Qualified
+			label = core.Item.Ref
 			break
 		}
 	}
@@ -1032,16 +1056,24 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	origin := ""
-	if it.Dossier.Goal != "" {
-		origin = "  " + it.Dossier.Goal
+	leads, keys := 0, 0
+	for _, other := range m.items {
+		leads = max(leads, ansi.StringWidth(m.tagged(other.Host, m.board.Org.ItemLead(other))))
+		keys = max(keys, ansi.StringWidth(strings.TrimSpace(ids[other.Key()])))
 	}
-	line := m.mark(i) + ids[it.Key()] + " " + pad(it.State, 10) + " to " + m.recipientName(it) + origin + "  " + m.tagged(it.Host, it.Question)
+	// what the row's lead, recipient and question share once its mark, state, gaps and longest key are out.
+	free := m.width - ansi.StringWidth(m.mark(i)) - itemFixed - keys
+	lead := max(minItemLead, min(leads, free-minRecipient-minItemQuestion))
+	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), lead) + " " + pad(it.State, 10) + " to "
+	ref := strings.TrimSpace(ids[it.Key()])
+	head += ansi.Truncate(m.recipientName(it), max(minRecipient, free-lead-minQuestion), "…") + "  "
+	room := max(minItemQuestion, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
+	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)
 	if it.State != core.ItemOpen && i != m.cursor {
 		line = pal.dim.Render(line)
 	}
 	out := line + "\n"
-	if ev := evidenceLine(it); ev != "" && i == m.cursor {
+	if ev := evidenceLine(m.board.Org, it); ev != "" && i == m.cursor {
 		out += pal.dim.Render("         "+ansi.Truncate(ev, max(10, m.width-10), "…")) + "\n"
 	}
 	if it.Answer != "" {
@@ -1362,11 +1394,11 @@ func (m Model) unprepared(it core.Item) string {
 }
 
 // evidenceLine sums up an item's evidence in one line: its goal, pull requests with CI, and what changed since the owner looked.
-func evidenceLine(it core.Item) string {
+func evidenceLine(o core.Org, it core.Item) string {
 	var parts []string
 	d := it.Dossier
 	if d.Goal != "" {
-		parts = append(parts, d.Goal)
+		parts = append(parts, o.ItemLead(it))
 	}
 	if len(it.Evidence) > 0 {
 		parts = append(parts, fmt.Sprintf("%d cited", len(it.Evidence)))
@@ -1428,7 +1460,9 @@ func (m Model) whyView() string {
 	field("assumption", it.Assumption)
 	field("recipient", m.recipientName(*it))
 	field("repository", core.ScopeName(it.Scope))
-	field("goal", it.Dossier.Goal)
+	if it.Dossier.Goal != "" {
+		field("goal", m.board.Org.ItemLead(*it))
+	}
 	if it.State == core.ItemOpen && it.Recipient == core.Owner {
 		field("unprepared", strings.TrimPrefix(m.unprepared(*it), "unprepared: "))
 	}
@@ -1553,7 +1587,8 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
    u            reopen a snoozed item (detail)
 
    More
-   N            new goal in the selected row's repository
+   N            on a goal or chief: rename it inline (kebab-case, 2 to 40 characters, unused here; its id
+                still names it); on any other row: new goal in that row's repository
    +            new session in the selected row's repository, run by you, no manager: type the prompt;
                 the worktree is named from it
    n N + c n    tab switches claude and codex, shift-tab steps through every account, and each starts

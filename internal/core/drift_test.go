@@ -84,11 +84,11 @@ func TestAChiefHearsWhenAManagerUnderItIsAdrift(t *testing.T) {
 	w.loop(t, 1)
 	w.set(m.Session, func(s *Session) { s.Status, s.Drift = Busy, []drift.Sign{looping(w.clock.Add(-10 * time.Minute))} })
 	w.loop(t, 3)
-	if events := adriftEvents(t, w, g.ID); len(events) != 1 || !strings.Contains(events[0], "manager "+m.ID) {
+	if events := adriftEvents(t, w, g.ID); len(events) != 1 || !strings.Contains(events[0], "manager "+m.Name) {
 		t.Fatalf("goal events %q, want the manager's evidence once", events)
 	}
 	chief, _ := w.core.Store.Manager(c.ID)
-	if heard := digests(w.handedTo(chief.Session)); len(heard) != 1 || !strings.Contains(heard[0], g.ID+": agent-adrift #") {
+	if heard := digests(w.handedTo(chief.Session)); len(heard) != 1 || !strings.Contains(heard[0], g.Name+": agent-adrift #") {
 		t.Fatalf("chief heard %q, want one line for the adrift manager", w.handedTo(chief.Session))
 	}
 }

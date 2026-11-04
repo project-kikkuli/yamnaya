@@ -74,6 +74,8 @@ type Core struct {
 	Woke time.Time
 	// Pace is how long a wake waits for followers and the rest wait for a digest; nil means WakeDebounce and DigestEvery.
 	Pace *WakePace
+	// Namer suggests a short name for a goal's ask; nil names it from the ask's first words.
+	Namer func(ask string) string
 	// StateDir holds ym's files beside its database, such as goal briefs.
 	StateDir string
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
@@ -219,6 +221,8 @@ type Need struct {
 	Relay *Relay
 	// Mark is what the owner or a chief set on a row that is not an item.
 	Mark QueueMark
+	// Name is the goal or chief the row comes from, by the name the org has now.
+	Name string
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -618,6 +622,9 @@ func (c *Core) Board() (Board, error) {
 	}
 	if c.ShowRemotes {
 		b.remoteStanding = c.mergeRemoteOrg(&b.Org, b.Remotes, feeds)
+		if err := c.settleParents(b.Org); err != nil {
+			return b, err
+		}
 	}
 	if err := c.tree(&b, b.Org, feeds); err != nil {
 		return b, err

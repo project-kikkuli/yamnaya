@@ -113,7 +113,7 @@ func TestWhatNeedsNoActionNeverStartsATurnAndIsReadOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{g.ID + ": 1 green CI run, 2 updates"}
+	want := []string{g.Name + ": 1 green CI run, 2 updates"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("ym digest printed %q, want %q", lines, want)
 	}
@@ -149,7 +149,7 @@ func TestQuietNewsRidesAlongAtMostEveryDigestPeriod(t *testing.T) {
 		t.Fatalf("ym item inbox handed %q within a digest period of the last, err %v", lines, err)
 	}
 	w.clock = w.clock.Add(2 * time.Minute)
-	if lines, err := w.core.ChangesDue(chief.Session); err != nil || !slices.Equal(lines, []string{g.ID + ": 1 update"}) {
+	if lines, err := w.core.ChangesDue(chief.Session); err != nil || !slices.Equal(lines, []string{g.Name + ": 1 update"}) {
 		t.Fatalf("ym item inbox handed %q after a digest period, err %v", lines, err)
 	}
 }
@@ -216,7 +216,7 @@ func TestAChiefMidTurnGetsOneDigestAndTheRestMergesIntoTheNext(t *testing.T) {
 	w.set(chief.Session, func(s *Session) { s.Status, s.Since = Idle, w.clock })
 	w.loop(t, 2)
 	got = digests(w.handedTo(chief.Session))
-	if len(got) != 2 || strings.Count(got[1], "\n"+g.ID+":") != 1 || strings.Count(got[1], "done #") != 2 {
+	if len(got) != 2 || strings.Count(got[1], "\n"+g.Name+":") != 1 || strings.Count(got[1], "done #") != 2 {
 		t.Fatalf("once idle the chief got %q, want one more message with both events on one line", got)
 	}
 }
@@ -249,12 +249,12 @@ func TestANewDigestMergesIntoOneStillPending(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("%d digests pending, want one holding everything: %+v", len(got), got)
 	}
-	for _, want := range []string{g1.ID + ": ", g2.ID + ": ", "stuck #", "done #"} {
+	for _, want := range []string{g1.Name + ": ", g2.Name + ": ", "stuck #", "done #"} {
 		if !strings.Contains(got[0].Text, want) {
 			t.Fatalf("pending digest lacks %q:\n%s", want, got[0].Text)
 		}
 	}
-	if n := strings.Count(got[0].Text, g1.ID+":"); n != 1 {
+	if n := strings.Count(got[0].Text, g1.Name+":"); n != 1 {
 		t.Fatalf("goal %s has %d lines, want 1:\n%s", g1.ID, n, got[0].Text)
 	}
 }
@@ -393,7 +393,7 @@ func TestYmDigestLeavesAManagersEventsForItsWake(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines, err := w.core.Digest(m.Session)
-	if err != nil || !slices.Equal(lines, []string{g.ID + ": 1 red CI run"}) {
+	if err != nil || !slices.Equal(lines, []string{g.Name + ": 1 red CI run"}) {
 		t.Fatalf("ym digest printed %q, err %v", lines, err)
 	}
 	w.set(m.Session, func(s *Session) { s.Prompt = nil })

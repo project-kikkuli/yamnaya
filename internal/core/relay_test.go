@@ -139,7 +139,7 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 				}
 				return
 			}
-			if !strings.Contains(got, "drop the old API") || !strings.Contains(got, key+" ask from") {
+			if !strings.Contains(got, "drop the old API") || !strings.HasSuffix(got, "  "+key) || !strings.Contains(got, " ask from ") {
 				t.Errorf("chief on %s was handed %q; want the ask with its key %s as that host names it", tc.chiefOn, got, key)
 			}
 		})
@@ -316,7 +316,7 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 	for _, who := range []Manager{chief, top} {
 		var heard []string
 		for _, h := range f.a.handedTo(who.Session) {
-			if strings.Contains(h, "b/"+g.ID) {
+			if strings.Contains(h, "b/"+g.Name) {
 				heard = append(heard, h)
 			}
 		}
@@ -324,7 +324,7 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 			t.Errorf("%s heard %q; want one line for b's goal, done with its merge counted, and nothing from before it was told", who.Name, heard)
 		}
 	}
-	if len(notified) != 1 || !strings.HasPrefix(notified[0], "ym: b "+g.ID+" done") {
+	if len(notified) != 1 || !strings.HasPrefix(notified[0], "ym: b "+g.Name+" done") {
 		t.Errorf("owner's host notified %q, want b's done goal once", notified)
 	}
 }
@@ -741,7 +741,7 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 			var heard []string
 			for _, h := range f.b.handedTo(chief.Session) {
 				for _, line := range strings.Split(h, "\n") {
-					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.ID) {
+					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.Name) {
 						_, rest, _ := strings.Cut(kind, " ")
 						heard = append(heard, rest)
 					}

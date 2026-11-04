@@ -174,7 +174,7 @@ func TestNPicksTheGoalsRepositoryFirst(t *testing.T) {
 			}
 			got := l.started[0]
 			real, _ := filepath.EvalSymlinks(root)
-			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || !strings.Contains(got.Prompt, "\n"+c.prompt+"\n") || got.Harness != c.harn || !strings.HasPrefix(got.Slug, "mgr1-") {
+			if filepath.Join(real, c.repo) != got.Repo && filepath.Join(root, c.repo) != got.Repo || !strings.Contains(got.Prompt, "\n"+c.prompt+"\n") || got.Harness != c.harn || got.Slug != c.prompt {
 				t.Fatalf("started %s", fmtLaunches(l.started))
 			}
 		})

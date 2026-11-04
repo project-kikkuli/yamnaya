@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,8 +172,8 @@ func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
 			if chief.Manager.Repo != "" || chief.Manager.Directory == "" {
 				t.Fatalf("chief inherited a repository: %+v", chief.Manager)
 			}
-			if chief.Manager.Name != "data team" {
-				t.Fatalf("no chief named data team on the board; message %q", m.message)
+			if chief.Manager.Name != "data-team" {
+				t.Fatalf("no chief named data-team on the board; message %q", m.message)
 			}
 			for i, mg := range ms {
 				if got, want := parentOf(t, c, mg.ID), slices.Contains(tc.want, i); (got == chief.Manager.ID) != want {
@@ -183,7 +184,7 @@ func TestCPicksTheNewChiefsReportsThenItsNameAndRemit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(brief), "# data team\n\n"+tc.remit+"\n") {
+			if !strings.Contains(string(brief), "# data-team\n\n"+tc.remit+"\n") {
 				t.Fatalf("the chief's brief does not hold its remit %q:\n%s", tc.remit, brief)
 			}
 		})
@@ -346,7 +347,7 @@ func TestNHandsAGoalToAManagerInTheRowsRepository(t *testing.T) {
 	if len(l.started) != 1 || l.started[0].Repo != "/src/app" || !strings.Contains(l.started[0].Prompt, "make login faster") {
 		t.Fatalf("started %s, want one manager in /src/app on the goal", fmtLaunches(l.started))
 	}
-	if !strings.HasPrefix(m.message, "goal1 started") {
+	if !strings.HasPrefix(m.message, "make-login-faster started") {
 		t.Fatalf("message %q", m.message)
 	}
 	if m = refresh(t, m); !slices.ContainsFunc(m.rows(), func(r row) bool { return r.node != nil && r.node.Goal.Ask == "make login faster" }) {
@@ -467,7 +468,7 @@ func TestAGoalRowShowsUnreadNewsAndEnterOpensTheFeedAndReadsIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	next, _ := refresh(t, m).Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = next.(Model)
 	if v := m.View().Content; !strings.Contains(v, "2 new") || !strings.Contains(v, "parser merged; TSV next") {
 		t.Fatalf("the goal row should show 2 unread and the newest line:\n%s", v)
@@ -571,7 +572,7 @@ func TestAQueueRowOpensOnlyWhenSelectedAndKeepsToOneLineAtPhoneWidth(t *testing.
 		need core.Need
 		want string
 	}{
-		{"pull request", core.Need{PR: &pr, Manager: "mgr1"}, "august#7 · mgr1"},
+		{"pull request", core.Need{PR: &pr, Manager: "mgr1", Name: "faster-login"}, "faster-login · august#7"},
 		{"steer", core.Need{Steer: &core.Steer{Manager: "mgr1", Revision: 2, Nudges: 2, Text: "ship TSV too"}, Manager: "mgr1"}, "not adopted after 2 nudges"},
 		{"item", core.Need{Item: &core.Item{ID: "D1", Kind: core.KindDecision, Question: "use CAS?", Rec: "yes", DoLine: "use CAS"}}, "rec: yes"},
 	} {
@@ -764,7 +765,7 @@ func TestDClosesAGoalWithAPickedDispositionAndReason(t *testing.T) {
 			}
 			m = press(t, refresh(t, m), "E")
 			v := ansi.Strip(m.View().Content)
-			for _, want := range []string{"ended goals", g, tc.wants, "the owner", "goal27 took it"} {
+			for _, want := range []string{"ended goals", now.Name, tc.wants, "the owner", "goal27 took it"} {
 				if !strings.Contains(v, want) {
 					t.Errorf("E lacks %q:\n%s", want, v)
 				}
@@ -807,7 +808,7 @@ func TestDEndsWhatStartedWhileItsPromptWasOpen(t *testing.T) {
 }
 
 func TestNewWorkFromANeutralChiefRequiresAnExplicitRepository(t *testing.T) {
-	for _, key := range []string{"N", "+"} {
+	for _, key := range []string{"n", "+"} {
 		t.Run(key, func(t *testing.T) {
 			m, c, _ := goalSetup(t, "service goal")
 			l := c.Launches.(*launches)
@@ -894,6 +895,281 @@ func TestTheAcceptKeyAndLaterActOnPullRequestRowsAsTheyRead(t *testing.T) {
 			press(t, m, "a")
 			if len(stub.merged) != tc.merged {
 				t.Fatalf("merged %v, want %d merges", stub.merged, tc.merged)
+			}
+		})
+	}
+}
+
+func TestNOnAGoalOrChiefRenamesItInlineAndRejectsABadNameWithoutLeaving(t *testing.T) {
+	for _, tc := range []struct {
+		name, row, typed, want, err string
+	}{
+		{name: "a goal", row: "goal", typed: "faster-login", want: "faster-login"},
+		{name: "a chief", row: "chief", typed: "platform-lead", want: "platform-lead"},
+		{name: "a name another uses", row: "goal", typed: "platform", err: "already names"},
+		{name: "not kebab-case", row: "chief", typed: "Platform Lead", err: "kebab-case"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make login faster")
+			chief, err := c.NewChief("platform", "", t.TempDir(), "", []string{ms[0].ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := map[string]string{"goal": ms[0].ID, "chief": chief.ID}[tc.row]
+			m = to(t, refresh(t, m), isNode(id))
+			m = press(t, m, "N")
+			m = press(t, m, strings.Split(tc.typed, "")...)
+			m = press(t, m, "enter")
+			if tc.err != "" {
+				if m.mode != modeInput || !strings.Contains(m.View().Content, tc.err) {
+					t.Fatalf("mode %v, want the input kept open saying %q:\n%s", m.mode, tc.err, m.View().Content)
+				}
+				return
+			}
+			o, err := c.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := o.Lookup(tc.want); err != nil || got.ID != id {
+				t.Fatalf("%q names %s, %v; want %s", tc.want, got.ID, err, id)
+			}
+			if m = refresh(t, m); !strings.Contains(m.View().Content, tc.want) {
+				t.Fatalf("the board does not show %q:\n%s", tc.want, m.View().Content)
+			}
+		})
+	}
+}
+
+func TestAQueueRowWithoutADoLineLeadsWithTheGoalsNameAndAKeyNeverLeads(t *testing.T) {
+	for _, tc := range []struct {
+		width   int
+		do      string
+		lead    string
+		keyLast bool
+	}{
+		{width: 40, lead: "rotate-the-signing"},
+		{width: 100, lead: "rotate-the-signing", keyLast: true},
+		{width: 200, lead: "rotate-the-signing", keyLast: true},
+		{width: 40, do: "pick the rotation", lead: "pick the rotation"},
+		{width: 100, do: "pick the rotation", lead: "pick the rotation", keyLast: true},
+	} {
+		t.Run(strconv.Itoa(tc.width)+tc.do, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "rotate the signing keys")
+			it, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: "which rotation?\n\n" + strings.Repeat("long detail ", 40), Rec: "a", DoLine: tc.do, Session: ms[0].Session, Recipient: core.Owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			at := slices.IndexFunc(m.board.Needs, func(n core.Need) bool { return n.Item != nil && n.Item.Seq == it.Seq })
+			if at < 0 {
+				t.Fatalf("no row for %s in %+v", it.Ref(), m.board.Needs)
+			}
+			line, side := core.RowLine(m.board.Needs[at], "1", tc.width, m.board.At)
+			_, words, _ := strings.Cut(line, "dec")
+			words = strings.TrimSpace(strings.TrimLeft(words, " 0123456789m?"))
+			if !strings.HasPrefix(words, tc.lead) {
+				t.Fatalf("row %q, want it to lead with %q", line, tc.lead)
+			}
+			if strings.Contains(line, it.Ref()) {
+				t.Fatalf("row %q holds its key %s", line, it.Ref())
+			}
+			if tc.keyLast && (!strings.Contains(side, it.Ref()) || !strings.Contains(side, "rotate-the-signing")) {
+				t.Fatalf("side %q, want the goal's name and key %s", side, it.Ref())
+			}
+		})
+	}
+}
+
+func TestABoardRowShowsTheWholeNameWhenTheWidthHasRoomForIt(t *testing.T) {
+	const long = "teach-the-board-to-scroll-its-long-rows"
+	for _, tc := range []struct {
+		name  string
+		width int
+		whole bool
+	}{
+		{"a wide board", 180, true},
+		{"a board of a hundred columns", 100, true},
+		{"a narrow board", 60, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "short ask")
+			if _, err := c.Rename(ms[0].ID, long); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			for _, i := range []int{-1, 0} {
+				m.cursor = 0
+				line, _, _ := strings.Cut(ansi.Strip(m.nodeLines(i, m.board.Tree[0], 0)), "\n")
+				if got := strings.Contains(line, long); got != tc.whole {
+					t.Fatalf("whole name shown %v, want %v, at %d columns:\n%s", got, tc.whole, tc.width, line)
+				}
+				if ansi.StringWidth(line) > tc.width {
+					t.Fatalf("row is %d wide, past %d columns:\n%s", ansi.StringWidth(line), tc.width, line)
+				}
+			}
+		})
+	}
+}
+
+func TestShortNamesLeaveTheBoardColumnNoWiderThanTheLongest(t *testing.T) {
+	m, c, ms := goalSetup(t, "one", "two")
+	for i, name := range []string{"a-name-of-twenty-char", "short-one"} {
+		if _, err := c.Rename(ms[i].ID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m = refresh(t, m)
+	m.width = 180
+	if got, want := m.nameColumn(0), len("a-name-of-twenty-char"); got != want {
+		t.Fatalf("name column is %d wide, want %d", got, want)
+	}
+}
+
+// renameRemotes is a host that answers a rename the way ym there does.
+type renameRemotes struct {
+	remotes
+	refuse error
+}
+
+func (r *renameRemotes) Run(host string, args ...string) (string, error) {
+	r.ran = append(r.ran, append([]string{host}, args...))
+	return "", r.refuse
+}
+
+func TestNOnAnotherHostsGoalRenamesItThereAndARefusalKeepsTheInputOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		open  bool
+		shows string
+	}{
+		{name: "the host renames it", shows: "login-box is now login-b2"},
+		{name: "the name is taken there", err: fmt.Errorf("ym goal rename login-box login-b2 on %s: login-b2 already names a goal or chief here", box), open: true, shows: "login-b2 already names a goal or chief here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, _ := setup(t)
+			r := &renameRemotes{refuse: tc.err}
+			r.boards = []core.RemoteBoard{{Host: box, At: time.Now(),
+				Managers: []core.Manager{{ID: "mgr1", Role: core.RoleManager, Name: "login-box", GoalID: "goal1"}},
+				Goals:    []core.Goal{{ID: "goal1", Name: "login-box", Ask: "faster login", ManagerID: "mgr1"}}}}
+			c.Remotes, c.ShowRemotes = r, true
+			m.width, m.peaks.hidden = 140, true
+			m = refresh(t, m)
+			m = press(t, to(t, m, isNode(core.RemoteKey(box, "mgr1"))), "N")
+			m = press(t, m, strings.Split("login-b2", "")...)
+			m = press(t, m, "enter")
+			if want := []string{box, "goal", "rename", "login-box", "login-b2"}; len(r.ran) != 1 || !slices.Equal(r.ran[0], want) {
+				t.Fatalf("ran %v, want %v", r.ran, want)
+			}
+			if open := m.mode == modeInput && m.inKind == inName; open != tc.open {
+				t.Fatalf("input open %v, want %v", open, tc.open)
+			}
+			view := ansi.Strip(m.View().Content)
+			if !strings.Contains(view, tc.shows) {
+				t.Fatalf("view does not say %q:\n%s", tc.shows, view)
+			}
+			if strings.Contains(view, "mgr1") {
+				t.Fatalf("view shows the id:\n%s", view)
+			}
+		})
+	}
+}
+
+func TestNOnAGoalsAgentRowStartsANewGoalAsTheHelpSays(t *testing.T) {
+	m, _, ms := goalSetup(t, "make login faster")
+	m = press(t, to(t, m, isNode(ms[0].ID)), "enter")
+	if m.mode != modeGoal {
+		t.Fatalf("enter went to mode %v, want the goal's page", m.mode)
+	}
+	m.board.Tree[0].Agents = []core.Live{{Session: core.Session{Harness: "claude", ID: "agent1", Title: "an agent", Repo: "/src/app"}}}
+	m = press(t, to(t, m, isSession("agent1")), "N")
+	if m.mode != modeInput || m.inKind != inGoal {
+		t.Fatalf("N on an agent row went to mode %v input %v, want a new goal's ask:\n%s", m.mode, m.inKind, m.View().Content)
+	}
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "goal in ") {
+		t.Fatalf("the prompt does not say it starts a goal:\n%s", v)
+	}
+}
+
+func TestAnItemsEvidenceLineNamesItsGoal(t *testing.T) {
+	m, c, ms := goalSetup(t, "make login faster")
+	if _, err := c.Rename(ms[0].ID, "faster-login"); err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(t, m)
+	line := evidenceLine(m.board.Org, core.Item{Dossier: core.Dossier{Goal: ms[0].GoalID}})
+	if !strings.Contains(line, "faster-login") || strings.Contains(line, ms[0].GoalID) {
+		t.Fatalf("evidence line %q, want the goal's name and not its id", line)
+	}
+}
+
+func TestANeedsYouRowShowsAWholeNameWhenTheWidthHasRoomForIt(t *testing.T) {
+	const long = "this-is-a-forty-character-goal-name-here"
+	for _, tc := range []struct {
+		width int
+		whole bool
+	}{{200, true}, {100, true}, {80, true}, {50, false}} {
+		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
+			m, c, ms := goalSetup(t, "short ask")
+			if _, err := c.Rename(ms[0].ID, long); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			need := core.Need{Item: &core.Item{Seq: 1, ID: "D1", Kind: core.KindDecision, Question: "which way?", Dossier: core.Dossier{Goal: ms[0].GoalID}}}
+			m.board.Needs = []core.Need{need}
+			line, _, _ := strings.Cut(ansi.Strip(m.needLines(-1, need)), "\n")
+			if got := strings.Contains(line, long); got != tc.whole {
+				t.Fatalf("whole name shown %v, want %v, at %d columns:\n%s", got, tc.whole, tc.width, line)
+			}
+			if !strings.Contains(line, "D1") {
+				t.Fatalf("row lost its key:\n%s", line)
+			}
+		})
+	}
+}
+
+func TestAnItemRowKeepsItsKeyWholeWhateverElseIsLong(t *testing.T) {
+	const lead, to = "this-is-a-forty-character-goal-name-here", "chief-with-a-forty-character-name-itself"
+	for _, tc := range []struct {
+		name     string
+		width    int
+		key      string
+		question string
+		wholeTo  bool
+		wholeLed bool
+	}{
+		{name: "a wide board", width: 200, key: "#7", question: "which way should the export go", wholeTo: true, wholeLed: true},
+		{name: "a short key at 100", width: 100, key: "#7", question: "which way", wholeLed: true},
+		{name: "a short key at 80", width: 80, key: "#7", question: "which", wholeLed: true},
+		{name: "a key of 22 at 100", width: 100, key: "byo-mbp-dm6tyx3m6c/#84", question: "which", wholeLed: true},
+		{name: "a key of 34 at 100", width: 100, key: "this-is-a-thirty-char-repo-name:D1", question: "which"},
+		{name: "a key of 34 at 80", width: 80, key: "this-is-a-thirty-char-repo-name:D1", question: "which"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "short ask")
+			if _, err := c.Rename(ms[0].ID, lead); err != nil {
+				t.Fatal(err)
+			}
+			boss, err := c.NewChief(to, "", t.TempDir(), "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			it := core.Item{Seq: 7, ID: "D1", Kind: core.KindDecision, State: core.ItemOpen, Recipient: boss.ID, Question: "which way should the export go when it is large?", Dossier: core.Dossier{Goal: ms[0].GoalID}}
+			m.items = []core.Item{it}
+			line, _, _ := strings.Cut(ansi.Strip(m.itemLines(-1, it, map[string]string{it.Key(): tc.key})), "\n")
+			if w := ansi.StringWidth(line); w > tc.width {
+				t.Fatalf("row is %d wide at %d columns:\n%s", w, tc.width, line)
+			}
+			if !strings.HasSuffix(line, tc.key) {
+				t.Fatalf("row lost its key %q:\n%s", tc.key, line)
+			}
+			if strings.Contains(line, lead) != tc.wholeLed || strings.Contains(line, to) != tc.wholeTo || !strings.Contains(line, tc.question) {
+				t.Fatalf("want whole lead %v, whole recipient %v, question %q:\n%s", tc.wholeLed, tc.wholeTo, tc.question, line)
 			}
 		})
 	}

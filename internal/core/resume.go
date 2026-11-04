@@ -124,9 +124,9 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 
 func managerWho(m Manager) string {
 	if m.Role == RoleChief {
-		return "chief " + m.ID
+		return "chief " + m.Shown()
 	}
-	return "manager " + m.ID
+	return "manager " + m.Shown()
 }
 
 // GoalWork is the active manager or chief whose work a session is, directly or through the sessions that spawned it, or that runs

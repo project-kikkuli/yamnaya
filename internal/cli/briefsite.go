@@ -95,7 +95,11 @@ type briefNode struct {
 	Context          []core.Steer
 	Ask, ContextText string
 	Items            []itemView
+	org              core.Org
 }
+
+// By names who wrote a context revision.
+func (n briefNode) By(st core.Steer) string { return n.org.SteerBy(st) }
 
 // Name is what the site calls n: its goal's id, or the chief's.
 func (n briefNode) Name() string {
@@ -115,13 +119,14 @@ func (n briefNode) Markdown() string {
 
 // itemView is one item as the site lists it; Text is what ym copy item gives.
 type itemView struct {
-	Seq                  int64
-	Key, ID, Kind, State string
-	Question, Text       string
+	Seq                        int64
+	Key, ID, Lead, Kind, State string
+	Question, Text             string
 }
 
 func (s *briefSite) itemView(it core.Item) itemView {
-	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Qualified(), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
+	o, _ := s.core.LoadOrg()
+	return itemView{Seq: it.Seq, Key: it.Key(), ID: it.Ref(), Lead: o.ItemLead(it), Kind: it.Kind, State: it.State, Question: it.Question, Text: clipboard.Clean(s.core.Store.Nicked(s.core.ItemText(it)))}
 }
 
 // items lists the open and snoozed items keep matches, oldest first.
@@ -342,10 +347,10 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var build func(core.Manager, int, map[string]bool) briefNode
 	build = func(m core.Manager, depth int, seen map[string]bool) briefNode {
 		seen[m.ID] = true
-		n := briefNode{ID: m.ID, Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: "chief", Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
+		n := briefNode{ID: m.Shown(), Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: "chief", Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
 			Fresh: fresh[m.ID], Now: time.Now()}
 		if g, ok := o.Goals[m.GoalID]; ok {
-			n.Kind, n.Title, n.Repo = g.ID, g.Ask, g.Repo
+			n.Kind, n.Title, n.Repo = g.Shown(), g.Ask, g.Repo
 			if g.ArtifactURL != "" {
 				n.Artifact = g.ArtifactURL
 			}
@@ -409,6 +414,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := build(m, 64, map[string]bool{})
+	n.org = o
 	if n.Versions, err = s.core.Store.Briefs(m.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -431,7 +437,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if n.Ask = o.Ask(m); len(n.Context) > 0 || n.Ask != "" {
 		var sb strings.Builder
-		writeContext(&sb, m.ID, n.Ask, n.Context)
+		writeContext(&sb, o, m.Shown(), n.Ask, n.Context)
 		n.ContextText = clipboard.Clean(sb.String())
 	}
 	slices.Reverse(n.Context)
@@ -468,13 +474,13 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 	rb := hosts.Boards()[0]
 	id := strings.ToLower(ref)
 	for _, g := range rb.Goals {
-		if g.ID == id {
+		if g.ID == id || g.Name == id {
 			id = g.ManagerID
 		}
 	}
 	var m *core.Manager
 	for i := range rb.Managers {
-		if rb.Managers[i].ID == id {
+		if rb.Managers[i].ID == id || m == nil && rb.Managers[i].Name == id {
 			m = &rb.Managers[i]
 		}
 	}
@@ -482,11 +488,11 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 		http.Error(w, fmt.Sprintf("%s: no goal or chief %s on %s as of %s", rb.StateAt(time.Now()), ref, host, rb.At.Local().Format(time.Kitchen)), http.StatusNotFound)
 		return
 	}
-	n := briefNode{ID: core.RemoteKey(host, m.ID), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
+	n := briefNode{ID: core.RemoteKey(host, m.Shown()), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
 		Fresh: rb.Fresh[m.ID], Now: time.Now()}
 	for _, g := range rb.Goals {
 		if g.ID == m.GoalID {
-			n.Kind, n.Title, n.Repo = core.RemoteKey(host, g.ID), g.Ask, g.Repo
+			n.Kind, n.Title, n.Repo = core.RemoteKey(host, g.Shown()), g.Ask, g.Repo
 			n.page = g.BriefPage
 			if g.ArtifactURL != "" {
 				n.Artifact = g.ArtifactURL
@@ -549,15 +555,8 @@ func directHost(host string) bool {
 }
 
 func findManager(o core.Org, ref string) (core.Manager, bool) {
-	ref = strings.ToLower(ref)
-	if m, ok := o.Managers[ref]; ok {
-		return m, true
-	}
-	if g, ok := o.Goals[ref]; ok {
-		m, ok := o.Managers[g.ManagerID]
-		return m, ok
-	}
-	return core.Manager{}, false
+	m, err := o.Lookup(ref)
+	return m, err == nil
 }
 
 func (s *briefSite) render(w http.ResponseWriter, t *template.Template, data any) {
@@ -617,7 +616,7 @@ var siteFuncs = template.FuncMap{"copy": func(label, text string) copyButton { r
 
 const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.Text}}" aria-label="Copy {{.Label}}">copy</button>{{end}}` +
 	`{{define "tags"}}<span class="tag {{.Standing}}">{{.Standing}}</span>{{if .Fresh.Brief}}{{if .Fresh.Stale}}<span class="tag stale">brief v{{.Fresh.Brief.Version}} stale</span>{{else}}<span class="tag fresh">brief v{{.Fresh.Brief.Version}}, {{.Age .Fresh.Brief.CreatedAt}}</span>{{end}}{{else}}<span class="tag stale">no brief</span>{{end}}{{if .Plan}}{{if .Plan.Adopted}}<span class="tag">plan r{{.Plan.Revision}}</span>{{else}}<span class="tag unadopted">steer r{{.Plan.Revision}} not adopted</span>{{end}}{{end}}{{end}}` +
-	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.ID}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p></div>{{end}}{{end}}`
+	`{{define "items"}}{{range .}}<div class="card"><a href="{{at "/i/"}}{{.Seq}}"><b>{{.Lead}}</b></a> <span class="tag">{{.Kind}}</span><span class="tag">{{.State}}</span>{{template "copy" (copy (print "item " .ID) .Text)}}<p class="sec">{{.Question}}</p><p class="meta">{{.ID}}</p></div>{{end}}{{end}}`
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
 <h1>Needs you</h1>
@@ -629,10 +628,10 @@ var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags 
 {{if .Roots}}{{template "tree" .Roots}}{{else}}<p>No goals. Start one with <code>ym goal "&lt;ask&gt;"</code>.</p>{{end}}
 </body></html>`))
 
-var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>item {{.ID}}</title>` + siteStyle + `</head><body>
+var itemPage = template.Must(template.New("item").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>{{.Lead}} item</title>` + siteStyle + `</head><body>
 <p class="meta"><a href="{{at "/"}}">all briefs</a></p>
-<h1>Item {{.ID}}{{template "copy" (copy (print "item " .ID) .Text)}}</h1>
-<p class="meta">{{.Key}} · {{.Kind}} · {{.State}}</p>
+<h1>{{.Lead}}{{template "copy" (copy (print "item " .ID) .Text)}}</h1>
+<p class="meta">{{.ID}} · {{.Key}} · {{.Kind}} · {{.State}}</p>
 <div class="card"><p class="sec">{{.Text}}</p></div>
 </body></html>`))
 
@@ -646,7 +645,7 @@ var briefPage = template.Must(template.New("brief").Funcs(siteFuncs).Parse(tags 
 {{with .Shown}}<div class="card"><p class="meta">Brief v{{.Version}}, {{$.Age .CreatedAt}}{{template "copy" (copy "brief" $.Markdown)}}</p>{{range .Sections}}<h2>{{index . 0}}{{template "copy" (copy (index . 0) (index . 1))}}</h2><p class="sec">{{index . 1}}</p>{{end}}</div>
 {{else}}<p>No brief recorded yet.</p>{{end}}
 {{if .ContextText}}<h2>Context{{template "copy" (copy "context" .ContextText)}}</h2>
-{{range .Context}}<div class="card"><p class="meta">Revision {{.Revision}} by {{.By}}, {{$.Age .CreatedAt}}, {{if .Adopted}}adopted{{else}}not adopted yet{{end}}{{template "copy" (copy (print "revision " .Revision) .Text)}}</p><div class="plan">{{.Text}}</div></div>
+{{range .Context}}<div class="card"><p class="meta">Revision {{.Revision}} by {{$.By .}}, {{$.Age .CreatedAt}}, {{if .Adopted}}adopted{{else}}not adopted yet{{end}}{{template "copy" (copy (print "revision " .Revision) .Text)}}</p><div class="plan">{{.Text}}</div></div>
 {{else}}<div class="card"><p class="meta">Revision 0, the ask it started with{{template "copy" (copy "revision 0" $.Ask)}}</p><div class="plan">{{$.Ask}}</div></div>{{end}}{{end}}
 {{if .Items}}<h2>Open items</h2>{{template "items" .Items}}{{end}}
 {{define "report"}}<div class="card"><a href="{{at "/b/"}}{{.ID}}"><b>{{if eq .Kind "chief"}}chief {{.Title}}{{else}}{{.Kind}}: {{.Title}}{{end}}</b></a>{{if .Fresh.Brief}}{{template "copy" (copy (print .Name " brief") .Markdown)}}{{end}}<br>{{template "tags" .}}

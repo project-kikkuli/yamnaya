@@ -211,8 +211,8 @@ func TestAGoalAskedForWithHostStartsOnTheHostThatPullsOrTellsTheRequesterWhyNot(
 				t.Errorf("a started %s in %s on %s with profile %q under %s; want app on %s with %q under b/%s",
 					m.ID, m.Repo, m.Harness, m.Profile, m.ParentID, harness, tc.profile, chief.ID)
 			}
-			if heard := told(t, b, chief.Session); !strings.Contains(heard, m.GoalID) {
-				t.Errorf("requester was told %q, want the started goal %s", heard, m.GoalID)
+			if heard := told(t, b, chief.Session); !strings.Contains(heard, m.Name) {
+				t.Errorf("requester was told %q, want the started goal %s", heard, m.Name)
 			}
 		})
 	}

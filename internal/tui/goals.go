@@ -125,7 +125,10 @@ func (m Model) treeMatches(ns []core.Node) bool {
 
 // minAsk is how much of a goal row its ask keeps before its numbers give way; a chief row's remit gives way first.
 const (
-	minAsk   = 56
+	minAsk = 56
+	// minNames and minRow are the least a goal or chief row's first column shows, and the least it leaves its vibe and text.
+	minNames = 12
+	minRow   = 24
 	minRemit = 10
 )
 
@@ -324,12 +327,12 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	var head, what string
 	host := n.Manager.Host
 	keep := minAsk
+	names := m.nameColumn(depth)
 	if n.Goal != nil {
-		_, id, _ := core.SplitRemote(n.Goal.ID)
-		head = pad(id, 8)
+		head = pad(ansi.Truncate(n.Goal.Shown(), names, "…"), names)
 		what = m.tagged(host, n.Goal.Ask)
 	} else {
-		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Name, chiefName, "…"), chiefName))
+		head = pal.bold.Render(pad(ansi.Truncate(n.Manager.Shown(), names, "…"), names))
 		fold := ""
 		if expandable(n) {
 			fold = "▾ "
@@ -361,7 +364,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	}
 	var meta []string
 	if n.Goal != nil {
-		meta = append(meta, n.Manager.ID, "moved "+age(m.board.At, n.Goal.LastMovedAt))
+		meta = append(meta, "moved "+age(m.board.At, n.Goal.LastMovedAt))
 		if n.Goal.State == core.GoalDone && n.Goal.Summary != "" {
 			meta = append(meta, "done: "+n.Goal.Summary)
 		}
@@ -369,7 +372,7 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 			meta = append(meta, n.Goal.Evidence)
 		}
 	} else {
-		meta = append(meta, n.Manager.Name, n.Manager.ID)
+		meta = append(meta, n.Manager.Shown())
 	}
 	if n.Live != nil && n.Live.Context > 0 {
 		meta = append(meta, "context "+core.Kilo(n.Live.Context))
@@ -410,8 +413,24 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	return b
 }
 
-// chiefName is how much of a chief's name its row's first column holds.
-const chiefName = 12
+// nameColumn is the width of a goal or chief row's first column: the longest name on the board, as far as the row leaves room.
+func (m Model) nameColumn(depth int) int {
+	longest := 0
+	var walk func([]core.Node)
+	walk = func(ns []core.Node) {
+		for i := range ns {
+			name := ns[i].Manager.Shown()
+			if ns[i].Goal != nil {
+				name = ns[i].Goal.Shown()
+			}
+			longest = max(longest, ansi.StringWidth(name))
+			walk(ns[i].Children)
+		}
+	}
+	walk(m.board.Tree)
+	const rest = 2 + 1 + 7 + 1 + 11 + 1 + minRow
+	return max(minNames, min(longest, m.width-rest-2*depth))
+}
 
 // remit is what a chief is about: its latest steer, else its brief's assessment.
 func remit(n core.Node) string {
@@ -459,7 +478,7 @@ func briefMeta(at time.Time, n core.Node) string {
 	return fmt.Sprintf("brief v%d %s", f.Brief.Version, age(at, f.Brief.CreatedAt))
 }
 
-func planField(n core.Node) string {
+func (m Model) planField(n core.Node) string {
 	st := n.Steer
 	if st == nil {
 		return ""
@@ -468,7 +487,7 @@ func planField(n core.Node) string {
 	if !st.Adopted() {
 		state = pal.yellow.Render("not adopted")
 	}
-	return fmt.Sprintf("r%d by %s, %s: %s", st.Revision, st.By(), state, oneLine(st.Text))
+	return fmt.Sprintf("r%d by %s, %s: %s", st.Revision, m.board.Org.SteerBy(*st), state, oneLine(st.Text))
 }
 
 func (m Model) artifact(n core.Node) (string, bool) {
@@ -489,8 +508,11 @@ func goalToClear(r row) *core.Goal {
 	return nil
 }
 
-// goalName is the goal's id, tagged with its host's short name when it runs on another host.
+// goalName is the goal's name, tagged with its host's short name when it runs on another host.
 func (m Model) goalName(g core.Goal) string {
+	if g.Name != "" {
+		return m.tagged(g.Host, g.Name)
+	}
 	_, id, _ := core.SplitRemote(g.ID)
 	return m.tagged(g.Host, id)
 }
@@ -593,7 +615,7 @@ func (m Model) queueRowLines(i int, n core.Need, label string) string {
 			if line := m.unprepared(*n.Item); line != "" {
 				b += pal.yellow.Render("  "+ansi.Truncate(line, max(10, m.width-2), "…")) + "\n"
 			}
-			if line := evidenceLine(*n.Item); line != "" {
+			if line := evidenceLine(m.board.Org, *n.Item); line != "" {
 				b += pal.dim.Render("  "+ansi.Truncate(line, max(10, m.width-2), "…")) + "\n"
 			}
 		}
@@ -612,11 +634,11 @@ func (m Model) goalView() viewPage {
 	}
 	b := viewPage{}
 	g := n.Goal
-	b.WriteString(fmt.Sprintf(" %s  %s  %s  %s\n", pal.bold.Render("GOAL "+g.ID), standStyle[n.Standing](n.Standing), filepath.Base(g.Repo), pal.dim.Render("moved "+age(m.board.At, g.LastMovedAt))))
+	b.WriteString(fmt.Sprintf(" %s  %s  %s  %s\n", pal.bold.Render("GOAL "+g.Shown()), standStyle[n.Standing](n.Standing), filepath.Base(g.Repo), pal.dim.Render("moved "+age(m.board.At, g.LastMovedAt))))
 	b.WriteString(" " + ansi.Wrap(g.Ask, max(20, m.width-2), " ") + "\n")
-	m.field(&b, "manager", n.Manager.ID+" "+managerState(m.board, n))
-	m.field(&b, "plan", planField(n))
-	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  b shows it, W opens the page"))
+	m.field(&b, "manager", managerState(m.board, n))
+	m.field(&b, "plan", m.planField(n))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.Ref())+pal.dim.Render("  b shows it, W opens the page"))
 	if url, ok := m.artifact(n); ok {
 		m.field(&b, "artifact", url+pal.dim.Render("  V opens it"))
 	}
@@ -702,10 +724,10 @@ func (m Model) chiefView() viewPage {
 		return textPage(" that chief left the board\n", "")
 	}
 	b := viewPage{}
-	b.WriteString(fmt.Sprintf(" %s  %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Name), standStyle[n.Standing](n.Standing), pal.dim.Render(n.Manager.ID)))
+	b.WriteString(fmt.Sprintf(" %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Shown()), standStyle[n.Standing](n.Standing)))
 	m.field(&b, "session", managerState(m.board, n))
-	m.field(&b, "plan", planField(n))
-	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.ID)+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))
+	m.field(&b, "plan", m.planField(n))
+	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.Ref())+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))
 	b.WriteString("\n" + pal.bold.Render(fmt.Sprintf(" REPORTS (%d)", len(n.Children))) + "\n")
 	if len(n.Children) == 0 {
 		b.WriteString(pal.dim.Render("   none; c then a on a goal row puts it under a chief") + "\n")
@@ -752,6 +774,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		}
 		return m, nil, true
 	case "n", "N":
+		if key == "N" && r.node != nil && r.session == nil {
+			m.startInput(inName, r.node.Manager.ID, "", r.node.Manager.Shown(), true)
+			m.inLabel, m.pickErr = r.node.Manager.Shown(), ""
+			return m, nil, true
+		}
 		if m.core.Launches == nil {
 			m.message = "ym's launcher is unavailable"
 			return m, nil, true
@@ -837,8 +864,8 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		return m, m.do(func() (string, error) { return "dismissed", m.core.Store.DismissQueue(id) }), true
 	}
 	if g := goalToClear(r); g != nil && key == "x" {
-		id := g.ID
-		return m, m.do(func() (string, error) { return id + " cleared", m.core.AckGoal(id) }), true
+		id, name := g.ID, g.Shown()
+		return m, m.do(func() (string, error) { return name + " cleared", m.core.AckGoal(id) }), true
 	}
 	if r.need != nil && r.item != nil && len(r.need.Asks) > 1 && key == "enter" {
 		if m.unfolded == nil {
@@ -916,14 +943,14 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.screenCopy = text
 		return m, nil, true
 	case "W":
-		url, open := core.BriefURL(n.Manager.ID), m.openURL
+		url, open := core.BriefURL(n.Manager.Ref()), m.openURL
 		return m, m.do(func() (string, error) { return "opened " + url, open(url) }), true
 	case "S":
 		return m, m.steerPlan(n.Manager.ID), true
 	case "V":
 		url, ok := m.artifact(n)
 		if !ok {
-			m.message = n.Manager.ID + " has registered no artifact; b shows its brief"
+			m.message = n.Manager.Shown() + " has registered no artifact; b shows its brief"
 			return m, nil, true
 		}
 		open := m.openURL
@@ -933,7 +960,7 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, false
 		}
 		if n.Live == nil {
-			m.message = n.Manager.ID + " is not running; R relaunches it"
+			m.message = n.Manager.Shown() + " is not running; R relaunches it"
 			return m, nil, true
 		}
 		m.beside = key == "O"
@@ -948,19 +975,19 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		var names []string
 		for _, t := range targets {
 			m.steer = append(m.steer, t.ID)
-			names = append(names, t.ID)
+			names = append(names, t.Shown())
 		}
 		m.startInput(inSteer, "", "", "", false)
 		m.inLabel = strings.Join(names, ", ")
 		return m, nil, true
 	case "R":
-		id, board := n.Manager.ID, m.board
+		id, name, board := n.Manager.ID, n.Manager.Shown(), m.board
 		m.confirm("relaunch "+n.Manager.Label()+"? its session ends and a fresh one starts from its prompt and brief", m.do(func() (string, error) {
 			mg, err := m.core.ReplaceManager(board, id)
 			if mg.Host != "" {
-				return mg.ID + " relaunched on " + m.hostTag(mg.Host), err
+				return name + " relaunched on " + m.hostTag(mg.Host), err
 			}
-			return mg.ID + " relaunched as " + core.Short(mg.Session), err
+			return name + " relaunched as " + core.Short(mg.Session), err
 		}))
 		return m, nil, true
 	case "K":
@@ -1017,14 +1044,14 @@ func (m Model) steerPlan(id string) tea.Cmd {
 		}
 		text, err := core.ReadPlan(path, was)
 		if err != nil || text == "" {
-			return doneMsg{fmt.Sprintf("%s unchanged at revision %d", mg.ID, rev), err}
+			return doneMsg{fmt.Sprintf("%s unchanged at revision %d", mg.Shown(), rev), err}
 		}
 		b, err := c.Board()
 		if err != nil {
 			return doneMsg{"", err}
 		}
 		st, err := c.SteerContext(b, mg.ID, text, core.Owner)
-		return doneMsg{fmt.Sprintf("%s steered to revision %d; it shows unadopted until its manager adopts it", mg.ID, st.Revision), err}
+		return doneMsg{fmt.Sprintf("%s steered to revision %d; it shows unadopted until its manager adopts it", mg.Shown(), st.Revision), err}
 	})
 }
 
@@ -1048,9 +1075,9 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 				err = m.launchedHere("goal", harness)
 			}
 			if err == nil && mg.LastError != "" {
-				return g.ID + " recorded; its manager did not start: " + mg.LastError, nil
+				return g.Shown() + " recorded; its manager did not start: " + mg.LastError, nil
 			}
-			return g.ID + " started; " + mg.ID + " owns it", err
+			return g.Shown() + " started", err
 		})
 	case inChief:
 		if text == "" {
@@ -1073,7 +1100,7 @@ func (m Model) goalInput(text string) (tea.Model, tea.Cmd) {
 			if err == nil {
 				err = m.launchedHere("chief", harness)
 			}
-			return "chief " + c.ID + " over " + plural(len(over), "report"), err
+			return "chief " + c.Shown() + " over " + plural(len(over), "report"), err
 		})
 	case inSteer:
 		if text == "" {
@@ -1162,7 +1189,7 @@ func (m *Model) closeGoal(n core.Node) {
 func (m *Model) dropPR(n core.Node) {
 	prs := append(append([]string(nil), n.Feed.PRs...), n.Feed.Touched...)
 	if len(prs) == 0 {
-		m.message = n.Goal.ID + " has no pull requests tied to it"
+		m.message = n.Goal.Shown() + " has no pull requests tied to it"
 		return
 	}
 	goal := n.Goal.ID

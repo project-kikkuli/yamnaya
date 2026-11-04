@@ -158,7 +158,8 @@ func TestKeysActOnTheSelectedRow(t *testing.T) {
 		{"c n starts a new chief", func(ms []core.Manager) func(row) bool { return isNode(ms[0].ID) }, []string{"c", "n"}, inOver},
 		{"c on an ask offers only a new chief", func([]core.Manager) func(row) bool { return isAsk }, []string{"c", "enter"}, inOver},
 		{"n picks the repository first", func(ms []core.Manager) func(row) bool { return isNode(ms[0].ID) }, []string{"n"}, inNewRepo},
-		{"N starts in the row's repository", func(ms []core.Manager) func(row) bool { return isNode(ms[0].ID) }, []string{"N"}, inGoal},
+		{"N on a goal renames it", func(ms []core.Manager) func(row) bool { return isNode(ms[0].ID) }, []string{"N"}, inName},
+		{"N elsewhere starts in the row's repository", func([]core.Manager) func(row) bool { return mission("lead") }, []string{"N"}, inGoal},
 		{"e renames a mission", func([]core.Manager) func(row) bool { return mission("lead") }, []string{"e"}, inRename},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

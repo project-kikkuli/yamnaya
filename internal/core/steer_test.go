@@ -239,7 +239,7 @@ func TestABriefGoesStaleWhenSomethingMeaningfulHappensAfterIt(t *testing.T) {
 	if f := fresh(m.ID); f.Stale() {
 		t.Fatalf("a brief just written shows stale: %+v", f)
 	}
-	if f := fresh(chief.ID); !f.Stale() || !strings.Contains(f.BehindWhat, m.ID) {
+	if f := fresh(chief.ID); !f.Stale() || !strings.Contains(f.BehindWhat, m.Name) {
 		t.Fatalf("chief's rollup ignores its report's newer brief: %+v", f)
 	}
 	w.clock = w.clock.Add(time.Minute)
@@ -355,7 +355,7 @@ func TestASteerWakesTheManagerAndWaitsInItsChiefsDigestAndAGoalEventStalesTheBri
 	w.steer(t, g.ID, "make the importer handle CSV and TSV", Owner)
 	w.loop(t, 2)
 	got := wakes(w.handedTo(m.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.ID) || !strings.Contains(got[0], "Revision 1") {
+	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.Name) || !strings.Contains(got[0], "Revision 1") {
 		t.Fatalf("manager wakes %q, want one carrying the steer's revision", got)
 	}
 	if heard := digests(w.handedTo(chief.Session)); len(heard) != 0 {
@@ -433,7 +433,7 @@ func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoe
 		f.sync(t)
 	}
 	if !slices.ContainsFunc(f.a.handedTo(chief.Session), func(s string) bool {
-		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.ID)+",")
+		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")
 	}) {
 		t.Fatalf("chief on a heard %q, want that its steer of %s went unadopted", f.a.handedTo(chief.Session), mgr.ID)
 	}
@@ -517,7 +517,7 @@ func TestAChiefTwoHostsUpSteersAGoalThroughTheChiefBetweenThemAndAStrangerIsTold
 		f.sync(t)
 	}
 	if !slices.ContainsFunc(f.c.handedTo(top.Session), func(s string) bool {
-		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.ID)+",")
+		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")
 	}) {
 		t.Fatalf("top chief on c heard %q, want that its steer of %s went unadopted", f.c.handedTo(top.Session), mgr.ID)
 	}

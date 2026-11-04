@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +19,11 @@ func (c *Core) NewGoal(ask, repo, harness string, selected ...string) (Goal, Man
 
 // NewGoalUnder is NewGoal with the manager reporting to under, a chief here or host/id on another host; empty reports to the owner.
 func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string) (Goal, Manager, error) {
+	return c.NewGoalNamed("", ask, repo, harness, under, selected...)
+}
+
+// NewGoalNamed is NewGoalUnder with the goal named name; empty names it from its ask.
+func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...string) (Goal, Manager, error) {
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, Manager{}, errors.New("a goal needs the ask in your words")
@@ -33,18 +38,22 @@ func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string
 		return Goal{}, Manager{}, err
 	}
 	if host, ok := c.RepoHost(repo); ok {
-		out, err := c.RunOrRelay(host, goalArgs(ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
-		return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
+		out, err := c.RunOrRelay(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
+		return Goal{Name: name, Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
 	}
-	g, err := c.Store.AddGoal(Goal{Ask: ask, Repo: repo, CreatedAt: c.now()})
+	if name, err = c.goalName(name, ask); err != nil {
+		return Goal{}, Manager{}, err
+	}
+	g, err := c.Store.AddGoal(Goal{Name: name, Ask: ask, Repo: repo, CreatedAt: c.now()})
 	if err != nil {
 		return g, Manager{}, err
 	}
 	g.BriefPath = filepath.Join(c.StateDir, "goals", g.ID, "brief.md")
-	if err := writeBrief(g.BriefPath, "# "+g.ID+": "+shortName(ask)+"\n\nNot started yet: the manager writes this brief.\n"+askSection(ask)); err != nil {
+	name = g.Name
+	if err := writeBrief(g.BriefPath, "# "+name+": "+shortName(ask)+"\n\nNot started yet: the manager writes this brief.\n"+askSection(ask)); err != nil {
 		return g, Manager{}, err
 	}
-	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: shortName(ask), GoalID: g.ID, ParentID: parent, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
+	m, err := c.Store.AddManager(Manager{Role: RoleManager, Name: name, GoalID: g.ID, ParentID: parent, Harness: harness, Profile: firstProfile(selected), Repo: repo, BriefPath: g.BriefPath, LaunchedAt: c.now()})
 	if err != nil {
 		return g, m, err
 	}
@@ -65,9 +74,9 @@ func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string
 	return g, m, nil
 }
 
-// NewGoalOn starts a goal for ask on host, in the repository repo names there, its manager reporting to under. A host ym does not
+// NewGoalOn starts a goal named name (empty names it from ask) for ask on host, in the repository repo names there, its manager reporting to under. A host ym does not
 // reach now gets it through a relay; if that host refuses it for good, requester, a session here, hears of it in an item.
-func (c *Core) NewGoalOn(host, ask, repo, harness, under, requester string, selected ...string) (Goal, error) {
+func (c *Core) NewGoalOn(host, name, ask, repo, harness, under, requester string, selected ...string) (Goal, error) {
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, errors.New("a goal needs the ask in your words")
@@ -86,7 +95,7 @@ func (c *Core) NewGoalOn(host, ask, repo, harness, under, requester string, sele
 	if err != nil {
 		return Goal{}, err
 	}
-	out, err := c.runOrRelay(host, relayYM{Args: goalArgs(ask, repo, harness, firstProfile(selected), c.parentOn(host, parent)), Requester: requester})
+	out, err := c.runOrRelay(host, relayYM{Args: goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent)), Requester: requester})
 	return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, err
 }
 
@@ -110,7 +119,7 @@ func (c *Core) goalChief(under string) (string, error) {
 		return "", err
 	}
 	if boss.Role != RoleChief {
-		return "", fmt.Errorf("%s is a manager; only a chief has reports", boss.ID)
+		return "", fmt.Errorf("%s is a manager; only a chief has reports", boss.Shown())
 	}
 	return boss.ID, nil
 }
@@ -170,13 +179,18 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
 		return Manager{Role: RoleChief, Name: name, Remit: remit, Repo: repo, Host: host}, err
 	}
+	if CheckName(name) != nil {
+		if name = Slug(name, 6); name == "" {
+			name = "chief"
+		}
+	}
 	m, err := c.Store.AddManager(Manager{Role: RoleChief, Name: name, Remit: remit, Harness: harness, Profile: firstProfile(selected), Repo: repo, LaunchedAt: c.now()})
 	if err != nil {
 		return m, err
 	}
 	m.BriefPath = filepath.Join(c.StateDir, "chiefs", m.ID, "brief.md")
 	m.Directory = filepath.Join(c.StateDir, "chiefs", m.ID, "workspace")
-	if err := writeBrief(m.BriefPath, "# "+name+"\n\n"+remit+"\n"); err != nil {
+	if err := writeBrief(m.BriefPath, "# "+m.Name+"\n\n"+remit+"\n"); err != nil {
 		return m, err
 	}
 	if err := c.Store.SaveManager(m); err != nil {
@@ -201,12 +215,22 @@ func (c *Core) Attach(child, chief string) error {
 	if host, rest, ok := c.remoteHost(child); ok {
 		args := []string{"chief", "detach", rest}
 		if chief != "" {
-			to := RemoteKey(c.SelfName(), chief)
+			var to string
 			if h, r, remote := SplitRemote(chief); remote {
 				to = chief
 				if h == host {
 					to = r
 				}
+			} else {
+				o, err := c.LoadOrg()
+				if err != nil {
+					return err
+				}
+				boss, err := o.lookup(chief)
+				if err != nil {
+					return err
+				}
+				to = RemoteKey(c.SelfName(), boss.ID)
 			}
 			args = []string{"chief", "attach", rest, to}
 		}
@@ -235,11 +259,11 @@ func (c *Core) Attach(child, chief string) error {
 			return err
 		}
 		if boss.Role != RoleChief {
-			return fmt.Errorf("%s is a manager; only a chief has reports", boss.ID)
+			return fmt.Errorf("%s is a manager; only a chief has reports", boss.Shown())
 		}
 		for _, below := range o.Below(m.ID) {
 			if below.ID == boss.ID {
-				return fmt.Errorf("%s is under %s already; a chief cannot report to its own report", boss.ID, m.ID)
+				return fmt.Errorf("%s is under %s already; a chief cannot report to its own report", boss.Shown(), m.Shown())
 			}
 		}
 		chief = boss.ID
@@ -260,11 +284,8 @@ func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 		return "", err
 	}
 	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
-	boss, ok := o.Managers[chief]
-	if g, isGoal := o.Goals[chief]; !ok && isGoal {
-		boss, ok = o.Managers[g.ManagerID]
-	}
-	if !ok {
+	boss, err := o.lookup(chief)
+	if err != nil {
 		return chief, nil
 	}
 	if boss.Role != RoleChief {
@@ -274,13 +295,16 @@ func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 	for at := boss.ID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
 		seen[at] = true
 		if at == child.ID {
-			return "", fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.ID)
+			return "", fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.Shown())
 		}
 	}
 	return boss.ID, nil
 }
 
 // lookup finds a manager or chief by its id or the id of its goal.
+// Lookup is the manager or chief ref names: its id, its goal's id, or its or its goal's name.
+func (o Org) Lookup(ref string) (Manager, error) { return o.lookup(ref) }
+
 func (o Org) lookup(ref string) (Manager, error) {
 	ref = strings.ToLower(strings.TrimSpace(ref))
 	if m, ok := o.Managers[ref]; ok {
@@ -291,10 +315,25 @@ func (o Org) lookup(ref string) (Manager, error) {
 			return m, nil
 		}
 	}
-	for _, m := range o.Managers {
-		if strings.EqualFold(m.Name, ref) {
-			return m, nil
+	for _, g := range o.Goals {
+		if g.Host == "" && g.Name == ref {
+			if m, ok := o.Managers[g.ManagerID]; ok {
+				return m, nil
+			}
 		}
+	}
+	host, rest, qualified := SplitRemote(ref)
+	var named []Manager
+	for _, m := range o.Managers {
+		if strings.EqualFold(m.Name, ref) || qualified && m.Host == host && strings.EqualFold(m.Name, rest) {
+			named = append(named, m)
+		}
+	}
+	if i := slices.IndexFunc(named, func(m Manager) bool { return m.Host == "" }); i >= 0 {
+		return named[i], nil
+	}
+	if len(named) > 0 {
+		return named[0], nil
 	}
 	return Manager{}, fmt.Errorf("no manager, chief or goal %q: %w", ref, ErrNotFound)
 }
@@ -411,7 +450,7 @@ func (c *Core) AckGoal(id string) error {
 		_, err := c.RunOrRelay(host, "goal", "ack", rest)
 		return err
 	}
-	g, err := c.Store.Goal(id)
+	g, err := c.GoalByRef(id)
 	if err != nil {
 		return err
 	}
@@ -426,7 +465,7 @@ func (o Org) goalOf(session string) (Goal, error) {
 	}
 	g, ok := o.Goals[m.GoalID]
 	if !ok {
-		return g, fmt.Errorf("%s is a chief and owns no goal", m.ID)
+		return g, fmt.Errorf("%s is a chief and owns no goal", m.Shown())
 	}
 	return g, nil
 }
@@ -480,7 +519,7 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 			return resumed
 		}
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.ID + "-" + slugWords(m.Name),
+	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.Shown(),
 		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()
@@ -495,16 +534,6 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 	m.Profile, m.ConfigRoot = st.Profile, st.ConfigRoot
 	c.Store.SaveManager(m)
 	return m
-}
-
-var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugWords(s string) string {
-	words := strings.Fields(nonWord.ReplaceAllString(strings.ToLower(s), " "))
-	if len(words) > 4 {
-		words = words[:4]
-	}
-	return strings.Join(words, "-")
 }
 
 func shortName(ask string) string {
@@ -562,7 +591,7 @@ func (c *Core) GoalByRef(ref string) (Goal, error) {
 	}
 	g, ok := o.Goals[m.GoalID]
 	if !ok {
-		return g, fmt.Errorf("%s is a chief and owns no goal", m.ID)
+		return g, fmt.Errorf("%s is a chief and owns no goal", m.Shown())
 	}
 	return g, nil
 }

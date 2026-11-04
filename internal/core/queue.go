@@ -601,9 +601,29 @@ func (c *Core) foldLater(b *Board) error {
 		kept = append(kept, n)
 	}
 	b.Needs = kept
+	for _, ns := range [][]Need{b.Needs, b.Later} {
+		for i := range ns {
+			ns[i].Name = ns[i].nameIn(b.Org)
+		}
+	}
 	rank(b.Needs, b.At)
 	rank(b.Later, b.At)
 	return nil
+}
+
+// nameIn is the name a row of this need shows for the goal or chief it comes from, "" when it comes from none.
+func (n Need) nameIn(o Org) string {
+	switch {
+	case n.Item != nil:
+		return o.ItemName(*n.Item)
+	case n.Goal != nil:
+		return n.Goal.Ref()
+	case n.Manager != "":
+		if m, ok := o.Managers[n.Manager]; ok {
+			return m.Ref()
+		}
+	}
+	return ""
 }
 
 // Verb is the row's three-letter action.
@@ -646,12 +666,15 @@ func prLabel(pr PR, title string) string {
 	return strings.TrimSpace(fmt.Sprintf("%s#%d %s", prRepoName(pr), pr.Number, oneLine(title)))
 }
 
-// DoLine is the row's words: what its filer wrote, else the question cut to fit.
+// DoLine is the row's words: what its filer wrote, else the goal's name and the question, cut to fit when there is no name.
 func (n Need) DoLine() string {
 	switch {
 	case n.Item != nil:
 		if n.Item.DoLine != "" {
 			return n.Item.DoLine
+		}
+		if n.Name != "" {
+			return n.Name + " " + oneLine(n.Item.Question)
 		}
 		return ansi.Truncate(oneLine(n.Item.Question), MaxDoLine, "…")
 	case n.PR != nil:
@@ -668,9 +691,9 @@ func (n Need) DoLine() string {
 	case n.Doc != nil:
 		return "reply on " + oneLine(n.Doc.Title)
 	case n.Goal != nil:
-		return "unstick " + n.Goal.ID
+		return "unstick " + n.Goal.Ref()
 	case n.Steer != nil:
-		return fmt.Sprintf("%s adopt r%d", n.Manager, n.Steer.Revision)
+		return fmt.Sprintf("%s adopt r%d", n.managerShown(), n.Steer.Revision)
 	case n.Relay != nil:
 		return "relay refused by " + n.Relay.Dest
 	case n.Session != nil && n.Session.Prompt != nil:
@@ -737,11 +760,19 @@ func (n Need) Why() []string {
 	return []string{n.DoLine()}
 }
 
-// ID names the row: an item's qualified id, a pull request's repo and number, a goal.
+// managerShown is the manager the row names, by its name when the board gave it one.
+func (n Need) managerShown() string {
+	if n.Name != "" {
+		return n.Name
+	}
+	return n.Manager
+}
+
+// ID names the row: an item's reference, a pull request's repo and number, a goal.
 func (n Need) ID() string {
 	switch {
 	case n.Item != nil:
-		return n.Item.Qualified()
+		return n.Item.Ref()
 	case n.PR != nil:
 		return fmt.Sprintf("%s#%d", prRepoName(*n.PR), n.PR.Number)
 	case n.Review != nil:
@@ -752,9 +783,9 @@ func (n Need) ID() string {
 	case n.Doc != nil:
 		return oneLine(n.Doc.Title)
 	case n.Goal != nil:
-		return n.Goal.ID
+		return n.Goal.Ref()
 	case n.Steer != nil:
-		return n.Manager
+		return n.managerShown()
 	case n.Relay != nil:
 		return fmt.Sprintf("relay %d", n.Relay.Seq)
 	case n.Session != nil:
@@ -808,7 +839,8 @@ func QueueHeader(rows []Need, later int) string {
 }
 
 // RowLine draws one row within width columns: rank, verb, minutes, ! for prod or clinical, the do-line, then ✓ or ▸, with the mark in the last column.
-// Side is the why, id and age to draw dim to the right of it, when width leaves room.
+// A row with no do-line of its own leads with its goal's name instead. Side is the why, goal's name, id and age to draw dim to the right of it, when
+// width leaves room.
 func RowLine(n Need, rank string, width int, now time.Time) (line, side string) {
 	main := min(width, QueueWidth)
 	mark := "▸"
@@ -825,6 +857,9 @@ func RowLine(n Need, rank string, width int, now time.Time) (line, side string) 
 	line = head + do + strings.Repeat(" ", max(0, room-ansi.StringWidth(do))) + mark
 	if width >= 100 {
 		tail := " · " + n.ID()
+		if n.Name != "" && n.Name != n.ID() {
+			tail = " · " + n.Name + tail
+		}
 		if old := oldFor(now, n.Since()); old != "" {
 			tail += " · " + old
 		}
@@ -834,20 +869,18 @@ func RowLine(n Need, rank string, width int, now time.Time) (line, side string) 
 	return line, side
 }
 
-// RowDetail is what opening a row shows within width columns: its why, wrapped, then id, goal and age.
+// RowDetail is what opening a row shows within width columns: its why, wrapped, then its goal's name, id and age.
 func RowDetail(n Need, width int, now time.Time) []string {
 	var out []string
 	for _, w := range n.Why() {
 		out = append(out, strings.Split(ansi.Wordwrap(w, max(10, width-2), " "), "\n")...)
 	}
-	facts := []string{n.ID()}
-	if n.Item == nil && n.Manager != "" {
-		facts = append(facts, n.Manager)
+	var facts []string
+	if n.Name != "" && n.Name != n.ID() {
+		facts = append(facts, n.Name)
 	}
+	facts = append(facts, n.ID())
 	if n.Item != nil {
-		if n.Item.Dossier.Goal != "" {
-			facts = append(facts, n.Item.Dossier.Goal)
-		}
 		if n.Item.Blocks > 0 {
 			facts = append(facts, fmt.Sprintf("blocks %d", n.Item.Blocks))
 		}

@@ -186,7 +186,7 @@ func TestTheRequesterHearsAGoalCommandsOutcomeOnceWhoeverItIs(t *testing.T) {
 				t.Errorf("requester %s was handed the outcome %d times, want once: %q", tc.rung, heard, f.b.handedTo(requester.Session))
 			}
 			if tc.rung == "unrelated" {
-				if got := heardWith(f.b, chief.Session, RemoteKey("a", g.ID)); len(got) == 0 {
+				if got := heardWith(f.b, chief.Session, RemoteKey("a", g.Name)); len(got) == 0 {
 					t.Errorf("the goal's chief heard nothing of it: %q", f.b.handedTo(chief.Session))
 				}
 			}

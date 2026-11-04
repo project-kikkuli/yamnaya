@@ -312,14 +312,14 @@ func TestNestedChiefsHearWhatNeedsThemWithTheRestCountedAndNeverGateWork(t *test
 	w.loop(t, 3)
 
 	lowerGot := wakes(w.handedTo(lower.Session))
-	if len(lowerGot) != 1 || !strings.Contains(lowerGot[0], g1.ID) || strings.Contains(lowerGot[0], g2.ID) {
+	if len(lowerGot) != 1 || !strings.Contains(lowerGot[0], g1.Name) || strings.Contains(lowerGot[0], g2.Name) {
 		t.Fatalf("chief auth heard %q, want one batch about %s alone", lowerGot, g1.ID)
 	}
 	upperGot := wakes(w.handedTo(upper.Session))
 	if len(upperGot) != 1 {
 		t.Fatalf("chief platform heard %d batches, want one: %q", len(upperGot), upperGot)
 	}
-	for _, want := range []string{g1.ID + ": done #", g2.ID + ": done #", "1 red CI run", "1 update"} {
+	for _, want := range []string{g1.Name + ": done #", g2.Name + ": done #", "1 red CI run", "1 update"} {
 		if !strings.Contains(upperGot[0], want) {
 			t.Fatalf("chief platform's batch lacks %q:\n%s", want, upperGot[0])
 		}
@@ -411,7 +411,7 @@ func TestOnlyDoneAndStuckRaiseADesktopNotificationEachOnce(t *testing.T) {
 		w.clock = w.clock.Add(3 * time.Hour)
 		w.loop(t, 1)
 	}
-	want := []string{"ym: " + gDone.ID + " done | ship the importer: importer ships CSV", "ym: " + gStuck.ID + " stuck"}
+	want := []string{"ym: " + gDone.Name + " done | ship the importer: importer ships CSV", "ym: " + gStuck.Name + " stuck"}
 	if len(shown) != 2 || shown[0] != want[0] || !strings.HasPrefix(shown[1], want[1]) {
 		t.Fatalf("notifications %q, want exactly %q then one for %s stuck", shown, want[0], gStuck.ID)
 	}

@@ -232,11 +232,11 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 		goal = g.ID
 	}
 	err = c.teardown(m, goal, targets)
-	what, id := "retired chief "+m.ID, m.ID
+	what, id := "retired chief "+m.Shown(), m.Shown()
 	if isGoal {
-		what, id = "killed "+g.ID, g.ID
+		what, id = "killed "+g.Shown(), g.Shown()
 		if g.Archive() {
-			what = g.ID + " stays " + g.State
+			what = g.Shown() + " stays " + g.State
 		}
 	}
 	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), err
@@ -377,7 +377,7 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 	}
 	if g, ok := o.Goals[m.GoalID]; ok {
 		if !g.Reopenable() {
-			return m, fmt.Errorf("%s is %s, not killed or closed", g.ID, g.State)
+			return m, fmt.Errorf("%s is %s, not killed or closed", g.Shown(), g.State)
 		}
 		held := g.Archive()
 		g.State, g.DoneAt, g.AckedAt, g.LastMovedAt = GoalActive, timeZero, timeZero, c.now()
@@ -386,7 +386,7 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 		}
 		if held {
 			now := c.now()
-			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.ID + " reopened; any items a close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
+			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.Shown() + " reopened; any items a close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
 				return m, err
 			}
 		}
