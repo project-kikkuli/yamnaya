@@ -44,12 +44,22 @@ func TestOverloadHoldsNewSlotsOnlyWhileOneIsHeld(t *testing.T) {
 				if err != nil || len(status.Holders) != c.held || len(status.Waiters) != 1 {
 					t.Errorf("waiting status %+v, %v", status, err)
 				}
+				if !status.SlotsWait {
+					t.Errorf("waiting behind the hold, status says slots do not wait: %+v", status)
+				}
 				if err := (pressure.State{Active: true}).Save(p.Dir); err != nil {
 					t.Error(err)
 				}
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			status, err := p.Status()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.grant && status.SlotsWait != (c.cause == "memory" && status.Pressure.Holding) {
+				t.Errorf("granted under %s: slots wait %v", c.cause, status.SlotsWait)
 			}
 			release()
 			if waited == c.grant || n != c.held+1 {

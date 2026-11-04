@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 )
@@ -123,4 +124,93 @@ type testWriter struct{ t *testing.T }
 func (w *testWriter) Write(p []byte) (int, error) {
 	w.t.Log(string(p))
 	return len(p), nil
+}
+
+func TestOnlyTheHomesOwnServeWritesTheMachinesOverloadFile(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	for _, c := range []struct {
+		name   string
+		scoped bool
+	}{
+		{"the home's own state dir", false},
+		{"a state dir of its own", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			state := filepath.Join(home, ".local", "state", "yamnaya")
+			if c.scoped {
+				state = filepath.Join(home, "drill", "state")
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", "")
+			t.Setenv("YAMNAYA_STATE_DIR", state)
+			t.Setenv("YAMNAYA_YM_SOCKET", tmuxtest.Socket(t))
+			overload := filepath.Join(home, ".local", "state", "agent-slot", "overload.json")
+			ctx, cancel := context.WithCancel(context.Background())
+			root := NewRoot()
+			root.SetArgs([]string{"serve", "--interval=50ms", "--briefs="})
+			root.SetErr(&testWriter{t})
+			done := make(chan error, 1)
+			go func() { done <- root.ExecuteContext(ctx) }()
+			defer func() {
+				cancel()
+				<-done
+			}()
+			// the sampler writes at once and every 5s, so a scoped serve has had its chance well before the limit
+			limit := 30 * time.Second
+			if c.scoped {
+				limit = 8 * time.Second
+			}
+			written := false
+			for end := time.Now().Add(limit); !written && time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
+				_, err := os.Stat(overload)
+				written = err == nil
+			}
+			if written == c.scoped {
+				t.Fatalf("scoped %v: machine's overload.json written %v", c.scoped, written)
+			}
+		})
+	}
+}
+
+func TestAScopedServeOptedIntoTheDiskWatcherStartsItAndLeavesPressureAlone(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	home := t.TempDir()
+	state := filepath.Join(home, "drill", "state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("YAMNAYA_STATE_DIR", state)
+	t.Setenv("YAMNAYA_YM_SOCKET", tmuxtest.Socket(t))
+	t.Setenv(core.DiskWatchEnv, "1")
+	if core.RehearsalRoot(state) == "" {
+		t.Fatalf("%s is not under a rehearsal root", state)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	root := NewRoot()
+	root.SetArgs([]string{"serve", "--interval=50ms", "--briefs="})
+	root.SetErr(&testWriter{t})
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	lock := filepath.Join(state, "disk.lock")
+	for end := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		if _, err := os.Stat(lock); err == nil {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("the disk watcher never ticked")
+		}
+	}
+	// the pressure sampler writes at once and every 5s
+	time.Sleep(6 * time.Second)
+	if _, err := os.Stat(filepath.Join(home, ".local", "state", "agent-slot", "overload.json")); err == nil {
+		t.Fatal("a scoped serve wrote the machine's overload.json")
+	}
 }

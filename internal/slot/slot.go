@@ -58,6 +58,8 @@ type Status struct {
 	Disk    *disk.Usage `json:"disk,omitempty"`
 	Holders []Claim     `json:"holders"`
 	Waiters []Claim     `json:"waiters"`
+	// SlotsWait is whether a free slot would be refused now, for memory or disk. Pressure.Holding also covers cpu, which never refuses one.
+	SlotsWait bool `json:"slots_wait"`
 }
 
 // Pool is the slots in Dir; Capacity is how many there are.
@@ -294,6 +296,7 @@ func (p Pool) Status() (Status, error) {
 		}
 		st.Waiters = append(st.Waiters, c)
 	}
+	st.SlotsWait = st.Pressure.HoldsSlots() && len(st.Holders) > 0
 	onLanes, err := p.laneClaims()
 	if err != nil {
 		return st, err

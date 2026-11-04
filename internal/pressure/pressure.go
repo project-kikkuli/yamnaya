@@ -171,13 +171,13 @@ func (s State) Line(held int) string {
 	}
 	switch {
 	case s.Holding && !s.HoldsSlots():
-		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), %d slots held, new slots open", head, len(s.Changed), held)
+		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), %d slots held; cpu does not hold new slots", head, len(s.Changed), held)
 	case s.Holding && held == 0:
 		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), 0 slots held, next slot granted", head, len(s.Changed))
 	case s.Holding:
 		return fmt.Sprintf("%s heavy agent jobs nice 15 (%d live), %d slots held, new slots wait", head, len(s.Changed), held)
 	case s.Active:
-		return "throttle: recovering, new slots open; clears after 3 minutes without agent pressure"
+		return "throttle: recovering, not holding new slots; clears after 3 minutes without agent pressure"
 	case !s.Above.IsZero():
 		return fmt.Sprintf("throttle: observing %s pressure from agents", s.Cause)
 	}
@@ -364,7 +364,7 @@ func (s State) Notices(held int) []Notice {
 		for _, c := range changes[:min(3, len(changes))] {
 			top = append(top, fmt.Sprintf("%s pid %d %.0f%%", filepath.Base(c.Command), c.PID, c.CPU))
 		}
-		slots := "slots open"
+		slots := "slots not held"
 		if s.HoldsSlots() && held > 0 {
 			slots = "slots held"
 		}

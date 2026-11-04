@@ -244,10 +244,10 @@ func TestThrottleLinesTellWhetherTheNextSlotIsGranted(t *testing.T) {
 		held        int
 		line, slots string
 	}{
-		{"idle pool", holdingMemory, 0, "throttle (memory): heavy agent jobs nice 15 (1 live), 0 slots held, next slot granted", "slots open"},
+		{"idle pool", holdingMemory, 0, "throttle (memory): heavy agent jobs nice 15 (1 live), 0 slots held, next slot granted", "slots not held"},
 		{"busy pool", holdingMemory, 2, "throttle (memory): heavy agent jobs nice 15 (1 live), 2 slots held, new slots wait", "slots held"},
-		{"cpu leaves slots open", holdingCPU, 2, "throttle (cpu): heavy agent jobs nice 15 (1 live), 2 slots held, new slots open", "slots open"},
-		{"recovering", State{Active: true}, 2, "throttle: recovering, new slots open; clears after 3 minutes without agent pressure", ""},
+		{"cpu leaves slots open", holdingCPU, 2, "throttle (cpu): heavy agent jobs nice 15 (1 live), 2 slots held; cpu does not hold new slots", "slots not held"},
+		{"recovering", State{Active: true}, 2, "throttle: recovering, not holding new slots; clears after 3 minutes without agent pressure", ""},
 	} {
 		if got := c.state.Line(c.held); got != c.line {
 			t.Errorf("%s: line %q, want %q", c.name, got, c.line)
