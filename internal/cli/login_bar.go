@@ -245,7 +245,7 @@ func (l launcher) noteLogin(dir string, ps []profile.Profile, p profile.Profile,
 	if current.Known {
 		reset = current.Until
 	}
-	said := quotaReset(reset) + " " + quotaReset(current.Until)
+	said := quotaReset(reset) + " " + quotaReset(current.Until) + " " + fmt.Sprint(l.portGate(dir, failoverAttempt{On: p.Account}, ps, core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account}, limits, now))
 	for _, q := range usable {
 		said += " " + q.Harness + "/" + q.ID
 	}
@@ -253,8 +253,10 @@ func (l launcher) noteLogin(dir string, ps []profile.Profile, p profile.Profile,
 		return nil
 	}
 	signedOut, unanswered := l.loginChecks(usable, p.Account)
-	usable = slices.DeleteFunc(usable, func(q profile.Profile) bool { return signedOut[q.Account] })
-	it := quotaItem(ps, usable, unanswered, core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account, Session: session}, reset, current.Until)
+	usable = slices.DeleteFunc(usable, func(q profile.Profile) bool { return signedOut[loginKey(q)] })
+	e := core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account, Session: session}
+	held := l.portGate(dir, failoverAttempt{On: p.Account}, ps, e, limits, now)
+	it := quotaItem(ps, usable, unanswered, e, reset, current.Until, held)
 	if open {
 		told := ""
 		if !reset.Equal(current.SaidReset) {
@@ -287,13 +289,16 @@ func (l launcher) noteLogin(dir string, ps []profile.Profile, p profile.Profile,
 	})
 }
 
-// settleLogins keeps each login's record and item true: it learns what rows say, clears a bar a good row disproved, gives a barred login with
+// settleLogins keeps each login's record and item true: only a look that found no stop says none shows; it learns what rows say, clears a bar a good row disproved, gives a barred login with
 // a session on it its item, and closes the item of one usable again, on a row's word or once its bar has passed with no stop coming straight back.
-func (l launcher) settleLogins(dir string, ps []profile.Profile, b core.Board, all []launch.Record, showing map[string]bool) error {
+func (l launcher) settleLogins(dir string, ps []profile.Profile, b core.Board, all []launch.Record, showing, unlooked map[string]bool) error {
 	var errs []error
 	limits := b.Fleet.Limits
 	for _, p := range ps {
-		errs = append(errs, setShowing(dir, p, showing[p.Account]), learnRows(dir, p, limits, b.At))
+		if showing[p.Account] || !unlooked[p.Account] {
+			errs = append(errs, setShowing(dir, p, showing[p.Account]))
+		}
+		errs = append(errs, learnRows(dir, p, limits, b.At))
 		record, err := readBar(barPath(dir, p))
 		if err != nil {
 			errs = append(errs, err)
@@ -327,7 +332,9 @@ func (l launcher) closeOrphanItems(dir string, ps []profile.Profile) error {
 	var errs []error
 	for _, path := range files {
 		r, err := readBar(path)
-		if err != nil || r.Item == "" || slices.ContainsFunc(ps, func(p profile.Profile) bool { return barPath(dir, p) == path }) {
+		if err != nil || r.Item == "" || slices.ContainsFunc(ps, func(p profile.Profile) bool {
+			return barPath(dir, p) == path || p.Harness == r.Harness && p.ID == r.Profile && p.Account == ""
+		}) {
 			continue
 		}
 		errs = append(errs, l.closeLoginItem(dir, profile.Profile{Harness: r.Harness, ID: r.Profile, Account: r.Account}, "this login is no longer on this host"))
@@ -368,7 +375,7 @@ type statusChecks struct {
 	mu      sync.Mutex
 	answers map[string]statusAnswer
 	running map[string]chan struct{}
-	waiting map[string]time.Time
+	started map[string]time.Time
 }
 
 // loginKey tells logins apart, those with no identity readable right now included.
@@ -387,7 +394,7 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.running == nil {
-		c.running, c.answers, c.waiting = map[string]chan struct{}{}, map[string]statusAnswer{}, map[string]time.Time{}
+		c.running, c.answers, c.started = map[string]chan struct{}{}, map[string]statusAnswer{}, map[string]time.Time{}
 	}
 	if done, running := c.running[loginKey(q)]; running {
 		return done
@@ -397,8 +404,8 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 		close(done)
 		return done
 	}
-	if c.waiting[loginKey(q)].IsZero() {
-		c.waiting[loginKey(q)] = time.Now()
+	if c.started[loginKey(q)].IsZero() {
+		c.started[loginKey(q)] = time.Now()
 	}
 	c.running[loginKey(q)] = done
 	go func() {
@@ -412,7 +419,7 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 		delete(c.running, loginKey(q))
 		if !errors.Is(err, errStatusUnanswered) {
 			c.answers[loginKey(q)] = statusAnswer{err, time.Now()}
-			delete(c.waiting, loginKey(q))
+			delete(c.started, loginKey(q))
 		}
 		close(done)
 	}()
@@ -430,14 +437,15 @@ func (c *statusChecks) answer(q profile.Profile) (statusAnswer, bool) {
 func (c *statusChecks) waited(q profile.Profile) time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if at := c.waiting[loginKey(q)]; !at.IsZero() {
+	if at := c.started[loginKey(q)]; !at.IsZero() {
 		return time.Since(at)
 	}
 	return 0
 }
 
 // loginChecks asks the logins' native status at once, but for the account given, waiting at most authBudget, and not at all on one already
-// past that. One that does not answer in time is unanswered: that says nothing about the login, so it costs it no place among the candidates.
+// past that. One that does not answer in time, or answers nothing readable, is unanswered: that says nothing about the login, so it costs it no
+// place among the candidates.
 func (l launcher) loginChecks(ps []profile.Profile, except string) (signedOut, unanswered map[string]bool) {
 	checks := l.statuses
 	if checks == nil {
@@ -469,6 +477,8 @@ waiting:
 			unanswered[loginKey(q)] = true
 		} else if answeredUnusable(a.err) {
 			signedOut[loginKey(q)] = true
+		} else if a.err != nil {
+			unanswered[loginKey(q)] = true
 		}
 	}
 	return signedOut, unanswered
@@ -491,21 +501,16 @@ func (l launcher) authentication(p profile.Profile, cwd string) error {
 	return a.err
 }
 
-// unansweredReason is what a row says of a login whose check has not answered.
-func (l launcher) unansweredReason(p profile.Profile) string {
-	if l.statuses != nil {
-		if waited := l.statuses.waited(p); waited >= time.Second {
-			return fmt.Sprintf("the status check of login %s has not answered for %s, so ym keeps asking", p.ID, waited.Round(time.Second))
-		}
-	}
-	return fmt.Sprintf("the status check of login %s has not answered, so ym tries it again shortly", p.ID)
+// unansweredReason names a login whose check has not answered and what unblocks it.
+func unansweredReason(p profile.Profile) string {
+	return fmt.Sprintf("the status check of login %s has not answered; it moves once that answers, or run ym profiles login %s %s", p.ID, p.Harness, p.ID)
 }
 
 // destination is where a conversation stopped on e's login goes: a login of its harness, which keeps its id, whose status check has answered,
 // else, past portGate, the other harness.
 func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profile, e core.Exhaustion, cwd string, limits []core.Limit, now time.Time) (profile.Profile, error) {
-	if l.core != nil && l.core.RowsUnloaded() {
-		return profile.Profile{}, errors.New("this login's usage has not been read yet")
+	if l.core != nil && l.core.Meter != nil && l.core.RowsUnloaded(l.core.Meter.Fleet(now)) {
+		return profile.Profile{}, errRowsUnread
 	}
 	usable := usableLogins(dir, a, ps, limits, now)
 	same := slices.DeleteFunc(slices.Clone(usable), func(p profile.Profile) bool { return p.Harness != e.Harness })
@@ -516,7 +521,7 @@ func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profil
 	}
 	for _, p := range same {
 		if unanswered[loginKey(p)] {
-			return profile.Profile{}, errors.New(l.unansweredReason(p))
+			return profile.Profile{}, errors.New(unansweredReason(p))
 		}
 	}
 	other, err := failoverTarget(usable, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, cwd)
@@ -545,23 +550,32 @@ func (l launcher) portGate(dir string, a failoverAttempt, ps []profile.Profile, 
 	}
 	signedOut, unanswered := l.loginChecks(unknown, "")
 	for _, p := range unknown {
+		record, _ := readBar(barPath(dir, p))
+		relogin := fmt.Sprintf("or run ym profiles login %s %s", p.Harness, p.ID)
 		switch {
 		case signedOut[loginKey(p)]:
 		case unanswered[loginKey(p)]:
-			return errors.New(l.unansweredReason(p))
+			return errors.New(unansweredReason(p))
 		case a.Failed[p.Account].After(now):
-			return fmt.Errorf("the switch to login %s failed and ym tries it again shortly: %s", p.ID, a.FailedWhy)
+			return fmt.Errorf("the switch to login %s failed and ym tries it again shortly: %s", p.ID, a.Why[p.Account])
 		case p.Account == "":
-			return fmt.Errorf("the identity of login %s cannot be read, so ym waits for it", p.ID)
+			return fmt.Errorf("the identity of login %s cannot be read; it moves once that reads again, %s", p.ID, relogin)
+		case !p.SubscriptionSafe(""):
+			return fmt.Errorf("the settings of login %s cannot be read as safe; it moves once they are fixed, %s", p.ID, relogin)
+		case record.Until.After(now) || record.Claim.After(now):
+			return fmt.Errorf("login %s stopped a session and may still have usage; ym tries it again %s, or a newer row clears it", p.ID, quotaReset(cmp.Or(record.Claim, record.Until)))
 		default:
-			return fmt.Errorf("login %s may still take it, so ym waits for it rather than port", p.ID)
+			return fmt.Errorf("the status of login %s cannot be told; it moves once it answers, %s", p.ID, relogin)
 		}
 	}
 	return nil
 }
 
-// barredText says how the login a session stopped on stands.
-func barredText(b loginBar, session string) string {
+// errRowsUnread is a meter that has not read its rows yet, which is no reason to think a login without one is free.
+var errRowsUnread = errors.New("usage rows have not been read yet, so ym waits a moment before choosing a login")
+
+// barredText says how the login a session stopped on stands, and what moves it from where it sits.
+func barredText(b loginBar, harness, session string) string {
 	when := "resets at a time not yet known"
 	switch {
 	case b.Known:
@@ -569,7 +583,7 @@ func barredText(b loginBar, session string) string {
 	case !b.Until.IsZero():
 		when = "tries this login again " + quotaReset(b.Until)
 	}
-	return fmt.Sprintf("%s; ym switch %s --profile <id> moves it", when, core.Short(session))
+	return fmt.Sprintf("%s; ym switch %s --profile <%s login> moves it, or --to %s once it is at its prompt", when, core.Short(session), harness, core.Other(harness))
 }
 
 // atStopReason is what a row shows while a session's screen holds it at its limit and it cannot move.
@@ -578,5 +592,5 @@ func atStopReason(dir string, a failoverAttempt, harness string) string {
 		return "stopped at its limit: " + a.State.Reason
 	}
 	b, _ := readBar(barPath(dir, profile.Profile{Harness: harness, ID: profile.ID(a.State.Profile), Account: a.State.Account}))
-	return "stopped at its limit, no usable login, " + barredText(b, a.State.Session)
+	return "stopped at its limit, no usable login, " + barredText(b, harness, a.State.Session)
 }

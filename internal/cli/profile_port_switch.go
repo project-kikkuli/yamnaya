@@ -16,6 +16,27 @@ import (
 
 var errPortRefused = errors.New("the port was refused before the session stopped")
 
+// errPortHeld is portGate's answer where a port would be made; nothing has happened to the session.
+var errPortHeld = errors.New("ym holds the port")
+
+// gatePort is the one test every port ym chose passes as it is made, however it got here.
+func (l launcher) gatePort(rec launch.Record, m migration) error {
+	dir := filepath.Dir(l.records.Dir)
+	a, err := loadFailover(dir, rec.Harness, rec.Session)
+	if err != nil {
+		return err
+	}
+	ps, err := profile.Load(dir)
+	if err != nil {
+		return err
+	}
+	e := core.Exhaustion{Harness: m.Source.Harness, Profile: m.Source.Profile, Account: m.Source.Account}
+	if err = l.portGate(dir, a, ps, e, l.limits(), l.now()); err != nil {
+		return fmt.Errorf("%w: %w", errPortHeld, err)
+	}
+	return nil
+}
+
 // runsAs is the session the launch key runs as now, which a port to another harness changes; session when it has no record.
 func (l launcher) runsAs(key, session string) string {
 	if rec, ok := l.records.Find(key); ok && rec.Session != "" {
@@ -33,8 +54,9 @@ func (l launcher) portSwitch(rec launch.Record, live core.Live, dest profile.Pro
 	if err != nil {
 		return none, err
 	}
-	m := migration{Version: 1, ResumeNote: l.resumeNote, Reason: reason, Source: rec, Destination: dest, State: "prepared", Since: time.Now()}
+	m := migration{Version: 1, ResumeNote: l.resumeNote, Reason: reason, Source: rec, Destination: dest, State: "prepared", Since: time.Now(), Automatic: l.automatic}
 	if prior.Version != 0 && prior.State != "running" && prior.Destination.ID == dest.ID && prior.Destination.Harness == dest.Harness {
+		m.Automatic = m.Automatic || prior.Automatic
 		m.ResumeNote, m.Reason, m.Crew, m.Head = cmp.Or(m.ResumeNote, prior.ResumeNote), cmp.Or(m.Reason, prior.Reason), prior.Crew, prior.Head
 	}
 	if err = retargetFailover(dir, rec.Harness, rec.Session, prior, dest); err != nil {
@@ -101,6 +123,11 @@ func (l launcher) portRecord(rec launch.Record, live core.Live, m migration) (la
 	dir := filepath.Dir(l.records.Dir)
 	old, dest := rec.Session, m.Destination
 	if m.Head == "" {
+		if m.Automatic {
+			if err := l.gatePort(rec, m); err != nil {
+				return rec, err
+			}
+		}
 		session := core.Session{Harness: rec.Harness, ID: old, Profile: rec.Profile, ConfigRoot: rec.ConfigRoot, Cwd: rec.Worktree.Path}
 		if live.ID != "" {
 			session = live.Session
@@ -200,6 +227,9 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	}
 	if b.ThrottleHolds(rec.Session) || b.ThrottleHolds(m.Source.Session) {
 		return stuck(heldThrottled)
+	}
+	if l.core.RowsUnloaded(b.Fleet) {
+		return l.holdPending(m, errRowsUnread.Error())
 	}
 	if out := l.loginOut(m.Destination); !out.IsZero() {
 		return stuck(fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, quotaReset(out)))

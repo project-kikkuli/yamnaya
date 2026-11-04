@@ -3,6 +3,7 @@ package usage
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"maps"
 
 	"os"
@@ -38,6 +39,8 @@ type Meter struct {
 	CodexHome string
 	Profiles  []profile.Profile
 	StateDir  string
+	// read is a scan having finished, with or without errors.
+	read bool
 	// Every is the least time between scans that Fleet starts.
 	Every time.Duration
 	// Fetch downloads a trimmed price file; nil keeps prices offline.
@@ -107,12 +110,8 @@ func (m *Meter) Err() error {
 	return m.err
 }
 
-// Loaded reports whether a scan has finished, so Fleet's rows are what the ledger holds and not merely none read yet.
-func (m *Meter) Loaded() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.fleet.Ready
-}
+// Loaded marks a meter whose Fleet says with Read whether a scan has finished, with or without errors.
+func (m *Meter) Loaded() {}
 
 // Fleet returns the latest scan's view and starts a new scan in the background when the last is older than Every.
 func (m *Meter) Fleet(now time.Time) core.Fleet {
@@ -121,12 +120,16 @@ func (m *Meter) Fleet(now time.Time) core.Fleet {
 		m.running = true
 		go func() {
 			_, err := m.Scan(time.Now())
+			if err != nil {
+				log.Printf("ym: usage scan: %v", err)
+			}
 			m.mu.Lock()
 			m.running, m.err = false, err
 			m.mu.Unlock()
 		}()
 	}
 	f := m.fleet
+	f.Read = m.read
 	m.mu.Unlock()
 	f.Limits = current(append(readClaudeLimits(m.StateDir), f.Limits...), now)
 	return f
@@ -201,6 +204,11 @@ type parsed struct {
 func (m *Meter) Scan(now time.Time) (Stats, error) {
 	m.scanMu.Lock()
 	defer m.scanMu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.read = true
+		m.mu.Unlock()
+	}()
 	start := time.Now()
 	var st Stats
 	if m.closing.Load() {

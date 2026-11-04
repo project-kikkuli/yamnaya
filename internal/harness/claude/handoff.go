@@ -227,6 +227,15 @@ func (a *Adapter) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, 
 	return stop, true, nil
 }
 
+// LastTurnAt is when the conversation's last turn ended, zero when that cannot be read.
+func (a *Adapter) LastTurnAt(cwd, id string) time.Time {
+	sc, err := a.handoffScan(a.transcript(cwd, id))
+	if err != nil || sc.LastType != "assistant" || !sc.Stopped || sc.LastStop != "end_turn" {
+		return time.Time{}
+	}
+	return sc.LastAt
+}
+
 func (a *Adapter) handoffScan(path string) (scan, error) {
 	root, err := filepath.EvalSymlinks(a.Dir)
 	if err != nil {

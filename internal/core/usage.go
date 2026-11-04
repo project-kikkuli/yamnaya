@@ -153,8 +153,10 @@ type Fleet struct {
 	Exhaustions []Exhaustion
 	Failovers   []FailoverState
 	Ready       bool
-	At          time.Time
-	Limits      []Limit
+	// Read is a meter's scan having finished, so a login with no row has none rather than none read yet.
+	Read   bool
+	At     time.Time
+	Limits []Limit
 	// PerHost is each host's own report of each limit, in board order; Limits folds one account's reports into the newest.
 	PerHost []Limit
 	// Quiet are hosts known only by what they relayed whose every window has reset, with when they last reported.

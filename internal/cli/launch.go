@@ -39,6 +39,8 @@ type launcher struct {
 	statuses *statusChecks
 	// idleScreens is when each idle session's pane was last captured for a quota stop, nil to always capture.
 	idleScreens *sync.Map
+	// automatic is a switch ym chose itself, whose port must pass portGate; only an owner's goes around it.
+	automatic bool
 	// toHarness is the harness a switch moves to, the session's own when empty.
 	toHarness      string
 	core           *core.Core

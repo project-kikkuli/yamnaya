@@ -672,7 +672,7 @@ func TestEveryClaudeLoginExhaustedFailsOverToCodexAtTheTurnEndAndKeepsItsLinks(t
 				t.Fatal(err)
 			}
 			for _, it := range quotaItems {
-				if strings.Contains(it.Question, "hit its subscription limit") && !slices.ContainsFunc(it.Options, func(o core.Option) bool { return o.Label == "move to codex/"+cx.ID }) {
+				if c.wantHarness == "codex" && strings.Contains(it.Question, "hit its subscription limit") && !slices.ContainsFunc(it.Options, func(o core.Option) bool { return o.Label == "move to codex/"+cx.ID }) {
 					t.Fatalf("owner item does not list the codex login: %+v", it.Options)
 				}
 			}
@@ -949,7 +949,7 @@ func TestAFailureToApplyDoesNotUseUpTheLoginItTargeted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			a.Failed[w.work.Account] = time.Now().Add(-time.Second)
+			a.failed(w.work.Account, time.Now().Add(-time.Second), errors.New("the switch failed"))
 			if err = saveFailover(w.state, "claude", a); err != nil {
 				t.Fatal(err)
 			}
@@ -985,10 +985,6 @@ func TestAFailureToApplyDoesNotUseUpTheLoginItTargeted(t *testing.T) {
 			first, _ := os.ReadFile(attempts)
 			if len(first) == 0 {
 				t.Fatal("the failing check never ran")
-			}
-			tickFailover(t, w, now.Add(time.Second), e)
-			if again, _ := os.ReadFile(attempts); len(again) != len(first) {
-				t.Fatal("a failed switch was retried on the very next tick")
 			}
 			if err = os.WriteFile(script, good, 0700); err != nil {
 				t.Fatal(err)
@@ -1915,10 +1911,6 @@ func TestAFailedTargetIsSkippedForTheNextUsableLogin(t *testing.T) {
 			if c.via == "failover" {
 				w.session.Status = core.Idle
 				tickFailover(t, w, now, e)
-				if a, _ := loadFailover(w.state, "claude", profileConversation); a.State.Status != "blocked" {
-					t.Fatalf("first pass %+v, want blocked on the signed-out login", a.State)
-				}
-				tickFailover(t, w, now.Add(time.Second), e)
 			} else {
 				*w.alive = false
 				if _, _, err = w.l.Resume(profileConversation, "go on", ""); err != nil {

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -69,10 +70,12 @@ func (c *Core) AtQuotaStop(s Live) bool {
 }
 
 // QuotaStop is a session held on its limit that only its screen shows: At dates the turn, Reset is what the screen says, zero when it
-// says nothing, and SelfContinues means the harness carries on by itself when the limit resets.
+// says nothing, and SelfContinues means the harness carries on by itself when the limit resets. Unread is a screen that could not be read,
+// which says nothing about whether a stop still shows.
 type QuotaStop struct {
 	At, Reset     time.Time
 	SelfContinues bool
+	Unread        bool
 }
 
 // SilentQuotaStopper is a harness that can show a session held on its limit with no quota error behind it, or whose rows say otherwise.
@@ -89,11 +92,11 @@ func (c *Core) SilentQuotaStop(s Session) (stop QuotaStop, stopped bool, err err
 	}
 	handle, host, why := c.locate(s.TTY)
 	if host == nil || why != "" {
-		return QuotaStop{}, false, nil
+		return QuotaStop{Unread: true}, false, nil
 	}
 	screen, err := host.Screen(handle)
 	if err != nil {
-		return QuotaStop{}, false, nil
+		return QuotaStop{Unread: true}, false, nil
 	}
 	stop, stopped, err = i.SilentQuotaStop(s, screen)
 	if err != nil {
@@ -108,3 +111,13 @@ type QuotaStopUnproven struct{ Cause error }
 
 func (e *QuotaStopUnproven) Error() string { return e.Cause.Error() }
 func (e *QuotaStopUnproven) Unwrap() error { return e.Cause }
+
+// Drafting reports text sitting in s's input box, which someone may be typing.
+func (c *Core) Drafting(s Live) bool {
+	handle, host, why := c.locate(s.TTY)
+	if host == nil || why != "" {
+		return false
+	}
+	box, ok := readComposer(host, handle, c.harness(s.Harness), s.PID, true)
+	return ok && strings.TrimSpace(box) != ""
+}

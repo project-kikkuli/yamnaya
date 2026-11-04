@@ -43,11 +43,13 @@ type migration struct {
 	Version     int             `json:"version"`
 	Source      launch.Record   `json:"source"`
 	Destination profile.Profile `json:"destination"`
-	Expected    string          `json:"expected_rollout"`
-	Head        string          `json:"published_head"`
-	State       string          `json:"state"`
-	Blocked     string          `json:"blocked,omitempty"`
-	Fingerprint string          `json:"fingerprint,omitempty"`
+	// Automatic is a switch ym chose itself, whose port must pass portGate.
+	Automatic   bool   `json:"automatic,omitempty"`
+	Expected    string `json:"expected_rollout"`
+	Head        string `json:"published_head"`
+	State       string `json:"state"`
+	Blocked     string `json:"blocked,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// BlockedAt is when serve last tried it, so a host where nothing changes still tries again in time.
 	BlockedAt time.Time  `json:"blocked_at,omitzero"`
 	NoteRead  bool       `json:"note_read,omitempty"`
@@ -192,6 +194,15 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 		return rec, nil
 	}
 	if m.Destination.Harness != rec.Harness {
+		if m.Automatic && m.Head == "" {
+			if back, ok, err := l.backToHarness(m, rec); err != nil {
+				return rec, err
+			} else if ok {
+				m = back
+			}
+		}
+	}
+	if m.Destination.Harness != rec.Harness {
 		return l.portRecord(rec, core.Live{}, m)
 	}
 	source := rec
@@ -207,7 +218,7 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 }
 
 func (l launcher) RecoverProfiles(b core.Board) error {
-	if l.core != nil && l.core.RowsUnloaded() {
+	if l.core != nil && l.core.RowsUnloaded(b.Fleet) {
 		return nil
 	}
 	dir := filepath.Dir(l.records.Dir)
@@ -393,6 +404,7 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 	}
 	next := l
 	next.toHarness = target.Harness
+	next.automatic = true
 	ref := m.Source.Key
 	if rec.Key == "" {
 		ref = m.Source.Session
@@ -411,37 +423,49 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 // redecidePort puts a failover's queued port through the gate again until it applies: a login of the session's own harness may have come back.
 // decided is whether anything but applying it follows.
 func (l launcher) redecidePort(m migration, rec launch.Record) (decided bool, err error) {
-	if m.State != "queued" || m.Destination.Harness == m.Source.Harness {
+	if !m.Automatic || m.Head != "" || m.Destination.Harness == m.Source.Harness || m.State != "queued" && m.State != "prepared" {
 		return false, nil
 	}
-	dir := filepath.Dir(l.records.Dir)
-	a, err := loadFailover(dir, m.Source.Harness, m.Source.Session)
-	if err != nil || !failoverPending(a) {
-		return false, err
-	}
-	ps, err := profile.Load(dir)
-	if err != nil {
+	if err = l.gatePort(m.Source, m); err != nil && !errors.Is(err, errPortHeld) {
 		return true, err
 	}
-	target, err := l.destination(dir, a, ps, core.Exhaustion{Harness: m.Source.Harness, Profile: m.Source.Profile, Account: m.Source.Account}, m.Source.Worktree.Path, l.limits(), l.now())
+	back, ok, backErr := l.backToHarness(m, rec)
+	if backErr != nil || ok {
+		_ = back
+		return true, backErr
+	}
 	if err != nil {
 		return true, l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
 			latest.Blocked = err.Error()
 			return true
 		})
 	}
-	if target.Harness != m.Source.Harness {
-		return false, nil
+	return false, nil
+}
+
+// backToHarness turns a port ym chose back onto a usable login of the session's own harness, if one has come back, and saves that.
+func (l launcher) backToHarness(m migration, rec launch.Record) (migration, bool, error) {
+	dir := filepath.Dir(l.records.Dir)
+	ps, err := profile.Load(dir)
+	if err != nil {
+		return m, false, err
 	}
-	ref := m.Source.Key
-	if rec.Key == "" {
-		ref = m.Source.Session
+	a, err := loadFailover(dir, m.Source.Harness, m.Source.Session)
+	if err != nil {
+		return m, false, err
 	}
-	_, err = l.QueueProfileSwitch(ref, target.ID, m.Reason)
-	if errors.Is(err, profile.ErrOperationBusy) {
-		return true, nil
+	target, err := failoverTarget(usableLogins(dir, a, ps, l.limits(), l.now()), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path)
+	if err != nil {
+		return m, false, nil
 	}
-	return true, err
+	if _, unanswered := l.loginChecks([]profile.Profile{target}, ""); unanswered[loginKey(target)] {
+		return m, false, nil
+	}
+	m.Destination, m.Automatic, m.Blocked = target, false, ""
+	if err = retargetFailover(dir, m.Source.Harness, m.Source.Session, m, target); err != nil {
+		return m, false, err
+	}
+	return m, true, saveMigration(dir, m)
 }
 
 // showWaiting says on the row why a switch cannot apply to a session stopped at the quota dialog, which never ends its turn by itself;
@@ -513,7 +537,7 @@ func (l launcher) atStopReasons(dir string) map[string]core.Switching {
 			login := profile.Profile{Harness: harness, ID: a.State.Profile, Account: a.On}
 			if !barredUntil(dir, login, limits, now).IsZero() {
 				record, _ := readBar(barPath(dir, login))
-				stop.Barred = "stopped at its limit earlier, its login is out, " + barredText(record, a.State.Session)
+				stop.Barred = "stopped at its limit earlier, its login is out, " + barredText(record, harness, a.State.Session)
 			}
 		}
 		stop.Blocked = stop.Barred

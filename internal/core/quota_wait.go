@@ -16,9 +16,15 @@ const ResumeRetry = 5 * time.Minute
 type QuotaWait struct {
 	Harness, Login, Key string
 	Until               time.Time
+	// Held is why it cannot move to the other harness, when something holds that.
+	Held string
 }
 
 func (q *QuotaWait) Error() string {
+	if q.Held != "" {
+		return fmt.Sprintf("%s login %s is out of its subscription limit until %s and it cannot move yet: %s. ym switch %s --profile <id> moves it now",
+			q.Harness, q.Login, q.Until.UTC().Format(time.RFC3339), q.Held, q.Key)
+	}
 	return fmt.Sprintf("%s login %s is out of its subscription limit until %s and no other login ym can verify as usable; ym resumes it after that. ym switch %s --profile <id> moves it now; once it is stopped, ym revive %s --anyway resumes it if the limit reset early",
 		q.Harness, q.Login, q.Until.UTC().Format(time.RFC3339), q.Key, q.Key)
 }

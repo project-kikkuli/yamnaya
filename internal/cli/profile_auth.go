@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/profile"
@@ -76,20 +77,29 @@ func nativeStatus(p profile.Profile, timeout time.Duration) error {
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env, cmd.Dir, cmd.WaitDelay = p.Environment(os.Environ()), p.Root, time.Second
 	out, err := cmd.Output()
-	if ctx.Err() != nil {
+	var exit *exec.ExitError
+	exited := errors.As(err, &exit)
+	if ctx.Err() != nil || exited && !exit.Exited() {
 		return fmt.Errorf("%s: %w", login, errStatusUnanswered)
-	}
-	if err != nil {
-		return fmt.Errorf("%s (native status unavailable or logged out)", login)
 	}
 	if p.Harness == "claude" {
 		var status struct {
-			LoggedIn bool   `json:"loggedIn"`
+			LoggedIn *bool  `json:"loggedIn"`
 			Method   string `json:"authMethod"`
 		}
-		if json.Unmarshal(out, &status) != nil || !status.LoggedIn || status.Method != "claude.ai" {
+		answered := json.Unmarshal(out, &status) == nil && status.LoggedIn != nil
+		if answered && (!*status.LoggedIn || status.Method != "claude.ai") {
 			return loginUnusable{fmt.Errorf("%s", login)}
 		}
+		if err == nil && !answered {
+			return fmt.Errorf("%s", login)
+		}
+	}
+	if exited && p.Harness == "codex" && strings.Contains(string(out)+string(exit.Stderr), "Not logged in") {
+		return loginUnusable{fmt.Errorf("%s", login)}
+	}
+	if err != nil {
+		return fmt.Errorf("%s (native status unavailable or logged out)", login)
 	}
 	if profile.Identity(p) != p.Account {
 		return fmt.Errorf("%s (native account changed)", login)
