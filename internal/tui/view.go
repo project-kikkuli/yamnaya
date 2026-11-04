@@ -1241,7 +1241,9 @@ func (m Model) whyView() string {
 	}
 	field("assumption", it.Assumption)
 	field("recipient", m.recipientName(*it))
-	field("repository", core.ScopeName(it.Scope))
+	if repo := core.ScopeName(it.Scope); !core.IDShaped(repo) {
+		field("repository", repo)
+	}
 	if it.Dossier.Goal != "" {
 		field("goal", m.board.Org.ItemLead(*it))
 	}

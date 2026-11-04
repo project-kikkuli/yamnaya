@@ -451,3 +451,116 @@ func TestGoalContextWithoutARefReadsTheCallersOwn(t *testing.T) {
 		t.Fatalf("printed %q", out.String())
 	}
 }
+
+func TestGoalListUnderRefusesAnUnknownRefAndDefaultsToTheCallingChief(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session string
+		args    []string
+		want    []string
+		absent  string
+		err     string
+	}{
+		{name: "by name", args: []string{"--under", "ops-lead"}, want: []string{"ship-it"}, absent: "other-goal"},
+		{name: "an unknown ref", args: []string{"--under", "nosuch-chief"}, err: "no manager, chief or goal"},
+		{name: "an old name", args: []string{"--under", "old-lead"}, err: "no manager, chief or goal"},
+		{name: "from the chief's session", session: "chief-session", want: []string{"ship-it"}, absent: "other-goal"},
+		{name: "from the chief's session, --all", session: "chief-session", args: []string{"--all"}, want: []string{"ship-it", "other-goal"}},
+		{name: "from a shell", want: []string{"ship-it", "other-goal"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+			_, m, err := k.NewGoalNamed("ship-it", "ship the thing", dir, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := k.NewGoalNamed("other-goal", "another thing", dir, "", ""); err != nil {
+				t.Fatal(err)
+			}
+			boss, err := k.NewChief("old-lead", "", dir, "", []string{m.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := k.Rename(boss.ID, "ops-lead"); err != nil {
+				t.Fatal(err)
+			}
+			boss, _ = st.Manager(boss.ID)
+			boss.Session = "chief-session"
+			if err := st.SaveManager(boss); err != nil {
+				t.Fatal(err)
+			}
+			with := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error {
+					return run(&env{core: k, session: tc.session}, cmd, args)
+				}
+			}
+			cmd := goalCmd(with, with)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(append([]string{"list"}, tc.args...))
+			err = cmd.Execute()
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("err %v, printed %q; want %q", err, out.String(), tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("printed %q, want %q", out.String(), w)
+				}
+			}
+			if tc.absent != "" && strings.Contains(out.String(), tc.absent) {
+				t.Errorf("printed %q, want no %q", out.String(), tc.absent)
+			}
+		})
+	}
+}
+
+func TestASteerToAnotherHostSaysItWasSentNotSteered(t *testing.T) {
+	dir := t.TempDir()
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+	r := &steerRemote{itemRemote: *boxBoard(k)}
+	r.board.Managers = []core.Manager{{ID: "mgr1", Role: core.RoleChief, Name: "box-chief"}}
+	k.Remotes = r
+	with := func(run runFunc) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+	}
+	cmd := goalCmd(with, with)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"steer", "--text", "new plan", "box/box-chief"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := out.String(); !strings.Contains(got, "sent to its host") || strings.Contains(got, "revision") || strings.Contains(got, "steered") {
+		t.Fatalf("printed %q", got)
+	}
+}
+
+// steerRemote is a host that answers ym goal context with a plan, as ym does there.
+type steerRemote struct{ itemRemote }
+
+func (r *steerRemote) Run(host string, args ...string) (string, error) {
+	if args[0] == "goal" && args[1] == "context" {
+		raw, err := json.Marshal(core.PlanContext{Manager: r.board.Managers[0], Text: "old plan", Revision: 2})
+		return string(raw), err
+	}
+	return r.itemRemote.Run(host, args...)
+}

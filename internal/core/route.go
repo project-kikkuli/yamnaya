@@ -264,10 +264,7 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 		if g, ok := o.Goals[m.GoalID]; ok {
 			to := "the owner"
 			if added.Recipient != Owner {
-				to = added.Recipient
-				if r, ok := o.Managers[added.Recipient]; ok {
-					to = r.Shown()
-				}
+				to = c.RefName(added.Recipient)
 			}
 			woken = added.Recipient == m.ID
 			e := GoalEvent{Goal: g.ID, Kind: EventAsked, Created: c.now(),

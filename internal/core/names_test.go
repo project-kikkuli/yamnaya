@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -606,14 +607,10 @@ func TestWhatAManagerIsToldNamesItWithoutItsId(t *testing.T) {
 	var prompt strings.Builder
 	w.core.managerPrompt(&prompt, o, o.Managers[m.ID])
 	w.core.chiefPrompt(&prompt, o, o.Managers[boss.ID])
-	if !strings.Contains(prompt.String(), "ym goal list --under "+boss.ID+" lists") {
-		t.Errorf("a chief's prompt must keep the one command a rename would strand on its id:\n%s", prompt.String())
-	}
-	if !strings.Contains(prompt.String(), "ym goal adopt --revision") || !strings.Contains(prompt.String(), "ym goal context prints") {
+	if !strings.Contains(prompt.String(), "ym goal adopt --revision") || !strings.Contains(prompt.String(), "ym goal context prints") || !strings.Contains(prompt.String(), "ym goal list lists") {
 		t.Errorf("prompts should name no goal in commands that need none:\n%s", prompt.String())
 	}
-	cleaned := strings.ReplaceAll(prompt.String(), "ym goal list --under "+boss.ID+" lists", "")
-	texts := map[string]string{"prompts": cleaned, "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
+	texts := map[string]string{"prompts": prompt.String(), "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
 	for what, text := range texts {
 		if !strings.Contains(text, "named-") {
 			t.Errorf("%s do not name it:\n%s", what, text)
@@ -1085,7 +1082,7 @@ func TestAWakeOrErrorAboutAGoalOrChiefNamesIt(t *testing.T) {
 			return got.History[len(got.History)-1].Text
 		}, "escalated to owner from named-chief"},
 		{"a report's chief on another host in its prompt", func(t *testing.T, w *orgWorld, _ Goal, m, _ Manager) string {
-			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleChief, Name: "far-chief"}}}}}
+			keepBoard(t, w, "box", Manager{ID: "mgr9", Role: RoleChief, Name: "far-chief"})
 			o, _ := w.core.LoadOrg()
 			m.ParentID = "box/mgr9"
 			o.Managers[m.ID] = m
@@ -1110,5 +1107,147 @@ func TestAWakeOrErrorAboutAGoalOrChiefNamesIt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// keepBoard stores a board from host as serve's reader would, with no live read in this process.
+func keepBoard(t *testing.T, w *orgWorld, host string, managers ...Manager) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"managers": managers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.KeepBoard(host, time.Now(), raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEveryProcessNamesAChiefFromTheBoardsItStored(t *testing.T) {
+	for _, tc := range []struct {
+		name, self, id, want string
+		live                 bool
+	}{
+		{name: "another host's, from its stored board", id: "box/mgr9", want: "box/far-chief"},
+		{name: "another host's, a live read winning", id: "box/mgr9", live: true, want: "box/live-chief"},
+		{name: "another host's goal", id: "box/mgr9", want: "box/far-chief"},
+		{name: "this host's under its own relay name", self: "home", id: "home/LOCAL", want: "boss-chief"},
+		{name: "this host's", id: "LOCAL", want: "boss-chief"},
+		{name: "a host with no board", id: "far/mgr9", want: "far/mgr9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			boss := w.chief(t, "boss-chief")
+			keepBoard(t, w, "box", Manager{ID: "mgr9", Role: RoleChief, Name: "far-chief"})
+			if tc.self != "" {
+				if err := w.core.Store.setRelaySelf(RelaySelf{Name: tc.self}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.live {
+				w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleChief, Name: "live-chief"}}}}}
+			}
+			if got := w.core.RefName(strings.ReplaceAll(tc.id, "LOCAL", boss.ID)); got != tc.want {
+				t.Fatalf("RefName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnAskToAChiefOnAnotherHostNamesItInTheFeed(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "named-goal" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	keepBoard(t, w, "box", Manager{ID: "mgr9", Role: RoleChief, Name: "far-chief"})
+	if err := w.core.Attach(m.ID, "box/mgr9"); err != nil {
+		t.Fatal(err)
+	}
+	mine, err := w.core.Store.Manager(m.ID)
+	if err != nil || mine.ParentID != "box/mgr9" {
+		t.Fatalf("parent %q, %v", mine.ParentID, err)
+	}
+	if _, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which way?", Session: m.Session}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := slices.IndexFunc(events, func(e GoalEvent) bool { return e.Kind == EventAsked })
+	if at < 0 || !strings.Contains(events[at].Payload, "to box/far-chief") || strings.Contains(events[at].Payload, "mgr9") {
+		t.Fatalf("feed %+v, want the ask to name box/far-chief", events)
+	}
+}
+
+func TestASteerOrCloseFromAnotherHostShowsItsChiefsNameAndKeepsItsId(t *testing.T) {
+	for _, tc := range []struct {
+		name, carried, want string
+	}{
+		{name: "the relay carried a name", carried: "ops-lead", want: "chief home/ops-lead"},
+		{name: "the name came whole", carried: "home/ops-lead", want: "chief home/ops-lead"},
+		{name: "an older host sent none", carried: "", want: "chief home/mgr2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "anything", "/repo/august")
+			boss := w.chief(t, "boss-chief", m.ID)
+			if err := w.core.Attach(boss.ID, "home/mgr2"); err != nil {
+				t.Fatal(err)
+			}
+			st, err := w.core.SteerContextAs(w.board(t), m.ID, "new plan", "home/mgr2", tc.carried)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Author != "home/mgr2" {
+				t.Fatalf("author key %q, want home/mgr2", st.Author)
+			}
+			o, _ := w.core.LoadOrg()
+			if got := o.SteerBy(st); got != tc.want {
+				t.Fatalf("shown as %q, want %q", got, tc.want)
+			}
+			stored, err := w.core.Store.Steers(m.ID)
+			if err != nil || len(stored) != 1 || o.SteerBy(stored[0]) != tc.want {
+				t.Fatalf("stored %+v, %v; want it shown as %q", stored, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAVerdictNeedsNoRefFromItsVerifierSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, ref string
+		err                string
+	}{
+		{name: "the verifier, no ref", session: "VERIFIER"},
+		{name: "the verifier, naming the goal", session: "VERIFIER", ref: "GOAL"},
+		{name: "another session, no ref", session: "someone-else", err: "verifying no goal"},
+		{name: "another session, naming the goal", session: "someone-else", ref: "GOAL", err: "may record"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newVerifyWorld(t)
+			g := w.goal
+			w.done(t, "finished the importer")
+			w.tick(t, time.Second)
+			session := strings.ReplaceAll(tc.session, "VERIFIER", w.verifiers()[0])
+			_, err := w.core.RecordVerdict(session, strings.ReplaceAll(tc.ref, "GOAL", g.Name), VerdictPass, nil)
+			if tc.err == "" && err != nil || tc.err != "" && (err == nil || !strings.Contains(err.Error(), tc.err)) {
+				t.Fatalf("RecordVerdict = %v, want error %q", err, tc.err)
+			}
+		})
+	}
+}
+
+func TestNameIDsNamesWhatABoardKnowsOnThatHost(t *testing.T) {
+	o := Org{Goals: map[string]Goal{"box/goal3": {ID: "box/goal3", Name: "fix-export", Host: "box"}},
+		Managers: map[string]Manager{"box/mgr51": {ID: "box/mgr51", Name: "far-chief", Host: "box"}}}
+	for _, tc := range []struct{ host, text, want string }{
+		{"box", "ym goal send --relayed mgr51 hello", "ym goal send --relayed far-chief hello"},
+		{"box", "ym goal close goal3 --as abandoned", "ym goal close fix-export --as abandoned"},
+		{"box", "ym goal send mgr99 hi", "ym goal send mgr99 hi"},
+		{"far", "ym goal send mgr51 hi", "ym goal send mgr51 hi"},
+		{"box", "ym item answer #4 mgr5100x", "ym item answer #4 mgr5100x"},
+	} {
+		if got := o.NameIDs(tc.host, tc.text); got != tc.want {
+			t.Errorf("NameIDs(%q, %q) = %q, want %q", tc.host, tc.text, got, tc.want)
+		}
 	}
 }

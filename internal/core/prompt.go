@@ -72,8 +72,7 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 		sb.WriteString("Act on it right away; do not wait for instructions. Plan how to carry it out, start a goal for each piece of work with ym goal --repo <repo> \"<ask>\", " +
 			"and write your first brief with ym goal brief. If goals already report to you, build on them rather than starting them again.\n\n")
 	}
-	// A rename must not strand this line: an old name lists no reports, silently, and the prompt outlives it.
-	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.ID)
+	sb.WriteString("Your reports: ym goal list lists them with their goals, states and briefs; --all lists every goal.\n\n")
 	fmt.Fprintf(sb, "Coordination workspace: %s. This directory is not a repository. Your reports retain their own repositories; use an explicit --repo when starting implementation agents.\n\n", m.Directory)
 	if m.Repo != "" {
 		fmt.Fprintf(sb, "Reference repository: %s. This is access for your work, not the repository identity of your reports or their requests.\n\n", m.Repo)
@@ -117,7 +116,7 @@ const wakeRules = "- ym wakes you with one short ym: message, one line per event
 	"Never poll; act on what needs you, then end your turn.\n"
 
 const chiefWakeRules = "- ym wakes you only for what needs you: an ask or item routed to you, a goal below you that first fails verification for a cause, gets stuck (once until it moves again), is verified or done, a pull request green and ready to merge, an agent that died and did not come back, a relayed command's outcome, and your own agents finishing, or anything of theirs that would wake a manager (an ask, hung, adrift, CI red, a conflict, review comments). " +
-	"A wake is one line per goal, such as goal15: failed verify #812, PR #19 ready, 3 updates. ym goal event <n> prints an event whole. Everything else below you (updates, steers, reviews, CI, conflicts, resumes) never wakes you: ym digest prints it on demand, one line per goal, ym goal feed <goal> shows a goal's events, and it rides along at most every 30 minutes with a wake or with ym item inbox. A session mid-turn gets at most one message; the rest merges into the next. " +
+	"A wake is one line per goal, such as fix-export: failed verify #812, PR #19 ready, 3 updates. ym goal event <n> prints an event whole. Everything else below you (updates, steers, reviews, CI, conflicts, resumes) never wakes you: ym digest prints it on demand, one line per goal, ym goal feed <goal> shows a goal's events, and it rides along at most every 30 minutes with a wake or with ym item inbox. A session mid-turn gets at most one message; the rest merges into the next. " +
 	"Never poll; act on what needs you, then end your turn.\n"
 
 const escalate = "- Give what reaches the owner a --do of at most 28 characters stating your rec as an action, and --impact prod or clinical when true; ym ranks the owner's queue from them, and ym item rank '<#key>' top|up|down pins a row.\n- Only the owner can review their direction, approve shared publication, or perform owner-only account actions. File those directly with ym item add --to owner, or escalate the existing item with ym item escalate '<#key>'; use ym item prepare first if its recommendation or options are missing. Saying it is for the owner in chat does not route it.\n" +

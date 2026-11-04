@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -143,6 +144,9 @@ func (o Org) SteerBy(st Steer) string {
 	}
 	if m, ok := o.Managers[st.Author]; ok {
 		return "chief " + m.Ref()
+	}
+	if st.AuthorName != "" {
+		return "chief " + st.AuthorName
 	}
 	return "chief " + st.Author
 }
@@ -622,14 +626,84 @@ func (o Org) RefOf(id string) string {
 
 // RefName is how a person reads the goal, manager or chief with this id, here or on another host whose board this one has.
 func (c *Core) RefName(id string) string {
-	o, err := c.LoadOrg()
+	o, err := c.orgWithHosts()
 	if err != nil {
 		return id
 	}
-	if c.Remotes != nil {
-		c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	if host, rest, remote := SplitRemote(id); remote && host == c.SelfName() {
+		id = rest
 	}
 	return o.RefOf(id)
+}
+
+// orgWithHosts is the org with every other host's managers, chiefs and goals as its stored board last had them, and as a live read has
+// them when this process has one, so any process can name them.
+func (c *Core) orgWithHosts() (Org, error) {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return o, err
+	}
+	boards, err := c.Store.keptOrgBoards()
+	if err != nil {
+		return o, err
+	}
+	if c.Remotes != nil {
+		boards = append(boards, slices.DeleteFunc(slices.Clone(c.Remotes.Boards()), func(b RemoteBoard) bool { return len(b.Managers) == 0 })...)
+	}
+	c.mergeRemoteOrg(&o, boards, nil)
+	return o, nil
+}
+
+// keptOrgBoards are each stored board's managers and goals.
+func (s *Store) keptOrgBoards() ([]RemoteBoard, error) {
+	rows, err := s.db.Query(`SELECT host, board FROM ym_host_boards`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RemoteBoard
+	for rows.Next() {
+		var host string
+		var raw []byte
+		if err := rows.Scan(&host, &raw); err != nil {
+			return nil, err
+		}
+		var kept struct {
+			Managers []Manager `json:"managers"`
+			Goals    []Goal    `json:"goals"`
+		}
+		if json.Unmarshal(raw, &kept) == nil {
+			out = append(out, RemoteBoard{Host: host, Managers: kept.Managers, Goals: kept.Goals})
+		}
+	}
+	return out, rows.Err()
+}
+
+// actorName is how the author of a steer or close carried from another host shows: the name it came with, under that host, else what this
+// host knows it by.
+func (c *Core) actorName(author, name string) string {
+	if name == "" {
+		return c.RefName(author)
+	}
+	if host, _, remote := SplitRemote(author); remote && !strings.Contains(name, "/") {
+		return RemoteKey(host, name)
+	}
+	return name
+}
+
+// IDShaped reports whether s reads as a goalNN or mgrNN id.
+func IDShaped(s string) bool { return idShaped.MatchString(s) }
+
+var anyID = regexp.MustCompile(`\b(goal|mgr)[0-9]+\b`)
+
+// NameIDs is text, a ym command for host or what it answered, with each id o knows there as its name.
+func (o Org) NameIDs(host, text string) string {
+	return anyID.ReplaceAllStringFunc(text, func(id string) string {
+		if shown := o.ShownOf(RemoteKey(host, id)); shown != RemoteKey(host, id) {
+			return shown
+		}
+		return id
+	})
 }
 
 // ActorShown is who a goal's closure says closed it, a chief by its name.

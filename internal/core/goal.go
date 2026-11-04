@@ -281,14 +281,10 @@ func (c *Core) Attach(child, chief string) error {
 // chief or reports to child already; a chief the board does not show yet is taken as named.
 func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 	chief = strings.ToLower(chief)
-	if c.Remotes == nil {
-		return chief, nil
-	}
-	o, err := c.LoadOrg()
+	o, err := c.orgWithHosts()
 	if err != nil {
 		return "", err
 	}
-	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
 	boss, err := o.lookup(chief)
 	if err != nil {
 		return chief, nil

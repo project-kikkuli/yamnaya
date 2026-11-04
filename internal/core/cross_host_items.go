@@ -107,11 +107,13 @@ func (it Item) Ref() string {
 
 // chiefScope is project, in an item ref on host, as the scope it names there: a chief's id for a chief named by its name.
 func (c *Core) chiefScope(host, project string) string {
-	if project == "" || c.Remotes == nil {
+	if project == "" {
 		return project
 	}
-	o := Org{Goals: map[string]Goal{}, Managers: map[string]Manager{}, Sessions: map[string]string{}}
-	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	o, err := c.orgWithHosts()
+	if err != nil {
+		return project
+	}
 	if m, err := o.lookup(RemoteKey(host, project)); err == nil && m.Role == RoleChief {
 		_, id, _ := SplitRemote(m.ID)
 		return id

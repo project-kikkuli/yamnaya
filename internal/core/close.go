@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"slices"
@@ -22,6 +23,8 @@ type CloseOrder struct {
 	Why      string `json:"why"`
 	Override bool   `json:"override,omitempty"`
 	Author   string `json:"-"`
+	// AuthorName is the name a chief on another host came with.
+	AuthorName string `json:"-"`
 }
 
 // CloseAuthor is who closes for the calling session: session is "" for a shell no harness runs, which is the owner, or for a relayed
@@ -68,7 +71,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 			args = append(args, "--override-verifier")
 		}
 		if order.Author != Owner {
-			args = append(args, "--by", RemoteKey(c.SelfName(), order.Author))
+			args = append(args, "--by", RemoteKey(c.SelfName(), order.Author), "--by-name", c.RefName(order.Author))
 		}
 		out, err := c.RunOrRelay(host, args...)
 		return Closed{Goal: order.Ref, Output: out}, err
@@ -101,7 +104,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	if via != "" {
 		host, rest, _ := SplitRemote(via)
 		close := order
-		v := relayVouch{Chief: rest, Author: c.fromHere(order.Author), Target: RemoteKey(c.SelfName(), m.ID), Close: &close}
+		v := relayVouch{Chief: rest, Author: c.fromHere(order.Author), AuthorName: cmp.Or(order.AuthorName, c.RefName(order.Author)), Target: RemoteKey(c.SelfName(), m.ID), Close: &close}
 		return Closed{Goal: g.Shown(), Pending: via}, c.Relay(host, RelayVouchClose, v)
 	}
 	return c.applyClose(b, m, g, order)
@@ -158,7 +161,7 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 			return out, err
 		}
 		now := c.now()
-		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, c.RefName(order.Author), order.Why, out.PRs), Key: closureKey(order.Author, now, int64(g.Version)), Created: now, Delivered: now}); err != nil {
+		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, c.actorName(order.Author, order.AuthorName), order.Why, out.PRs), Key: closureKey(order.Author, now, int64(g.Version)), Created: now, Delivered: now}); err != nil {
 			return out, err
 		}
 		if !g.Ended() {
@@ -255,7 +258,7 @@ func (c *Core) closeVouched(b Board, o Org, v relayVouch) error {
 		return fmt.Errorf("%w: %s is not a goal to close", errUnusable, id)
 	}
 	order := *v.Close
-	order.Author = c.hereFrom(v.Author)
+	order.Author, order.AuthorName = c.hereFrom(v.Author), v.AuthorName
 	if _, err := c.applyClose(b, m, g, order); err != nil {
 		if errors.Is(err, ErrFinal) {
 			return c.tellManager(b, o, order.Author, fmt.Sprintf("ym: your close of %s did not land: %s", RemoteKey(c.SelfName(), g.Shown()), err))

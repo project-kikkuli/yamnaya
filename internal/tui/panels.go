@@ -625,13 +625,13 @@ func (m Model) hostRows() ([]prow, []pdo) {
 	}
 	for _, r := range m.pn.relays {
 		seq := fmt.Sprint(r.Seq)
-		text := pad(m.hostTag(r.Dest), 8) + " " + relayWhat(r) + pal.dim.Render(" since "+r.Created.Local().Format(time.Kitchen))
+		text := pad(m.hostTag(r.Dest), 8) + " " + m.shownRelay(r) + pal.dim.Render(" since "+r.Created.Local().Format(time.Kitchen))
 		if r.Error != "" {
 			text += pal.red.Render("  refused there: " + oneLine(r.Error))
 		}
 		key := "panel:relay:" + seq
 		rows = append(rows, prow{text: text, key: key, does: []pdo{{"x", "stop carrying it", func(m Model) (tea.Model, tea.Cmd) {
-			m.confirm("stop carrying "+relayWhat(r)+" to "+r.Dest+"?", m.runYM(key, "dropping", "drop", "", "", "relay", "drop", seq))
+			m.confirm("stop carrying "+m.shownRelay(r)+" to "+r.Dest+"?", m.runYM(key, "dropping", "drop", "", "", "relay", "drop", seq))
 			return m, nil
 		}}}})
 	}

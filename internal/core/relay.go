@@ -90,9 +90,11 @@ type relayVouch struct {
 	// Chief is the chief on the destination the climb reached; Target names the steered manager by its host.
 	Chief  string `json:"chief"`
 	Author string `json:"author"`
-	Target string `json:"target"`
-	Text   string `json:"text"`
-	Hops   int    `json:"hops"`
+	// AuthorName is how the author shows, so a host that has no board of the author's can still name it.
+	AuthorName string `json:"author_name,omitempty"`
+	Target     string `json:"target"`
+	Text       string `json:"text"`
+	Hops       int    `json:"hops"`
 	// Close is the close to land, nil on a steer.
 	Close *CloseOrder `json:"close,omitempty"`
 }
@@ -809,7 +811,7 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
 			return c.tellManager(b, o, c.hereFrom(v.Author), fmt.Sprintf("ym: your steer of %s did not land: it has ended.", RemoteKey(c.SelfName(), m.Shown())))
 		}
-		_, err = c.applySteer(b, o, m, v.Text, c.hereFrom(v.Author))
+		_, err = c.applySteer(b, o, m, v.Text, c.hereFrom(v.Author), v.AuthorName)
 		return err
 	case RelayNotify:
 		var n relayNotify
@@ -1001,14 +1003,14 @@ func (c *Core) noteFinal(r Relay, err error) error {
 			return nil
 		}
 		_, id, _ := SplitRemote(v.Target)
-		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, c.RefName(v.Author)), why, r)
+		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, c.actorName(v.Author, v.AuthorName)), why, r)
 	case RelayVouchedClose:
 		var v relayVouch
 		if json.Unmarshal([]byte(r.Body), &v) != nil {
 			return nil
 		}
 		_, id, _ := SplitRemote(v.Target)
-		return c.noteGoal(id, "the close by "+c.RefName(v.Author), why, r)
+		return c.noteGoal(id, "the close by "+c.actorName(v.Author, v.AuthorName), why, r)
 	}
 	return nil
 }

@@ -257,9 +257,9 @@ func treeRows(b core.Board, under string) []goalRow {
 
 func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var under string
-	var asJSON, full, archived bool
+	var asJSON, full, archived, all bool
 	cmd := &cobra.Command{
-		Use:   "list [--under CHIEF] [--full] [--archived] [--json]",
+		Use:   "list [--under CHIEF] [--all] [--full] [--archived] [--json]",
 		Short: "List goals, managers and chiefs as a tree, each goal under a one-line title, with their state and brief; --archived lists ended goals with how they ended",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
@@ -269,6 +269,17 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			}
 			if archived {
 				return printArchived(cmd.OutOrStdout(), b, asJSON)
+			}
+			if under != "" {
+				if _, err := b.Org.Lookup(under); err != nil {
+					return err
+				}
+			} else if !all {
+				if cl, err := e.caller(); err == nil {
+					if m, ok := b.Org.ManagerOf(e.core.Resolve(cl.Session)); ok && m.Role == core.RoleChief {
+						under = m.ID
+					}
+				}
 			}
 			rows := titled(treeRows(b, under), full)
 			if asJSON {
@@ -284,7 +295,8 @@ func goalListCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&under, "under", "", "only the reports below this chief")
+	cmd.Flags().StringVar(&under, "under", "", "only the reports below this chief (default: from a chief's session, its own reports)")
+	cmd.Flags().BoolVar(&all, "all", false, "every goal, from a chief's session too")
 	cmd.Flags().BoolVar(&full, "full", false, "print each goal's whole ask instead of its title")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON")
 	cmd.Flags().BoolVar(&archived, "archived", false, "list ended goals with how, why, who and when, newest first")
@@ -559,9 +571,9 @@ func goalVerdictCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 	var pass, fail bool
 	var findings []string
 	cmd := &cobra.Command{
-		Use:   "verdict <goal> --pass|--fail [--finding <line>]...",
+		Use:   "verdict [<goal>] --pass|--fail [--finding <line>]...",
 		Short: "Record a verifier session's verdict on the goal it was launched to check",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			if pass == fail {
 				return errors.New("pass exactly one of --pass or --fail")
@@ -577,7 +589,11 @@ func goalVerdictCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if fail {
 				verdict = core.VerdictFail
 			}
-			v, err := e.core.RecordVerdict(c.Session, args[0], verdict, findings)
+			goal := ""
+			if len(args) == 1 {
+				goal = args[0]
+			}
+			v, err := e.core.RecordVerdict(c.Session, goal, verdict, findings)
 			if err != nil {
 				return err
 			}
@@ -718,6 +734,8 @@ func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	cmd.Flags().StringVar(&order.Why, "why", "", "the reason, in words")
 	cmd.Flags().BoolVar(&order.Override, "override-verifier", false, "with --as finished, close without a verifier pass at its current work")
 	cmd.Flags().StringVar(&by, "by", "", "the chief on another host that closes, as host/id")
+	cmd.Flags().StringVar(&order.AuthorName, "by-name", "", "how that chief shows")
+	cmd.Flags().MarkHidden("by-name")
 	cmd.Flags().MarkHidden("by")
 	cmd.MarkFlagRequired("as")
 	cmd.MarkFlagRequired("why")

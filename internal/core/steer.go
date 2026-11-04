@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -42,8 +43,11 @@ type Steer struct {
 	Manager  string
 	Revision int
 	Text     string
-	// Author is Owner, or the id of the chief that steered.
-	Author    string
+	// Author is Owner, or the id of the chief that steered; AuthorName is the name a chief on another host came with.
+	Author     string
+	AuthorName string
+	// Sent says the steer left for another host, whose ym takes it or refuses it; it has no revision here.
+	Sent      bool
 	CreatedAt time.Time
 	AdoptedAt time.Time
 	// AdoptedSession is the session that adopted the revision.
@@ -57,17 +61,17 @@ type Steer struct {
 func (s Steer) Adopted() bool { return !s.AdoptedAt.IsZero() }
 
 // By names who steered, for messages.
-func (s *Store) addSteer(manager, text, author string, at time.Time) (Steer, error) {
+func (s *Store) addSteer(manager, text, author, authorName string, at time.Time) (Steer, error) {
 	defer s.invalidate()
-	st := Steer{Manager: manager, Text: text, Author: author, CreatedAt: at}
+	st := Steer{Manager: manager, Text: text, Author: author, AuthorName: authorName, CreatedAt: at}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return st, err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRow(`INSERT INTO ym_steers (manager, revision, text, author, created_at)
-		VALUES (?, (SELECT coalesce(max(revision), 0) + 1 FROM ym_steers WHERE manager = ?), ?, ?, ?) RETURNING revision`,
-		manager, manager, text, author, stamp(at)).Scan(&st.Revision)
+	err = tx.QueryRow(`INSERT INTO ym_steers (manager, revision, text, author, author_name, created_at)
+		VALUES (?, (SELECT coalesce(max(revision), 0) + 1 FROM ym_steers WHERE manager = ?), ?, ?, ?, ?) RETURNING revision`,
+		manager, manager, text, author, authorName, stamp(at)).Scan(&st.Revision)
 	if err != nil {
 		return st, err
 	}
@@ -89,12 +93,12 @@ func (s *Store) saveSteer(st Steer) error {
 	return err
 }
 
-const steerCols = `manager, revision, text, author, created_at, adopted_at, adopted_session, nudges, nudged_at, raised_at`
+const steerCols = `manager, revision, text, author, author_name, created_at, adopted_at, adopted_session, nudges, nudged_at, raised_at`
 
 func scanSteer(row interface{ Scan(...any) error }) (Steer, error) {
 	var st Steer
 	var created, adopted, nudged, raised sql.NullString
-	err := row.Scan(&st.Manager, &st.Revision, &st.Text, &st.Author, &created, &adopted, &st.AdoptedSession, &st.Nudges, &nudged, &raised)
+	err := row.Scan(&st.Manager, &st.Revision, &st.Text, &st.Author, &st.AuthorName, &created, &adopted, &st.AdoptedSession, &st.Nudges, &nudged, &raised)
 	st.CreatedAt, st.AdoptedAt, st.NudgedAt, st.RaisedAt = parseTime(created), parseTime(adopted), parseTime(nudged), parseTime(raised)
 	return st, err
 }
@@ -189,6 +193,11 @@ func (o Org) Ask(m Manager) string {
 // SteerContext records text as the next revision of what the goal or chief ref names is about, and tells its manager to adopt it.
 // author is Owner, or the manager or chief steering: a chief steers only what reports to it, at any depth.
 func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
+	return c.SteerContextAs(b, ref, text, author, "")
+}
+
+// SteerContextAs is SteerContext for a chief on another host that came with its name.
+func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string) (Steer, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Steer{}, errors.New("a steer needs the new plan in words")
@@ -196,10 +205,10 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 	if host, rest, ok := c.remoteHost(ref); ok {
 		args := []string{"goal", "steer", "--text", text}
 		if author != Owner {
-			args = append(args, "--by", RemoteKey(c.SelfName(), author))
+			args = append(args, "--by", RemoteKey(c.SelfName(), author), "--by-name", c.RefName(author))
 		}
 		_, err := c.RunOrRelay(host, append(args, rest)...)
-		return Steer{Manager: ref, Text: text, Author: author}, err
+		return Steer{Manager: ref, Text: text, Author: author, Sent: true}, err
 	}
 	o, err := c.LoadOrg()
 	if err != nil {
@@ -216,24 +225,27 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 		reports, via := climb(o, author, m.ID)
 		if !reports && via != "" {
 			host, rest, _ := SplitRemote(via)
-			v := relayVouch{Chief: rest, Author: c.fromHere(author), Target: RemoteKey(c.SelfName(), m.ID), Text: text}
+			v := relayVouch{Chief: rest, Author: c.fromHere(author), AuthorName: cmp.Or(authorName, c.RefName(author)), Target: RemoteKey(c.SelfName(), m.ID), Text: text}
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
 			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), c.RefName(author)))
 		}
 	}
-	return c.applySteer(b, o, m, text, author)
+	return c.applySteer(b, o, m, text, author, authorName)
 }
 
 // applySteer records text as m's next revision by author and tells m to adopt it.
-func (c *Core) applySteer(b Board, o Org, m Manager, text, author string) (Steer, error) {
+func (c *Core) applySteer(b Board, o Org, m Manager, text, author, authorName string) (Steer, error) {
 	if latest, err := c.Store.LatestSteers(); err != nil {
 		return Steer{}, err
 	} else if st, ok := latest[m.ID]; ok && st.Text == text {
 		return st, Final(fmt.Errorf("%s is already at revision %d with that plan", m.Shown(), st.Revision))
 	}
-	st, err := c.Store.addSteer(m.ID, text, author, c.now())
+	if _, _, remote := SplitRemote(author); remote {
+		authorName = c.actorName(author, authorName)
+	}
+	st, err := c.Store.addSteer(m.ID, text, author, authorName, c.now())
 	if err != nil {
 		return st, err
 	}

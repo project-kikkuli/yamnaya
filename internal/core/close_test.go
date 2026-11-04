@@ -254,6 +254,8 @@ func closeRunner(t *testing.T, w *orgWorld) func(args ...string) (string, error)
 			case "--by":
 				i++
 				by = args[i]
+			case "--by-name":
+				i++
 			case "--override-verifier":
 				order.Override = true
 			}

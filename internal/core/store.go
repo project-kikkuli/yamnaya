@@ -313,7 +313,7 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate doc pages: %w", err)
 	}
-	if err := addColumns(db, `ym_goals name TEXT NOT NULL DEFAULT ''`, `ym_goals name_source TEXT NOT NULL DEFAULT ''`); err != nil {
+	if err := addColumns(db, `ym_goals name TEXT NOT NULL DEFAULT ''`, `ym_goals name_source TEXT NOT NULL DEFAULT ''`, `ym_steers author_name TEXT NOT NULL DEFAULT ''`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate goal names: %w", err)
 	}

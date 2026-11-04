@@ -35,7 +35,7 @@ func (e *env) author() (string, error) {
 }
 
 func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var file, inline, by string
+	var file, inline, by, byName string
 	cmd := &cobra.Command{
 		Use:   "steer [--file PATH|-] <goal|manager|chief>",
 		Short: "Change what a goal or chief is about as its next numbered revision; its manager must adopt it",
@@ -92,12 +92,16 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
-			st, err := e.core.SteerContext(b, m.ID, text, author)
+			st, err := e.core.SteerContextAs(b, m.ID, text, author, byName)
 			if err != nil {
 				return err
 			}
 			if st.Pending != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.Shown(), e.core.RefName(st.Pending), e.core.RefName(author), e.core.RefName(author))
+				return nil
+			}
+			if st.Sent {
+				fmt.Fprintf(cmd.OutOrStdout(), "new plan for %s sent to its host; the result comes back to you\n", args[0])
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s steered to revision %d; it shows unadopted until its manager runs ym goal adopt %s --revision %d\n", m.Shown(), st.Revision, m.Shown(), st.Revision)
@@ -109,6 +113,8 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	cmd.Flags().StringVar(&by, "by", "", "the chief on another host that steers, as host/id")
 	cmd.Flags().MarkHidden("text")
 	cmd.Flags().MarkHidden("by")
+	cmd.Flags().StringVar(&byName, "by-name", "", "how that chief shows")
+	cmd.Flags().MarkHidden("by-name")
 	return cmd
 }
 

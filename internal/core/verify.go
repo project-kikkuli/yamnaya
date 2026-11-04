@@ -148,7 +148,7 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 		if s.Status != Idle || s.Prompt != nil || !v.NudgedAt.IsZero() || starting {
 			return nil
 		}
-		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict %s --pass or --fail with a --finding for each concrete gap.", g.Shown(), g.Shown())
+		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict --pass or --fail with a --finding for each concrete gap.", g.Shown())
 		if err := c.tell(b, v.Session, text, false); err != nil {
 			return err
 		}
@@ -198,8 +198,16 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 	return nil
 }
 
-// RecordVerdict takes the verdict of goal's verifier, which only the verifier session itself may give.
+// RecordVerdict takes the verdict of goal's verifier, which only the verifier session itself may give; an empty goal is the one that
+// session is checking.
 func (c *Core) RecordVerdict(session, goal, verdict string, findings []string) (Verification, error) {
+	if goal == "" {
+		id, err := c.Store.verifierGoal(session, c.Resolve(session))
+		if err != nil {
+			return Verification{}, err
+		}
+		goal = id
+	}
 	g, err := c.GoalByRef(goal)
 	if err != nil {
 		return Verification{}, err
@@ -461,8 +469,7 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	sb.WriteString("- Read only: do not edit, commit, push, merge, comment, or message anyone. Running tests, builds and the program to check behaviour is fine.\n")
 	sb.WriteString("- Check every part of the ask, not only what the summary mentions. A part not done, done differently than asked, or not shown to work is a failure.\n")
 	sb.WriteString("- A pull request marked as someone else's to land is context: whether it merged or has open threads is never a reason to fail.\n")
-	// A rename while it checks must not strand the one command a verifier has to run.
-	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.ID, g.ID)
+	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict --pass --finding \"<what you checked>\"\n  ym goal verdict --fail --finding \"<concrete gap>\" --finding \"<another>\"\n")
 	sb.WriteString("  Each finding is one concrete, checkable line: what is missing or wrong, and where.\n")
 	sb.WriteString("- Then stop. ym ends this session.")
 	return sb.String()

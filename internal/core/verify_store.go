@@ -224,6 +224,16 @@ func (s *Store) Verifications(goal string) ([]Verification, error) {
 	return out, rows.Err()
 }
 
+// verifierGoal is the goal the session, by either id, is verifying now.
+func (s *Store) verifierGoal(session, resolved string) (string, error) {
+	var goal string
+	err := s.db.QueryRow(`SELECT goal FROM ym_goal_verifications WHERE verdict = '' AND verifier_session IN (?, ?) ORDER BY num DESC LIMIT 1`, session, resolved).Scan(&goal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("session %s is verifying no goal: %w", Short(session), ErrNotFound)
+	}
+	return goal, err
+}
+
 // OpenVerification is goal's undecided attempt.
 func (s *Store) OpenVerification(goal string) (Verification, error) {
 	v, err := scanVerification(s.db.QueryRow(`SELECT `+verificationCols+` FROM ym_goal_verifications WHERE goal = ? AND verdict = '' ORDER BY num DESC LIMIT 1`, goal))

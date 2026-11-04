@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -1233,5 +1234,40 @@ func TestAFullDoLineDrawsWholeOnTheBoardAsOnTheOtherSurfaces(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAChiefsItemDetailShowsNoIdAsItsRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope, want string
+		shows             bool
+	}{
+		{"a chief's workspace", "/state/chiefs/mgr2", "mgr2", false},
+		{"a repository", "/src/august/.git", "august", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _, _ := setup(t)
+			m = refresh(t, m)
+			m.width = 120
+			it := core.Item{Seq: 7, ID: "D1", Kind: core.KindDecision, State: core.ItemOpen, Question: "which way?", Scope: tc.scope}
+			m.why = &it
+			v := ansi.Strip(m.whyView())
+			if got := strings.Contains(v, tc.want); got != tc.shows {
+				t.Fatalf("shows %q %v, want %v:\n%s", tc.want, got, tc.shows, v)
+			}
+		})
+	}
+}
+
+func TestARelayRowNamesWhatItCarries(t *testing.T) {
+	m, _, _ := setup(t)
+	m.board.Org.Managers = map[string]core.Manager{"box/mgr51": {ID: "box/mgr51", Name: "far-chief", Host: "box"}}
+	body, err := json.Marshal(map[string]any{"args": []string{"goal", "send", "--relayed", "mgr51", "hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := m.shownRelay(core.Relay{Kind: core.RelayYM, Dest: "box", Body: string(body)})
+	if got != "ym goal send --relayed far-chief hello" {
+		t.Fatalf("relay row reads %q", got)
 	}
 }

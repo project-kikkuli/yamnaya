@@ -262,7 +262,7 @@ func TestAnotherHostsGoalsJoinTheBoardsTreeAndTheOwnerSteersThemThere(t *testing
 		{func() error { return w.core.Attach("box/mgr1", "") }, "box chief detach mgr1"},
 		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", Owner); return err }, "box goal steer --text ship it smaller mgr1"},
 		{func() error { _, err := w.core.SteerContext(b, "box/mgr1", "ship it smaller", chief.ID); return err },
-			"box goal steer --text ship it smaller --by a/" + chief.ID + " mgr1"},
+			"box goal steer --text ship it smaller --by a/" + chief.ID + " --by-name platform mgr1"},
 	} {
 		r.ran = nil
 		if err := act.do(); err != nil {

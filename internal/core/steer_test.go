@@ -394,6 +394,8 @@ func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoe
 			case "--by":
 				i++
 				by = args[i]
+			case "--by-name":
+				i++
 			default:
 				ref = args[i]
 			}
@@ -461,6 +463,8 @@ func steerRunner(t *testing.T, w *orgWorld) func(args ...string) (string, error)
 			case "--by":
 				i++
 				by = args[i]
+			case "--by-name":
+				i++
 			default:
 				ref = args[i]
 			}

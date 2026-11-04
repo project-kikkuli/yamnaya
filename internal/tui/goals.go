@@ -899,6 +899,9 @@ func (m Model) steerPlan(id string) tea.Cmd {
 			return doneMsg{"", err}
 		}
 		st, err := c.SteerContext(b, mg.ID, text, core.Owner)
+		if st.Sent {
+			return doneMsg{"new plan for " + mg.Ref() + " sent to its host; the result comes back to you", err}
+		}
 		return doneMsg{fmt.Sprintf("%s steered to revision %d; it shows unadopted until its manager adopts it", mg.Shown(), st.Revision), err}
 	})
 }
@@ -982,6 +985,9 @@ func (m Model) pickLabel() string {
 	}
 	return "new " + m.newL.Harness + " session, repository"
 }
+
+// shownRelay is what a relay carries as a person reads it: by the names the board has for the host it goes to.
+func (m Model) shownRelay(r core.Relay) string { return m.board.Org.NameIDs(r.Dest, relayWhat(r)) }
 
 // relayWhat names what a relay carries, as its owner would recognize it.
 func relayWhat(r core.Relay) string {
