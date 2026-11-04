@@ -60,6 +60,11 @@ func (l launcher) prepareProfilePort(s core.Session, to, id string) (core.PortPl
 	if err = target.ValidateSubscription(s.Cwd); err != nil {
 		return core.PortPlan{}, err
 	}
+	if to == "claude" {
+		if err = launch.EnsureOnboardingComplete(target.Root, target.Explicit); err != nil {
+			return core.PortPlan{}, err
+		}
+	}
 	cs := os.Getenv("YAMNAYA_CS_BIN")
 	if cs == "" {
 		cs, err = exec.LookPath("cs")

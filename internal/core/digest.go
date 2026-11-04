@@ -439,7 +439,7 @@ func (s *Store) rewriteMessage(seq int64, text string) error {
 // busyTold reports whether told already reached s in the turn it is taking, or s cannot take a message now. A hung session is taking
 // no turn, and no event but this message reaches a hung manager.
 func (c *Core) busyTold(s Live, told time.Time) bool {
-	return s.Status == Waiting || s.Prompt != nil || s.Status == Busy && !s.Hung(c.now(), c.Woke) && told.After(s.Since)
+	return s.Status == Waiting || s.Status == Onboarding || s.Prompt != nil || s.Status == Busy && !s.Hung(c.now(), c.Woke) && told.After(s.Since)
 }
 
 // flushDigest hands a chief what waits for it. New content goes into a digest still pending; a session mid-turn gets at most one,

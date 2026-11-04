@@ -1,25 +1,26 @@
 package claude
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/project-kikkuli/yamnaya/internal/harness/screen"
 )
 
-// onboardingSteps are the screens of Claude Code's first-run onboarding, each told apart by lines only it draws.
+// onboardingSteps are the screens Claude Code draws before its prompt. A step shows when lines appear in order as whole lines,
+// wrapped or not, and the screen's last line starts with last, so text quoted in a conversation or dialog does not read as one.
 var onboardingSteps = []struct {
 	step  string
 	lines []string
+	last  string
 }{
-	{"theme", []string{"Let's get started.", "Choose the text style that looks best with your terminal"}},
-	{"api key", []string{"Detected a custom API key in your environment", "Do you want to use this API key?"}},
-	{"login", []string{"Select login method:", "Claude account with subscription"}},
-	{"security notes", []string{"Security notes:", "Press Enter to continue"}},
-	{"terminal setup", []string{"Use Claude Code's terminal setup?", "No, maybe later with /terminal-setup"}},
-	{"chrome", []string{"Requires the Chrome extension.", "Enter to confirm · Esc to cancel"}},
+	{"theme", []string{"Let's get started.", "Choose the text style that looks best with your terminal"}, ""},
+	{"api key", []string{"Detected a custom API key in your environment", "Do you want to use this API key?"}, "Enter to confirm"},
+	{"login", []string{"Select login method:"}, ""},
+	{"login", nil, "Paste code here if prompted >"},
+	{"login", nil, "Login successful. Press"},
+	{"security notes", []string{"Security notes:"}, "Press Enter to continue"},
+	{"terminal setup", []string{"Use Claude Code's terminal setup?"}, "Enter to confirm"},
+	{"chrome", []string{"Claude in Chrome"}, "Enter to confirm"},
 }
 
 // Onboarding reports the first-run onboarding step the screen shows, which hides the input box until the owner finishes it.
@@ -30,52 +31,49 @@ func ParseOnboarding(text string) (string, bool) {
 		return "", false
 	}
 	lines := screen.Lines(text)
+	if len(lines) == 0 || screen.Index(lines, conversationLine) >= 0 {
+		return "", false
+	}
 	for _, s := range onboardingSteps {
-		all := true
-		for _, want := range s.lines {
-			if !screen.Has(lines, want) {
-				all = false
-				break
-			}
-		}
-		if all {
+		if strings.HasPrefix(lines[len(lines)-1], s.last) && inOrder(lines, s.lines) {
 			return s.step, true
 		}
 	}
 	return "", false
 }
 
-// onboardingState is what the config file last said about onboarding, kept until the file changes.
-type onboardingState struct {
-	size     int64
-	modified time.Time
-	read     bool
-	done     bool
+// conversationLine is a line only Claude Code's conversation view draws: tool output or the header above it.
+func conversationLine(l string) bool {
+	return strings.HasPrefix(l, "⎿") || strings.HasPrefix(l, "▐▛")
 }
 
-// onboarded reports whether the config marks first-run onboarding done; until it does, every session started on it opens on
-// the onboarding screens, so its screen is worth reading.
-func (a *Adapter) onboarded() bool {
-	path := a.Config
-	if path == "" {
-		path = filepath.Join(a.Dir, ".claude.json")
-	}
-	info, err := a.stat(path)
-	a.files.Lock()
-	defer a.files.Unlock()
-	was := a.setup
-	switch {
-	case err != nil:
-		a.setup = onboardingState{read: true}
-	case !was.read || was.size != info.Size() || !was.modified.Equal(info.ModTime()):
-		var c struct {
-			Done bool `json:"hasCompletedOnboarding"`
+// inOrder reports whether each wanted line appears after the one before, whole, across as many screen lines as it wraps to.
+func inOrder(lines, wanted []string) bool {
+	from := 0
+	for _, want := range wanted {
+		next := -1
+		for i := from; i < len(lines) && next < 0; i++ {
+			next = wrappedAt(lines, i, want)
 		}
-		b, rerr := os.ReadFile(path)
-		a.setup = onboardingState{size: info.Size(), modified: info.ModTime(), read: true, done: rerr == nil && json.Unmarshal(b, &c) == nil && c.Done}
+		if next < 0 {
+			return false
+		}
+		from = next
 	}
-	if was.read && was.done != a.setup.done {
-		a.gen.Add(1)
+	return true
+}
+
+// wrappedAt is the index after want when it starts at lines[i], -1 when it does not.
+func wrappedAt(lines []string, i int, want string) int {
+	got := ""
+	for ; i < len(lines) && len(got) < len(want); i++ {
+		got = strings.TrimSpace(got + " " + lines[i])
+		if !strings.HasPrefix(want, got) {
+			return -1
+		}
 	}
-	return a.setup.done
+	if got != want {
+		return -1
+	}
+	return i
 }

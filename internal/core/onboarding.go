@@ -6,21 +6,18 @@ import (
 )
 
 // onboard marks l Onboarding when its harness asked for a screen check and the screen shows the harness's first-run setup.
-func onboard(l *Live, hn Harness, host Host, h Handle) bool {
+func onboard(l *Live, hn Harness, host Host, h Handle) {
 	o, ok := hn.(Onboarder)
 	if !ok || !l.CheckScreen {
-		return false
+		return
 	}
 	screen, err := host.Screen(h)
 	if err != nil {
-		return false
+		return
 	}
-	step, ok := o.Onboarding(screen)
-	if !ok {
-		return false
+	if step, ok := o.Onboarding(screen); ok {
+		l.Status, l.WaitingFor = Onboarding, step
 	}
-	l.Status, l.WaitingFor = Onboarding, step
-	return true
 }
 
 // noticeOnboarding tells the manager of each agent held on first-run onboarding, once per process.

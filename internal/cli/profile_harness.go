@@ -10,7 +10,6 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
-	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -60,7 +59,6 @@ func (h *profileHarness) all() ([]profile.Profile, map[string]core.Harness) {
 			if h.name == claude.Name {
 				cl := claude.New()
 				cl.Dir = p.Root
-				cl.Config, _ = launch.ClaudeConfigFile(p.Root, p.Explicit)
 				cl.Cache = h.cache
 				a = cl
 			} else {

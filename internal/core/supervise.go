@@ -270,7 +270,7 @@ func (c *Core) lastMoved(act activity, m Manager) time.Time {
 		}
 	}
 	for _, s := range act.sessions[m.ID] {
-		if (s.Status == Busy && !s.Hung(now, c.Woke)) || s.Status == Waiting {
+		if (s.Status == Busy && !s.Hung(now, c.Woke)) || s.Status == Waiting || s.Status == Onboarding {
 			return now
 		}
 		seen(s.lastActive())

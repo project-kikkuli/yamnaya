@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
 func TestPreparingARecordFinishesOnboardingAndKeepsTheRestOfTheConfig(t *testing.T) {
@@ -91,6 +93,107 @@ func TestPreparingARecordFinishesOnboardingAndKeepsTheRestOfTheConfig(t *testing
 				}
 			})
 		}
+	}
+}
+
+func TestConfigsThatAreNotAnObjectNeverPanic(t *testing.T) {
+	for _, c := range []struct {
+		name, config string
+		wantErr      bool
+	}{
+		{"literal null", `null`, false},
+		{"null projects", `{"projects":null,"userID":"kept"}`, false},
+		{"null project", `{"projects":{"/elsewhere":null},"userID":"kept"}`, false},
+		{"truncated", `{"userID":`, true},
+		{"array", `[]`, true},
+		{"projects an array", `{"projects":[]}`, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, ".claude.json")
+			if err := os.WriteFile(path, []byte(c.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := prepareRecord(launch.Record{Harness: claude.Name, ConfigRoot: root, ConfigExplicit: true, Worktree: launch.Worktree{Path: t.TempDir()}})
+			if c.wantErr {
+				if err == nil || !strings.Contains(err.Error(), path) {
+					t.Fatalf("err = %v; want it to name %s", err, path)
+				}
+				if data, _ := os.ReadFile(path); string(data) != c.config {
+					t.Fatalf("malformed config rewritten: %s", data)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(path)
+			if !strings.Contains(string(data), `"hasCompletedOnboarding": true`) || strings.Contains(c.config, "kept") != strings.Contains(string(data), "kept") {
+				t.Fatalf("config %s", data)
+			}
+		})
+	}
+}
+
+func TestPortingToAClaudeProfileFinishesItsOnboarding(t *testing.T) {
+	for _, c := range []struct {
+		name, to string
+		done     bool
+	}{
+		{"onto_claude", "claude", true},
+		{"onto_codex", "codex", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			state, bins := t.TempDir(), t.TempDir()
+			t.Setenv("YAMNAYA_STATE_DIR", state)
+			t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
+			script := "#!/bin/sh\nprintf '%s\\n' '{\"loggedIn\":true,\"authMethod\":\"claude.ai\"}'\n"
+			for _, name := range []string{"claude", "codex", "cs", "python3"} {
+				if err := os.WriteFile(filepath.Join(bins, name), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("YAMNAYA_CS_BIN", filepath.Join(bins, "cs"))
+			from := map[string]string{"claude": "codex", "codex": "claude"}[c.to]
+			a := profile.Profile{Harness: from, ID: "a", Root: t.TempDir(), Explicit: true}
+			b := profile.Profile{Harness: c.to, ID: "b", Root: t.TempDir(), Explicit: true}
+			for _, p := range []profile.Profile{a, b} {
+				if err := profile.Add(state, p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a.Root, b.Root = physicalProfileRoot(a.Root), physicalProfileRoot(b.Root)
+			subscriptionIdentity(t, &b)
+			rel, data := filepath.Join("projects", "p", profileConversation+".jsonl"), profileResponse(from, time.Now().UTC().Format(time.RFC3339Nano), "first", 100, 20)
+			if from == "codex" {
+				rel = filepath.Join("sessions", "rollout-2026-10-23T10-00-00-"+profileConversation+".jsonl")
+				data = profileMeta(profileConversation, "", 0) + data
+			}
+			putProfileFile(t, filepath.Join(a.Root, rel), data)
+			if c.to == "codex" {
+				db, err := sql.Open("sqlite", filepath.Join(b.Root, "state_5.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer db.Close()
+				if _, err := db.Exec(`CREATE TABLE threads(id, rollout_path, created_at, updated_at, source, model_provider, cwd, title, sandbox_policy, approval_mode, tokens_used, has_user_event, archived, cli_version, first_user_message, memory_mode, created_at_ms, updated_at_ms, thread_source, preview, recency_at, recency_at_ms, history_mode)`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l := testLauncher(t, state)
+			plan, err := l.prepareProfilePort(core.Session{Harness: from, ID: profileConversation, Profile: "a", ConfigRoot: a.Root, Cwd: t.TempDir()}, c.to, "b")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer plan.Close()
+			config, err := os.ReadFile(filepath.Join(b.Root, ".claude.json"))
+			if c.done && (!strings.Contains(string(config), `"hasCompletedOnboarding": true`) || !strings.Contains(string(config), "fixture-user")) {
+				t.Fatalf("config %s, %v; want onboarding done and the login kept", config, err)
+			}
+			if !c.done && !os.IsNotExist(err) {
+				t.Fatalf("a codex port wrote Claude config: %s, %v", config, err)
+			}
+		})
 	}
 }
 

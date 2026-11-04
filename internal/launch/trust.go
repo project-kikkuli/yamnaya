@@ -3,6 +3,7 @@ package launch
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,7 +44,10 @@ func trustClaudeAt(path, dir string) error {
 		projects := map[string]map[string]json.RawMessage{}
 		if raw, ok := config["projects"]; ok {
 			if err := json.Unmarshal(raw, &projects); err != nil {
-				return false, err
+				return false, fmt.Errorf("%s: projects: %w", path, err)
+			}
+			if projects == nil {
+				projects = map[string]map[string]json.RawMessage{}
 			}
 		}
 		changed := false
@@ -89,7 +93,10 @@ func updateClaudeConfig(path string, change func(config map[string]json.RawMessa
 	}
 	if len(data) > 0 {
 		if err := json.Unmarshal(data, &config); err != nil {
-			return err
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if config == nil {
+			config = map[string]json.RawMessage{}
 		}
 	}
 	changed, err := change(config)

@@ -26,9 +26,7 @@ const Name = "claude"
 const staleAfter = 15 * time.Minute
 
 type Adapter struct {
-	Dir string
-	// Config is the .claude.json Claude Code reads beside Dir; "" means Dir's own.
-	Config string
+	Dir    string
 	Bin    string
 	Cwd    func(pid int) string
 	Now    func() time.Time
@@ -61,21 +59,19 @@ type Adapter struct {
 	files    sync.Mutex
 	listings map[string]listing
 	jsons    map[string]jsonFile
-	setup    onboardingState
 }
 
 func New() *Adapter {
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
-	config := ""
 	if dir == "" {
 		home, _ := os.UserHomeDir()
-		dir, config = filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")
+		dir = filepath.Join(home, ".claude")
 	}
 	bin := os.Getenv("YAMNAYA_CLAUDE_BIN")
 	if bin == "" {
 		bin = "claude"
 	}
-	return &Adapter{Dir: dir, Config: config, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: managedSettings(runtime.GOOS)}
+	return &Adapter{Dir: dir, Bin: bin, Cwd: proc.Cwd, Now: time.Now, ManagedSettings: managedSettings(runtime.GOOS)}
 }
 
 // managedSettings is the file Claude Code reads the organization's settings from on goos.
@@ -242,12 +238,6 @@ func (a *Adapter) Discover(procs []proc.Proc) []core.Session {
 		}
 	}
 	a.kept = next
-	pending := !a.onboarded()
-	for i := range out {
-		// A session with no state file yet may sit on a modal that comes before it writes one.
-		_, stated := a.state(out[i].PID)
-		out[i].CheckScreen = pending || !stated
-	}
 	return out
 }
 
@@ -364,7 +354,8 @@ type found struct {
 }
 
 func (a *Adapter) readFresh(p proc.Proc, st state, ok bool, now time.Time) core.Session {
-	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY}
+	// Claude Code writes its state file once its prompt is up, so only a process without one can sit on a setup screen.
+	s := core.Session{Harness: Name, PID: p.PID, TTY: p.TTY, CheckScreen: !ok}
 	if ok {
 		s.ID, s.Cwd, s.Background = st.SessionID, st.Cwd, st.Kind == "bg"
 	} else {

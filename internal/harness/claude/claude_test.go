@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,6 +312,13 @@ func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
 		{"claude-onboarding-security", "security notes", false},
 		{"claude-onboarding-terminal-setup", "terminal setup", false},
 		{"claude-onboarding-chrome", "chrome", false},
+		{"claude-onboarding-chrome-50-cols", "chrome", false},
+		{"claude-onboarding-oauth", "login", false},
+		{"claude-onboarding-theme-50-cols", "theme", false},
+		{"claude-onboarding-api-key-40-cols", "api key", false},
+		{"claude-onboarding-security-40-cols", "security notes", false},
+		{"claude-quoted-security-help", "", false},
+		{"claude-quoted-security-resume", "", false},
 		{"claude-idle", "", false},
 		{"claude-busy-pasted", "", false},
 		{"claude-bash", "", true},
@@ -327,31 +335,40 @@ func TestOnboardingScreensAreToldApartFromPromptsAndIdle(t *testing.T) {
 			}
 		})
 	}
+	withExtension := strings.ReplaceAll(dialog(t, "claude-onboarding-chrome"), "Requires the Chrome extension. Get started at https://claude.ai/chrome", "")
+	if step, ok := ParseOnboarding(withExtension); step != "chrome" || !ok {
+		t.Errorf("Chrome modal without its install line, as the bundle draws it once the extension is installed: %q, %v", step, ok)
+	}
+	if step, ok := ParseOnboarding("Logged in as me@example.com\n\nLogin successful. Press Enter to continue…\n"); step != "login" || !ok {
+		t.Errorf("login success screen, from the bundle's text: %q, %v", step, ok)
+	}
 	if step, ok := ParseOnboarding(dialog(t, "claude-onboarding-security") + dialog(t, "claude-idle")); ok {
 		t.Errorf("security notes scrolled above a live input box read as onboarding %q", step)
 	}
 }
 
-func TestSessionsOnAProfileNotOnboardedAskForAScreenCheck(t *testing.T) {
+func TestOnlyASessionWithoutItsStateFileAsksForAScreenCheck(t *testing.T) {
+	const state = `{"pid":4242,"sessionId":"s1","cwd":"/repo","status":"idle"}`
 	for _, c := range []struct {
 		name   string
 		config string
-		pid    int
+		state  bool
 		check  bool
 	}{
-		{"absent", "", 102, true},
-		{"theme null and no flag", `{"theme":null}`, 102, true},
-		{"reset by a login change", `{"hasCompletedOnboarding":false}`, 102, true},
-		{"done", `{"hasCompletedOnboarding":true}`, 102, false},
-		{"done but no state file, as behind the Chrome modal", `{"hasCompletedOnboarding":true}`, 4242, true},
+		{"on setup, flag never written", `{"theme":null}`, false, true},
+		{"on setup, another start wrote the flag", `{"hasCompletedOnboarding":true}`, false, true},
+		{"at its prompt", `{"hasCompletedOnboarding":true}`, true, false},
+		{"at its prompt, login change reset the flag", `{"hasCompletedOnboarding":false}`, true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a := fixture(t)
-			a.Config = filepath.Join(t.TempDir(), ".claude.json")
-			if c.config != "" {
-				must(t, os.WriteFile(a.Config, []byte(c.config), 0o600))
+			a.Dir = t.TempDir()
+			must(t, os.WriteFile(filepath.Join(a.Dir, ".claude.json"), []byte(c.config), 0o600))
+			if c.state {
+				must(t, os.MkdirAll(filepath.Join(a.Dir, "sessions"), 0o700))
+				must(t, os.WriteFile(filepath.Join(a.Dir, "sessions", "4242.json"), []byte(state), 0o600))
 			}
-			ss := a.Discover([]proc.Proc{p(c.pid, "claude", "--session-id", "s1")})
+			ss := a.Discover([]proc.Proc{p(4242, "claude", "--session-id", "s1")})
 			if len(ss) != 1 || ss[0].CheckScreen != c.check {
 				t.Fatalf("Discover = %+v; want CheckScreen %v", ss, c.check)
 			}

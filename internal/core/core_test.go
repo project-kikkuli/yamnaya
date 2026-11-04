@@ -64,7 +64,8 @@ func (f *fakeHarness) ParsePrompt(screen string) (Prompt, bool) {
 }
 func (f *fakeHarness) Composer(screen string) (string, bool) { return strings.CutPrefix(screen, "> ") }
 func (f *fakeHarness) Onboarding(screen string) (string, bool) {
-	return strings.CutPrefix(screen, "SETUP ")
+	_, step, ok := strings.Cut(screen, "SETUP ")
+	return step, ok
 }
 
 type fakeHost struct {
@@ -81,6 +82,8 @@ type fakeHost struct {
 	// readErr is tmux failing to list its panes; ours marks ym's own server.
 	readErr error
 	ours    bool
+	// reads counts screen reads.
+	reads int
 }
 
 func (f *fakeHost) Name() string { return f.name }
@@ -119,6 +122,7 @@ func (f *fakeHost) Enter(h Handle) error {
 	return nil
 }
 func (f *fakeHost) Screen(h Handle) (string, error) {
+	f.reads++
 	if s, ok := f.screens[h.ID]; ok {
 		return s, nil
 	}

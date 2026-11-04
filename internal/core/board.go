@@ -491,7 +491,7 @@ func (c *Core) Board() (Board, error) {
 		}
 		if host != nil {
 			l.Handle, l.Ours = &h, ours(host)
-			if !onboard(&l, harnessOf[s.Harness], host, h) && (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
+			if (l.Status == Waiting || l.CheckScreen) && l.Prompt == nil {
 				l.Prompt = c.prompts.on(l.Session, h, b.At, func() *Prompt {
 					if screen, err := host.Screen(h); err == nil {
 						if hn := harnessOf[s.Harness]; hn != nil {
@@ -502,6 +502,9 @@ func (c *Core) Board() (Board, error) {
 					}
 					return nil
 				})
+			}
+			if l.Prompt == nil {
+				onboard(&l, harnessOf[s.Harness], host, h)
 			}
 		}
 		b.Sessions = append(b.Sessions, l)

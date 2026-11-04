@@ -117,7 +117,7 @@ func (c *Crew) add(s core.Status, cut bool) {
 		return
 	}
 	c.Dispatched++
-	if s != core.Busy && s != core.Waiting {
+	if s != core.Busy && s != core.Waiting && s != core.Onboarding {
 		c.Finished++
 	}
 }

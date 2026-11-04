@@ -513,7 +513,7 @@ func (c *Core) inFlight(b Board, o Org, m Manager) bool {
 			continue
 		}
 		starting := s.Status == Unknown && s.PID > 0 && s.Result == ""
-		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting || starting) && !s.Hung(c.now(), c.Woke) {
+		if s.Key() != m.Session && (s.Status == Busy || s.Status == Waiting || s.Status == Onboarding || starting) && !s.Hung(c.now(), c.Woke) {
 			return true
 		}
 		for _, member := range s.Crew {

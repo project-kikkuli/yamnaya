@@ -594,7 +594,7 @@ func sessionCounts(sessions []core.Live) string {
 		counts[s.Status]++
 	}
 	var parts []string
-	for _, st := range []core.Status{core.Waiting, core.Busy, core.Idle} {
+	for _, st := range []core.Status{core.Waiting, core.Onboarding, core.Busy, core.Idle} {
 		if counts[st] > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", counts[st], st))
 		}
