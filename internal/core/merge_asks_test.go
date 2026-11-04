@@ -571,9 +571,9 @@ func TestAClosedRowAnswersWithItsWordsAndAnOpenedRowWithItsRec(t *testing.T) {
 		do     func(*Core, Board, Need) (string, error)
 		answer string
 	}{
-		{"decision, check mark", item(KindDecision), (*Core).DoCheck, "Use CAS"},
+		{"decision, check mark", item(KindDecision), (*Core).DoCheck, "Yes: Use CAS"},
 		{"decision, opened row", item(KindDecision), (*Core).DoAccept, "use CAS because the rest was tried"},
-		{"default, check mark", item(KindDefault), (*Core).DoCheck, "Use CAS"},
+		{"default, check mark", item(KindDefault), (*Core).DoCheck, "Yes: Use CAS"},
 		{"default, opened row", item(KindDefault), (*Core).DoAccept, "use CAS because the rest was tried"},
 		{"go, check mark", item(KindGo), (*Core).DoCheck, GoAhead},
 		{"go, opened row", item(KindGo), (*Core).DoAccept, GoAhead},

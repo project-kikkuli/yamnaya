@@ -633,7 +633,7 @@ func TestAnOpenedRowsFormsActThroughTheSamePathsAndGuards(t *testing.T) {
 		{name: "later takes only its three", row: chore, route: "/later/", form: url.Values{"when": {"forever"}}, want: http.StatusBadRequest, state: core.ItemOpen},
 		{name: "later snoozes a pull request row", row: "repo#1", route: "/later/", form: url.Values{"when": {"tonight"}}, want: http.StatusSeeOther, pr: true},
 		{name: "accept answers with the rec on show", row: decision, route: "/accept/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "the long rec"},
-		{name: "the check mark answers with the row's words", row: decision, route: "/do/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: decision},
+		{name: "the check mark answers with the row's words", row: decision, route: "/do/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "Yes: " + decision},
 		{name: "another port does nothing", row: chore, route: "/done/", origin: "http://127.0.0.1:9999", want: http.StatusForbidden, state: core.ItemOpen},
 		{name: "a wrong token does nothing", row: chore, route: "/reply/", form: url.Values{"text": {"x"}}, badToken: true, want: http.StatusForbidden, state: core.ItemOpen},
 		{name: "a row changed since the page does nothing", row: chore, route: "/done/", want: http.StatusConflict, state: core.ItemOpen, stale: func(t *testing.T, w *doWorld, it core.Item) {

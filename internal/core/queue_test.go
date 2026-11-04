@@ -484,8 +484,8 @@ func TestTheCheckMarkAnswersThroughTheItemPaths(t *testing.T) {
 		item         Item
 	}{
 		{"go", GoAhead, Item{Kind: KindGo, Question: "build?", Rec: "yes"}},
-		{"a check mark answers with the words on the row", "Use CAS", Item{Kind: KindDecision, Question: "store?", Rec: "a long unread rec", DoLine: "Use CAS", Options: picks}},
-		{"a default's too", "Use CAS", Item{Kind: KindDefault, Question: "store?", Rec: "a long unread rec", DoLine: "Use CAS"}},
+		{"a check mark answers yes to the words on the row", "Yes: Use CAS", Item{Kind: KindDecision, Question: "store?", Rec: "a long unread rec", DoLine: "Use CAS", Options: picks}},
+		{"a default's too", "Yes: Use CAS", Item{Kind: KindDefault, Question: "store?", Rec: "a long unread rec", DoLine: "Use CAS"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)

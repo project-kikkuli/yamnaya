@@ -369,7 +369,7 @@ func (n Need) Accept() Check {
 // DoCheck carries out what a closed row's check mark says: a decision answers with the words the owner read, never a rec they did not.
 func (c *Core) DoCheck(b Board, n Need) (string, error) {
 	if n.Check() == CheckAccept {
-		it, d, err := c.Answer(b, n.Item.Key(), n.Item.DoLine)
+		it, d, err := c.Answer(b, n.Item.Key(), "Yes: "+n.Item.DoLine)
 		return it.ID + " answered as its row reads, " + d.String(), err
 	}
 	return c.actOnRow(b, n, n.Check())
