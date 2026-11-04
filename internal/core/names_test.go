@@ -1251,9 +1251,15 @@ func TestNameArgsRenamesRefsAndLeavesAPersonsWords(t *testing.T) {
 		{"box", []string{"goal", "send", "--relayed", "mgr51", "see goal3 and mgr51 too"}, "goal send --relayed far-chief see goal3 and mgr51 too"},
 		{"box", []string{"goal", "send", "mgr51", "mgr51"}, "goal send far-chief mgr51"},
 		{"box", []string{"goal", "close", "goal3", "--as", "abandoned", "--why", "goal3"}, "goal close fix-export --as abandoned --why goal3"},
-		{"box", []string{"goal", "steer", "--text", "mgr51", "--by", "home/mgr2", "goal3"}, "goal steer --text mgr51 --by home/mgr2 fix-export"},
-		{"box", []string{"goal", "relaunch", "mgr99"}, "goal relaunch mgr99"},
-		{"far", []string{"goal", "relaunch", "mgr51"}, "goal relaunch mgr51"},
+		{"box", []string{"goal", "steer", "--text", "mgr51", "--by", "home/mgr2", "--by-name", "ops-lead", "goal3"}, "goal steer --text mgr51 fix-export"},
+		{"box", []string{"goal", "done", "--summary", "goal3", "--evidence", "mgr51"}, "goal done --summary goal3 --evidence mgr51"},
+		{"box", []string{"item", "add", "--question", "goal3", "--rec", "mgr51", "--do", "mgr51"}, "item add --question goal3 --rec mgr51 --do mgr51"},
+		{"box", []string{"goal", "goal3", "--name", "mgr51"}, "goal goal3 --name mgr51"},
+		{"box", []string{"goal", "--repo", "app", "--", "goal3"}, "goal --repo app -- goal3"},
+		{"box", []string{"goal", "list", "--under", "mgr51"}, "goal list --under far-chief"},
+		{"box", []string{"kill", "--yes", "goal3"}, "kill --yes fix-export"},
+		{"box", []string{"goal", "relaunch", "mgr99"}, "goal relaunch chief on box"},
+		{"far", []string{"goal", "relaunch", "mgr51"}, "goal relaunch chief on far"},
 		{"", []string{"goal", "relaunch", "mgr7"}, "goal relaunch here-chief"},
 	} {
 		if got := strings.Join(o.NameArgs(tc.host, tc.args), " "); got != tc.want {
@@ -1398,5 +1404,112 @@ func TestAPromptNamesItsChiefOnceAndNeverItsOwnId(t *testing.T) {
 	paths := regexp.MustCompile(`\S*/(chiefs|goals)/\S+`)
 	if ids := regexp.MustCompile(`\b(goal|mgr)[0-9]+\b`).FindAllString(paths.ReplaceAllString(prompt.String(), ""), -1); len(ids) != 0 {
 		t.Fatalf("prompts show ids %v outside paths:\n%s", ids, prompt.String())
+	}
+}
+
+func TestWhatARelayedCommandTellsARequesterShowsNoIds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ref  RelayRef
+		args []string
+		want []string
+		item bool
+	}{
+		{name: "it ran", ref: RelayRef{Output: "closed it"},
+			args: []string{"goal", "close", "goal3", "--as", "abandoned", "--why", "goal3", "--by", "home/mgr2"},
+			want: []string{"ym: ym goal close far-goal --as abandoned --why goal3 on box: closed it"}},
+		{name: "it failed, with the far command in its text", ref: RelayRef{Error: "ym goal steer --text mgr51 --by home/mgr2 mgr51 --by-name ops-lead: exit status 3: no such goal"},
+			args: []string{"goal", "steer", "--text", "mgr51", "--by", "home/mgr2", "mgr51"},
+			want: []string{"ym: ym goal steer --text mgr51 far-chief on box failed: exit status 3: no such goal"}},
+		{name: "it failed, the far ym naming only its command", ref: RelayRef{Error: "ym goal steer: exit status 3: no such goal"},
+			args: []string{"goal", "steer", "--text", "plan", "--by", "home/mgr2", "mgr51"},
+			want: []string{"ym goal steer --text plan far-chief on box failed: exit status 3: no such goal"}},
+		{name: "refused for good", ref: RelayRef{Final: true, Error: "ym goal close goal3 --as abandoned --why x --by home/mgr2 --by-name ops-lead: exit status 3: gone"},
+			args: []string{"goal", "close", "goal3", "--as", "abandoned", "--why", "x", "--by", "home/mgr2"},
+			want: []string{"ym goal close far-goal --as abandoned --why x on box was refused for good: exit status 3: gone"}, item: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "anything", "/repo/august")
+			w.spawn("a1", m.Session)
+			keepBoard(t, w, "box", Manager{ID: "mgr51", Role: RoleChief, Name: "far-chief"}, Manager{ID: "mgr3", Role: RoleManager, Name: "far-goal", GoalID: "goal3"})
+			raw, err := json.Marshal(map[string]any{"managers": []Manager{{ID: "mgr51", Role: RoleChief, Name: "far-chief"}}, "goals": []Goal{{ID: "goal3", Name: "far-goal"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.Store.KeepBoard("box", time.Now().Add(time.Hour), raw); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(relayYM{Args: tc.args, Requester: m.Session, ByName: "ops-lead"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.tellOutcome(Relay{Seq: 9, Dest: "box", Kind: RelayYM, Body: string(body)}, tc.ref); err != nil {
+				t.Fatal(err)
+			}
+			text := strings.Join(w.handedTo(m.Session), "\n")
+			if tc.item {
+				items, err := w.core.Store.Items(ItemFilter{})
+				if err != nil || len(items) != 1 {
+					t.Fatalf("items %+v, %v", items, err)
+				}
+				text = items[0].Question + "\n" + items[0].Rec + "\n" + strings.Join(items[0].Evidence, "\n")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("told %q, want %q", text, want)
+				}
+			}
+			for _, leak := range []string{"--by", "home/mgr2", "ops-lead"} {
+				if strings.Contains(text, leak) {
+					t.Errorf("told %q, which shows %q", text, leak)
+				}
+			}
+		})
+	}
+}
+
+func TestACloseRefusedOnTheFarHostNamesTheChief(t *testing.T) {
+	for _, tc := range []struct{ name, carried, want string }{
+		{"it came with its name", "ops-lead", "does not report to home/ops-lead"},
+		{"it came with none", "", "does not report to chief on home"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, _ := w.goal(t, "anything", "/repo/august")
+			_, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "x", Author: "home/mgr2", AuthorName: tc.carried})
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "mgr2") {
+				t.Fatalf("err %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAClosureReadsItsChiefByNameInTheEndedList(t *testing.T) {
+	for _, tc := range []struct{ name, actor, want string }{
+		{"an old host's, naming this host's chief", "chief home/LOCAL", "chief boss-chief"},
+		{"another host's chief, name known", "chief peer/mgr51", "chief peer/master"},
+		{"another host's chief, no name", "chief peer/mgr99", "chief on peer"},
+		{"already by name", "chief home/some-chief", "chief home/some-chief"},
+		{"already with no name", "chief on peer", "chief on peer"},
+		{"the owner", "the owner", "the owner"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			if err := w.core.Store.setRelaySelf(RelaySelf{Name: "home"}); err != nil {
+				t.Fatal(err)
+			}
+			boss := w.chief(t, "boss-chief")
+			if err := w.core.Store.noteHostNames(map[string]string{"peer/mgr51": "master"}); err != nil {
+				t.Fatal(err)
+			}
+			o, err := w.core.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := o.ActorShown(strings.ReplaceAll(tc.actor, "LOCAL", boss.ID)); got != tc.want {
+				t.Fatalf("ActorShown = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

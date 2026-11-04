@@ -626,6 +626,9 @@ func (o Org) RefOf(id string) string {
 	if !remote || !idShaped.MatchString(rest) {
 		return id
 	}
+	if host == o.self {
+		return o.RefOf(rest)
+	}
 	if name, ok := o.hostNames[id]; ok {
 		return RemoteKey(host, name)
 	}
@@ -725,9 +728,6 @@ func (c *Core) RefName(id string) string {
 	if err != nil {
 		return id
 	}
-	if host, rest, remote := SplitRemote(id); remote && host == c.SelfName() {
-		id = rest
-	}
 	return o.RefOf(id)
 }
 
@@ -789,28 +789,46 @@ func (c *Core) actorName(author, name string) string {
 	return name
 }
 
-// NameArgs is a ym command for host as a person reads it: each argument that is only an id, known there, as its name. A person's words
-// stay as they wrote them.
+// freeFlags take a person's words, or a value that is no goal or chief, never a ref.
+var freeFlags = fieldSet("--text --why --reason --summary --remit --evidence --question --rec --name --do --tried --option --as --impact --minutes --repo --host")
+
+// NameArgs is a ym command for host as a person reads it: each argument that is only an id as its name, and without --by and --by-name,
+// which are ym's own. A person's words, in a flag's value, an ask or the text of a send, stay as they wrote them. The stored command is
+// not this; it keeps its ids.
 func (o Org) NameArgs(host string, args []string) []string {
-	out := slices.Clone(args)
-	free := map[string]bool{"--text": true, "--why": true, "--reason": true, "--summary": true, "--remit": true, "--by": true, "--by-name": true}
-	last := len(args) - 1
+	var out []string
 	send := len(args) > 1 && args[1] == "send" || len(args) > 0 && args[0] == "send"
-	for i, a := range args {
-		if !idShaped.MatchString(a) || i > 0 && free[args[i-1]] || send && i == last {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return append(out, args[i:]...)
+		case a == "--by" || a == "--by-name":
+			i++
+			continue
+		case strings.HasPrefix(a, "--by=") || strings.HasPrefix(a, "--by-name="):
+			continue
+		case freeFlags[a]:
+			out = append(out, a)
+			if i++; i < len(args) {
+				out = append(out, args[i])
+			}
+			continue
+		}
+		ask := i == 1 && args[0] == "goal"
+		if !idShaped.MatchString(a) || ask || send && i == len(args)-1 {
+			out = append(out, a)
 			continue
 		}
 		ref := a
 		if host != "" {
 			ref = RemoteKey(host, a)
 		}
-		if shown := o.RefOf(ref); !strings.HasPrefix(shown, "chief on ") && !strings.HasPrefix(shown, "goal on ") {
-			_, name, remote := SplitRemote(shown)
-			if !remote {
-				name = shown
-			}
-			out[i] = name
+		shown := o.RefOf(ref)
+		if h, name, remote := SplitRemote(shown); remote && h == host {
+			shown = name
 		}
+		out = append(out, shown)
 	}
 	return out
 }
@@ -820,8 +838,8 @@ func IDShaped(s string) bool { return idShaped.MatchString(s) }
 
 // ActorShown is who a goal's closure says closed it, a chief by its name.
 func (o Org) ActorShown(actor string) string {
-	if id, ok := strings.CutPrefix(actor, "chief "); ok {
-		return "chief " + o.ShownOf(id)
+	if id, ok := strings.CutPrefix(actor, "chief "); ok && !strings.HasPrefix(id, "on ") {
+		return chiefPhrase(o.RefOf(id))
 	}
 	return actor
 }

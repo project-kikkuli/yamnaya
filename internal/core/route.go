@@ -26,6 +26,8 @@ type Org struct {
 	order    []string
 	// hostNames are names other hosts' managers, chiefs and goals were last known by, by host/id.
 	hostNames map[string]string
+	// self is what this host calls itself, so a ref under it reads as this host's own.
+	self string
 }
 
 func (c *Core) LoadOrg() (Org, error) {
@@ -34,7 +36,7 @@ func (c *Core) LoadOrg() (Org, error) {
 	if err != nil {
 		return o, err
 	}
-	o.hostNames = names
+	o.hostNames, o.self = names, c.SelfName()
 	ms, err := c.Store.Managers()
 	if err != nil {
 		return o, err

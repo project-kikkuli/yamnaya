@@ -129,7 +129,7 @@ func runSelf(args ...string) (string, error) {
 	}
 	out, err := exec.Command(self, args...).CombinedOutput()
 	if err != nil {
-		err = fmt.Errorf("ym %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		err = fmt.Errorf("ym %s: %w: %s", core.CommandName(args), err, strings.TrimSpace(string(out)))
 		var exit *exec.ExitError
 		switch {
 		case errors.As(err, &exit) && exit.ExitCode() == exitFinal:

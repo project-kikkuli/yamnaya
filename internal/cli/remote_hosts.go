@@ -300,20 +300,9 @@ func (r *remoteHosts) drop(host string) {
 func (r *remoteHosts) Run(host string, args ...string) (string, error) {
 	out, err := r.call(host, nil, args...)
 	if err != nil {
-		return "", fmt.Errorf("ym %s on %s: %w", commandName(args), host, err)
+		return "", fmt.Errorf("ym %s on %s: %w", core.CommandName(args), host, err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// commandName is the ym command args run, without what it acts on or says.
-func commandName(args []string) string {
-	if len(args) > 1 && (args[0] == "goal" || args[0] == "chief" || args[0] == "item" || args[0] == "project") && !strings.HasPrefix(args[1], "-") {
-		return args[0] + " " + args[1]
-	}
-	if len(args) > 0 {
-		return args[0]
-	}
-	return ""
 }
 
 // Reach runs nothing on host, failing with core.ErrUnreachable when ssh cannot reach it within its connect timeout.

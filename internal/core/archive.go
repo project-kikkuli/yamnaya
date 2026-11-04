@@ -48,7 +48,9 @@ func (b Board) ArchivedGoals() []ArchivedGoal {
 	for _, r := range b.Remotes {
 		for _, g := range r.Goals {
 			if g.Ended() && g.Host == "" {
-				out = append(out, archivedGoal(r.Host, g))
+				a := archivedGoal(r.Host, g)
+				a.Actor = b.Org.ActorShown(a.Actor)
+				out = append(out, a)
 			}
 		}
 	}

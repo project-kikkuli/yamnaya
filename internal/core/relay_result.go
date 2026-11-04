@@ -43,7 +43,7 @@ func (c *Core) noteRelayed(r Relay, out string, err error, ref *RelayRef) error 
 		if errors.Is(err, ErrFinal) {
 			outcome = "refused"
 		}
-		text = what + " " + outcome + ": " + strings.TrimPrefix(err.Error(), "ym "+strings.Join(y.Args, " ")+": ")
+		text = what + " " + outcome + ": " + relayWhy(y, err.Error())
 	}
 	key := fmt.Sprintf("relayed:%s:%d:%s", r.Origin, r.OriginSeq, outcome)
 	if _, _, err := c.RecordGoalEvent(g.ID, kind, text, key); err != nil {
@@ -51,6 +51,31 @@ func (c *Core) noteRelayed(r Relay, out string, err error, ref *RelayRef) error 
 	}
 	ref.Goal, ref.Chief = g.ID, feedChief(o, m)
 	return nil
+}
+
+// relayWhy is what went wrong with a relayed command, without the command as the far ym ran it, which holds ids.
+func relayWhy(y relayYM, text string) string {
+	raw := strings.Join(y.Args, " ")
+	for _, prefix := range []string{"ym " + raw + " --by-name " + y.ByName + ": ", "ym " + raw + ": ", "ym " + CommandName(y.Args) + ": "} {
+		if rest, ok := strings.CutPrefix(text, prefix); ok {
+			return rest
+		}
+	}
+	return text
+}
+
+// CommandName is the ym command args run, without what it acts on or says.
+func CommandName(args []string) string {
+	if len(args) > 1 && (args[0] == "goal" || args[0] == "chief" || args[0] == "item" || args[0] == "project") && !strings.HasPrefix(args[1], "-") {
+		if args[0] == "goal" && idShaped.MatchString(args[1]) {
+			return args[0]
+		}
+		return args[0] + " " + args[1]
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return ""
 }
 
 // relayTarget is the manager, chief or goal a ym command acts on, "" for one that acts on none: a goal start, an item, a session.
@@ -269,13 +294,13 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	if y.Requester == "" && (!ref.Final || ref.Goal != "") {
 		return nil
 	}
-	o, err := c.LoadOrg()
+	o, err := c.orgWithHosts()
 	if err != nil {
 		return err
 	}
 	b, berr := c.Board()
-	cmd := "ym " + clip(oneLine(strings.Join(y.Args, " ")), commandMax)
-	why := strings.TrimPrefix(ref.Error, "ym "+strings.Join(y.Args, " ")+": ")
+	cmd := "ym " + clip(oneLine(strings.Join(o.NameArgs(r.Dest, y.Args), " ")), commandMax)
+	why := relayWhy(y, ref.Error)
 	switch {
 	case ref.Error == "":
 		out := oneLine(ref.Output)
@@ -290,7 +315,7 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 		}
 		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle, %s stops it", cmd, r.Dest, oneLine(why), drop), false)
 	}
-	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{"ym " + strings.Join(y.Args, " ")},
+	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{cmd},
 		Question: fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why),
 		Rec:      fmt.Sprintf("rerun %s once %s can take it", cmd, r.Dest)}
 	if len(y.Args) > 1 && y.Args[0] == "goal" && strings.HasPrefix(y.Args[1], "--") {

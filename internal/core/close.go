@@ -99,7 +99,7 @@ func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	if order.Author != Owner {
 		var reports bool
 		if reports, via = climb(o, order.Author, m.ID); !reports && via == "" {
-			return Closed{}, Final(fmt.Errorf("%s does not report to %s; a chief closes only goals below it", g.Shown(), o.ShownOf(order.Author)))
+			return Closed{}, Final(fmt.Errorf("%s does not report to %s; a chief closes only goals below it", g.Shown(), c.actorName(order.Author, order.AuthorName)))
 		}
 	}
 	if err := c.closable(g); err != nil {
