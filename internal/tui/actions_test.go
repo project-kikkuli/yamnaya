@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -42,12 +43,15 @@ func isMember(r row) bool { return r.member != nil }
 
 // signals makes Kill signal no process: each SIGTERM ends the fake pid unless it is stubborn.
 func signals(c *core.Core, stubborn bool) *[]int {
+	var mu sync.Mutex
 	var sent []int
 	dead := map[int]bool{}
 	procs := c.Procs
 	c.KillGrace = 100 * time.Millisecond
 	c.Procs = func() ([]proc.Proc, error) {
 		ps, err := procs()
+		mu.Lock()
+		defer mu.Unlock()
 		var live []proc.Proc
 		for _, p := range ps {
 			if !dead[p.PID] {
@@ -57,6 +61,8 @@ func signals(c *core.Core, stubborn bool) *[]int {
 		return live, err
 	}
 	c.Signal = func(pid int, sig syscall.Signal) error {
+		mu.Lock()
+		defer mu.Unlock()
 		sent = append(sent, pid)
 		dead[pid] = !stubborn
 		return nil
