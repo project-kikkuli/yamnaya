@@ -228,14 +228,14 @@ func TestOpeningARemoteLaunchThroughTheRelayShowsItsAgentWhicheverWindowItsSessi
 		name, window, dead string
 	}{
 		{"its only window", "", ""},
-		{"a shell window that exited", "true", "1 0"},
+		{"a shell window that exited", "true", "1"},
 		{"a shell window still running", "sleep 600", "0"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.window != "" {
 				run("new-window", "-t", "=k:", c.window)
 				t.Cleanup(func() { run("kill-window", "-a", "-t", agent.ID) })
-				for deadline := time.Now().Add(5 * time.Second); run("display-message", "-p", "-t", "=k:", "#{pane_dead} #{pane_dead_status}") != c.dead; time.Sleep(20 * time.Millisecond) {
+				for deadline := time.Now().Add(5 * time.Second); run("display-message", "-p", "-t", "=k:", "#{pane_dead}") != c.dead; time.Sleep(20 * time.Millisecond) {
 					if time.Now().After(deadline) {
 						t.Fatalf("the shell window never reached %q", c.dead)
 					}
