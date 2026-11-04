@@ -169,11 +169,18 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 			return out, err
 		}
 		out.State = g.State
-		if out.Items, err = c.dismissGoalItems(g, disposition, order.Why); err != nil {
+		reason := fmt.Sprintf("%s closed as %s: %s", g.Shown(), disposition, order.Why)
+		if out.Items, err = c.dismissGoalItems(g.ID, reason); err != nil {
+			return out, err
+		}
+		if out.Elsewhere, err = c.dismissItemsElsewhere(g, reason); err != nil {
 			return out, err
 		}
 	}
-	return out, c.teardown(m, g.ID, targets)
+	if err := c.teardown(m, g.ID, targets); err != nil {
+		return out, fmt.Errorf("%s is closed as %s, but its sessions did not all end; run the close again to finish: %w", g.Shown(), out.Disposition, err)
+	}
+	return out, nil
 }
 
 // openPRs lists the pull requests g owns that have not merged or closed.
@@ -195,17 +202,16 @@ func (c *Core) openPRs(g Goal) ([]string, error) {
 	return out, nil
 }
 
-// dismissGoalItems dismisses what g's sessions still ask, which would otherwise climb to the owner once its manager ends.
-func (c *Core) dismissGoalItems(g Goal, disposition, why string) (int, error) {
+// dismissGoalItems dismisses what owner's sessions still ask here, which would otherwise climb to the owner once its manager ends.
+func (c *Core) dismissGoalItems(owner, reason string) (int, error) {
 	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
 	if err != nil {
 		return 0, err
 	}
 	n := 0
-	reason := fmt.Sprintf("%s closed as %s: %s", g.Shown(), disposition, why)
 	var errs []error
 	for _, it := range items {
-		if it.GoalOwner != g.ID {
+		if it.GoalOwner != owner {
 			continue
 		}
 		if _, err := c.Store.Transition(it.Key(), ItemDismissed, reason); err != nil {
@@ -215,6 +221,26 @@ func (c *Core) dismissGoalItems(g Goal, disposition, why string) (int, error) {
 		n++
 	}
 	return n, errors.Join(errs...)
+}
+
+// dismissItemsElsewhere has each host g's agents ran on dismiss their asks, which live on the host that filed them.
+func (c *Core) dismissItemsElsewhere(g Goal, reason string) ([]string, error) {
+	assignments, err := c.Store.Assignments(g.ID)
+	if err != nil {
+		return nil, err
+	}
+	var hosts []string
+	for _, a := range assignments {
+		host, _, remote := SplitRemote(a.Session)
+		if !remote || slices.Contains(hosts, host) {
+			continue
+		}
+		hosts = append(hosts, host)
+		if err := c.queueWork(host, WorkMessage{Op: "goal-closed", Work: RemoteAssignment{Origin: c.SelfName(), Goal: g.ID}, Summary: reason}); err != nil {
+			return hosts, err
+		}
+	}
+	return hosts, nil
 }
 
 // closeVouched lands a close whose author another host confirmed, telling that author when it cannot.

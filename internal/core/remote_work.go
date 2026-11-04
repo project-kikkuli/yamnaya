@@ -370,6 +370,12 @@ func (c *Core) WorkReceive(m WorkMessage) error {
 			return errors.New("invalid work revocation")
 		}
 		return c.revokeForeign(w)
+	case "goal-closed":
+		if w.Origin == "" || w.Goal == "" {
+			return errors.New("invalid goal close")
+		}
+		_, err := c.dismissGoalItems(RemoteKey(w.Origin, w.Goal), m.Summary)
+		return err
 	case "launch":
 		if identity, err := c.Store.RelaySelf(); err != nil {
 			return err

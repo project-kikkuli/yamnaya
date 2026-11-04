@@ -695,14 +695,17 @@ func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			}
 			order.Ref = args[0]
 			closed, err := e.core.CloseGoal(b, order)
+			if err != nil {
+				return err
+			}
 			if closed.Pending != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the close lands once that host confirms %s is above it, and %s hears if not\n", closed.Goal, closed.Pending, e.shown(order.Author), e.shown(order.Author))
-				return err
+				return nil
 			}
 			if line := closed.String(); line != "" {
 				fmt.Fprintln(cmd.OutOrStdout(), line)
 			}
-			return err
+			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&order.As, "as", "", "how it ended: finished, superseded or abandoned")

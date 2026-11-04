@@ -1015,3 +1015,81 @@ func TestACloseRefusesWhatIsNotAGoalOrHasNoWords(t *testing.T) {
 		})
 	}
 }
+
+func TestAClosedGoalsItemsOnAnotherHostAreDismissedThere(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session string
+		snooze  bool
+		down    bool
+	}{
+		{name: "its worker's ask", session: "worker"},
+		{name: "a subagent of its worker", session: "nested"},
+		{name: "a snoozed ask", session: "worker", snooze: true},
+		{name: "a host down at the close hears later", session: "worker", down: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, repo := remoteWorkFleet(t)
+			g, m := f.a.goal(t, "remote work", "/repo/app")
+			other, otherM := f.a.goal(t, "other work", "/repo/other")
+			for _, start := range []NewLaunch{
+				{Parent: m.Session, Repo: repo, Prompt: "work", Session: "worker", Source: "root"},
+				{Parent: otherM.Session, Repo: repo, Prompt: "work", Session: "bystander", Source: "root"},
+			} {
+				if _, err := f.a.core.StartNew(start); err != nil {
+					t.Fatal(err)
+				}
+			}
+			syncWork(t, f)
+			if err := f.b.core.Store.Link("nested", "worker"); err != nil {
+				t.Fatal(err)
+			}
+			file := func(session string) Item {
+				it, err := f.b.core.AddItem(Item{Scope: "/repo/app/.git", Session: session, Kind: KindDecision, Question: "choose work", Rec: "a", Options: picks})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return it
+			}
+			asked, kept := file(tc.session), file("bystander")
+			if tc.snooze {
+				if _, err := f.b.core.Store.SnoozeItem(asked.Key(), time.Now().Add(time.Hour)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			syncWork(t, f)
+			f.net.down["b"] = tc.down
+			closed, err := f.a.core.CloseGoal(f.a.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "owner moved on", Author: Owner})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(closed.String(), "open items on b dismissed once it hears") {
+				t.Fatalf("close said %q", closed)
+			}
+			syncWork(t, f)
+			state := func(it Item) Item {
+				now, err := f.b.core.Store.Item(it.Key())
+				if err != nil {
+					t.Fatal(err)
+				}
+				return now
+			}
+			if tc.down {
+				if now := state(asked); now.State == ItemDismissed {
+					t.Fatalf("host down, yet its item is %s", now.State)
+				}
+				f.net.down["b"] = false
+				syncWork(t, f)
+			}
+			if now := state(asked); now.State != ItemDismissed || !strings.Contains(now.Reason, "owner moved on") {
+				t.Fatalf("the closed goal's item is %s (%q)", now.State, now.Reason)
+			}
+			if now := state(kept); now.State != ItemOpen {
+				t.Fatalf("%s's item is %s", other.ID, now.State)
+			}
+			if !slices.Contains(f.b.launches.forgot, "worker") || slices.Contains(f.b.launches.forgot, "bystander") {
+				t.Fatalf("host b ended %v, want only the closed goal's worker", f.b.launches.forgot)
+			}
+		})
+	}
+}

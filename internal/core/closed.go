@@ -14,6 +14,7 @@ type Closed struct {
 	Toll        Toll
 	Items       int
 	PRs         []string
+	Elsewhere   []string
 	Pending     string
 	Output      string
 }
@@ -26,6 +27,9 @@ func (c Closed) String() string {
 	fmt.Fprintf(&sb, "closed %s as %s, state %s: %s ended", c.Goal, c.Disposition, c.State, c.Toll)
 	if c.Items > 0 {
 		fmt.Fprintf(&sb, ", %s dismissed", count(c.Items, "open item"))
+	}
+	if len(c.Elsewhere) > 0 {
+		fmt.Fprintf(&sb, ", open items on %s dismissed once it hears", strings.Join(c.Elsewhere, ", "))
 	}
 	fmt.Fprintf(&sb, "; ym revive %s brings it back", c.Goal)
 	for _, pr := range c.PRs {

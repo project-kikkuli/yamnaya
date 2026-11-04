@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -206,4 +207,46 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 		t.Fatal(err)
 	}
 	return string(out)
+}
+
+// bundleFails is a launcher that ends session only once fail is cleared, as a worktree that cannot be bundled does.
+type bundleFails struct {
+	core.Launches
+	session string
+	fail    error
+	ended   int
+}
+
+func (l *bundleFails) Dormant() []core.Dormant { return nil }
+func (l *bundleFails) Launched() []core.Launched {
+	return []core.Launched{{Key: "worker", Session: l.session, Parent: "manager-session"}}
+}
+func (l *bundleFails) Weigh(string) (core.Toll, error) { return core.Toll{}, nil }
+func (l *bundleFails) End(string, string) (string, error) {
+	if l.fail != nil {
+		return "", l.fail
+	}
+	l.ended++
+	return "", nil
+}
+
+func TestAFailedTeardownReportsItsErrorAndARetryFinishes(t *testing.T) {
+	c, g, _, _ := closeWorld(t, "")
+	l := &bundleFails{session: "worker-session", fail: errors.New("bundle failed: disk full")}
+	c.Launches = l
+	out, err := runGoal(c, "close", g.ID, "--as", "abandoned", "--why", "not needed")
+	if err == nil || !strings.Contains(err.Error(), "disk full") || !strings.Contains(err.Error(), "run the close again") {
+		t.Fatalf("err %v, want the bundle's error and how to finish", err)
+	}
+	if out != "" {
+		t.Fatalf("printed %q before its error", out)
+	}
+	l.fail = nil
+	out, err = runGoal(c, "close", g.ID, "--as", "superseded", "--why", "second try")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "closed "+g.ID+" as abandoned") || l.ended == 0 {
+		t.Fatalf("retry printed %q, ended %d; want the first close's record and the session ended", out, l.ended)
+	}
 }
