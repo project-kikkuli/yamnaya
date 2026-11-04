@@ -693,3 +693,26 @@ func TestQueueRowSideColumnFollowsTheTerminalAndFitsIt(t *testing.T) {
 		})
 	}
 }
+
+func TestGoalSubagentsSectionSaysWhatItsCountSays(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		state   core.Status
+		heading string
+		body    string
+	}{
+		{"finished only", core.Done, "SUBAGENTS (0 running, 1 done)", "none running"},
+		{"one running", core.Busy, "SUBAGENTS (1 running, 0 done)", "stub-worker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			worker := core.Worker{Name: "stub-worker", State: tc.state.String(), Member: &core.Member{ID: "w", Status: tc.state}}
+			m.board.Tree = []core.Node{{Manager: core.Manager{ID: "g", Name: "g"}, Goal: &core.Goal{ID: "g", Ask: "ask"}, Standing: core.StandMoving, Workers: []core.Worker{worker}}}
+			m.mode, m.goal, m.page = modeGoal, "g", nil
+			content := ansi.Strip(m.View().Content)
+			if !strings.Contains(content, tc.heading) || !strings.Contains(content, tc.body) {
+				t.Fatalf("want %q with %q:\n%s", tc.heading, tc.body, content)
+			}
+		})
+	}
+}

@@ -1122,6 +1122,9 @@ func (m Model) goalSections(n core.Node) []treeNode {
 		line := "   " + pad(w.Name, 36) + " " + pal.state(w.State).Render(pad(w.State, 8)) + " " + oneLine(w.Activity) + pal.dim.Render(" "+age(m.board.At, w.At))
 		b.WriteString(ansi.Truncate(line, max(20, m.width-1), "…") + "\n")
 	}
+	if len(subs) == 0 {
+		b.WriteString(pal.dim.Render("   none running") + "\n")
+	}
 	if len(subs)+finished > 0 {
 		out = append(out, textSection("node/"+n.Manager.ID+"/subagents", fmt.Sprintf("SUBAGENTS (%d running, %d done)", len(subs), finished), b.String()))
 	}
