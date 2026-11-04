@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -775,7 +777,7 @@ func (l launcher) Launched() []core.Launched {
 			// A table read before a launch's session started lacks it, so gone goes by the pane as it is now.
 			_, st = l.state(rec)
 		}
-		if was := rec; mark(&rec, st) != was {
+		if was := rec; !reflect.DeepEqual(mark(&rec, st), was) {
 			if err := l.records.Save(rec); err != nil {
 				if l.core != nil && l.core.Log != nil {
 					l.core.Log(fmt.Sprintf("save launch %s: %v", rec.Key, err))
@@ -991,7 +993,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 			}
 			rec.Recovery = launch.Recovery{}
 		case launch.WorkChanged:
-			kept = fmt.Sprintf("its worktree changed since it ended, so the work ym saved stays in %s, not applied", rec.Recovery.Bundle)
+			kept = fmt.Sprintf("ym cannot show its worktree still holds what ym saved at its end, so that work stays in %s, not applied", rec.Recovery.Bundle)
 			if _, err := os.Stat(rec.Recovery.Bundle); err != nil {
 				kept = fmt.Sprintf("its worktree differs from the work ym saved, and the bundle that held it, %s, is gone", rec.Recovery.Bundle)
 			}
@@ -1029,6 +1031,22 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 			rec.Worktree.GitDir, rec.Recovery, lost = filepath.Join(rec.Worktree.Path, ".git"), launch.Recovery{}, ""
 		}
 	}
+	if head := launch.Head(rec.Worktree.Path); head != "" {
+		rec.Shelved = slices.DeleteFunc(slices.Clone(rec.Shelved), func(r launch.Recovery) bool { return r.Settled(rec.Worktree.Path) })
+	}
+	if len(rec.Shelved) > 0 {
+		paths := make([]string, len(rec.Shelved))
+		for i, r := range rec.Shelved {
+			paths[i] = r.Bundle
+		}
+		note := "earlier saved work stays in " + strings.Join(paths, ", ") + ", not applied"
+		if lost != "" {
+			note = lost + "; " + note
+		} else if was.Recovery != (launch.Recovery{}) {
+			note = "its latest saved work is back; " + note
+		}
+		lost = note
+	}
 	var alignErr error
 	rec, alignErr = l.chiefRecord(rec)
 	if alignErr != nil {
@@ -1060,7 +1078,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		rec.Dedicated = rec.Harness == codex.Name
 	}
 	rec.Landed, rec.Killed, rec.Revive, rec.Seen, rec.Goal, rec.Blocked, rec.Stamp = time.Time{}, time.Time{}, false, time.Time{}, "", "", ""
-	if rec != was {
+	if !reflect.DeepEqual(rec, was) {
 		if err := l.records.Save(rec); err != nil {
 			return nil, "", err
 		}
@@ -1302,6 +1320,13 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 		}
 		if keep, reason := launch.Pinned(rec.Worktree.Path); keep != "" {
 			stays = reason
+		}
+		if rec.Recovery != (launch.Recovery{}) {
+			earlier, err := rec.Recovery.Shelve(rec.Worktree.GitDir, rec.Key)
+			if err != nil {
+				return "", fmt.Errorf("keep the earlier work of %s: %w", rec.Key, err)
+			}
+			rec.Shelved, rec.Recovery = append(rec.Shelved, earlier), launch.Recovery{}
 		}
 		// A worktree that stays keeps its work whether or not the bundle could take it.
 		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {

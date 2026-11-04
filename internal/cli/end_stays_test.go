@@ -309,6 +309,16 @@ func TestReviveDropsTheBundleOnlyWhenTheWorktreeProvablyHoldsItsWork(t *testing.
 		{"edited since", func(t *testing.T, repo, wt, base string) {
 			plant(t, wt, "later.txt", "later")
 		}, false, true, "stays in", []string{".env", "notes.txt", "later.txt"}},
+		{"staged, marked assume-unchanged and edited since", func(t *testing.T, repo, wt, base string) {
+			git(t, wt, "add", "-A")
+			git(t, wt, "update-index", "--assume-unchanged", "notes.txt")
+			plant(t, wt, "notes.txt", "edited behind the flag")
+		}, false, true, "stays in", []string{".env", "notes.txt"}},
+		{"staged, marked skip-worktree and removed since", func(t *testing.T, repo, wt, base string) {
+			git(t, wt, "add", "-A")
+			git(t, wt, "update-index", "--skip-worktree", "notes.txt")
+			os.Remove(filepath.Join(wt, "notes.txt"))
+		}, false, true, "stays in", []string{".env"}},
 		{"removed by hand and added again on its branch", func(t *testing.T, repo, wt, base string) {
 			readd(t, repo, wt, wt, "task")
 		}, false, false, "", []string{"notes.txt"}},
@@ -601,6 +611,94 @@ func TestARealLFSFileKeepsItsWorktreeAtItsEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(ended.Recovery.Bundle); err == nil {
 		t.Error("left a bundle revive proved it no longer needs")
+	}
+}
+
+func TestALaterEndNeverLosesABundleReviveKept(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	for _, c := range []struct {
+		name  string
+		later func(t *testing.T, wt string)
+	}{
+		{"with new work to bundle", func(t *testing.T, wt string) { plant(t, wt, "new.txt", "later work") }},
+		{"with nothing new to bundle", func(*testing.T, string) {}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fakeAgent(t)
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo := filepath.Join(base, "repo")
+			plant(t, repo, ".gitignore", ".env\n")
+			git(t, repo, "add", ".")
+			git(t, repo, "commit", "-q", "-m", "root")
+			git(t, repo, "push", "-q", "origin", "main")
+			wt := launch.WorktreePath(repo, "task")
+			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+			plant(t, wt, ".env", "SECRET=1")
+			git(t, wt, "commit", "-q", "--allow-empty", "-m", "only here")
+			only := launch.Head(wt)
+			l := testLauncher(t, base)
+			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: only,
+				Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			if err := l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			collect := func() {
+				os.Remove(filepath.Join(repo, ".git", "worktrees", filepath.Base(wt), "ORIG_HEAD"))
+				git(t, repo, "reflog", "expire", "--expire=now", "--all")
+				git(t, repo, "gc", "-q", "--prune=now")
+			}
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			git(t, wt, "reset", "-q", "--hard", "origin/main")
+			collect()
+			if msg, err := l.Revive(rec.Key); err != nil || !strings.Contains(msg, "stays in") {
+				t.Fatalf("first revive said %q, %v", msg, err)
+			}
+
+			c.later(t, wt)
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			collect()
+			ended, _ := l.records.Find(rec.Key)
+			if len(ended.Shelved) != 1 {
+				t.Fatalf("shelved %+v, recovery %+v; want the earlier bundle kept", ended.Shelved, ended.Recovery)
+			}
+			earlier := ended.Shelved[0].Bundle
+			heads, err := exec.Command("git", "-C", repo, "bundle", "list-heads", earlier).Output()
+			if err != nil || !strings.Contains(string(heads), only) {
+				t.Fatalf("the earlier bundle lists %q, %v; want %s", heads, err, only)
+			}
+			git(t, repo, "cat-file", "-e", only)
+
+			msg, err := l.Revive(rec.Key)
+			if err != nil || !strings.Contains(msg, "earlier saved work stays in "+earlier) {
+				t.Fatalf("second revive said %q, %v; want the earlier bundle named", msg, err)
+			}
+			if _, err := os.Stat(earlier); err != nil {
+				t.Fatalf("the earlier bundle went: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(wt, ".env")); err != nil {
+				t.Fatalf(".env went: %v", err)
+			}
+
+			git(t, wt, "clean", "-fdq")
+			git(t, wt, "reset", "-q", "--hard", only)
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			if msg, err := l.Revive(rec.Key); err != nil || strings.Contains(msg, earlier) {
+				t.Fatalf("revive with the commit back said %q, %v; want the earlier bundle settled", msg, err)
+			}
+			if _, err := os.Stat(earlier); err == nil {
+				t.Fatal("kept a bundle whose commits the worktree holds again")
+			}
+		})
 	}
 }
 

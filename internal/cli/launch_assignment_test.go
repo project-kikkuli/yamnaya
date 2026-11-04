@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -353,7 +354,7 @@ func TestAssignmentSettlementFailuresStayVisibleAndPreserveRecords(t *testing.T)
 				t.Fatal("settlement failure was discarded")
 			}
 			stored, ok := l.records.Find(rec.Key)
-			if !ok || stored != rec {
+			if !ok || !reflect.DeepEqual(stored, rec) {
 				t.Fatalf("failed binding changed lifecycle metadata: %+v", stored)
 			}
 		})
@@ -370,7 +371,7 @@ func TestAssignmentLaunchReplayDoesNotInventSuccessfulStart(t *testing.T) {
 		t.Fatal("replay accepted a launch with no confirmed pane")
 	}
 	stored, ok := l.records.Find(rec.Key)
-	if !ok || stored != rec {
+	if !ok || !reflect.DeepEqual(stored, rec) {
 		t.Fatalf("unconfirmed replay changed record: %+v", stored)
 	}
 }

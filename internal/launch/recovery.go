@@ -154,6 +154,10 @@ func (r Recovery) Standing(w Worktree, key string) int {
 	if r.Work == "" {
 		return WorkHere
 	}
+	// A flag on a file makes git add -A trust the index over the file, so the tree below would prove nothing.
+	if hidden, err := hiddenEdits(w.Path); err != nil || hidden != "" {
+		return WorkChanged
+	}
 	want, err := git(w.Path, "rev-parse", recoveryRef(key)+"^{tree}")
 	if err != nil {
 		return WorkChanged
@@ -172,6 +176,47 @@ func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
+}
+
+// Shelve moves this bundle and its ref to a name of their own, so a later Stash of key cannot touch them.
+func (r Recovery) Shelve(gitDir, key string) (Recovery, error) {
+	dir, name := filepath.Dir(r.Bundle), key
+	for n := 1; ; n++ {
+		name = fmt.Sprintf("%s-%d", key, n)
+		if _, err := os.Stat(filepath.Join(dir, name+".bundle")); err != nil {
+			break
+		}
+	}
+	shelved := r
+	shelved.Bundle = filepath.Join(dir, name+".bundle")
+	if err := os.Rename(r.Bundle, shelved.Bundle); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return r, err
+	}
+	gd := "--git-dir=" + gitDir
+	if tip, err := gitCommand(gd, "rev-parse", "--verify", "--quiet", recoveryRef(key)).Output(); err == nil {
+		if err := gitCommand(gd, "update-ref", recoveryRef(name), strings.TrimSpace(string(tip))).Run(); err != nil {
+			return r, err
+		}
+		gitCommand(gd, "update-ref", "-d", recoveryRef(key)).Run()
+	}
+	return shelved, nil
+}
+
+// Settled drops a shelved bundle of commits alone once the worktree at path holds them all, or when its file is gone, and says so.
+// Any other shelved bundle stays: its files were never put back, and nothing but the owner can say they are no longer wanted.
+func (r Recovery) Settled(path string) bool {
+	if _, err := os.Stat(r.Bundle); err != nil {
+		return true
+	}
+	if r.Work != "" {
+		return false
+	}
+	heads, err := git(path, "bundle", "list-heads", r.Bundle)
+	tip, _, ok := strings.Cut(heads, " ")
+	if err != nil || !ok || local("-C", path, "merge-base", "--is-ancestor", tip, "HEAD") != nil {
+		return false
+	}
+	return r.Drop(path, strings.TrimSuffix(filepath.Base(r.Bundle), ".bundle")) == nil
 }
 
 // Fetch brings the bundled commits of key into the repository at gitDir, so its worktree can be recreated at them.

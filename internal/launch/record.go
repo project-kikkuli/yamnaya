@@ -59,6 +59,8 @@ type Record struct {
 	Landed time.Time `json:"landed,omitzero"`
 	// Recovery is the work ym kill bundled out of the worktree before removing it; ym revive puts it back.
 	Recovery Recovery `json:"recovery,omitzero"`
+	// Shelved are earlier bundles of this session revive could not settle, each under a name of its own.
+	Shelved []Recovery `json:"shelved,omitempty"`
 	// Goal is the goal or chief whose kill ended the session, so reviving it revives the session too.
 	Goal string `json:"goal,omitempty"`
 	// Blocked is why the last automatic landing refused, with Stamp the worktree's Stamp then; it is not tried again until the
