@@ -78,18 +78,19 @@ func relayTarget(args []string) string {
 }
 
 // feedChief is the chief on another host that m's goal's feed reaches, as this host names it: wakeRemoteChiefs passes over a retired
-// manager below it, and one with no live goal right under it.
+// manager below it, and one with no live goal right under it, and carries on past a retired chief above it.
 func feedChief(o Org, m Manager) string {
 	seen := map[string]bool{}
 	for !seen[m.ID] && !m.Retired {
 		seen[m.ID] = true
-		if _, _, remote := SplitRemote(m.ParentID); remote {
+		chief := o.chiefOver(m)
+		if _, _, remote := SplitRemote(chief); remote {
 			if o.Active(m) {
-				return m.ParentID
+				return chief
 			}
 			return ""
 		}
-		next, ok := o.Managers[m.ParentID]
+		next, ok := o.Managers[chief]
 		if !ok {
 			return ""
 		}
@@ -185,16 +186,24 @@ func (c *Core) heardOutcome(ref RelayRef) error {
 }
 
 // relayOutcome reports how ym command r ended once, however often the news of it arrives; a refusal that may clear is only ever
-// news once.
+// news once. One left to a goal's feed stays unreported, for the host that ran it to hand back if that feed stops carrying it.
 func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 	if r.Kind != RelayYM {
 		return nil
 	}
 	if ref.Error != "" && !ref.Final {
+		fed, err := c.leftToFeed(r, ref)
+		if err != nil || fed {
+			return err
+		}
 		return c.tellOutcome(r, ref)
 	}
 	reported, err := c.Store.outcomeReported(r.Seq)
 	if err != nil || reported {
+		return err
+	}
+	fed, err := c.leftToFeed(r, ref)
+	if err != nil || fed {
 		return err
 	}
 	if err := c.tellOutcome(r, ref); err != nil {
@@ -203,9 +212,55 @@ func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 	return c.Store.markOutcomeReported(r.Seq)
 }
 
-// tellOutcome tells the session that queued ym command r how it turned out where it ran, unless its goal's feed reaches that session
-// already: what it printed, a message while ym retries it, or an item when it was refused for good, which goes to the owner when no
-// session queued it and no goal's feed records it. A board that cannot be read leaves a message queued for the session.
+// leftToFeed reports whether the feed ref names reaches the session that queued ym command r.
+func (c *Core) leftToFeed(r Relay, ref RelayRef) (bool, error) {
+	var y relayYM
+	if ref.Chief == "" || json.Unmarshal([]byte(r.Body), &y) != nil {
+		return false, nil
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return false, err
+	}
+	return c.hearsFeed(o, y.Requester, ref), nil
+}
+
+// returnUnfed hands the host that queued a ym command its outcome when the goal's feed it was left to has not carried it and no longer
+// can, because the goal ended or a manager on the way retired.
+func (c *Core) returnUnfed(o Org) error {
+	unfed, err := c.Store.unfedOutcomes()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, u := range unfed {
+		if o.feeds(u.ref.Goal, u.ref.Chief) {
+			continue
+		}
+		chief := u.ref.Chief
+		u.ref.Chief = ""
+		err := c.Relay(u.ref.Origin, RelayResult, u.ref)
+		if err == nil {
+			err = c.Store.markHeard(chief, []GoalEvent{{Seq: u.event}}, c.now())
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// feeds reports whether goal's feed still reaches chief.
+func (o Org) feeds(goal, chief string) bool {
+	for _, m := range o.Managers {
+		if m.GoalID == goal && feedChief(o, m) == chief {
+			return true
+		}
+	}
+	return false
+}
+
+// tellOutcome tells the session that queued ym command r how it turned out where it ran: what it printed, a message while ym retries
+// it, or an item when it was refused for good, which goes to the owner when no session queued it and no goal's feed records it. A board
+// that cannot be read leaves a message queued for the session.
 func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	var y relayYM
 	if json.Unmarshal([]byte(r.Body), &y) != nil || len(y.Args) == 0 {
@@ -217,9 +272,6 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	o, err := c.LoadOrg()
 	if err != nil {
 		return err
-	}
-	if c.hearsFeed(o, y.Requester, ref) {
-		return nil
 	}
 	b, berr := c.Board()
 	cmd := "ym " + clip(oneLine(strings.Join(y.Args, " ")), commandMax)
@@ -273,6 +325,36 @@ func (s *Store) outcomeReported(seq int64) (bool, error) {
 func (s *Store) markOutcomeReported(seq int64) error {
 	_, err := s.db.Exec(`UPDATE ym_relay SET reported = 1 WHERE seq = ?`, seq)
 	return err
+}
+
+// unfedOutcome is a ym command this host ran, how it ended, and the event of it that the chief ref names has yet to be handed.
+type unfedOutcome struct {
+	ref   RelayRef
+	event int64
+}
+
+func (s *Store) unfedOutcomes() ([]unfedOutcome, error) {
+	rows, err := s.db.Query(`SELECT r.outcome, e.seq FROM ym_relay_seen r JOIN ym_goal_events e
+		ON e.key = 'relayed:' || r.origin || ':' || r.origin_seq || ':' || IIF(json_extract(r.outcome, '$.final'), 'refused', 'done')
+		WHERE r.outcome != '' AND json_extract(r.outcome, '$.chief') IS NOT NULL AND NOT EXISTS
+		(SELECT 1 FROM ym_goal_event_deliveries d WHERE d.event = e.seq AND d.manager = json_extract(r.outcome, '$.chief'))`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []unfedOutcome
+	for rows.Next() {
+		var raw string
+		var u unfedOutcome
+		if err := rows.Scan(&raw, &u.event); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(raw), &u.ref); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // ownRelay is the relay this host queued as seq.

@@ -2,6 +2,7 @@ package core
 
 import (
 	stderrors "errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -449,5 +450,134 @@ func TestARequesterHearsDirectlyWhenTheGoalsFeedWillNotReachIt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
+	type stage struct {
+		f     *fleet
+		g     Goal
+		m     Manager
+		local Manager
+	}
+	kill := func(t *testing.T, s stage, ref string) {
+		t.Helper()
+		if _, err := s.f.a.core.KillGoal(s.f.a.board(t), ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		// underLocal has a local chief between the goal's manager and the chief on b.
+		underLocal bool
+		// before happens before the command runs. stops ends what the feed runs through after the command ran and before the feed went
+		// out; nil leaves it running.
+		before, stops func(t *testing.T, s stage)
+		// fedAnyway says the feed outlives what stops ended.
+		fedAnyway bool
+	}{
+		{name: "the feed keeps running"},
+		{name: "the feed keeps running under a local chief", underLocal: true},
+		{name: "the goal passes verification", stops: func(t *testing.T, s stage) {
+			if _, _, err := s.f.a.core.FinishGoal(s.m.Session, "shipped", nil); err != nil {
+				t.Fatal(err)
+			}
+			s.f.a.supervise(t)
+			v, err := s.f.a.core.Store.OpenVerification(s.g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.f.a.core.RecordVerdict(v.Session, s.g.ID, VerdictPass, nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "the goal is killed", stops: func(t *testing.T, s stage) { kill(t, s, s.g.ID) }},
+		{name: "the manager is retired", stops: func(t *testing.T, s stage) {
+			s.m.Retired = true
+			if err := s.f.a.core.Store.SaveManager(s.m); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "the manager is retired under a local chief", underLocal: true, stops: func(t *testing.T, s stage) {
+			s.m.Retired = true
+			if err := s.f.a.core.Store.SaveManager(s.m); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "the local chief is killed after the command", underLocal: true, fedAnyway: true, stops: func(t *testing.T, s stage) { kill(t, s, s.local.ID) }},
+		{name: "the local chief is killed before the command", underLocal: true, before: func(t *testing.T, s stage) { kill(t, s, s.local.ID) }},
+	} {
+		for _, final := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, final %v", tc.name, final), func(t *testing.T) {
+				f := newFleet(t)
+				chief := f.b.chief(t, "platform")
+				g, m := f.a.goal(t, "ship the fix", "/repo/app")
+				s := stage{f: f, g: g, m: m}
+				top := m.ID
+				if tc.underLocal {
+					s.local = f.a.chief(t, "local")
+					if err := f.a.core.Attach(m.ID, s.local.ID); err != nil {
+						t.Fatal(err)
+					}
+					top = s.local.ID
+				}
+				if err := f.a.core.Attach(top, RemoteKey("b", chief.ID)); err != nil {
+					t.Fatal(err)
+				}
+				cycle := func() {
+					t.Helper()
+					if err := f.a.core.Loop(f.a.board(t)); err != nil {
+						t.Fatal(err)
+					}
+					cycleAll(f, 1)
+					if err := f.b.core.Loop(f.b.board(t)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cycle()
+				s.m, _ = f.a.core.Store.Manager(m.ID)
+				if tc.before != nil {
+					tc.before(t, s)
+				}
+				f.a.core.RunSelf = func(args ...string) (string, error) {
+					if final {
+						return "", Final(stderrors.New("the marker"))
+					}
+					return "the marker", nil
+				}
+				f.b.core.Requester = func() string { return chief.Session }
+				if err := f.b.core.AckGoal(RemoteKey("a", g.ID)); err != nil {
+					t.Fatal(err)
+				}
+				cycleAll(f, 1)
+				if tc.stops != nil {
+					tc.stops(t, s)
+				}
+				for range 5 {
+					cycle()
+				}
+
+				items, err := f.b.core.Store.Items(ItemFilter{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				heard := recorded(t, f.b, chief.Session, "the marker")
+				if final && tc.stops != nil && !tc.fedAnyway {
+					if len(items) != 1 || !strings.Contains(items[0].Question, "the marker") || items[0].Recipient != chief.ID {
+						t.Errorf("b's items %+v, want one to %s carrying the refusal", items, chief.ID)
+					}
+					if heard > 1 {
+						t.Errorf("requester told %d times beside the item", heard)
+					}
+					return
+				}
+				if len(items) != 0 {
+					t.Errorf("b's items %+v, want none", items)
+				}
+				if heard != 1 {
+					t.Errorf("requester told %d times, want once", heard)
+				}
+			})
+		}
 	}
 }
