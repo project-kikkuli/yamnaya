@@ -520,7 +520,10 @@ func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profil
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	return other, l.portGate(dir, a, ps, e, limits, now)
+	if err = l.portGate(dir, a, ps, e, limits, now); err != nil {
+		return profile.Profile{}, err
+	}
+	return other, nil
 }
 
 // portGate is the one test of a move to the other harness, which has no way back. The stop must be proved, by the conversation's own stop on the
