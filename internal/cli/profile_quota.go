@@ -52,11 +52,13 @@ func quotaItem(ps, usable []profile.Profile, unanswered map[string]bool, e core.
 		port = core.Option{Label: "move to " + other + "/" + p.ID, Effect: "with no " + e.Harness + " login left, ym ports each session to " + other + " login " + p.ID + " at its turn end, under a new session id, and keeps its manager and goal links"}
 	}
 	target, err := failoverTarget(usable, e)
+	it.DoLine = "Add a login or wait"
 	if err != nil {
 		it.Options = []core.Option{wait, add}
 		it.Rec = "add a login if the work cannot wait until " + when + "; no other usable " + e.Harness + " login is configured on this host"
 		if port.Label != "" {
 			it.Options = []core.Option{port, wait, add}
+			it.DoLine = "Move harness or wait"
 			it.Rec = port.Label + ": no other " + e.Harness + " login has usage, so work continues now instead of waiting until " + when
 		}
 		return it
@@ -72,6 +74,7 @@ func quotaItem(ps, usable []profile.Profile, unanswered map[string]bool, e core.
 	if unanswered[target.Account] {
 		why = "it is a different login, though its status check has not answered yet"
 	}
+	it.DoLine = "Switch login or wait"
 	it.Rec = "switch to " + target.ID + ": " + why + ", so work continues now instead of waiting until " + when
 	return it
 }

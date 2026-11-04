@@ -123,7 +123,7 @@ func (s *Store) RewordItem(ref string, next Item, told string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err = tx.Exec(`UPDATE ym_items SET question = ?, tried = ?, rec = ?, options = ? WHERE seq = ?`, next.Question, next.Tried, next.Rec, string(opts), it.Seq); err != nil {
+	if _, err = tx.Exec(`UPDATE ym_items SET question = ?, tried = ?, rec = ?, options = ?, do_line = ? WHERE seq = ?`, next.Question, next.Tried, next.Rec, string(opts), next.DoLine, it.Seq); err != nil {
 		return err
 	}
 	if told != "" {
