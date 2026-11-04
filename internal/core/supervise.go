@@ -111,9 +111,6 @@ func (c *Core) Supervise(b Board) error {
 	if err := c.watchSteers(b, o); err != nil {
 		errs = append(errs, err)
 	}
-	if err := c.watchBriefs(b, o); err != nil {
-		errs = append(errs, err)
-	}
 	return errors.Join(errs...)
 }
 

@@ -231,7 +231,7 @@ func (c *Core) Wake(b Board) error {
 		var err error
 		if g, ok := o.Goals[m.GoalID]; ok {
 			if err = c.nudgeIdle(b, o, m, g); err == nil && !held[m.ID] {
-				err = c.wakeManager(b, m, g)
+				err = c.wakeManager(b, o, m, g)
 			}
 		} else if m.Role == RoleChief && !held[m.ID] {
 			err = c.wakeChief(b, o, m)
@@ -243,7 +243,7 @@ func (c *Core) Wake(b Board) error {
 	return errors.Join(append(errs, c.wakeRemoteChiefs(o), c.returnUnfed(o))...)
 }
 
-func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
+func (c *Core) wakeManager(b Board, o Org, m Manager, g Goal) error {
 	events, err := c.Store.undelivered(g.ID)
 	if err != nil || !c.wakeDue(events) {
 		return err
@@ -251,11 +251,20 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	if hold, err := c.holdWake(b, m, g); err != nil || hold {
 		return err
 	}
-	if err := c.tell(b, m.Session, wakeText(g, events), false); err != nil {
+	line, behind, err := c.briefRequest(o, m)
+	if err != nil {
+		return err
+	}
+	if err := c.tell(b, m.Session, withLine(wakeText(g, events), line), false); err != nil {
 		return err
 	}
 	if err := c.Store.markDelivered(events, c.now()); err != nil {
 		return err
+	}
+	if line != "" {
+		if err := c.Store.noteBriefNudge(m.ID, behind); err != nil {
+			return err
+		}
 	}
 	r, err := c.Store.digest(m.ID)
 	if err != nil {
@@ -309,7 +318,7 @@ func (c *Core) wakeChief(b Board, o Org, m Manager) error {
 	if err := c.rollChief(m.ID, o, events, func(action, quiet Rollup) error { return c.Store.addDigest(m.ID, action, quiet) }, ""); err != nil {
 		return err
 	}
-	return c.flushDigest(b, m)
+	return c.flushDigest(b, o, m)
 }
 
 // rollChief hands deliver what of chief's events is due, split into what needs it and what does not, and marks those heard.

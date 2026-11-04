@@ -1047,11 +1047,23 @@ func goalFeedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if keep {
 				return nil
 			}
+			if err := e.notePulled(events); err != nil {
+				return err
+			}
 			return e.core.Looked(g.ID)
 		}),
 	}
 	cmd.Flags().BoolVar(&keep, "keep-unread", false, "leave the news unread")
 	return cmd
+}
+
+// notePulled records events as read by the manager or chief running this command; nobody else's reading hands them over.
+func (e *env) notePulled(events []core.GoalEvent) error {
+	c, err := e.caller()
+	if err != nil {
+		return nil
+	}
+	return e.core.NotePulled(c.Session, events)
 }
 
 func goalEventCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
@@ -1079,6 +1091,9 @@ func goalEventCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 					return err
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "#%d %s %s %s\n%s\n", ev.Seq, e.shown(ev.Goal), ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
+				if err := e.notePulled([]core.GoalEvent{ev}); err != nil {
+					return err
+				}
 			}
 			return nil
 		}),

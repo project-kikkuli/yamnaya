@@ -254,51 +254,6 @@ func TestABriefGoesStaleWhenSomethingMeaningfulHappensAfterIt(t *testing.T) {
 	}
 }
 
-func TestAStaleBriefNudgesItsManagerOncePerEventAndNotMidTurn(t *testing.T) {
-	w := newOrgWorld(t)
-	_, m := w.goal(t, "ship the importer", "/repo/august")
-	nudges := func() int {
-		n := 0
-		for _, text := range w.handedTo(m.Session) {
-			if strings.Contains(text, "your brief is behind") {
-				n++
-			}
-		}
-		return n
-	}
-	w.set(m.Session, func(s *Session) { s.Status = Busy })
-	w.clock = w.clock.Add(BriefGrace + time.Minute)
-	w.supervise(t)
-	if n := nudges(); n != 0 {
-		t.Fatalf("nudged a busy manager mid-turn %d times", n)
-	}
-	w.set(m.Session, func(s *Session) { s.Status = Idle })
-	for range 3 {
-		w.clock = w.clock.Add(BriefGrace + time.Minute)
-		w.supervise(t)
-	}
-	if n := nudges(); n != 1 {
-		t.Fatalf("a manager with no brief was nudged %d times, want once", n)
-	}
-	w.core.WriteBrief(m.Session, brief("open the PR"))
-	w.clock = w.clock.Add(time.Minute)
-	st := w.steer(t, m.ID, "CSV only", Owner)
-	w.core.Adopt(m.Session, m.ID, st.Revision)
-	for range 3 {
-		w.clock = w.clock.Add(BriefGrace + time.Minute)
-		w.supervise(t)
-	}
-	if n := nudges(); n != 2 {
-		t.Fatalf("after adopting a steer the stale brief drew %d nudges in all, want 2", n)
-	}
-	w.core.WriteBrief(m.Session, brief("ship CSV"))
-	w.clock = w.clock.Add(BriefGrace + time.Minute)
-	w.supervise(t)
-	if n := nudges(); n != 2 {
-		t.Fatalf("a refreshed brief still drew nudges: %d", n)
-	}
-}
-
 func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTheNewPlan(t *testing.T) {
 	w := newVerifyWorld(t)
 	w.done(t, "importer handles CSV")

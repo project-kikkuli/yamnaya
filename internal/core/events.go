@@ -490,3 +490,52 @@ func (s *Store) heardAny(chief string) (bool, error) {
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO ym_goal_event_deliveries (event, manager, at) VALUES (0, ?, ?)`, chief, stamp(time.Now()))
 	return false, err
 }
+
+// NotePulled records that session read events through ym goal feed or ym goal event, so no digest hands them to it again: its goal's
+// events for a manager, what is quiet below it and its own agents' replies for a chief. What wakes still wakes: reading an event is
+// not acting on it.
+func (c *Core) NotePulled(session string, events []GoalEvent) error {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return err
+	}
+	m, ok := o.ManagerOf(c.Resolve(session))
+	if !ok {
+		return nil
+	}
+	if _, ok := o.Goals[m.GoalID]; ok {
+		var read []GoalEvent
+		for _, e := range events {
+			if e.Goal == m.GoalID && !e.wakes() {
+				read = append(read, e)
+			}
+		}
+		return c.Store.markDelivered(read, c.now())
+	}
+	if m.Role != RoleChief {
+		return nil
+	}
+	mine := map[string]bool{m.ID: true}
+	for _, below := range o.Subtree(m.ID) {
+		if g, ok := o.Goals[below.GoalID]; ok {
+			mine[g.ID] = true
+		}
+	}
+	var read []GoalEvent
+	for _, e := range events {
+		if mine[e.Goal] {
+			read = append(read, e)
+		}
+	}
+	split, err := c.sortChief(m.ID, read)
+	if err != nil {
+		return err
+	}
+	heard := split.quiet
+	for _, e := range split.action {
+		if e.Goal == m.ID && e.agentReply() {
+			heard = append(heard, e)
+		}
+	}
+	return c.Store.markHeard(m.ID, heard, c.now())
+}

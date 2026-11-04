@@ -151,21 +151,9 @@ func replayNew(g Goal, events []GoalEvent, items map[string]Item, end time.Time)
 		}
 		timeline = append(timeline, e)
 	}
-	pace := WakePace{WakeDebounce, DigestEvery}
+	pace := WakePace{WakeDebounce, ReplyDebounce, DigestEvery}
 	var pending []GoalEvent
-	dueAt := func() (time.Time, bool) {
-		for _, e := range pending {
-			if wakeKinds[e.Kind] {
-				return e.Created.Add(pace.Debounce), true
-			}
-		}
-		for _, e := range pending {
-			if e.Kind != EventIdleAgain {
-				return e.Created.Add(pace.Digest), true
-			}
-		}
-		return time.Time{}, false
-	}
+	dueAt := func() (time.Time, bool) { return pace.dueAt(pending) }
 	deliver := func() {
 		wakes++
 		chars += len([]rune(wakeText(g, pending)))

@@ -10,12 +10,34 @@ import (
 	"unicode/utf8"
 )
 
-// wakeKinds are the events that wake a manager or chief: something needs it now. Every other event waits in its inbox for the next
-// wake, or for the digest.
+// wakeKinds are the kinds of event that wake a manager or chief: something needs it now. GoalEvent.wakes judges one event; an agent's
+// reply with news wakes after ReplyDebounce, and every other event waits in its inbox for the next wake, or for the digest.
 var wakeKinds = map[string]bool{
 	EventAsked: true, EventStuck: true, EventAgentStopped: true, EventAgentHung: true, EventAgentAdrift: true, EventAgentSwollen: true,
 	EventAgentOnboarding: true, EventResumeFailed: true, EventCIRed: true, EventConflict: true, EventReview: true, EventSteered: true, EventFailedVerify: true,
-	EventTimer: true, EventNudge: true, EventMachineThrottled: true, EventRelayFailed: true,
+	EventTimer: true, EventNudge: true, EventRelayFailed: true,
+}
+
+// wakes reports whether the event needs its reader within a debounce: a wake kind, or the terminal report a manager must accept. A plain
+// approval and a review count with nothing unresolved need nobody.
+func (e GoalEvent) wakes() bool {
+	if e.terminalReport() {
+		return true
+	}
+	return wakeKinds[e.Kind] && !e.quietReview()
+}
+
+func (e GoalEvent) terminalReport() bool {
+	return e.Kind == EventFinished && strings.HasPrefix(e.Key, assignmentReportKey)
+}
+
+func (e GoalEvent) quietReview() bool {
+	return e.Kind == EventReview && (strings.HasSuffix(e.Payload, " review: approved") || strings.HasSuffix(e.Payload, ", 0 unresolved"))
+}
+
+// agentReply reports whether the event is an agent's idle reply with news, which wakes once after ReplyDebounce.
+func (e GoalEvent) agentReply() bool {
+	return e.Kind == EventFinished && !e.terminalReport()
 }
 
 // wholeKinds are the events a wake shows whole: a failure's cause and a relayed command's outcome are lost when cut.
@@ -24,44 +46,58 @@ var wholeKinds = map[string]bool{EventResumeFailed: true, EventRelayed: true, Ev
 const (
 	// WakeDebounce is how long ym waits after the first event that wakes a manager, so a burst reaches it as one message.
 	WakeDebounce = time.Minute
+	// ReplyDebounce is how long an agent's reply with news waits for followers before it wakes its manager.
+	ReplyDebounce = 10 * time.Minute
 	// DigestEvery is how long events that wake nobody wait before ym hands them over as one digest.
 	DigestEvery = 30 * time.Minute
 	// lineMax caps an event's text in a wake; ym goal event prints it whole.
 	lineMax = 200
 )
 
-// WakePace is how long a wake waits for followers, and how long events that wake nobody wait for a digest.
+// WakePace is how long a wake waits for followers, how long an agent's reply waits for them, and how long events that wake nobody
+// wait for a digest.
 type WakePace struct {
-	Debounce, Digest time.Duration
+	Debounce, Reply, Digest time.Duration
 }
 
-// wakeDue reports whether events, oldest first, are due now: Debounce after the first that wakes, or once the oldest of the rest
-// has waited Digest. Agents' replies that add nothing are never due on their own.
+// wakeDue reports whether events, oldest first, are due now: Debounce after the first that wakes, else Reply after the first agent's
+// reply with news, or once the oldest of the rest has waited Digest. Agents' replies that add nothing are never due on their own.
 func (c *Core) wakeDue(events []GoalEvent) bool {
-	pace := WakePace{WakeDebounce, DigestEvery}
-	if c.Pace != nil {
-		pace = *c.Pace
-	}
-	return pace.due(events, c.now())
+	return c.pace().due(events, c.now())
 }
 
 func (p WakePace) due(events []GoalEvent, now time.Time) bool {
-	var oldest time.Time
+	at, ok := p.dueAt(events)
+	return ok && !now.Before(at)
+}
+
+// dueAt is when events, oldest first, are due, and whether they ever are.
+func (p WakePace) dueAt(events []GoalEvent) (time.Time, bool) {
+	var oldest, reply time.Time
 	for _, e := range events {
-		if wakeKinds[e.Kind] {
-			return !now.Before(e.Created.Add(p.Debounce))
+		if e.wakes() {
+			return e.Created.Add(p.Debounce), true
+		}
+		if e.agentReply() && reply.IsZero() {
+			reply = e.Created
 		}
 		if e.Kind != EventIdleAgain && oldest.IsZero() {
 			oldest = e.Created
 		}
 	}
-	return !oldest.IsZero() && !now.Before(oldest.Add(p.Digest))
+	switch {
+	case oldest.IsZero():
+		return oldest, false
+	case !reply.IsZero() && reply.Add(p.Reply).Before(oldest.Add(p.Digest)):
+		return reply.Add(p.Reply), true
+	}
+	return oldest.Add(p.Digest), true
 }
 
-// urgent reports whether any of events wakes its manager.
+// urgent reports whether any of events will wake its manager by itself before a digest would.
 func urgent(events []GoalEvent) bool {
 	for _, e := range events {
-		if wakeKinds[e.Kind] {
+		if e.wakes() || e.agentReply() {
 			return true
 		}
 	}
@@ -84,7 +120,7 @@ func inboxText(head string, events []GoalEvent, host string, label func(GoalEven
 		switch {
 		case e.Kind == EventIdleAgain:
 			quiet++
-		case wakeKinds[e.Kind]:
+		case e.wakes() || e.agentReply():
 			now = append(now, line)
 		default:
 			later = append(later, line)

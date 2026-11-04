@@ -167,13 +167,16 @@ func (c *Core) ReportAssignment(session, id, summary string) (int64, error) {
 	return seq, tx.Commit()
 }
 
+// assignmentReportKey starts the key of a terminal report's event.
+const assignmentReportKey = "assignment-report:"
+
 func assignmentReportIn(tx *sql.Tx, a Assignment, summary string, at time.Time) (int64, error) {
 	if a.Report != 0 {
 		return a.Report, nil
 	}
 	var seq int64
 	err := tx.QueryRow(`INSERT INTO ym_goal_events (goal,kind,payload,key,created) VALUES (?,?,?,?,?) RETURNING seq`, a.Goal, EventFinished,
-		fmt.Sprintf("assignment %s generation %d terminal report from %s: %s; manager: ym goal accept %s --report <this-event>", a.ID, a.Generation, Short(a.Session), summary, a.ID), "assignment-report:"+a.ID, stamp(at)).Scan(&seq)
+		fmt.Sprintf("assignment %s generation %d terminal report from %s: %s; manager: ym goal accept %s --report <this-event>", a.ID, a.Generation, Short(a.Session), summary, a.ID), assignmentReportKey+a.ID, stamp(at)).Scan(&seq)
 	if err != nil {
 		return 0, err
 	}
@@ -213,6 +216,9 @@ func (c *Core) AcceptAssignment(session, id string, report int64) error {
 	}
 	res, err := tx.Exec(`UPDATE ym_assignments SET state='accepted',accepted_report=? WHERE id=? AND state='outstanding' AND report=?`, report, id, report)
 	if err = changed(res, err); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE ym_goal_events SET delivered_to_manager=? WHERE seq=? AND delivered_to_manager IS NULL`, stamp(c.now()), report); err != nil {
 		return err
 	}
 	if host, _, remote := SplitRemote(a.Session); remote {

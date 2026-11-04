@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 	"time"
 )
 
-// BriefGrace is how long a manager may leave its brief behind what happened before it is nudged to refresh it.
+// BriefGrace is how long a session past the context cap has to answer an ask for a fresh brief before ym restarts it anyway.
 const BriefGrace = 5 * time.Minute
 
 const briefSchema = `
@@ -293,6 +292,9 @@ type Freshness struct {
 	// Behind is the newest event the brief predates, zero when it is fresh.
 	Behind     time.Time
 	BehindWhat string
+	// Own is Behind without a chief's reports' newer briefs: what a wake asks it to refresh for.
+	Own     time.Time
+	OwnWhat string
 }
 
 func (f Freshness) Stale() bool { return f.Brief == nil || !f.Behind.IsZero() }
@@ -329,6 +331,7 @@ func freshness(o Org, reports map[string][]string, m Manager, briefs map[string]
 	for _, e := range events {
 		note(e.At, e.What)
 	}
+	f.Own, f.OwnWhat = f.Behind, f.BehindWhat
 	if m.Role == RoleChief {
 		for _, r := range o.subtree(reports, m.ID) {
 			if b, ok := briefs[r.ID]; ok && r.ID != m.ID {
@@ -337,7 +340,7 @@ func freshness(o Org, reports map[string][]string, m Manager, briefs map[string]
 		}
 	}
 	if f.Brief == nil {
-		f.Behind = timeZero
+		f.Behind, f.Own = timeZero, timeZero
 	}
 	return f
 }
@@ -381,48 +384,68 @@ func (c *Core) freshness(o Org, remotes []RemoteBoard) (map[string]Freshness, er
 	return out, nil
 }
 
-// watchBriefs nudges a running manager or chief whose brief predates a meaningful event by more than BriefGrace, once per event.
-func (c *Core) watchBriefs(b Board, o Org) error {
+// briefRequest is the line a wake or digest to m carries when its brief is behind what happened, once per event, with the event's
+// time to note once it is handed over. A report's newer brief asks nothing of a chief.
+func (c *Core) briefRequest(o Org, m Manager) (string, time.Time, error) {
 	fresh, err := c.Freshness(o)
 	if err != nil {
-		return err
+		return "", timeZero, err
 	}
 	nudged, err := c.Store.briefNudges()
 	if err != nil {
-		return err
+		return "", timeZero, err
 	}
-	now := c.now()
-	var errs []error
-	for _, m := range o.Ordered() {
-		f := fresh[m.ID]
-		if !o.Active(m) || !b.Alive(m) || !f.Stale() {
-			continue
-		}
-		behind := f.Behind
-		if f.Brief == nil {
-			behind = m.LaunchedAt
-		}
-		if now.Sub(behind) < BriefGrace || !nudged[m.ID].Before(behind) {
-			continue
-		}
-		if s, ok := b.Session(m.Session); ok && s.Status == Busy {
-			continue
-		}
-		text := fmt.Sprintf("ym: your brief is behind (%s). Refresh it now with ym goal brief --assessment \"…\" --changed \"…\" --uncertainty \"…\" --next \"…\" --waiting-on \"…\".", f.reason())
-		if err := c.tell(b, m.Session, text, false); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		errs = append(errs, c.Store.noteBriefNudge(m.ID, behind), c.Store.noteBriefAsk(m.ID, now))
+	f := fresh[m.ID]
+	if !f.ownStale() {
+		return "", timeZero, nil
 	}
-	return errors.Join(errs...)
+	behind := f.Own
+	if f.Brief == nil {
+		behind = m.LaunchedAt
+	}
+	if !nudged[m.ID].Before(behind) {
+		return "", timeZero, nil
+	}
+	return f.request(), behind, nil
+}
+
+// withLine ends a message with line, when there is one.
+func withLine(text, line string) string {
+	if line == "" {
+		return text
+	}
+	return text + "\n" + line
+}
+
+func (f Freshness) ownStale() bool { return f.Brief == nil || !f.Own.IsZero() }
+
+// briefAsk starts the line that asks for a fresh brief inside a message.
+const briefAsk = "Your brief is behind"
+
+// request asks for a fresh brief in one line, for what m itself is behind on.
+func (f Freshness) request() string {
+	return briefAsk + " (" + f.reason() + "); refresh it with ym goal brief once you have acted."
+}
+
+// briefLineOf is the line asking for a fresh brief in the message numbered seq, "" when it has none.
+func (s *Store) briefLineOf(seq int64) (string, error) {
+	var text string
+	if err := s.db.QueryRow(`SELECT text FROM ym_messages WHERE seq = ?`, seq).Scan(&text); err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, briefAsk) {
+			return line, nil
+		}
+	}
+	return "", nil
 }
 
 func (f Freshness) reason() string {
 	if f.Brief == nil {
 		return "you have written none yet"
 	}
-	return fmt.Sprintf("v%d predates %s at %s", f.Brief.Version, f.BehindWhat, f.Behind.Local().Format(time.Kitchen))
+	return fmt.Sprintf("v%d predates %s at %s", f.Brief.Version, f.OwnWhat, f.Own.Local().Format(time.Kitchen))
 }
 
 // BriefsAddr is where ym serve serves briefs: $YAMNAYA_BRIEFS_ADDR, else 127.0.0.1:7477 for the default state directory and a port

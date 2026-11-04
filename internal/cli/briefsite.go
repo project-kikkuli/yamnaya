@@ -792,7 +792,7 @@ var briefPage = template.Must(template.New("brief").Funcs(siteFuncs).Parse(tags 
 <p class="meta">{{.ID}}{{if .Repo}} · {{.Repo}}{{end}}{{if .Artifact}} · <a href="{{.Artifact}}">artifact</a>{{end}}</p>
 <p>{{template "tags" .}}</p>
 {{if .Remote}}<p class="meta">{{.Remote}}</p>{{end}}
-{{if .Fresh.Stale}}{{if .Fresh.Brief}}<p class="meta">This brief predates {{.Fresh.BehindWhat}} ({{.Age .Fresh.Behind}}); its manager has been asked to refresh it.</p>{{end}}{{end}}
+{{if .Fresh.Stale}}{{if .Fresh.Brief}}<p class="meta">This brief predates {{.Fresh.BehindWhat}} ({{.Age .Fresh.Behind}}).</p>{{end}}{{end}}
 {{with .Shown}}<div class="card"><p class="meta">Brief v{{.Version}}, {{$.Age .CreatedAt}}{{template "copy" (copy "brief" $.Markdown)}}</p>{{range .Sections}}<h2>{{index . 0}}{{template "copy" (copy (index . 0) (index . 1))}}</h2><p class="sec">{{index . 1}}</p>{{end}}</div>
 {{else}}<p>No brief recorded yet.</p>{{end}}
 {{if .ContextText}}<h2>Context{{template "copy" (copy "context" .ContextText)}}</h2>

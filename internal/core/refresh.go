@@ -196,16 +196,21 @@ func (c *Core) refreshSwollen(b Board, o Org) (map[string]bool, error) {
 			continue
 		}
 		f := fresh[m.ID]
-		behind := f.Behind
+		behind := f.Own
 		if f.Brief == nil {
 			behind = m.LaunchedAt
 		}
+		told, err := c.Store.digest(m.ID)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
 		asked := timeZero
-		if mc := asks[m.ID]; mc.Session == m.Session && !mc.Asked.Before(behind) {
+		if mc := asks[m.ID]; mc.Session == m.Session && !mc.Asked.Before(told.ToldAt) {
 			asked = mc.Asked
 		}
 		idle := s.Status == Idle && s.Prompt == nil
-		switch refreshStep(s.Context, limit, idle, f.Stale(), asked, s.ResultAt, now) {
+		switch refreshStep(s.Context, limit, idle, f.ownStale(), asked, s.ResultAt, now) {
 		case wakeAsUsual:
 			continue
 		case askBrief:

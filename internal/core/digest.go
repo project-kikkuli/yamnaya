@@ -194,7 +194,7 @@ func (c *Core) sortChief(chief string, events []GoalEvent) (chiefSort, error) {
 			continue
 		case EventStuck, EventFailedVerify, EventAgentStopped:
 		default:
-			if e.Goal == chief && (wakeKinds[e.Kind] || e.Kind == EventFinished) || managerAdrift(e) {
+			if e.Goal == chief && (e.wakes() || e.Kind == EventFinished) || managerAdrift(e) {
 				out.action = append(out.action, e)
 			} else {
 				out.quiet = append(out.quiet, e)
@@ -301,7 +301,7 @@ func (c *Core) pace() WakePace {
 	if c.Pace != nil {
 		return *c.Pace
 	}
-	return WakePace{WakeDebounce, DigestEvery}
+	return WakePace{WakeDebounce, ReplyDebounce, DigestEvery}
 }
 
 // actionDue reports whether any of chief's events that need it has waited long enough: what its own agents did a debounce, and what
@@ -315,6 +315,9 @@ func (c *Core) actionDue(s chiefSort, chief string) bool {
 		wait := batch
 		if e.Goal == chief {
 			wait = c.pace().Debounce
+			if e.agentReply() {
+				wait = c.pace().Reply
+			}
 		}
 		if !now.Before(e.Created.Add(wait)) {
 			return true
@@ -455,7 +458,7 @@ func (c *Core) busyTold(s Live, told time.Time) bool {
 // flushDigest hands a chief what waits for it. New content goes into a digest still pending; a session mid-turn gets at most one,
 // so anything later waits here for its next message, and only what needs the chief ever starts a message. Quiet content rides
 // along at most every Digest.
-func (c *Core) flushDigest(b Board, m Manager) error {
+func (c *Core) flushDigest(b Board, o Org, m Manager) error {
 	r, err := c.Store.digest(m.ID)
 	if err != nil || len(r.Action) == 0 {
 		return err
@@ -470,8 +473,23 @@ func (c *Core) flushDigest(b Board, m Manager) error {
 	}
 	if seq != 0 {
 		r.Sent, r.Action = r.Sent.merged(r.Action), Rollup{}
-		if err := c.Store.rewriteMessage(seq, c.Store.Nicked(r.Sent.text())); err != nil {
+		line, behind, err := c.briefRequest(o, m)
+		if err != nil {
 			return err
+		}
+		asked := line != ""
+		if !asked {
+			if line, err = c.Store.briefLineOf(seq); err != nil {
+				return err
+			}
+		}
+		if err := c.Store.rewriteMessage(seq, c.Store.Nicked(withLine(r.Sent.text(), line))); err != nil {
+			return err
+		}
+		if asked {
+			if err := c.Store.noteBriefNudge(m.ID, behind); err != nil {
+				return err
+			}
 		}
 		return c.Store.saveDigest(m.ID, r)
 	}
@@ -482,9 +500,17 @@ func (c *Core) flushDigest(b Board, m Manager) error {
 	if now := c.now(); len(r.Quiet) > 0 && !now.Before(r.SummedAt.Add(c.pace().Digest)) {
 		body, r.Quiet, r.SummedAt = body.merged(r.Quiet), Rollup{}, now
 	}
-	text := body.text()
-	if err := c.tell(b, m.Session, text, false); err != nil {
+	line, behind, err := c.briefRequest(o, m)
+	if err != nil {
 		return err
+	}
+	if err := c.tell(b, m.Session, withLine(body.text(), line), false); err != nil {
+		return err
+	}
+	if line != "" {
+		if err := c.Store.noteBriefNudge(m.ID, behind); err != nil {
+			return err
+		}
 	}
 	r.Action, r.Sent, r.ToldAt = Rollup{}, Rollup{}, c.now()
 	if seq, err = c.Store.pendingDigest(m.Session); err != nil {
