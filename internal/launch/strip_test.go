@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,39 @@ func put(t *testing.T, wt, rel string) {
 	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// webPackage commits web/package.json where origin holds it, so a dist beside it can count as a build's.
+func webPackage(t *testing.T, wt string) {
+	t.Helper()
+	put(t, wt, "web/package.json")
+	run(t, wt, "git", "add", "web/package.json")
+	run(t, wt, "git", "commit", "-q", "-m", "package")
+	run(t, wt, "git", "push", "-q", "origin", "HEAD")
+}
+
+func exclude(t *testing.T, repo, pattern string) {
+	t.Helper()
+	f, err := os.OpenFile(filepath.Join(repo, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fmt.Fprintln(f, pattern)
+}
+
+// unignoreClaude drops .claude from the worktree's .gitignore and pushes that.
+func unignoreClaude(t *testing.T, wt string) {
+	t.Helper()
+	p := filepath.Join(wt, ".gitignore")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(p, []byte(strings.ReplaceAll(string(b), ".claude\n", "")), 0o644)
+	run(t, wt, "git", "add", ".gitignore")
+	run(t, wt, "git", "commit", "-q", "-m", "stop ignoring .claude")
+	run(t, wt, "git", "push", "-q", "origin", "HEAD")
 }
 
 func exists(wt, rel string) bool {
@@ -205,6 +239,23 @@ func TestAShortIdleOnlyAppliesToAReclaim(t *testing.T) {
 	s, err = GCWith(repo, at, nil, nil, nil, true, false, Policy{Idle: time.Hour})
 	if err != nil || s.Trees[0].Keep != "" {
 		t.Fatalf("reclaim at 2h idle: %+v %v", s.Trees, err)
+	}
+}
+
+func TestHoldsOnlyStopsAtTheFirstFileItRejects(t *testing.T) {
+	dir := t.TempDir()
+	put(t, dir, "a.tsbuildinfo")
+	put(t, dir, "b.env")
+	put(t, dir, "c.tsbuildinfo")
+	var seen []string
+	if holdsOnly(dir, func(name string) bool {
+		seen = append(seen, name)
+		return strings.HasSuffix(name, ".tsbuildinfo")
+	}) {
+		t.Fatal("said a directory holding b.env holds only tsbuildinfo")
+	}
+	if !slices.Equal(seen, []string{"a.tsbuildinfo", "b.env"}) {
+		t.Fatalf("looked at %v after finding b.env", seen)
 	}
 }
 
@@ -399,13 +450,90 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 			run(t, wt, "git", "push", "-q", "origin", "HEAD")
 			put(t, wt, "src/target/debug/app")
 		}, "", nil, []string{"src/target/debug/app"}},
-		{"a package's dist beside its tracked package.json", func(t *testing.T, repo, wt string) {
-			put(t, wt, "web/package.json")
-			run(t, wt, "git", "add", "web/package.json")
-			run(t, wt, "git", "commit", "-q", "-m", "package")
-			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+		{"a package's dist holding only tsbuildinfo", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
 			put(t, wt, "web/dist/tsconfig.tsbuildinfo")
 		}, "", nil, []string{"web/dist/tsconfig.tsbuildinfo"}},
+		{"tsbuildinfo nested in a package's dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/sub/x.tsbuildinfo")
+		}, "", nil, []string{"web/dist/sub/x.tsbuildinfo"}},
+		{"an empty dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			os.MkdirAll(filepath.Join(wt, "web/dist"), 0o755)
+		}, "", nil, []string{"web/dist"}},
+		{"an empty directory named like tsbuildinfo in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			os.MkdirAll(filepath.Join(wt, "web/dist/foo.tsbuildinfo"), 0o755)
+		}, "", nil, []string{"web/dist/foo.tsbuildinfo"}},
+		{"a secret beside tsbuildinfo in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/tsconfig.tsbuildinfo")
+			put(t, wt, "web/dist/prod.env")
+		}, KeepIgnored, []string{"web/dist/tsconfig.tsbuildinfo", "web/dist/prod.env"}, nil},
+		{"notes in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/notes.md")
+		}, KeepIgnored, []string{"web/dist/notes.md"}, nil},
+		{"a file inside a directory named like tsbuildinfo in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/foo.tsbuildinfo/notes.md")
+		}, KeepIgnored, []string{"web/dist/foo.tsbuildinfo/notes.md"}, nil},
+		{"a link named like tsbuildinfo in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/tsconfig.tsbuildinfo")
+			os.Symlink(filepath.Join(wt, "pkg/mod.py"), filepath.Join(wt, "web/dist/x.tsbuildinfo"))
+		}, KeepIgnored, []string{"web/dist/x.tsbuildinfo", "pkg/mod.py"}, nil},
+		{"tsbuildinfo with no stem in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/.tsbuildinfo")
+		}, KeepIgnored, []string{"web/dist/.tsbuildinfo"}, nil},
+		{"tsbuildinfo that cannot be opened in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/x.tsbuildinfo")
+			os.Chmod(filepath.Join(wt, "web/dist/x.tsbuildinfo"), 0)
+		}, KeepIgnored, []string{"web/dist/x.tsbuildinfo"}, nil},
+		{"a directory that cannot be read in dist", func(t *testing.T, repo, wt string) {
+			webPackage(t, wt)
+			put(t, wt, "web/dist/sub/x.tsbuildinfo")
+			os.Chmod(filepath.Join(wt, "web/dist/sub"), 0)
+			t.Cleanup(func() { os.Chmod(filepath.Join(wt, "web/dist/sub"), 0o755) })
+		}, KeepNested, []string{"web/dist/sub"}, nil},
+		{"only tsbuildinfo in dist with no package.json", func(t *testing.T, repo, wt string) {
+			put(t, wt, "dist/tsconfig.tsbuildinfo")
+		}, KeepIgnored, []string{"dist/tsconfig.tsbuildinfo"}, nil},
+		{"a sole ignored file a leading space sets apart from the allowlist", func(t *testing.T, repo, wt string) {
+			exclude(t, repo, " .DS_Store")
+			put(t, wt, " .DS_Store")
+		}, KeepIgnored, []string{" .DS_Store"}, nil},
+		{"an ignored name with a newline", func(t *testing.T, repo, wt string) {
+			exclude(t, repo, "*.pyc")
+			put(t, wt, "notes\n.pyc")
+		}, "", nil, []string{"notes\n.pyc"}},
+		{"an ignored name a newline sets apart from the allowlist", func(t *testing.T, repo, wt string) {
+			exclude(t, repo, "*.DS_Store")
+			put(t, wt, "a\n.DS_Store")
+		}, KeepIgnored, []string{"a\n.DS_Store"}, nil},
+		{"Next.js's generated types file", func(t *testing.T, repo, wt string) {
+			exclude(t, repo, "next-env.d.ts")
+			put(t, wt, "web/next-env.d.ts")
+		}, "", nil, []string{"web/next-env.d.ts"}},
+		{"Claude Code's lock excluded alone", func(t *testing.T, repo, wt string) {
+			unignoreClaude(t, wt)
+			exclude(t, repo, "**/.claude/scheduled_tasks.lock")
+			put(t, wt, ".claude/scheduled_tasks.lock")
+		}, "", nil, []string{".claude/scheduled_tasks.lock"}},
+		{"Claude Code's lock in an ignored .claude", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".claude/scheduled_tasks.lock")
+		}, "", nil, []string{".claude/scheduled_tasks.lock"}},
+		{"settings beside Claude Code's lock", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".claude/scheduled_tasks.lock")
+			put(t, wt, ".claude/settings.local.json")
+		}, KeepIgnored, []string{".claude/scheduled_tasks.lock", ".claude/settings.local.json"}, nil},
+		{"a file named like Claude Code's lock outside .claude", func(t *testing.T, repo, wt string) {
+			exclude(t, repo, "scheduled_tasks.lock")
+			put(t, wt, "scheduled_tasks.lock")
+		}, KeepIgnored, []string{"scheduled_tasks.lock"}, nil},
 		{"dist with its package.json only higher up", func(t *testing.T, repo, wt string) {
 			put(t, wt, "package.json")
 			run(t, wt, "git", "add", "package.json")

@@ -477,7 +477,7 @@ func TestYmDiskNamesWhatAPassCouldNotFreeOnlyWhileTheDiskIsLow(t *testing.T) {
 	}{{"low", 150, true}, {"exactly at the tier", 200, false}, {"recovered", 400, false}} {
 		t.Run(c.name, func(t *testing.T) {
 			var b strings.Builder
-			printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: c.free}}, st)
+			printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: c.free}}, st, pinnedWorktrees{})
 			if got := strings.Contains(b.String(), "could not free uv clean"); got != c.want {
 				t.Fatalf("printed %q, want the line %v", b.String(), c.want)
 			}
@@ -506,7 +506,7 @@ func TestYmDiskSaysWhatTheLastPassRiskedOnlyWhileTheDiskIsLow(t *testing.T) {
 		want bool
 	}{{150, true}, {400, false}} {
 		var b strings.Builder
-		printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: x.free}}, readDiskState(dir))
+		printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: x.free}}, readDiskState(dir), pinnedWorktrees{})
 		if got := strings.Contains(b.String(), "builds may have failed"); got != x.want {
 			t.Errorf("free %d printed %q, want %v", x.free, b.String(), x.want)
 		}

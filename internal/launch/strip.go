@@ -20,10 +20,19 @@ import (
 var regenerableDirs = map[string]bool{
 	"node_modules": true, ".venv": true, "target": true, "__pycache__": true, ".pytest_cache": true, ".mypy_cache": true,
 	".ruff_cache": true, ".next": true, ".turbo": true, ".parcel-cache": true, ".gradle": true, ".tox": true, ".nox": true,
-	".svelte-kit": true, "dist": true,
+	".svelte-kit": true, "dist": true, ".claude": true,
 }
 
-var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", ".eslintcache"}
+var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", ".eslintcache", "next-env.d.ts"}
+
+// claudeLock is Claude Code's own lock, naming the session holding it. The rest of .claude can hold settings or worktrees.
+const claudeLock = ".claude/scheduled_tasks.lock"
+
+// holding narrows a directory of the allowlist to one whose every file has a name its func accepts.
+var holding = map[string]func(name string) bool{
+	"dist":    func(name string) bool { return strings.HasSuffix(name, ".tsbuildinfo") && name != ".tsbuildinfo" },
+	".claude": func(name string) bool { return name == filepath.Base(claudeLock) },
+}
 
 // buildFiles are the build files whose being tracked beside it makes a generically named directory a build's output: unlike the
 // rest of the allowlist, which only its tool writes to, these are names anyone might use for a folder.
@@ -59,10 +68,31 @@ func isBareRepo(dir string) bool {
 	return true
 }
 
+// holdsOnly reports whether every file under dir is a regular file it can open with a name match accepts, stopping at the first
+// that is not. A walk that cannot finish counts as not.
+func holdsOnly(dir string, match func(name string) bool) bool {
+	only := true
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			return nil
+		}
+		if err == nil && d.Type().IsRegular() && match(d.Name()) {
+			f, openErr := os.Open(p)
+			if openErr == nil {
+				f.Close()
+				return nil
+			}
+		}
+		only = false
+		return filepath.SkipAll
+	})
+	return only
+}
+
 // ignoredEntries lists the git-ignored entries of the worktree at path as git reports them, folding a virtualenv that
-// ignores itself, as uv's do, back into one directory.
+// ignores itself, as uv's do, back into one directory. Names keep their every byte: a space may be all that sets one apart.
 func ignoredEntries(path string) ([]string, error) {
-	out, err := look(path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+	out, err := gitEnv(path, nil, nil, "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +138,7 @@ func regenerable(root, entry string) bool {
 func allowlisted(root, entry string) bool {
 	base := filepath.Base(strings.TrimSuffix(entry, "/"))
 	if !strings.HasSuffix(entry, "/") {
-		return slices.ContainsFunc(regenerableFiles, func(p string) bool {
+		return entry == claudeLock || strings.HasSuffix(entry, "/"+claudeLock) || slices.ContainsFunc(regenerableFiles, func(p string) bool {
 			ok, _ := filepath.Match(p, base)
 			return ok
 		})
@@ -116,8 +146,11 @@ func allowlisted(root, entry string) bool {
 	if !regenerableDirs[base] {
 		return false
 	}
-	files, generic := buildFiles[base]
-	return !generic || trackedBuildFile(root, filepath.Dir(strings.TrimSuffix(entry, "/")), files)
+	if files, generic := buildFiles[base]; generic && !trackedBuildFile(root, filepath.Dir(strings.TrimSuffix(entry, "/")), files) {
+		return false
+	}
+	match, narrow := holding[base]
+	return !narrow || holdsOnly(filepath.Join(root, entry), match)
 }
 
 // trackedBuildFile reports whether HEAD holds one of files as a file in dir; staged, a directory or a link do not count.
@@ -129,6 +162,12 @@ func trackedBuildFile(root, dir string, files []string) bool {
 		}
 	}
 	return false
+}
+
+// Pinned says why the worktree at path must stay for what it holds beyond its commits, or "" when removing it loses none of that.
+func Pinned(path string) (keep, why string) {
+	keep, why, _ = keepContents(path)
+	return keep, why
 }
 
 // keepContents says why what lies in the worktree at path beyond its commits must stay: a repository nested at any depth under

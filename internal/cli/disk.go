@@ -367,11 +367,11 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 
 func (r reclaimer) fileOwnerItem(ctx context.Context, low disk.Usage, blocked []string) (core.Item, error) {
 	consumers, complete := r.measure(low)
-	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, blocked, filepath.Join(r.dir, "gc.log")))
+	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, blocked, filepath.Join(r.dir, "gc.log"), readPinned(r.dir)))
 }
 
 // diskItem is the one owner item of a low-disk episode: what is low, and what still fills it.
-func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, blocked []string, log string) core.Item {
+func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, blocked []string, log string, pinned pinnedWorktrees) core.Item {
 	names := make([]string, len(consumers))
 	for i, c := range consumers {
 		names[i] = c.String()
@@ -385,6 +385,9 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	}
 	if len(blocked) > 0 {
 		largest += ". Not freed, ym retries each pass: " + strings.Join(blocked, "; ")
+	}
+	if len(pinned.Trees) > 0 {
+		largest += fmt.Sprintf(". Kept for what they hold, as of %s: %d worktrees, %s; ym disk names them", pinned.At.Format(time.RFC3339), len(pinned.Trees), gb(pinned.size()))
 	}
 	outcome := "ym cannot free more by itself"
 	if len(blocked) > 0 {
@@ -430,7 +433,7 @@ func serveRunning(dir string) bool {
 }
 
 // printDisk shows each filesystem and the episode. What the last pass could not free matters only while a filesystem is still low.
-func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
+func printDisk(w io.Writer, usages []disk.Usage, st diskState, pinned pinnedWorktrees) {
 	low := false
 	for _, u := range usages {
 		fmt.Fprintf(w, "%s  %.1f%% free  %s of %s  tier %d\n", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(int64(u.Total)), disk.TierOf(u.Free()))
@@ -449,6 +452,12 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 			fmt.Fprintln(w, "last pass, at tier 3:", b)
 		}
 	}
+	if len(pinned.Trees) > 0 {
+		fmt.Fprintf(w, "worktrees kept for what they hold, %s, as of the last gc or pass at %s:\n", gb(pinned.size()), pinned.At.Format(time.RFC3339))
+		for _, t := range pinned.Trees {
+			fmt.Fprintf(w, "  %10s  %s: %s\n", gb(t.Size), t.Path, t.Why)
+		}
+	}
 	if st.Filed != "" {
 		fmt.Fprintf(w, "this episode's owner item: %s, filed %s\n", st.Filed, st.FiledAt.Format(time.RFC3339))
 	}
@@ -458,7 +467,7 @@ func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 	cmd := &cobra.Command{Use: "disk", Short: "Show free space on the filesystems ym watches, the tier each is in and the current low-disk episode", Args: cobra.NoArgs}
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), diskWatcherLine(e.core.StateDir))
-		printDisk(cmd.OutOrStdout(), disk.Each(disk.Stat, diskPaths(cmd.Context())), readDiskState(e.core.StateDir))
+		printDisk(cmd.OutOrStdout(), disk.Each(disk.Stat, diskPaths(cmd.Context())), readDiskState(e.core.StateDir), readPinned(e.core.StateDir))
 		return nil
 	})
 	reclaim := &cobra.Command{

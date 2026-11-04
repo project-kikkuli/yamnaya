@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -196,6 +199,11 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 		}
 		out = append(out, s)
 	}
+	if !dry && l.removals != "" {
+		if err := savePinned(filepath.Dir(l.removals), out, now); err != nil && len(out) > 0 {
+			out[0].Errors = append(out[0].Errors, err.Error())
+		}
+	}
 	pruned := 0
 	for _, rec := range recs {
 		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep && conversationGone(rec) {
@@ -207,6 +215,51 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 		}
 	}
 	return out, pruned
+}
+
+// pinnedWorktrees is what the last real gc or pass kept for what it holds, read without walking anything.
+type pinnedWorktrees struct {
+	At    time.Time
+	Trees []launch.Sweep
+}
+
+func pinnedPath(dir string) string { return filepath.Join(dir, "pinned.json") }
+
+func readPinned(dir string) pinnedWorktrees {
+	var p pinnedWorktrees
+	if raw, err := os.ReadFile(pinnedPath(dir)); err == nil {
+		json.Unmarshal(raw, &p)
+	}
+	return p
+}
+
+func (p pinnedWorktrees) size() int64 {
+	var n int64
+	for _, t := range p.Trees {
+		n += t.Size
+	}
+	return n
+}
+
+func savePinned(dir string, all []launch.Swept, at time.Time) error {
+	p := pinnedWorktrees{At: at}
+	for _, s := range all {
+		for _, t := range s.Trees {
+			if t.Pinned() {
+				p.Trees = append(p.Trees, t)
+			}
+		}
+	}
+	slices.SortFunc(p.Trees, func(a, b launch.Sweep) int { return cmp.Compare(b.Size, a.Size) })
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	tmp := pinnedPath(dir) + ".new"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, pinnedPath(dir))
 }
 
 // logRemoval appends one line for something gc removed to l.removals, prefixed with its RFC3339 time; empty logs nothing.
@@ -247,7 +300,7 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 					how += ", submodules proven to lose nothing, with --force"
 				}
 				fmt.Fprintf(w, "%s %s (%s%s, %s)\n", verb, t.Path, t.Branch, how, gb(t.Size))
-			case launch.KeepDirty, launch.KeepLocal:
+			case launch.KeepDirty, launch.KeepLocal, launch.KeepIgnored, launch.KeepNested, launch.KeepModules:
 				held = append(held, t)
 			}
 			if t.Keep != "" {
@@ -265,7 +318,11 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 	if len(held) > 0 {
 		fmt.Fprintln(w, "never touched:")
 		for _, t := range held {
-			fmt.Fprintf(w, "  %-18s %10s  %s (%s)\n", t.Keep, gb(t.Size), t.Path, t.Branch)
+			why := ""
+			if t.Pinned() {
+				why = ": " + t.Why
+			}
+			fmt.Fprintf(w, "  %-18s %10s  %s (%s)%s\n", t.Keep, gb(t.Size), t.Path, t.Branch, why)
 		}
 	}
 	if pruned > 0 {

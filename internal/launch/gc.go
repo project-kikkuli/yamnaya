@@ -58,6 +58,11 @@ type Sweep struct {
 	Forced bool
 }
 
+// Pinned says gc keeps it for what it holds beyond its commits, which only someone looking inside can settle.
+func (s Sweep) Pinned() bool {
+	return s.Keep == KeepIgnored || s.Keep == KeepNested || s.Keep == KeepModules
+}
+
 // Swept is one repository's gc: its worktrees, the branches it deleted, and what failed.
 type Swept struct {
 	Root     string
@@ -218,7 +223,7 @@ func Inside(path string, cwds []string) string {
 // GC removes the linked worktrees of the repository at root that are clean, have every commit on a remote or in a
 // merged pull request, went untouched for Idle, hold no cwd in cwds and nothing ignored off the regenerable allowlist, then deletes local branches merged into Base or
 // squashed by a merged pull request that no worktree has checked out. With dry it only decides; with sizes it measures
-// every worktree it removes or keeps for dirt or local commits. A non-nil own leaves every other worktree and branch alone.
+// every worktree it removes or keeps for dirt or local commits, and it always measures one it keeps for what it holds. A non-nil own leaves every other worktree and branch alone.
 func GC(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, sizes bool) (Swept, error) {
 	return GCWith(root, now, cwds, q, own, dry, sizes, Policy{Idle: Idle})
 }
@@ -284,7 +289,7 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 				sw.Why = fmt.Sprintf("clean, squash-merged in #%d, untouched %s, unused", sw.PR, idle.Round(time.Hour))
 			}
 		}
-		if sizes && (sw.Keep == "" || sw.Keep == KeepDirty || sw.Keep == KeepLocal) {
+		if sw.Pinned() || sizes && (sw.Keep == "" || sw.Keep == KeepDirty || sw.Keep == KeepLocal) {
 			sw.Size = Size(w.path)
 		}
 		if sw.Keep == "" && !dry {
