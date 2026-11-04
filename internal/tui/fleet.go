@@ -147,22 +147,7 @@ func spendText(f core.Fleet, s core.Spend) string {
 	return s.Dollars()
 }
 
-// loginName names a session's login whenever its harness has more than one to tell apart, the native login included.
-func (m Model) loginName(h, id string) string {
-	if id != "" && id != "default" {
-		return profileDisplay(h, id)
-	}
-	logins := 0
-	for _, p := range m.board.Profiles {
-		if p.Harness == h {
-			logins++
-		}
-	}
-	if logins > 1 {
-		return h + "/default"
-	}
-	return h
-}
+func (m Model) loginName(h, id string) string { return core.LoginName(m.board.Profiles, h, id) }
 
 func profileDisplay(h, id string) string {
 	if id == "" || id == "default" {

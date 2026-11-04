@@ -435,10 +435,33 @@ func (l launcher) settleNote(m migration) error {
 	})
 }
 
+// atStopReasons are, by harness:session, why a session stopped on its limit cannot move: its failover found no usable login, nothing has
+// been queued, and its window has not passed. The board shows one only while the session waits at the dialog.
+func atStopReasons(dir string) map[string]core.Switching {
+	files, _ := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
+	out := map[string]core.Switching{}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var a failoverAttempt
+		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" || a.State.Target != "" || a.State.Reason != errNoUsablePool.Error() {
+			continue
+		}
+		if !a.State.Reset.IsZero() && !a.State.Reset.After(time.Now()) {
+			continue
+		}
+		harness, _, _ := strings.Cut(filepath.Base(path), "-")
+		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: "at quota dialog, no usable login, resets " + quotaReset(a.State.Reset)}
+	}
+	return out
+}
+
 // PendingSwitches are the login switches not yet running, by harness:session, for the board to show.
 func (l launcher) PendingSwitches() map[string]core.Switching {
 	files, _ := filepath.Glob(filepath.Join(filepath.Dir(l.records.Dir), "migrations", "*.json"))
-	out := map[string]core.Switching{}
+	out := atStopReasons(filepath.Dir(l.records.Dir))
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {

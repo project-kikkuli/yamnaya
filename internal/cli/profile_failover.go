@@ -16,6 +16,8 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
+var errNoUsablePool = errors.New("no different verified usable subscription pool")
+
 type failoverAttempt struct {
 	State core.FailoverState   `json:"state"`
 	Pools map[string]time.Time `json:"attempted_pools"`
@@ -207,7 +209,7 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit
 			return p, nil
 		}
 	}
-	return profile.Profile{}, fmt.Errorf("no different verified usable subscription pool")
+	return profile.Profile{}, errNoUsablePool
 }
 
 // failoverDestination is a usable login of e's harness, which keeps the conversation's id, else of the other harness as the last resort.

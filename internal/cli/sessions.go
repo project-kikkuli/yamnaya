@@ -79,7 +79,7 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 				return writeJSON(cmd.OutOrStdout(), out)
 			}
 			for _, j := range out {
-				line := fmt.Sprintf("%-6s %-8s %-8s %-22s %s", profileDisplay(j.Harness, j.Profile), core.Short(j.ID), j.Status, j.Host, j.Title)
+				line := fmt.Sprintf("%-6s %-8s %-8s %-22s %s", core.LoginName(b.Profiles, j.Harness, j.Profile), core.Short(j.ID), j.Status, j.Host, j.Title)
 				if j.Copies > 1 {
 					line += fmt.Sprintf("  [%d COPIES %v]", j.Copies, j.CopyPIDs)
 				}
@@ -96,7 +96,7 @@ func sessionsCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			}
 			for _, n := range b.Launched {
 				if _, live := b.Session(n.Session); n.Switching != nil && !live {
-					fmt.Fprintf(cmd.OutOrStdout(), "%-6s %-8s %-8s %-22s [%s]\n", profileDisplay(n.Harness, n.Profile), core.Short(n.Session), n.State, "", n.Switching)
+					fmt.Fprintf(cmd.OutOrStdout(), "%-6s %-8s %-8s %-22s [%s]\n", core.LoginName(b.Profiles, n.Harness, n.Profile), core.Short(n.Session), n.State, "", n.Switching)
 				}
 			}
 			for _, r := range b.Remotes {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
@@ -2614,4 +2617,112 @@ func TestEveryWayOntoANewLoginStartsPastOnboarding(t *testing.T) {
 		}
 		onboarded(t, dest.Root)
 	})
+}
+
+func TestARowSaysWhyASessionAtTheQuotaDialogCannotMove(t *testing.T) {
+	type stage struct {
+		name string
+		then func(*testing.T, queueWorld, time.Time)
+		want string
+	}
+	reason := func(reset time.Time) string {
+		return "at quota dialog, no usable login, resets " + reset.UTC().Format(time.RFC3339)
+	}
+	for _, c := range []struct {
+		name   string
+		silent bool
+		rows   bool
+		then   stage
+	}{
+		{name: "silent stop, login usable later", silent: true, rows: true, then: stage{"moves", func(t *testing.T, w queueWorld, now time.Time) {
+			quotaLimits(t, w.state, limit(w.def, 100, now.Add(time.Hour)), limit(w.work, 5, now.Add(time.Hour)))
+			tickFailover(t, w, now)
+		}, "no row"}},
+		{name: "silent stop, window passes", silent: true, rows: true, then: stage{"window passed", func(t *testing.T, w queueWorld, now time.Time) {
+			a, _ := loadFailover(w.state, "claude", profileConversation)
+			a.State.Reset = now.Add(-time.Second)
+			if err := saveFailover(w.state, "claude", a); err != nil {
+				t.Fatal(err)
+			}
+		}, "default"}},
+		{name: "ledger event, back at work", rows: true, then: stage{"working", func(t *testing.T, w queueWorld, now time.Time) {
+			w.session.Status = core.Busy
+		}, "default"}},
+		{name: "ledger event, reset not yet known", then: stage{"working", func(t *testing.T, w queueWorld, now time.Time) {
+			w.session.Status = core.Busy
+		}, "default"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newQueueWorld(t, "claude", "")
+			now := time.Now()
+			reset := now.Add(31 * time.Hour).Truncate(time.Second)
+			me := personal(t, w)
+			out := []core.Limit{limit(w.work, 100, reset), limit(me, 100, reset)}
+			if c.rows {
+				out = append(out, limit(w.def, 100, reset))
+			}
+			quotaLimits(t, w.state, out...)
+			w.session.Status = core.Waiting
+			var events []core.Exhaustion
+			if c.silent {
+				base := w.l.core.Harnesses[0].(turnHarness)
+				w.l.core.Harnesses = []core.Harness{silentHarness{base, nil}}
+			} else {
+				events = append(events, quotaEvent(w, now))
+			}
+			tickFailover(t, w, now, events...)
+			want := reason(reset)
+			if !c.rows {
+				want = "at quota dialog, no usable login, resets at a time not yet known"
+			}
+			if got := w.row(t); got != want {
+				t.Fatalf("row %q, want %q", got, want)
+			}
+			if *w.signals != 0 {
+				t.Fatalf("stopped a session nothing can take: %d signals", *w.signals)
+			}
+			c.then.then(t, w, now)
+			if got := w.row(t); got != c.then.want {
+				t.Fatalf("after %s: row %q, want %q", c.then.name, got, c.then.want)
+			}
+			if rec, _ := w.l.records.Find(w.rec.Key); c.then.name == "moves" && rec.Profile != "claude-work" {
+				t.Fatalf("session on %s, want claude-work", rec.Profile)
+			}
+		})
+	}
+}
+
+func TestSessionsNamesTheLoginTheSameWayTheRowsDo(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		profile string
+		want    string
+	}{
+		{name: "the native login among others", want: "claude/default "},
+		{name: "a named login", profile: "claude-work", want: "claude/claude-work "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newQueueWorld(t, "claude", "")
+			w.session.Status = core.Idle
+			if c.profile != "" {
+				w.session.Profile, w.session.ConfigRoot, w.session.Account = w.work.ID, w.work.Root, w.work.Account
+			}
+			w.l.core.ProfileList = func() []core.LoginProfile {
+				return []core.LoginProfile{{Harness: "claude", ID: "default"}, {Harness: "claude", ID: "claude-work"}}
+			}
+			var out bytes.Buffer
+			with := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error { return run(&env{core: w.l.core}, cmd, args) }
+			}
+			cmd := sessionsCmd(with)
+			cmd.SetOut(&out)
+			cmd.SetArgs(nil)
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(out.String(), c.want) {
+				t.Fatalf("sessions printed %q, want it to start %q", out.String(), c.want)
+			}
+		})
+	}
 }
