@@ -61,6 +61,9 @@ func (a *Adapter) QuotaDialog(text string) bool {
 	return false
 }
 
+// dialogRule is the dialog's top rule, which can carry the effort level.
+var dialogRule = regexp.MustCompile(`^▔+(\s.*\s▔+)?$`)
+
 // silentQuotaDialog reports the quota dialog as Claude shows it the moment it starts on a used-up login: no turn ran, so no hit-limit line
 // sits above it, only the dialog's own top rule. The rule tells it from those lines quoted in scrollback or another dialog's options.
 func silentQuotaDialog(text string) bool {
@@ -69,14 +72,18 @@ func silentQuotaDialog(text string) bool {
 		return false
 	}
 	end := lines[len(lines)-5:]
-	rule := strings.Trim(lines[len(lines)-6], "▔") == ""
+	rule := dialogRule.MatchString(lines[len(lines)-6])
 	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
 }
 
-// quotaFooter matches the footer under the input box, read with no spaces or line breaks: nothing a reply prints above the box can be it.
-var quotaFooter = regexp.MustCompile(`^─*⚠Usagelimitreached·limitresets(.+?)Continuingautomaticallyat.+?·esctocancel`)
+// quotaFooter matches the footer read with no spaces or line breaks.
+var quotaFooter = regexp.MustCompile(`^⚠Usagelimitreached·limitresets(.+?)Continuingautomaticallyat.+?·esctocancel`)
 
-// footerStop reads the footer Claude shows under its input box when a turn hits the limit, and what it says about the reset.
+// hitLimitZone finds the zone on the hit-limit line, the one place a clock-only reset says which it means.
+var hitLimitZone = regexp.MustCompile(`You'vehityour(?:weekly)?limit·resets[^(]*\(([^)]+)\)`)
+
+// footerStop reads the footer Claude shows when a turn hits the limit, and what it says about the reset. It sits below the input box, under
+// the box's closing rule: anything typed or pasted is above that rule, and anything a reply prints is above the box.
 func footerStop(text string, now time.Time) (time.Time, bool) {
 	lines := screen.Lines(text)
 	box := -1
@@ -89,17 +96,46 @@ func footerStop(text string, now time.Time) (time.Time, bool) {
 	if box < 0 {
 		return time.Time{}, false
 	}
-	m := quotaFooter.FindStringSubmatch(strings.ReplaceAll(strings.Join(lines[box+1:], ""), " ", ""))
+	closing := -1
+	for i := box + 1; i < len(lines); i++ {
+		if rule := strings.TrimSpace(lines[i]); rule != "" && strings.Trim(rule, "─") == "" {
+			closing = i
+		}
+	}
+	if closing < 0 {
+		return time.Time{}, false
+	}
+	m := quotaFooter.FindStringSubmatch(strings.ReplaceAll(strings.Join(lines[closing+1:], ""), " ", ""))
 	if m == nil {
 		return time.Time{}, false
 	}
-	return parseQuotaReset(m[1], now), true
+	return readReset(text, m[1], now), true
+}
+
+// readReset reads a reset on the screen, in the zone the screen's hit-limit line names when it names one itself.
+func readReset(text, reset string, now time.Time) time.Time {
+	if m := hitLimitZone.FindStringSubmatch(strings.Join(strings.Fields(text), "")); m != nil && !strings.Contains(reset, "(") {
+		reset += "(" + m[1] + ")"
+	}
+	return parseQuotaReset(reset, now)
+}
+
+// dialogReset is the time the quota dialog's second option names, zero when no such dialog shows.
+func dialogReset(text string, now time.Time) time.Time {
+	lines := quotaDialogLines(text)
+	for _, line := range lines[max(0, len(lines)-5):] {
+		if at, ok := strings.CutPrefix(line, "2. Wait here, then continue automatically at "); ok {
+			return readReset(text, strings.ReplaceAll(at, " ", ""), now)
+		}
+	}
+	return time.Time{}
 }
 
 var quotaClock = regexp.MustCompile(`^(?:([A-Z][a-z]{2})(\d{1,2}),)?(\d{1,2})(?::(\d{2}))?(am|pm)(?:\((.+)\))?$`)
 
 // parseQuotaReset reads when Claude says a limit resets, with spaces removed: a clock time, perhaps with a date and a zone. A bare time is
-// its next occurrence in the zone named, else this machine's, which is the one Claude prints in. Zero when it cannot be read.
+// its next occurrence in the zone named, else this machine's, which is the one Claude prints in, but one within the last hour was read late and
+// has passed, as has a date within the last half year. Zero when it cannot be read.
 func parseQuotaReset(text string, now time.Time) time.Time {
 	m := quotaClock.FindStringSubmatch(text)
 	if m == nil {
@@ -130,13 +166,13 @@ func parseQuotaReset(text string, now time.Time) time.Time {
 		}
 		day, _ := strconv.Atoi(m[2])
 		at := time.Date(local.Year(), month.Month(), day, hour, minute, 0, 0, loc)
-		if !at.After(now) {
+		if at.Before(now.AddDate(0, -6, 0)) {
 			at = at.AddDate(1, 0, 0)
 		}
 		return at
 	}
 	at := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
-	if !at.After(now) {
+	if at.Before(now.Add(-time.Hour)) {
 		at = at.AddDate(0, 0, 1)
 	}
 	return at
@@ -151,8 +187,11 @@ func (a *Adapter) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, 
 		now = a.Now
 	}
 	reset, footer := footerStop(text, now())
-	if !footer && (!silentQuotaDialog(text) || a.QuotaDialog(text)) {
-		return core.QuotaStop{}, false, nil
+	if !footer {
+		reset = dialogReset(text, now())
+		if !silentQuotaDialog(text) || a.QuotaDialog(text) {
+			return core.QuotaStop{Reset: reset}, false, nil
+		}
 	}
 	stop := core.QuotaStop{Reset: reset, SelfContinues: footer}
 	st, ok := a.state(s.PID)

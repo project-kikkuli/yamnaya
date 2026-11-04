@@ -1,0 +1,10 @@
+❯ ym switched this conversation from profile claude-work to profile default. Reason: the owner asked for it.
+  ⎿  10 skills available
+  ⎿  You've hit your weekly limit · resets Nov 5, 3am (UTC)
+✻ Cogitated for 6s · done 1:13 AM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at Nov 5, 3am
+     3. Switch to usage credits
+   Enter to confirm · Esc to cancel

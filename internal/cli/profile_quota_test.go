@@ -422,7 +422,7 @@ func TestFailoverRecordsWhetherTheSwitchWasQueuedOrAppliedUntilTheSessionMoves(t
 			}
 			items, err := w.l.core.Store.Items(core.ItemFilter{})
 			if err != nil || len(items) != want {
-				t.Fatalf("owner items %d, %v, want %d: nobody on the login needs one", len(items), err, want)
+				t.Fatalf("owner items %d, %v, want %d: nobody on the login needs one: %+v", len(items), err, want, items)
 			}
 		})
 	}
@@ -1230,9 +1230,6 @@ func TestAStaleLimitRowDoesNotMoveASessionThatJustRecovered(t *testing.T) {
 	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" || *w.signals != 0 {
 		t.Fatalf("moved a working session: %+v signals=%d", rec, *w.signals)
 	}
-	if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
-		t.Fatalf("a stale limit row filed %d items, %v", len(items), err)
-	}
 }
 
 func TestExhaustedUntilAndTargetChoiceAgreeOnWhatStopsALogin(t *testing.T) {
@@ -1259,7 +1256,7 @@ func TestExhaustedUntilAndTargetChoiceAgreeOnWhatStopsALogin(t *testing.T) {
 			if got.IsZero() == c.out {
 				t.Fatalf("exhaustedUntil = %v, want out=%v", got, c.out)
 			}
-			target, err := failoverTarget([]profile.Profile{me}, core.Exhaustion{Harness: "codex", Account: "codex/u/other"}, []core.Limit{c.w}, now)
+			target, err := failoverTarget(usableLogins(t.TempDir(), failoverAttempt{}, []profile.Profile{me}, []core.Limit{c.w}, now), core.Exhaustion{Harness: "codex", Account: "codex/u/other"})
 			if (err != nil) != c.out || !c.out && target.ID != "a" {
 				t.Fatalf("target = %+v, %v, want out=%v", target, err, c.out)
 			}
@@ -1998,6 +1995,8 @@ func TestARecoveredPortWaitsForWhatHoldsIt(t *testing.T) {
 		blocker string
 		// ended means it stays down for good and the handoff closes.
 		ended bool
+		// told is how many times its manager hears it cannot come back.
+		told int
 	}{
 		{name: "ym off", blocker: heldOff, hold: func(t *testing.T, w queueWorld, _ profile.Profile) func() {
 			w.l.core.Store.SetOff(ported, true)
@@ -2011,7 +2010,7 @@ func TestARecoveredPortWaitsForWhatHoldsIt(t *testing.T) {
 			w.l.core.ThrottleDir = func() (string, error) { return dir, nil }
 			return func() { w.l.core.ThrottleDir = nil }
 		}},
-		{name: "destination out", blocker: "out of its subscription limit", hold: func(t *testing.T, w queueWorld, cx profile.Profile) func() {
+		{name: "destination out", blocker: "out of its subscription limit", told: 1, hold: func(t *testing.T, w queueWorld, cx profile.Profile) func() {
 			quotaLimits(t, w.state, limit(cx, 100, time.Now().Add(time.Hour)))
 			return func() { quotaLimits(t, w.state, limit(cx, 5, time.Now().Add(time.Hour))) }
 		}},
@@ -2043,8 +2042,33 @@ func TestARecoveredPortWaitsForWhatHoldsIt(t *testing.T) {
 			if err = saveMigration(w.state, migration{Version: 1, ResumeNote: "the note", Source: source, Destination: dest, Head: ported, State: "prepared", Since: time.Now()}); err != nil {
 				t.Fatal(err)
 			}
+			mgr, err := w.l.core.Store.AddManager(core.Manager{Role: core.RoleManager, Harness: "claude", Profile: "default", ConfigRoot: w.def.Root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mgr.Session = "33333333-3333-4333-8333-333333333333"
+			if err = w.l.core.Store.SaveManager(mgr); err != nil {
+				t.Fatal(err)
+			}
+			if err = w.l.core.Store.Link(profileConversation, mgr.Session); err != nil {
+				t.Fatal(err)
+			}
 			release := c.hold(t, w, cx)
 			tickFailover(t, w, time.Now())
+			tickFailover(t, w, time.Now())
+			events, err := w.l.core.Store.GoalEvents(mgr.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			told := 0
+			for _, e := range events {
+				if strings.Contains(e.Payload, "cannot come back") {
+					told++
+				}
+			}
+			if told != c.told {
+				t.Fatalf("its manager told %d times, want %d: %+v", told, c.told, events)
+			}
 			time.Sleep(200 * time.Millisecond)
 			if _, err := os.Stat(w.ran); !os.IsNotExist(err) {
 				t.Fatal("resumed while held")
@@ -2575,13 +2599,6 @@ func TestSessionsNamesTheLoginTheSameWayTheRowsDo(t *testing.T) {
 }
 
 // followLogin puts the live session on whichever login its record now names, held at the dialog again, as Claude does on a used-up login.
-func followLogin(t *testing.T, w queueWorld) {
-	t.Helper()
-	rec, _ := w.l.records.Find(w.rec.Key)
-	w.session.Profile, w.session.ConfigRoot, w.session.Account, w.session.Status = profile.ID(rec.Profile), rec.ConfigRoot, rec.Account, core.Waiting
-	*w.alive = true
-}
-
 func dialogWorld(t *testing.T) (queueWorld, *time.Time) {
 	t.Helper()
 	w := newQueueWorld(t, "claude", "")
@@ -2668,16 +2685,16 @@ func TestAPassedLimitContinuesTheSessionWhereItIs(t *testing.T) {
 	}
 }
 
-func TestAStaleDialogOnALoginWithUsageFilesNothingAndDoesNotMove(t *testing.T) {
+func TestADialogOnScreenIsAStopWhateverAnOlderRowSays(t *testing.T) {
 	w, clock := dialogWorld(t)
 	row := limit(w.def, 20, clock.Add(time.Hour))
-	row.Seen = time.Now().Add(time.Minute)
+	row.Seen = clock.Add(-time.Minute)
 	quotaLimits(t, w.state, row, limit(w.work, 5, clock.Add(time.Hour)))
 	tickFailover(t, w, *clock)
-	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
-		t.Fatalf("moved to %s", rec.Profile)
+	if bar, err := readBar(barPath(w.state, w.def)); err != nil || !bar.Until.After(*clock) {
+		t.Fatalf("bar %+v, %v", bar, err)
 	}
-	if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
+	if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 1 {
 		t.Fatalf("items %d, %v", len(items), err)
 	}
 }

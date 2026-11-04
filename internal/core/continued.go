@@ -107,17 +107,32 @@ func (s *Store) RetireItem(ref, reason string) error {
 	return err
 }
 
-// RewordItem restates an open item whose facts have moved, so it never needs a second one.
-func (s *Store) RewordItem(ref, question, rec string, options []Option) error {
+// RewordItem restates an open item whose facts have moved, so it never needs a second one, and records told when the owner should hear of it.
+func (s *Store) RewordItem(ref string, next Item, told string) error {
 	it, err := s.Item(ref)
 	if err != nil {
 		return err
 	}
-	opts, err := json.Marshal(options)
+	if it.State != ItemOpen && it.State != ItemSnoozed {
+		return nil
+	}
+	opts, err := json.Marshal(next.Options)
 	if err != nil {
 		return err
 	}
 	defer s.invalidate()
-	_, err = s.db.Exec(`UPDATE ym_items SET question = ?, rec = ?, options = ? WHERE seq = ?`, question, rec, string(opts), it.Seq)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE ym_items SET question = ?, tried = ?, rec = ?, options = ? WHERE seq = ?`, next.Question, next.Tried, next.Rec, string(opts), it.Seq); err != nil {
+		return err
+	}
+	if told != "" {
+		if err = addEvent(tx, it.Key(), it.State, it.State, told); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

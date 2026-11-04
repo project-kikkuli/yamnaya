@@ -197,13 +197,17 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	if b.ThrottleHolds(rec.Session) || b.ThrottleHolds(m.Source.Session) {
 		return l.holdPending(m, heldThrottled)
 	}
+	stuck := func(why string) error {
+		text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s, and its port is written but cannot come back yet: %s. ym keeps trying; ym revive %s brings it back by hand.", core.Short(rec.Session), rec.Key, m.Destination.ID, why, rec.Key)
+		return errors.Join(l.core.NoticeStuckSwitch(b, rec.Session, text), l.holdPending(m, why))
+	}
 	if out := l.loginOut(m.Destination); !out.IsZero() {
-		return l.holdPending(m, fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, quotaReset(out)))
+		return stuck(fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, quotaReset(out)))
 	}
 	once := l
 	once.resumeNote, once.operation = "", rec.Session
 	if _, err = once.revive(rec); err != nil {
-		return l.holdPending(m, "resume failed: "+err.Error())
+		return stuck("resume failed: " + err.Error())
 	}
 	return done()
 }

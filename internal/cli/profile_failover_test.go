@@ -62,12 +62,12 @@ func TestAutomaticFailoverNeverUsesAnAliasUnknownOrFailedLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := failoverTarget(usableLogins(dir, restarted, ps, nil, now), e, nil, now)
+	target, err := failoverTarget(usableLogins(dir, restarted, ps, nil, now), e)
 	if err != nil || target.ID != "c" {
 		t.Fatalf("target=%#v %v", target, err)
 	}
 	restarted.failed(target.Account, now.Add(time.Hour))
-	if _, err = failoverTarget(usableLogins(dir, restarted, ps, nil, now), e, nil, now); err == nil {
+	if _, err = failoverTarget(usableLogins(dir, restarted, ps, nil, now), e); err == nil {
 		t.Fatal("a login that failed was chosen again")
 	}
 }

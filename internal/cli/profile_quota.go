@@ -20,7 +20,7 @@ func quotaReset(reset time.Time) string {
 	return reset.UTC().Format(time.RFC3339)
 }
 
-func quotaItem(ps, usable []profile.Profile, e core.Exhaustion, reset time.Time, limits []core.Limit, now time.Time) core.Item {
+func quotaItem(ps, usable []profile.Profile, unanswered map[string]bool, e core.Exhaustion, reset, retry time.Time) core.Item {
 	var names []string
 	for _, p := range ps {
 		if p.Harness == e.Harness && p.Account == e.Account {
@@ -31,22 +31,27 @@ func quotaItem(ps, usable []profile.Profile, e core.Exhaustion, reset time.Time,
 		names = []string{profile.ID(e.Profile)}
 	}
 	login := strings.Join(names, ", ")
-	when := reset.UTC().Format("Jan 2 15:04 UTC")
+	back := reset
+	if back.IsZero() {
+		back = retry
+	}
+	when := back.UTC().Format("Jan 2 15:04 UTC")
+	state := "resets " + when
 	if reset.IsZero() {
-		when = "at a time not yet known"
+		state = "did not say when it resets, so ym tries it again " + when
 	}
 	it := core.Item{Kind: core.KindDecision, Session: e.Session, Harness: e.Harness,
-		Question: fmt.Sprintf("%s login %s hit its subscription limit and resets %s; how should its work continue?", e.Harness, login, when),
+		Question: fmt.Sprintf("%s login %s hit its subscription limit and %s; how should its work continue?", e.Harness, login, state),
 		Evidence: []string{"ym usage", "account " + e.Account},
 		Tried:    "ym resumes nothing onto " + login + " before " + when + " and moves quota-stopped sessions to a usable login of the same harness when there is one"}
-	wait := core.Option{Label: "wait until " + when, Effect: "sessions on " + login + " stay stopped and ym resumes them after the reset"}
+	wait := core.Option{Label: "wait until " + when, Effect: "sessions on " + login + " stay stopped and ym resumes them after that"}
 	add := core.Option{Label: "add a login", Effect: "ym profiles add " + e.Harness + " <id> && ym profiles login " + e.Harness + " <id>; ym's next pass moves quota-stopped sessions to it"}
 	other := core.Other(e.Harness)
 	port := core.Option{}
-	if p, err := failoverTarget(usable, core.Exhaustion{Harness: other, Account: e.Account}, limits, now); err == nil {
+	if p, err := failoverTarget(usable, core.Exhaustion{Harness: other, Account: e.Account}); err == nil {
 		port = core.Option{Label: "move to " + other + "/" + p.ID, Effect: "with no " + e.Harness + " login left, ym ports each session to " + other + " login " + p.ID + " at its turn end, under a new session id, and keeps its manager and goal links"}
 	}
-	target, err := failoverTarget(usable, e, limits, now)
+	target, err := failoverTarget(usable, e)
 	if err != nil {
 		it.Options = []core.Option{wait, add}
 		it.Rec = "add a login if the work cannot wait until " + when + "; no other usable " + e.Harness + " login is configured on this host"
@@ -63,7 +68,11 @@ func quotaItem(ps, usable []profile.Profile, e core.Exhaustion, reset time.Time,
 	if port.Label != "" {
 		it.Options = append(it.Options, port)
 	}
-	it.Rec = "switch to " + target.ID + ": it is a different login with usage left, so work continues now instead of waiting until " + when
+	why := "it is a different login with usage left"
+	if unanswered[target.Account] {
+		why = "it is a different login, though its status check has not answered yet"
+	}
+	it.Rec = "switch to " + target.ID + ": " + why + ", so work continues now instead of waiting until " + when
 	return it
 }
 
@@ -94,8 +103,20 @@ func (l launcher) wall(rec launch.Record) (until time.Time, target profile.Profi
 	if err != nil {
 		return
 	}
-	target, _ = failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: source.Account}, limits, now, rec.Worktree.Path)
+	usable := usableLogins(dir, a, ps, limits, now)
+	e := core.Exhaustion{Harness: rec.Harness, Account: source.Account}
+	if target, _ = failoverTarget(usable, e, rec.Worktree.Path); target.ID != "" || !stopEvidence(dir, a, source, limits, now) {
+		return
+	}
+	target, _ = failoverDestination(usable, e, rec.Worktree.Path)
 	return
+}
+
+// stopEvidence is whether a bar proves enough to port a conversation under a new id: its own stop on the login, a row at the limit or a reset
+// the login stated. One stop's guess by another session does not, so a session that merely exited waits it out.
+func stopEvidence(dir string, a failoverAttempt, p profile.Profile, limits []core.Limit, now time.Time) bool {
+	b, err := readBar(barPath(dir, p))
+	return err == nil && (b.Known || a.On == p.Account || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero())
 }
 
 // refusal is the error for a resume onto rec's used-up login, or nil when it has usage left or another login can take the session.
@@ -113,7 +134,8 @@ func (l launcher) noteWall(rec launch.Record, ps []profile.Profile, source profi
 	if session == "" {
 		session = rec.Key
 	}
-	return l.noteLogin(filepath.Dir(l.records.Dir), ps, source, session, l.limits(), l.now())
+	dir, limits, now := filepath.Dir(l.records.Dir), l.limits(), l.now()
+	return errors.Join(learnRows(dir, source, limits, now), l.noteLogin(dir, ps, source, session, limits, now))
 }
 
 // loginOut is when dest, the login a queued switch waits to land on, comes back, zero while it can be used.
@@ -204,7 +226,7 @@ func (l launcher) freshLogin(rec launch.Record) (launch.Record, error) {
 		return rec, err
 	}
 	now, limits := l.now(), l.limits()
-	target, err := failoverTarget(usableLogins(filepath.Dir(l.records.Dir), a, ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: source.Account}, limits, now, rec.Worktree.Path)
+	target, err := failoverTarget(usableLogins(filepath.Dir(l.records.Dir), a, ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: source.Account}, rec.Worktree.Path)
 	if err != nil {
 		return rec, errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
 	}

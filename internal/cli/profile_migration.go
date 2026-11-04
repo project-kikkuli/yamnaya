@@ -379,7 +379,7 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 		return err
 	}
 	now, limits := l.now(), l.limits()
-	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, limits, now, m.Source.Worktree.Path)
+	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path)
 	if err != nil {
 		return block()
 	}
@@ -444,22 +444,37 @@ func (l launcher) settleNote(m migration) error {
 	})
 }
 
-// atStopReasons are, by harness:session, why a session stopped on its limit cannot move. The board shows one only while the session's
-// screen shows that stop, so it needs no expiry of its own.
-func atStopReasons(dir string) map[string]core.Switching {
+// atStopReasons are, by harness:session, what a row shows of a session that stopped on its limit. The board shows the reason only while its
+// screen shows that stop; once Claude's own prompt is back, scrollback says nothing, and Barred tells how its login still stands.
+func (l launcher) atStopReasons(dir string) map[string]core.Switching {
 	files, _ := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
 	out := map[string]core.Switching{}
+	limits, now := l.limits(), l.now()
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		var a failoverAttempt
-		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" {
+		if json.Unmarshal(raw, &a) != nil {
 			continue
 		}
 		harness, _, _ := strings.Cut(filepath.Base(path), "-")
-		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: atStopReason(dir, a, harness)}
+		stop := core.Switching{AtStop: true, Account: a.On}
+		if a.On != "" {
+			login := profile.Profile{Harness: harness, ID: a.State.Profile, Account: a.On}
+			if !barredUntil(dir, login, limits, now).IsZero() {
+				record, _ := readBar(barPath(dir, login))
+				stop.Barred = "stopped at its limit earlier, " + barredText(record, a.State.Session)
+			}
+		}
+		stop.Blocked = stop.Barred
+		if a.State.Status == "blocked" {
+			stop.Blocked = atStopReason(dir, a, harness)
+		}
+		if stop.Blocked != "" {
+			out[harness+":"+a.State.Session] = stop
+		}
 	}
 	return out
 }
@@ -467,7 +482,7 @@ func atStopReasons(dir string) map[string]core.Switching {
 // PendingSwitches are the login switches not yet running, by harness:session, for the board to show.
 func (l launcher) PendingSwitches() map[string]core.Switching {
 	files, _ := filepath.Glob(filepath.Join(filepath.Dir(l.records.Dir), "migrations", "*.json"))
-	out := atStopReasons(filepath.Dir(l.records.Dir))
+	out := l.atStopReasons(filepath.Dir(l.records.Dir))
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {

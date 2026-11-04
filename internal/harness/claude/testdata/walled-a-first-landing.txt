@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.311
+▝▜██████▀  Haiku 5.5 · Claude Ultra
+ ▝▝   ▝▝   ~/tmp/arbiter-work/goal27/tui/drill/walled-resume/cwd
+
+
+❯ Reply with only the word hello.
+
+● hello
+
+✻ Crunched for 6s · done 6:52 AM
+
+❯ Reply with only the word note.
+  ⎿  10 skills available
+  ⎿  You've hit your weekly limit · resets 3am (UTC)
+
+● Usage limit reached · continuing automatically at 3am · esc to cancel
+
+✻ Brewed for 4s · done 6:52 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 3am
+    Continuing automatically at 3am · esc to cancel · /usage-credits to continue now
+  Context: 4% used (73% until auto-compact) | ctx: 41k  in: 2  out: 4  window: 1000k
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

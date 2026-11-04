@@ -460,13 +460,14 @@ func TestAQuotaResetReadsAsItsNextOccurrenceInTheRightZone(t *testing.T) {
 	}{
 		{"later today", "3pm", utc(2026, 11, 4, 4, 31), utc(2026, 11, 4, 15, 0)},
 		{"already passed today means tomorrow", "3am", utc(2026, 11, 4, 4, 31), utc(2026, 11, 5, 3, 0)},
-		{"exactly now means tomorrow", "3am", utc(2026, 11, 4, 3, 0), utc(2026, 11, 5, 3, 0)},
+		{"read just after it passed has passed", "3am", utc(2026, 11, 4, 3, 1), utc(2026, 11, 4, 3, 0)},
 		{"with minutes", "3:30am", utc(2026, 11, 4, 3, 0), utc(2026, 11, 4, 3, 30)},
 		{"noon", "12pm", utc(2026, 11, 4, 4, 0), utc(2026, 11, 4, 12, 0)},
 		{"midnight", "12am", utc(2026, 11, 4, 4, 0), utc(2026, 11, 5, 0, 0)},
 		{"a named zone", "3am(America/New_York)", utc(2026, 11, 4, 4, 31), time.Date(2026, 11, 4, 3, 0, 0, 0, ny)},
 		{"a date", "Nov5,3am(UTC)", utc(2026, 11, 4, 4, 31), utc(2026, 11, 5, 3, 0)},
-		{"a date just past means next year", "Nov3,3am(UTC)", utc(2026, 11, 4, 4, 31), utc(2027, 11, 3, 3, 0)},
+		{"a date just past has passed", "Nov3,3am(UTC)", utc(2026, 11, 4, 4, 31), utc(2026, 11, 3, 3, 0)},
+		{"a date early next year, read in December", "Jan2,3am(UTC)", utc(2026, 12, 30, 4, 31), utc(2027, 1, 2, 3, 0)},
 		{"unreadable", "soon", utc(2026, 11, 4, 4, 31), time.Time{}},
 		{"an unknown zone", "3am(Mars/Olympus)", utc(2026, 11, 4, 4, 31), time.Time{}},
 		{"not a clock", "13am", utc(2026, 11, 4, 4, 31), time.Time{}},
@@ -506,5 +507,64 @@ func TestAHitLimitDialogIsReadHoweverAPaneWrapsIt(t *testing.T) {
 		if a.QuotaDialog(rewrap(strings.ReplaceAll(quotaDialog, "You've hit your weekly limit", "Your weekend has been great"), width)) {
 			t.Errorf("width %d: read another heading as the quota dialog", width)
 		}
+	}
+}
+
+func TestRealWalledResumeScreensAreReadAsWhatTheyAre(t *testing.T) {
+	saved := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = saved })
+	now := time.Date(2026, 11, 4, 6, 53, 0, 0, time.UTC)
+	reset := time.Date(2026, 11, 5, 3, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		file                   string
+		footer, silent, strict bool
+	}{
+		{file: "walled-a-first-landing.txt", footer: true},
+		{file: "walled-b-esc-footer.txt"},
+		{file: "walled-c-after-esc.txt", silent: true},
+		{file: "walled-c-after-exit.txt", silent: true},
+		{file: "walled-d-esc-dialog.txt"},
+		{file: "walled-hit-line-dialog.txt", silent: true, strict: true},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("testdata", c.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(raw)
+			got, footer := footerStop(text, now)
+			if footer != c.footer || footer && !got.Equal(reset) {
+				t.Fatalf("footer %v at %v, want %v", footer, got, c.footer)
+			}
+			if New().QuotaDialog(text) != c.strict || silentQuotaDialog(text) != c.silent {
+				t.Fatalf("strict %v silent %v, want %v %v", New().QuotaDialog(text), silentQuotaDialog(text), c.strict, c.silent)
+			}
+			if at := dialogReset(text, now); c.silent != !at.IsZero() || c.silent && !at.Equal(reset) {
+				t.Fatalf("dialog reset %v, dialog %v", at, c.silent)
+			}
+		})
+	}
+}
+
+func TestTextInTheComposerIsNoFooter(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	footer := "⚠ Usage limit reached · limit resets 3am\n  Continuing automatically at 3am · esc to cancel"
+	now := time.Date(2026, 11, 4, 6, 53, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name, screen string
+		want         bool
+	}{
+		{"the real layout", rule + "\n❯ \n" + rule + "\n" + footer + "\n", true},
+		{"text typed with the real footer below", rule + "\n❯ more to say\n  and more\n" + rule + "\n" + footer + "\n", true},
+		{"pasted on the prompt line", rule + "\n❯ " + footer + "\n" + rule + "\n⏵⏵ bypass\n", false},
+		{"pasted below the prompt line", rule + "\n❯ see this\n" + footer + "\n" + rule + "\n⏵⏵ bypass\n", false},
+		{"pasted with a rule of its own", rule + "\n❯ see this\n" + rule + "\n" + footer + "\n" + rule + "\n⏵⏵ bypass\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, got := footerStop(c.screen, now); got != c.want {
+				t.Fatalf("footer %v, want %v", got, c.want)
+			}
+		})
 	}
 }

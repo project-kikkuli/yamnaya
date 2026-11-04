@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,8 +23,12 @@ var errNoUsablePool = errors.New("no different verified usable subscription pool
 type failoverAttempt struct {
 	State core.FailoverState `json:"state"`
 	Event string             `json:"event"`
-	// Recorded is the last stop of this conversation's already told to its login's record.
+	// Recorded is the last stop of this conversation's already told to the record of On, its login. A stop that could not be proved is
+	// recorded by the prefix of the event it becomes.
 	Recorded string `json:"recorded,omitempty"`
+	On       string `json:"on,omitempty"`
+	// Continues is when Claude's footer said it carries on by itself.
+	Continues time.Time `json:"continues,omitzero"`
 	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile.
 	Failed map[string]time.Time `json:"failed,omitempty"`
 }
@@ -34,6 +39,28 @@ func (a *failoverAttempt) failed(account string, until time.Time) {
 		a.Failed = map[string]time.Time{}
 	}
 	a.Failed[account] = until
+}
+
+// noteStop tells the login's record of a stop of this conversation once.
+func (a *failoverAttempt) noteStop(dir string, p profile.Profile, e core.Exhaustion, at, reset time.Time, limits []core.Limit) error {
+	if a.Recorded == e.Event || a.Recorded != "" && strings.HasPrefix(a.Recorded, e.Event+"-") {
+		return nil
+	}
+	if a.Recorded == "" || !strings.HasPrefix(e.Event, a.Recorded+"-") {
+		if err := recordStop(dir, p, at, reset, limits); err != nil {
+			return err
+		}
+	}
+	a.Recorded, a.On, a.State.Session = e.Event, p.Account, e.Session
+	return saveFailover(dir, e.Harness, *a)
+}
+
+// stopLogin is the login a stop really happened on: the one the session started on, if the profile has since been logged in again.
+func (l launcher) stopLogin(p profile.Profile, session string) profile.Profile {
+	if rec, ok := l.records.Find(session); ok && profile.ID(rec.Profile) == profile.ID(p.ID) && rec.Account != "" && rec.Account != p.Account {
+		p.Account = rec.Account
+	}
+	return p
 }
 
 // usableLogins are the logins this conversation can go to now.
@@ -128,6 +155,7 @@ func trueExhaustion(e core.Exhaustion, windows []core.Limit, now time.Time) (tim
 	}
 	return reset, !reset.IsZero()
 }
+
 func quotaReason(harness string) string {
 	if harness == "codex" {
 		return "usage_limit_exceeded"
@@ -144,6 +172,10 @@ type silentStop struct {
 	core.QuotaStop
 }
 
+// idleScreenEvery is how often an idle session that showed no stop has its pane captured again: a footer comes at a turn's end, which
+// shows as a new Since, so only one printed late waits this long.
+const idleScreenEvery = time.Minute
+
 // silentStops are the sessions whose screen shows them held on their limit, whatever else says so: the dialog, which starting on a used-up
 // login shows without running a turn, and the footer an idle session shows. Either is the session's own quota stop like any other. One a
 // session lands on is a new stop on that login, however long ago its last turn ran, so it is known by the session, the login and the
@@ -156,15 +188,21 @@ func (l launcher) silentStops(b core.Board) (stops []silentStop, unproven []core
 		if s.Remote != "" || s.ID == "" || s.Account == "" || s.Status != core.Waiting && s.Status != core.Idle || s.Prompt != nil {
 			continue
 		}
+		if l.idleScreens != nil && s.Status == core.Idle {
+			key := fmt.Sprintf("%s-%d-%d", s.ID, s.PID, s.Since.Unix())
+			if last, seen := l.idleScreens.Load(key); seen && b.At.Sub(last.(time.Time)) < idleScreenEvery {
+				continue
+			}
+			l.idleScreens.Store(key, b.At)
+		}
 		stop, stopped, err := l.core.SilentQuotaStop(s.Session)
 		if !stopped {
 			continue
 		}
-		landed := stop.At
-		if rec, ok := l.records.Find(s.ID); ok && rec.AttachedAt.After(landed) {
-			landed = rec.AttachedAt
+		e := core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("screen-%s-%s-%d", s.ID, s.Account, s.PID), Seen: b.At}
+		if err == nil {
+			e.Event += fmt.Sprintf("-%d", stop.At.Unix())
 		}
-		e := core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("screen-%s-%s-%d", s.ID, s.Account, landed.Unix()), Seen: landed}
 		if err != nil {
 			e.Reason = err.Error()
 			unproven = append(unproven, e)
@@ -176,8 +214,7 @@ func (l launcher) silentStops(b core.Board) (stops []silentStop, unproven []core
 }
 
 // showUnproven gives a session whose stop cannot be proved over its login's item and its reason, as nothing can move it yet.
-func (l launcher) showUnproven(dir string, ps []profile.Profile, e core.Exhaustion, at time.Time) error {
-	why := e.Reason
+func (l launcher) showUnproven(dir string, ps []profile.Profile, e core.Exhaustion, at time.Time, limits []core.Limit) error {
 	selected, err := profile.Find(ps, e.Harness, e.Profile)
 	if err != nil {
 		return err
@@ -186,14 +223,11 @@ func (l launcher) showUnproven(dir string, ps []profile.Profile, e core.Exhausti
 	if err != nil {
 		return err
 	}
-	if a.Recorded != e.Event {
-		if err = recordStop(dir, selected, at, time.Time{}); err != nil {
-			return err
-		}
-		a.Recorded = e.Event
+	if err = a.noteStop(dir, l.stopLogin(selected, e.Session), e, at, time.Time{}, limits); err != nil {
+		return err
 	}
-	if a.State.Reason != why || a.State.Status != "blocked" {
-		a.State = core.FailoverState{Session: e.Session, Profile: e.Profile, Account: e.Account, Status: "blocked", Reason: why}
+	if a.State.Reason != e.Reason || a.State.Status != "blocked" {
+		a.State = core.FailoverState{Session: e.Session, Profile: e.Profile, Account: e.Account, Status: "blocked", Reason: e.Reason}
 	}
 	return saveFailover(dir, e.Harness, a)
 }
@@ -204,6 +238,10 @@ func (l launcher) showUnproven(dir string, ps []profile.Profile, e core.Exhausti
 func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a failoverAttempt, e core.Exhaustion, now time.Time) error {
 	if l.core == nil || !l.core.CanResume() {
 		return nil
+	}
+	selected := profile.Profile{Harness: e.Harness, ID: profile.ID(e.Profile), Account: e.Account}
+	if err := claimLogin(dir, selected, now); err != nil {
+		return err
 	}
 	a.Event = e.Event
 	a.State = core.FailoverState{Session: e.Session, Profile: e.Profile, Account: e.Account, Status: "continued", Reason: "the limit on this login has passed"}
@@ -217,6 +255,9 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 	if err != nil {
 		a.State.Status, a.State.Reason = "blocked", "could not continue after the limit passed: "+err.Error()
 		a.failed(e.Account, now.Add(core.QuotaRecheck))
+		if released := releaseClaim(dir, selected); released != nil {
+			return released
+		}
 	} else {
 		l.core.ResumedNow()
 	}
@@ -224,8 +265,8 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 }
 
 // verifiedStop reports a quota stop proved by the session itself, sat at the quota dialog on the turn the event names, however its limit
-// rows read: they lag, and a row at 99% does not un-stop it. The reset is what its rows show, if anything. stuck is a stop the dialog shows
-// but ym cannot prove over, such as a child still busy.
+// rows read: they lag, and a row at 99% does not un-stop it. The reset is what the dialog says, else what its rows show. stuck is a stop the
+// dialog shows but ym cannot prove over, such as a child still busy.
 func (l launcher) verifiedStop(e core.Exhaustion, b core.Board) (reset time.Time, ok bool, stuck error) {
 	if l.core == nil || e.Recovered || e.Account == "" || e.Seen.IsZero() || e.Reason != quotaReason(e.Harness) {
 		return time.Time{}, false, nil
@@ -245,16 +286,17 @@ func (l launcher) verifiedStop(e core.Exhaustion, b core.Board) (reset time.Time
 	if e.Seen.Before(at) {
 		return time.Time{}, false, nil
 	}
-	return exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), true, nil
+	stop, _, _ := l.core.SilentQuotaStop(s.Session)
+	return cmp.Or(stop.Reset, exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At)), true, nil
 }
 
-func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, now time.Time, cwds ...string) (profile.Profile, error) {
+func failoverTarget(ps []profile.Profile, e core.Exhaustion, cwds ...string) (profile.Profile, error) {
 	cwd := ""
 	if len(cwds) > 0 {
 		cwd = cwds[0]
 	}
 	for _, p := range ps {
-		if p.Harness != e.Harness || p.Account == "" || p.Account == e.Account || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero() {
+		if p.Harness != e.Harness || p.Account == "" || p.Account == e.Account {
 			continue
 		}
 		if p.SubscriptionSafe(cwd) {
@@ -265,12 +307,12 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit
 }
 
 // failoverDestination is a usable login of e's harness, which keeps the conversation's id, else of the other harness as the last resort.
-func failoverDestination(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, now time.Time, cwd string) (profile.Profile, error) {
-	target, err := failoverTarget(ps, e, limits, now, cwd)
+func failoverDestination(ps []profile.Profile, e core.Exhaustion, cwd string) (profile.Profile, error) {
+	target, err := failoverTarget(ps, e, cwd)
 	if err == nil {
 		return target, nil
 	}
-	other, otherErr := failoverTarget(ps, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, limits, now, cwd)
+	other, otherErr := failoverTarget(ps, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, cwd)
 	if otherErr != nil {
 		return profile.Profile{}, err
 	}
@@ -304,7 +346,7 @@ func (l launcher) Failover(b core.Board) error {
 	silent, unproven := l.silentStops(b)
 	var notices []error
 	for _, stop := range unproven {
-		notices = append(notices, l.showUnproven(dir, ps, stop, b.At))
+		notices = append(notices, l.showUnproven(dir, ps, stop, b.At, b.Fleet.Limits))
 	}
 	events := make([]core.Exhaustion, 0, len(b.Fleet.Exhaustions)+len(silent))
 	for _, e := range b.Fleet.Exhaustions {
@@ -326,9 +368,13 @@ func (l launcher) Failover(b core.Board) error {
 			var stuck error
 			reset, actual, stuck = l.verifiedStop(e, b)
 			dialog = actual
+			if s, alive := b.Session(e.Session); actual && alive {
+				at = b.At
+				e.Event += fmt.Sprintf("-%d", s.PID)
+			}
 			if stuck != nil {
 				e.Reason = stuck.Error()
-				notices = append(notices, l.showUnproven(dir, ps, e, b.At))
+				notices = append(notices, l.showUnproven(dir, ps, e, b.At, b.Fleet.Limits))
 			}
 		}
 		if !actual {
@@ -342,12 +388,15 @@ func (l launcher) Failover(b core.Board) error {
 		if err != nil {
 			return err
 		}
-		if a.Recorded != e.Event {
-			if err = recordStop(dir, selected, at, reset); err != nil {
-				return err
+		recorded := a.Recorded
+		if err = a.noteStop(dir, l.stopLogin(selected, e.Session), e, at, reset, b.Fleet.Limits); err != nil {
+			return err
+		}
+		if selfContinues && a.Recorded != recorded {
+			a.Continues = reset
+			if a.Continues.IsZero() || a.Continues.After(at.Add(longestWindow)) {
+				a.Continues = at.Add(unknownResetBar)
 			}
-			a.Recorded = e.Event
-			a.State.Session = e.Session
 			if err = saveFailover(dir, e.Harness, a); err != nil {
 				return err
 			}
@@ -378,17 +427,10 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		until := barredUntil(dir, selected, b.Fleet.Limits, b.At)
 		if selfContinues {
-			// The footer outranks what rows say. Past its bar Claude carries on by itself, so ym only steps in if it plainly has not.
-			record, err := readBar(barPath(dir, selected))
-			if err != nil {
-				return err
-			}
-			until = record.Until
+			// The footer outranks what rows say. Past its reset Claude carries on by itself, so ym only steps in if it plainly has not.
+			until = a.Continues
 			if !until.After(b.At) && b.At.Sub(until) < selfContinueGrace {
 				continue
-			}
-			if !until.After(b.At) {
-				until = time.Time{}
 			}
 		}
 		if until.IsZero() || !until.After(b.At) {
@@ -399,7 +441,7 @@ func (l launcher) Failover(b core.Board) error {
 			}
 			continue
 		}
-		target, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, b.Fleet.Limits, b.At, rec.Worktree.Path)
+		target, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path)
 		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
 			continue
 		}
@@ -416,7 +458,11 @@ func (l launcher) Failover(b core.Board) error {
 		if l.core != nil && !l.core.CanResume() {
 			continue
 		}
-		if authHangs(target, hung) {
+		if _, known := hung[target.Account]; !known {
+			_, unanswered := loginChecks([]profile.Profile{target}, "")
+			hung[target.Account] = unanswered[target.Account]
+		}
+		if hung[target.Account] {
 			a.State.Status = "blocked"
 			a.State.Reason = fmt.Sprintf("the status check of login %s has not answered, so ym tries it again shortly", target.ID)
 			a.failed(target.Account, b.At.Add(core.QuotaRecheck))
@@ -427,6 +473,9 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		a.State.Target = target.ID
 		if err = saveFailover(dir, e.Harness, a); err != nil {
+			return err
+		}
+		if err = claimLogin(dir, target, b.At); err != nil {
 			return err
 		}
 		when := quotaReset(until)

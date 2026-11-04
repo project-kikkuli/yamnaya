@@ -21,8 +21,11 @@ import (
 // one attempt, and a new stop bars it again, so no login is hammered and none is lost for good.
 const unknownResetBar = 5 * time.Hour
 
+// longestWindow bounds a reset worth believing, as a screen read late can name a time far ahead.
+const longestWindow = 7 * 24 * time.Hour
+
 // loginBar is all ym knows about a login's quota beyond its rows, the one answer to whether it can be used. It is per login because quota
-// is: whichever session or row learns something tells every other. Serve and CLI commands both write it, under barLock.
+// is: whichever session or row learns something tells every other. Serve and CLI commands both write it, under updateBar's lock.
 type loginBar struct {
 	Harness string    `json:"harness"`
 	Profile string    `json:"profile"`
@@ -30,11 +33,17 @@ type loginBar struct {
 	Stopped time.Time `json:"stopped"`
 	Until   time.Time `json:"until"`
 	Known   bool      `json:"reset_known,omitempty"`
-	// Held means a session stopped here during or just after an earlier bar, so rows reading well are no proof: only Until lifts this.
+	// Held means this stop came soon after the last, so a row reading well is no proof until the shortest window has passed.
 	Held bool `json:"held,omitempty"`
-	// Item is the login's one owner item, Said the reset it states.
-	Item string    `json:"item,omitempty"`
-	Said time.Time `json:"said,omitzero"`
+	// Unclaimed is a stop no landing has tested yet; the first takes Claim, and others wait to see whether the stop comes back.
+	Unclaimed bool      `json:"unclaimed,omitempty"`
+	Claim     time.Time `json:"claim,omitzero"`
+	// Item is the login's one owner item, filed at Filed's stop; Said is the state its text was written for, and SaidReset the reset in it.
+	Item      string    `json:"item,omitempty"`
+	Filed     time.Time `json:"filed,omitzero"`
+	Filing    time.Time `json:"filing,omitzero"`
+	Said      string    `json:"said,omitempty"`
+	SaidReset time.Time `json:"said_reset,omitzero"`
 }
 
 func barPath(dir string, p profile.Profile) string {
@@ -87,47 +96,82 @@ func updateBar(dir string, p profile.Profile, change func(*loginBar) error) erro
 	return profile.Write(path, raw)
 }
 
+// holding reports a stop rows cannot lift yet.
+func (b loginBar) holding(now time.Time) bool {
+	return b.Held && now.Before(b.Stopped.Add(unknownResetBar))
+}
+
+// settle clears a bar a good row has disproved, with the reset that came with it, so nothing later inherits them.
+func (b *loginBar) settle(limits []core.Limit, p profile.Profile, now time.Time) {
+	if !b.Until.IsZero() && !b.holding(now) && showsUsage(limits, p, b.Stopped, now) {
+		b.Until, b.Known, b.Held = time.Time{}, false, false
+	}
+}
+
 // barredUntil is when the login can next be used, zero when it can be now. Every path that picks, resumes or moves onto a login asks this.
 func barredUntil(dir string, p profile.Profile, limits []core.Limit, now time.Time) time.Time {
 	if reset := exhaustedUntil(limits, p.Harness, p.ID, p.Account, now); !reset.IsZero() {
 		return reset
 	}
 	b, err := readBar(barPath(dir, p))
-	if err != nil || !b.Until.After(now) || !b.Held && showsUsage(limits, p, b.Stopped, now) {
+	if err != nil {
 		return time.Time{}
+	}
+	b.settle(limits, p, now)
+	if b.Claim.After(now) {
+		return b.Claim
+	}
+	if !b.Until.After(now) {
+		return time.Time{}
+	}
+	if end := b.Stopped.Add(unknownResetBar); b.Held && end.Before(b.Until) && showsUsage(limits, p, b.Stopped, now) {
+		return end
 	}
 	return b.Until
 }
 
-// recordStop is a session stopping on the login at at. A reset the stop states is kept; with none the bar is the shortest window, unless a
-// known reset still stands. A stop soon after a bar means whatever let the session back on was wrong.
-func recordStop(dir string, p profile.Profile, at, reset time.Time) error {
+// recordStop is a session stopping on the login at at. A reset the stop states is kept, the latest of those known standing, unless it is
+// beyond the longest window; with none the bar is the shortest window. A stop within two of those of the last means what let it back was wrong.
+func recordStop(dir string, p profile.Profile, at, reset time.Time, limits []core.Limit) error {
 	return updateBar(dir, p, func(b *loginBar) error {
+		b.settle(limits, p, at)
 		if !at.After(b.Stopped) {
 			return nil
 		}
-		b.Held = b.Until.Add(unknownResetBar).After(at)
-		b.Stopped = at
+		b.Held = !b.Stopped.IsZero() && at.Before(b.Stopped.Add(2*unknownResetBar))
+		b.Stopped, b.Unclaimed, b.Claim = at, true, time.Time{}
+		if reset.After(at.Add(longestWindow)) {
+			reset = time.Time{}
+		}
 		switch {
-		case !reset.IsZero():
+		case !reset.IsZero() && !(b.Known && b.Until.After(reset)):
 			b.Until, b.Known = reset, true
-		case !b.Known || !b.Until.After(at):
+		case reset.IsZero() && (!b.Known || !b.Until.After(at)):
 			b.Until, b.Known = at.Add(unknownResetBar), false
 		}
 		return nil
 	})
 }
 
-// learnReset is a row showing the login used up until reset, which outranks what any stop guessed. The latest known reset stands, as the
-// login is out until every used-up window has passed.
-func learnReset(dir string, p profile.Profile, reset, seen time.Time) error {
+// learnRows keeps what the login's rows say used it up. The latest known reset stands, as it is out until every used-up window has passed.
+func learnRows(dir string, p profile.Profile, limits []core.Limit, now time.Time) error {
+	reset := exhaustedUntil(limits, p.Harness, p.ID, p.Account, now)
+	if reset.IsZero() {
+		return nil
+	}
 	return updateBar(dir, p, func(b *loginBar) error {
-		if b.Known && !reset.After(b.Until) {
-			return nil
+		if !b.Known || reset.After(b.Until) {
+			b.Until, b.Known = reset, true
 		}
-		b.Until, b.Known = reset, true
-		if b.Stopped.IsZero() {
-			b.Stopped = seen
+		return nil
+	})
+}
+
+// claimLogin is a landing on the login after a stop: the first keeps others off until its stop returns or the claim passes.
+func claimLogin(dir string, p profile.Profile, now time.Time) error {
+	return updateBar(dir, p, func(b *loginBar) error {
+		if b.Unclaimed {
+			b.Unclaimed, b.Claim = false, now.Add(selfContinueGrace)
 		}
 		return nil
 	})
@@ -151,166 +195,183 @@ func (l launcher) sessionOn(p profile.Profile, b core.Board, all []launch.Record
 	return ""
 }
 
-// noteLogin keeps the login's one owner item true while it is barred: filed once, its reset restated when a better one is learned.
+// releaseClaim gives back a claim whose landing never happened, so it tested nothing.
+func releaseClaim(dir string, p profile.Profile) error {
+	return updateBar(dir, p, func(b *loginBar) error {
+		b.Unclaimed, b.Claim = true, time.Time{}
+		return nil
+	})
+}
+
+// noteLogin keeps the login's one owner item true while it is barred. It is filed once and restated when the reset or the logins it offers
+// change. An item the owner closed stands for its own stop; a later stop on the wall files another. Filing reads the board, so it is outside the lock.
 func (l launcher) noteLogin(dir string, ps []profile.Profile, p profile.Profile, session string, limits []core.Limit, now time.Time) error {
 	if l.core == nil {
 		return nil
-	}
-	said := func(b loginBar) time.Time {
-		if b.Known {
-			return b.Until
-		}
-		return time.Time{}
-	}
-	if reset := exhaustedUntil(limits, p.Harness, p.ID, p.Account, now); !reset.IsZero() {
-		if err := learnReset(dir, p, reset, now); err != nil {
-			return err
-		}
 	}
 	current, err := readBar(barPath(dir, p))
 	if err != nil {
 		return err
 	}
-	if current.Item != "" && current.Said.Equal(said(current)) {
-		return nil
-	}
-	usable := l.signedIn(usableLogins(dir, failoverAttempt{}, ps, limits, now), p)
-	return updateBar(dir, p, func(b *loginBar) error {
-		reset := said(*b)
-		if b.Item != "" && b.Said.Equal(reset) {
-			return nil
-		}
-		it := quotaItem(ps, usable, core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account, Session: session}, reset, limits, now)
-		if !b.Known && !b.Until.IsZero() {
-			it.Tried += "; ym tries this login again " + quotaReset(b.Until)
-		}
-		if b.Item != "" {
-			if err := l.core.Store.RewordItem(b.Item, it.Question, it.Rec, it.Options); err != nil {
-				return err
-			}
-			b.Said = reset
-			return nil
-		}
-		added, err := l.core.AddOwnerItem(it)
+	open := current.Item != ""
+	if open {
+		it, err := l.core.Store.Item(current.Item)
 		if err != nil {
 			return err
 		}
-		b.Item, b.Said = added.Key(), reset
+		if open = it.State == core.ItemOpen || it.State == core.ItemSnoozed; !open && !current.Stopped.After(current.Filed) {
+			return nil
+		}
+	}
+	usable := usableLogins(dir, failoverAttempt{}, ps, limits, now)
+	reset := time.Time{}
+	if current.Known {
+		reset = current.Until
+	}
+	said := quotaReset(reset) + " " + quotaReset(current.Until)
+	for _, q := range usable {
+		said += " " + q.Harness + "/" + q.ID
+	}
+	if open && current.Said == said || !open && current.Filing.After(now) {
+		return nil
+	}
+	signedOut, unanswered := loginChecks(usable, p.Account)
+	usable = slices.DeleteFunc(usable, func(q profile.Profile) bool { return signedOut[q.Account] })
+	it := quotaItem(ps, usable, unanswered, core.Exhaustion{Harness: p.Harness, Profile: p.ID, Account: p.Account, Session: session}, reset, current.Until)
+	if open {
+		told := ""
+		if !reset.Equal(current.SaidReset) {
+			told = "this login now resets " + quotaReset(reset)
+		}
+		if err = l.core.Store.RewordItem(current.Item, it, told); err != nil {
+			return err
+		}
+		return updateBar(dir, p, func(b *loginBar) error {
+			b.Said, b.SaidReset = said, reset
+			return nil
+		})
+	}
+	if err = updateBar(dir, p, func(b *loginBar) error {
+		b.Filing = now.Add(time.Minute)
+		return nil
+	}); err != nil {
+		return err
+	}
+	added, err := l.core.AddOwnerItem(it)
+	if err != nil {
+		return err
+	}
+	return updateBar(dir, p, func(b *loginBar) error {
+		b.Item, b.Filed, b.Filing, b.Said, b.SaidReset = added.Key(), current.Stopped, time.Time{}, said, reset
 		return nil
 	})
 }
 
-// rowDisproved is a turn on the login recovering after its used-up rows were read, which shows they are stale.
-func rowDisproved(p profile.Profile, b core.Board) bool {
-	var seen time.Time
-	for _, w := range b.Fleet.Limits {
-		if loginWindow(w, p.Harness, p.ID, p.Account, b.At) && w.Seen.After(seen) {
-			seen = w.Seen
-		}
-	}
-	return !seen.IsZero() && slices.ContainsFunc(b.Fleet.Exhaustions, func(e core.Exhaustion) bool {
-		return e.Recovered && e.Account == p.Account && e.Seen.After(seen)
-	})
-}
-
-// settleLogins learns what rows say about each login, gives one with a session on it its item, and closes the item of one usable again:
-// on a row's word, or once its bar has passed with no stop coming straight back.
+// settleLogins keeps each login's record and item true: it learns what rows say, clears a bar a good row disproved, gives a barred login with
+// a session on it its item, and closes the item of one usable again, on a row's word or once its bar has passed with no stop coming straight back.
 func (l launcher) settleLogins(dir string, ps []profile.Profile, b core.Board, all []launch.Record) error {
 	var errs []error
+	limits := b.Fleet.Limits
 	for _, p := range ps {
-		if rowDisproved(p, b) {
-			continue
-		}
-		if reset := exhaustedUntil(b.Fleet.Limits, p.Harness, p.ID, p.Account, b.At); !reset.IsZero() {
-			errs = append(errs, learnReset(dir, p, reset, b.At))
-		}
+		errs = append(errs, learnRows(dir, p, limits, b.At))
 		record, err := readBar(barPath(dir, p))
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		barred := !barredUntil(dir, p, b.Fleet.Limits, b.At).IsZero()
-		if session := l.sessionOn(p, b, all); barred && session != "" {
-			errs = append(errs, l.noteLogin(dir, ps, p, session, b.Fleet.Limits, b.At))
+		settled := record
+		settled.settle(limits, p, b.At)
+		if !settled.Until.Equal(record.Until) {
+			errs = append(errs, updateBar(dir, p, func(r *loginBar) error {
+				r.settle(limits, p, b.At)
+				return nil
+			}))
 		}
-		if !barred && record.Item != "" && (b.At.After(record.Until.Add(selfContinueGrace)) || showsUsage(b.Fleet.Limits, p, record.Stopped, b.At)) {
-			errs = append(errs, l.closeLoginItem(dir, p))
+		barred := !barredUntil(dir, p, limits, b.At).IsZero()
+		if session := l.sessionOn(p, b, all); barred && (session != "" || record.Item != "") {
+			errs = append(errs, l.noteLogin(dir, ps, p, session, limits, b.At))
 		}
+		if !barred && record.Item != "" && b.At.After(settled.Until.Add(selfContinueGrace)) {
+			errs = append(errs, l.closeLoginItem(dir, p, "this login has usage again"))
+		}
+	}
+	return errors.Join(append(errs, l.closeOrphanItems(dir, ps))...)
+}
+
+// closeOrphanItems retires the items of logins no profile is on any more, re-logged in or removed: nothing else visits them.
+func (l launcher) closeOrphanItems(dir string, ps []profile.Profile) error {
+	files, err := filepath.Glob(filepath.Join(dir, "logins", "*.json"))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, path := range files {
+		r, err := readBar(path)
+		if err != nil || r.Item == "" || slices.ContainsFunc(ps, func(p profile.Profile) bool { return barPath(dir, p) == path }) {
+			continue
+		}
+		errs = append(errs, l.closeLoginItem(dir, profile.Profile{Harness: r.Harness, ID: r.Profile, Account: r.Account}, "this login is no longer on this host"))
 	}
 	return errors.Join(errs...)
 }
 
-// closeLoginItem retires the login's item now it is usable, without telling the session that happened to file it.
-func (l launcher) closeLoginItem(dir string, p profile.Profile) error {
+// closeLoginItem retires the login's item, without telling the session that happened to file it.
+func (l launcher) closeLoginItem(dir string, p profile.Profile, why string) error {
 	if l.core == nil {
 		return nil
 	}
 	return updateBar(dir, p, func(b *loginBar) error {
 		item := b.Item
-		b.Item, b.Said = "", time.Time{}
+		b.Item, b.Said, b.SaidReset, b.Filed = "", "", time.Time{}, time.Time{}
 		it, err := l.core.Store.Item(item)
 		if err != nil || it.State != core.ItemOpen && it.State != core.ItemSnoozed {
 			return nil
 		}
-		return l.core.Store.RetireItem(item, "this login has usage again")
+		return l.core.Store.RetireItem(item, why)
 	})
 }
 
-// authBudget is how long filing an item waits on native status checks, as one can hang for its whole timeout inside serve's cycle.
+// authBudget is how long ym waits on native status checks, as one can hang for its whole timeout inside serve's cycle.
 const authBudget = 2 * time.Second
 
-// signedIn drops the logins an item would otherwise offer that their native status says are signed out, so its options are true. A check
-// that does not answer in time is no evidence either way: the login stays on offer as not yet checked.
-func (l launcher) signedIn(ps []profile.Profile, p profile.Profile) []profile.Profile {
-	results := make(chan struct {
+// loginChecks asks the logins' native status at once, but for the account given. A check that does not answer in time says nothing either way.
+func loginChecks(ps []profile.Profile, except string) (signedOut, unanswered map[string]bool) {
+	signedOut, unanswered = map[string]bool{}, map[string]bool{}
+	type result struct {
 		account string
 		out     bool
-	}, len(ps))
-	asked := 0
+	}
+	results := make(chan result, len(ps))
 	for _, q := range ps {
-		if q.Account == "" || q.Account == p.Account {
+		if q.Account == "" || q.Account == except {
 			continue
 		}
-		asked++
-		go func(q profile.Profile) {
-			results <- struct {
-				account string
-				out     bool
-			}{q.Account, switchAuthentication(q, "") != nil}
-		}(q)
+		unanswered[q.Account] = true
+		go func() { results <- result{q.Account, switchAuthentication(q, "") != nil} }()
 	}
 	wait := time.After(authBudget)
-	for range asked {
+	for len(unanswered) > 0 {
 		select {
 		case r := <-results:
-			if r.out {
-				ps = slices.DeleteFunc(slices.Clone(ps), func(q profile.Profile) bool { return q.Account == r.account })
-			}
+			delete(unanswered, r.account)
+			signedOut[r.account] = r.out
 		case <-wait:
-			return ps
+			return signedOut, unanswered
 		}
 	}
-	return ps
+	return signedOut, unanswered
 }
 
-// authHangs reports a login whose native status check does not answer in time, which would hold serve's cycle on the switch that runs it.
-// A pass asks each login once.
-func authHangs(p profile.Profile, hung map[string]bool) bool {
-	if known, asked := hung[p.Account]; asked {
-		return known
+// barredText says how the login a session stopped on stands.
+func barredText(b loginBar, session string) string {
+	when := "resets at a time not yet known"
+	switch {
+	case b.Known:
+		when = "resets " + quotaReset(b.Until)
+	case !b.Until.IsZero():
+		when = "tries this login again " + quotaReset(b.Until)
 	}
-	done := make(chan struct{})
-	go func() {
-		switchAuthentication(p, "")
-		close(done)
-	}()
-	select {
-	case <-done:
-		hung[p.Account] = false
-	case <-time.After(authBudget):
-		hung[p.Account] = true
-	}
-	return hung[p.Account]
+	return fmt.Sprintf("no usable login, %s; ym switch %s --profile <id> moves it", when, core.Short(session))
 }
 
 // atStopReason is what a row shows while a session's screen holds it at its limit and it cannot move.
@@ -319,12 +380,5 @@ func atStopReason(dir string, a failoverAttempt, harness string) string {
 		return "stopped at its limit: " + a.State.Reason
 	}
 	b, _ := readBar(barPath(dir, profile.Profile{Harness: harness, ID: profile.ID(a.State.Profile), Account: a.State.Account}))
-	when := "resets at a time not yet known"
-	switch {
-	case b.Known:
-		when = "resets " + quotaReset(b.Until)
-	case !b.Until.IsZero():
-		when = "tries this login again " + quotaReset(b.Until)
-	}
-	return fmt.Sprintf("stopped at its limit, no usable login, %s; ym switch %s --profile <id> moves it", when, core.Short(a.State.Session))
+	return "stopped at its limit, " + barredText(b, a.State.Session)
 }

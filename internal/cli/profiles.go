@@ -229,12 +229,14 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 		sort.SliceStable(ps, func(i, j int) bool { return ps[i].ID == pref && ps[j].ID != pref })
 	}
 	limits, now := l.limits(), l.now()
-	for _, p := range ps {
-		if p.Harness != harness || p.DefaultConstraint() != nil || !barredUntil(dir, p, limits, now).IsZero() {
-			continue
-		}
-		if p.ID == "default" || p.Account != "" {
-			return p, nil
+	for _, guessed := range []bool{false, true} {
+		for _, p := range ps {
+			if p.Harness != harness || p.DefaultConstraint() != nil || !barredUntil(dir, p, limits, now).IsZero() && (!guessed || stopEvidence(dir, failoverAttempt{}, p, limits, now)) {
+				continue
+			}
+			if p.ID == "default" || p.Account != "" {
+				return p, nil
+			}
 		}
 	}
 	if p, err := profile.Find(ps, harness, ""); err == nil {

@@ -191,7 +191,7 @@ func (l launcher) switchProfile(ref, id, reason string) (core.SwitchOutcome, err
 			return none, fmt.Errorf("current account identity is unknown; select a profile explicitly")
 		}
 		limits, now := l.limits(), l.now()
-		dest, err = failoverTarget(usableLogins(filepath.Dir(l.records.Dir), a, ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: source.Account}, limits, now, rec.Worktree.Path)
+		dest, err = failoverTarget(usableLogins(filepath.Dir(l.records.Dir), a, ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: source.Account}, rec.Worktree.Path)
 	}
 	if err != nil {
 		return none, err
