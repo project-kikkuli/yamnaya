@@ -543,6 +543,9 @@ func (m Model) renderTree(rows []row) viewPage {
 				line = indent + "  " + line
 			}
 			b.place = m.rowPlace(r)
+			if j == 0 && i == m.cursor {
+				b.selectNext()
+			}
 			b.WriteString(line + "\n")
 		}
 		if r.header != "" && !r.closed {
@@ -585,9 +588,22 @@ func (m Model) treeRowText(i int, r row, ids map[string]string, labels map[*core
 	case r.node != nil:
 		return withNote(m.nodeLines(i, *r.node, 0), m.rowNote(r))
 	case r.need != nil:
+		terminal := m.width + 2*r.depth + 2
 		m.width -= 3
-		text := withNote(m.queueRowLines(i, *r.need, labels[r.need]), m.rowNote(r))
+		n := *r.need
+		threads := 0
+		if r.container && n.Doc != nil {
+			threads, n.Docs = len(n.Docs), nil
+		}
+		text := m.mark(i) + withNote(m.queueRowLines(i, n, labels[r.need], terminal), m.rowNote(r))
+		if threads > 0 {
+			head, rest, _ := strings.Cut(text, "\n")
+			text = head + "\n" + pal.dim.Render(fmt.Sprintf("  %d open threads", threads)) + "\n" + rest
+		}
 		if strings.HasPrefix(r.key, "doc-ask:") && i != m.cursor {
+			if terminal < 100 {
+				text += pal.dim.Render("         "+oneLine(r.need.Doc.Asker+": "+r.need.Doc.Text)) + "\n"
+			}
 			text += pal.dim.Render("         "+r.need.Doc.URL) + "\n"
 		}
 		return text

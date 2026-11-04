@@ -82,7 +82,8 @@ func TestSceneResumesWithTheCurrentBoardAfterEvents(t *testing.T) {
 				if got, want := m.View().Content, scene.Frame(m.sceneOf(), m.width, m.height, m.peaks.frame, text); got != want {
 					t.Fatal("resumed scene differs from the current snapshot, selection or table")
 				}
-				if got := m.sceneOf().Selected; got != m.peakOf() || got == "" {
+				r, _ := m.selected()
+				if got := m.sceneOf().Selected; got != m.peakOf() || got == "" && r.header == "" {
 					t.Fatal("selection no longer identifies a board row")
 				}
 			})

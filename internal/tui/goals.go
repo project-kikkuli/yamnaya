@@ -499,8 +499,8 @@ func queueKeys(n core.Need, later bool) string {
 }
 
 // queueRowLines draws one queue row with the renderer the brief page shares; the selected row opens under itself, and no other.
-func (m Model) queueRowLines(i int, n core.Need, label string) string {
-	line, side := core.RowLine(n, label, m.width, m.board.At)
+func (m Model) queueRowLines(i int, n core.Need, label string, terminal int) string {
+	line, side := core.RowLineIn(n, label, terminal, m.width, m.board.At)
 	later := label == core.LaterLabel
 	style := pal.plain
 	if later {

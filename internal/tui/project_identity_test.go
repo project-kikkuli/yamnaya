@@ -109,6 +109,9 @@ func TestCollidingProjectNavigationAndActionsStayOnSelectedHost(t *testing.T) {
 				}
 				m = press(t, m, "enter")
 				for _, row := range m.rows() {
+					if row.header != "" {
+						continue
+					}
 					if row.project == nil || core.ProjectHost(*row.project) != "" {
 						t.Fatalf("local navigation opened remote detail: %+v", row)
 					}

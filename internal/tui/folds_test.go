@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -666,6 +667,28 @@ func TestGoalSessionsHeadingCountsEveryListedSession(t *testing.T) {
 			m.mode, m.goal, m.page = modeGoal, "g", nil
 			if content := ansi.Strip(m.View().Content); !strings.Contains(content, tc.want) {
 				t.Fatalf("want %s on the page:\n%s", tc.want, content)
+			}
+		})
+	}
+}
+
+func TestQueueRowSideColumnFollowsTheTerminalAndFitsIt(t *testing.T) {
+	for _, tc := range []struct {
+		width int
+		side  bool
+	}{{99, false}, {100, true}, {106, true}, {180, true}} {
+		t.Run(fmt.Sprint(tc.width), func(t *testing.T) {
+			m := treeModel()
+			m.width, m.cursor, m.page = tc.width, 0, nil
+			m.board.Needs = []core.Need{{Project: "mission", Item: &core.Item{Seq: 9, ID: "D9", Kind: core.KindDecision, DoLine: "Do it", Question: "The question?"}}}
+			content := ansi.Strip(m.View().Content)
+			if got := strings.Contains(content, "The question?"); got != tc.side {
+				t.Fatalf("question shown %v at width %d, want %v:\n%s", got, tc.width, tc.side, content)
+			}
+			for _, line := range strings.Split(content, "\n") {
+				if strings.Contains(line, "Do it") && ansi.StringWidth(line) > tc.width {
+					t.Fatalf("row is %d wide on a %d terminal: %q", ansi.StringWidth(line), tc.width, line)
+				}
 			}
 		})
 	}

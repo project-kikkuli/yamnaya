@@ -279,7 +279,7 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 	if it, _ := c.Store.Item("D2"); it.State != core.ItemSnoozed {
 		t.Fatalf("l in the expanded view left D2 %s", it.State)
 	}
-	m = press(t, m, "enter", "home", "o")
+	m = press(t, to(t, press(t, m, "enter"), func(r row) bool { return r.need != nil }), "o")
 	if len(h.focused) != 1 || h.focused[0] != "/dev/a" {
 		t.Fatalf("o from the expanded view focused %v", h.focused)
 	}

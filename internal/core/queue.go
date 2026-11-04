@@ -892,7 +892,12 @@ func QueueHeader(rows []Need, later int) string {
 // A row with no do-line of its own leads with its goal's name instead. Side is the why, goal's name, id and age to draw dim to the right of it, when
 // width leaves room.
 func RowLine(n Need, rank string, width int, now time.Time) (line, side string) {
-	main := min(width, QueueWidth)
+	return RowLineIn(n, rank, width, width, now)
+}
+
+// RowLineIn is RowLine inside room columns of a terminal width wide: the terminal decides whether the side column shows, the room what fits.
+func RowLineIn(n Need, rank string, width, room int, now time.Time) (line, side string) {
+	main := min(room, QueueWidth)
 	mark := "▸"
 	if n.Check() != CheckNone {
 		mark = "✓"
@@ -903,9 +908,9 @@ func RowLine(n Need, rank string, width int, now time.Time) (line, side string) 
 	}
 	head := fmt.Sprintf("%s %-3s %-3s%s", rank, n.Verb(), QueueMinutes(n.Minutes()), flag)
 	do := n.DoLine()
-	room := max(1, main-ansi.StringWidth(head)-1)
-	do = ansi.Truncate(do, room, "…")
-	line = head + do + strings.Repeat(" ", max(0, room-ansi.StringWidth(do))) + mark
+	fit := max(1, main-ansi.StringWidth(head)-1)
+	do = ansi.Truncate(do, fit, "…")
+	line = head + do + strings.Repeat(" ", max(0, fit-ansi.StringWidth(do))) + mark
 	if width >= 100 {
 		tail := " · " + n.ID()
 		if n.Name != "" && n.Name != n.ID() {
@@ -914,8 +919,8 @@ func RowLine(n Need, rank string, width int, now time.Time) (line, side string) 
 		if old := oldFor(now, n.Since()); old != "" {
 			tail += " · " + old
 		}
-		room := width - ansi.StringWidth(line) - ansi.StringWidth(tail) - 3
-		side = ansi.Truncate("  "+ansi.Truncate(n.Why()[0], max(1, room), "…")+tail, width-ansi.StringWidth(line), "…")
+		fit := room - ansi.StringWidth(line) - ansi.StringWidth(tail) - 3
+		side = ansi.Truncate("  "+ansi.Truncate(n.Why()[0], max(1, fit), "…")+tail, room-ansi.StringWidth(line), "…")
 	}
 	return line, side
 }

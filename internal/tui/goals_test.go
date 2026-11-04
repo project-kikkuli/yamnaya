@@ -593,12 +593,12 @@ func TestAQueueRowOpensOnlyWhenSelectedAndKeepsToOneLineAtPhoneWidth(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m.cursor = 9
-			closed := strings.TrimRight(ansi.Strip(m.queueRowLines(1, tc.need, "1")), "\n")
+			closed := strings.TrimRight(ansi.Strip(m.queueRowLines(1, tc.need, "1", m.width)), "\n")
 			if strings.Contains(closed, "\n") || ansi.StringWidth(closed) != 40 {
 				t.Fatalf("closed row is not one 40 column line: %q", closed)
 			}
 			m.cursor = 1
-			if open := ansi.Strip(m.queueRowLines(1, tc.need, "1")); !strings.Contains(open, tc.want) {
+			if open := ansi.Strip(m.queueRowLines(1, tc.need, "1", m.width)); !strings.Contains(open, tc.want) {
 				t.Fatalf("open row %q lacks %q", open, tc.want)
 			}
 		})
