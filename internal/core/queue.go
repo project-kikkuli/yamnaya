@@ -339,7 +339,7 @@ func (n Need) Check() Check {
 		switch {
 		case it.Kind == KindGo:
 			return CheckGo
-		case (it.Kind == KindDecision || it.Kind == KindDefault) && it.DoLine != "" && it.Rec != "":
+		case (it.Kind == KindDecision || it.Kind == KindDefault) && it.DoLine != "" && it.Rec != "" && !doLineAsks(it.DoLine):
 			return CheckAccept
 		}
 	}
@@ -605,6 +605,25 @@ func rank(ns []Need, now time.Time) {
 	})
 }
 
+var askingWords = map[string]bool{
+	"pick": true, "choose": true, "decide": true, "select": true, "review": true, "answer": true, "consider": true, "weigh": true, "compare": true,
+	"how": true, "which": true, "what": true, "whether": true, "should": true, "where": true, "who": true, "when": true, "why": true,
+}
+
+func doLineAsks(do string) bool {
+	do = strings.TrimSpace(do)
+	first, _, _ := strings.Cut(do, " ")
+	return strings.HasSuffix(do, "?") || askingWords[strings.ToLower(strings.TrimRight(first, ":,"))]
+}
+
+func nobodyActs(o Org, it Item) bool {
+	if itemGoalEnded(o, it) {
+		return true
+	}
+	chief, ok := o.Managers[it.Dossier.Chief]
+	return ok && !o.Active(chief)
+}
+
 // itemGoalEnded reports whether the goal an item came from is done, killed or dropped.
 func itemGoalEnded(o Org, it Item) bool {
 	id := it.GoalOwner
@@ -636,6 +655,9 @@ func (c *Core) foldLater(b *Board) error {
 	for _, ns := range [][]Need{b.Needs, b.Later} {
 		for i := range ns {
 			ns[i].Name = ns[i].nameIn(b.Org)
+			if ns[i].Item != nil && nobodyActs(b.Org, *ns[i].Item) {
+				ns[i].NoAct = true
+			}
 		}
 	}
 	rank(b.Needs, b.At)

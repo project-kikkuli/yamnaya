@@ -16,6 +16,7 @@ import (
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/spf13/cobra"
 )
 
 func TestBriefPagesShowEachVersionAndRollReportsUpUnderTheirChief(t *testing.T) {
@@ -530,5 +531,63 @@ func TestARowActedOnReturnsToThePageWhenReopened(t *testing.T) {
 	w.observe(t)
 	if !strings.Contains(w.page(t), "do/"+id) {
 		t.Fatal("a reopened row stays hidden")
+	}
+}
+
+func TestTheCliAndPageDrawTheSameRowAndTheButtonNamesWhatItDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name, do string
+		button   string
+		mark     string
+	}{
+		{"a do-line that answers names itself", "Rotate the 3 exposed credsok", "Rotate the 3 exposed credsok", "✓"},
+		{"a do-line that asks shows the arrow and the rec's button", "Pick how the proof is caught", "accept rec", "▸"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newDoWorld(t)
+			_, err := w.c.Store.AddItem(core.Item{Kind: core.KindDecision, Scope: w.item.Scope, Question: "q", DoLine: tc.do, Rec: "the rec", Session: "another-session"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.observe(t)
+			cmd := itemQueueCmd(func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error { return run(&env{core: w.c}, cmd, args) }
+			})
+			var out strings.Builder
+			cmd.SetOut(&out)
+			cmd.SetArgs([]string{"--width", "40"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			var cli string
+			for _, line := range strings.Split(out.String(), "\n") {
+				if strings.Contains(line, tc.do) {
+					cli = line
+				}
+			}
+			if cli == "" || !strings.HasSuffix(cli, tc.mark) {
+				t.Fatalf("ym item queue row %q of:\n%s", cli, out.String())
+			}
+			page := w.page(t)
+			var row string
+			for _, r := range strings.Split(page, "<details")[1:] {
+				if strings.Contains(r, tc.do) {
+					row = r
+				}
+			}
+			line := regexp.MustCompile(`<span class="line">([^<]*)</span>`).FindStringSubmatch(row)
+			if line == nil || html.UnescapeString(line[1])+tc.mark != cli {
+				t.Fatalf("page row %q, cli row %q", line, cli)
+			}
+			if !strings.Contains(row, `class="act" type="submit">`+tc.button+`</button>`) {
+				t.Fatalf("row %s has no button named %q", row, tc.button)
+			}
+			if tc.mark == "✓" && !strings.Contains(row, `aria-label="`+tc.button+`"`) {
+				t.Fatalf("check mark does not name %q: %s", tc.button, row)
+			}
+			if strings.Contains(row, `class="check"`) != (tc.mark == "✓") {
+				t.Fatalf("mark %s disagrees with the page's button: %s", tc.mark, row)
+			}
+		})
 	}
 }

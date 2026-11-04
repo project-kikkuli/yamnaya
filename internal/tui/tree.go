@@ -522,6 +522,10 @@ func (m Model) renderTree(rows []row) viewPage {
 	for i, r := range rows {
 		rowModel := m
 		rowModel.width = max(20, m.width-2*r.depth-2)
+		flush := r.need != nil && !strings.HasPrefix(r.key, "doc-ask:") && m.width < core.QueueWidth+2*r.depth+5
+		if flush {
+			rowModel.width = m.width + 3
+		}
 		text := rowModel.treeRowText(i, r, ids, labels)
 		lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 		indicator := "  "
@@ -539,7 +543,10 @@ func (m Model) renderTree(rows []row) viewPage {
 					mark = mark[:len(mark)-1] + "*"
 				}
 				line = mark + indent + indicator + ansi.Cut(line, 3, ansi.StringWidth(line))
-			} else {
+				if flush {
+					line = ansi.Cut(line, 5+len(indent), ansi.StringWidth(line))
+				}
+			} else if !flush {
 				line = indent + "  " + line
 			}
 			b.place = m.rowPlace(r)

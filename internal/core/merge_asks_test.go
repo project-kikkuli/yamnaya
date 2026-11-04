@@ -1,6 +1,7 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -439,6 +440,117 @@ func TestAPullRequestAskedAboutAndRequestedForReviewHasOneRow(t *testing.T) {
 			}
 			if tc.live == 1 && tc.askRow && (!row.Urgent() || row.blocked() != 2) {
 				t.Fatalf("the ask's rank was lost: urgent %v, blocked %d", row.Urgent(), row.blocked())
+			}
+		})
+	}
+}
+
+func TestACheckMarkOnlyDoesWhatTheRowSays(t *testing.T) {
+	for _, tc := range []struct {
+		do    string
+		check Check
+	}{
+		{"Pick how proof is captured", CheckNone},
+		{"Decide the rollout", CheckNone},
+		{"review the plan", CheckNone},
+		{"Which store to use", CheckNone},
+		{"Ship it?", CheckNone},
+		{"Ship QA-51 fix to prod", CheckAccept},
+		{"Rotate the 3 exposed creds", CheckAccept},
+		{"Confirm G8 and G12 were you", CheckAccept},
+		{"Confirm Q; fix / in items", CheckAccept},
+		{"Keep the no-rerun CI rule", CheckAccept},
+		{"Record who accepted a rec", CheckAccept},
+		{"Allow Linear proof comments", CheckAccept},
+		{"Drop 3 test charts from goal", CheckAccept},
+	} {
+		t.Run(tc.do, func(t *testing.T) {
+			n := queueItem("q", func(it *Item) { it.DoLine, it.Rec = tc.do, "the rec" })
+			if got := n.Check(); got != tc.check {
+				t.Fatalf("check %d, want %d", got, tc.check)
+			}
+			if n.Accept() != CheckAccept {
+				t.Fatal("the opened row, which shows the rec, should accept it")
+			}
+			line, _ := RowLine(n, "1", QueueWidth, queueNow)
+			want := "▸"
+			if tc.check != CheckNone {
+				want = "✓"
+			}
+			if !strings.HasSuffix(line, want) {
+				t.Fatalf("row %q, want %s", line, want)
+			}
+		})
+	}
+}
+
+func TestAnAnswerNobodyWouldActOnGetsNoCheckMark(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		end    func(t *testing.T, w *orgWorld, g Goal, m Manager)
+		goal   bool
+		chief  bool
+		acts   bool
+		ranked bool
+	}{
+		{name: "a live goal", goal: true, acts: true, ranked: true},
+		{name: "a finished goal, prod, stays ranked with the arrow", goal: true, ranked: true, end: func(t *testing.T, w *orgWorld, g Goal, _ Manager) {
+			g.State = GoalDone
+			if err := w.core.Store.SaveGoal(g); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "no goal, under a working chief", chief: true, acts: true, ranked: true},
+		{name: "no goal, under a retired chief", chief: true, ranked: true, end: func(t *testing.T, w *orgWorld, _ Goal, m Manager) {
+			m.Retired = true
+			if err := w.core.Store.SaveManager(m); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "no goal and no chief", acts: true, ranked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "ship", "/repo/a")
+			w.spawn("asker", "")
+			it := Item{Kind: KindDecision, Question: "q", DoLine: "Rotate the keys", Rec: "rotate", Options: picks, Impact: ImpactProd, Session: "asker"}
+			if tc.goal {
+				it.Session = m.Session
+			}
+			added, err := w.core.AddOwnerItem(it)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.chief {
+				added.Dossier.Chief = m.ID
+				if err := w.core.Store.SaveDossier(added.Seq, added.Dossier); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.end != nil {
+				tc.end(t, w, g, m)
+			}
+			b := w.board(t)
+			at := slices.IndexFunc(b.Needs, func(n Need) bool { return n.Item != nil && n.Item.Seq == added.Seq })
+			if (at >= 0) != tc.ranked {
+				t.Fatalf("ranked %v, want %v", at >= 0, tc.ranked)
+			}
+			row := b.Needs[at]
+			want, accept := CheckNone, CheckNone
+			if tc.acts {
+				want, accept = CheckAccept, CheckAccept
+			}
+			if row.Check() != want || row.Accept() != accept {
+				t.Fatalf("check %d accept %d, want %d %d", row.Check(), row.Accept(), want, accept)
+			}
+			if !tc.acts {
+				if _, err := w.core.DoCheck(b, row); err == nil {
+					t.Fatal("a row nobody acts on took an answer")
+				}
+				got, err := w.core.Store.Item(added.Key())
+				if err != nil || got.State != ItemOpen {
+					t.Fatalf("item %s err %v, want it still open", got.State, err)
+				}
 			}
 		})
 	}

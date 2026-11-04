@@ -175,6 +175,9 @@ func queueRow(n core.Need, label, token string, now time.Time) queueRowView {
 		v.ID, v.Token, v.Act = n.RowID(), token, "go ahead"
 	case core.CheckAccept:
 		v.ID, v.Token, v.Act = n.RowID(), token, "accept rec"
+		if n.Check() == core.CheckAccept {
+			v.Act = n.DoLine()
+		}
 	case core.CheckMerge:
 		v.ID, v.Token, v.Act = n.RowID(), token, "merge"
 	}

@@ -228,7 +228,7 @@ type Need struct {
 	// HeldPR is the pull request an item row asks to merge, Held why the owner cannot merge it now.
 	HeldPR *PR
 	Held   string
-	// Read is when another host's snapshot showed this row, zero for a row of this host; NoAct is a row whose host this one cannot reach.
+	// Read is when another host's snapshot showed this row, zero for a row of this host; NoAct is a row whose answer would reach no one.
 	Read  time.Time
 	NoAct bool
 }

@@ -1189,3 +1189,41 @@ func TestAnItemRowKeepsItsKeyWholeWhateverElseIsLong(t *testing.T) {
 		})
 	}
 }
+
+func TestAFullDoLineDrawsWholeOnTheBoardAsOnTheOtherSurfaces(t *testing.T) {
+	do := strings.Repeat("x", core.MaxDoLine)
+	for _, width := range []int{40, 41, 46, 47, 60, 99} {
+		for _, tc := range []struct {
+			name   string
+			rows   int
+			impact string
+		}{
+			{"one digit rank", 1, ""},
+			{"two digit rank", 12, ""},
+			{"urgent two digit rank", 12, core.ImpactProd},
+		} {
+			t.Run(fmt.Sprintf("%d %s", width, tc.name), func(t *testing.T) {
+				m := treeModel()
+				m.width, m.cursor, m.page = width, 0, nil
+				m.board.Needs = nil
+				for i := range tc.rows {
+					m.board.Needs = append(m.board.Needs, core.Need{Project: "mission", Item: &core.Item{Seq: int64(i + 1), ID: fmt.Sprintf("D%d", i+1), Kind: core.KindDecision, Question: "q",
+						DoLine: fmt.Sprintf("%s%02d", do[:core.MaxDoLine-2], i+1), Rec: "r", Impact: tc.impact}})
+				}
+				content := ansi.Strip(m.View().Content)
+				labels := core.RankLabels(tc.rows)
+				for i := range m.board.Needs {
+					want, _ := core.RowLine(m.board.Needs[i], labels[i], core.QueueWidth, m.board.At)
+					if !strings.Contains(content, want) {
+						t.Fatalf("row %q missing at width %d:\n%s", want, width, content)
+					}
+				}
+				for _, line := range strings.Split(content, "\n") {
+					if strings.Contains(line, do[:10]) && ansi.StringWidth(line) > width {
+						t.Fatalf("a %d wide row on a %d terminal: %q", ansi.StringWidth(line), width, line)
+					}
+				}
+			})
+		}
+	}
+}
