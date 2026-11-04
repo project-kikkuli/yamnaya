@@ -3030,6 +3030,29 @@ func TestOwnerItemsTrackEachWindowOfALogin(t *testing.T) {
 			t.Fatalf("%d open", got)
 		}
 	})
+	t.Run("an item the owner snoozed still closes", func(t *testing.T) {
+		w := newQueueWorld(t, "claude", "")
+		now := time.Now()
+		reset := now.Add(31 * time.Hour)
+		ps, _ := profile.Load(w.state)
+		if err := w.l.fileQuotaItem(w.state, ps, quotaEvent(w, now), reset, nil, now); err != nil {
+			t.Fatal(err)
+		}
+		items, err := w.l.core.Store.Items(core.ItemFilter{})
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%d, %v", len(items), err)
+		}
+		if _, err = w.l.core.Store.SnoozeItem(items[0].Key(), time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+		if it, err := w.l.core.Store.Item(items[0].Key()); err != nil || it.State != core.ItemSnoozed {
+			t.Fatalf("%+v, %v", it.State, err)
+		}
+		tickAt(t, w, reset.Add(time.Minute))
+		if it, err := w.l.core.Store.Item(items[0].Key()); err != nil || it.State != core.ItemDismissed {
+			t.Fatalf("a snoozed item outlived its window: %s, %v", it.State, err)
+		}
+	})
 	t.Run("an item never offers a signed-out login", func(t *testing.T) {
 		w := newQueueWorld(t, "claude", "")
 		now := time.Now()

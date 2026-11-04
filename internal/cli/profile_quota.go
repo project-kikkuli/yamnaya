@@ -203,7 +203,7 @@ func (l launcher) closeQuotaItems(dir string, b core.Board) error {
 				continue
 			}
 			it, err := l.core.Store.Item(w.Item)
-			open := err == nil && it.State == core.ItemOpen
+			open := err == nil && (it.State == core.ItemOpen || it.State == core.ItemSnoozed)
 			if open {
 				if err = l.core.Store.RetireItem(w.Item, reason); err != nil {
 					return err
