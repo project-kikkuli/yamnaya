@@ -390,7 +390,7 @@ func DossierLines(d Dossier) [][2]string {
 		add("goal", name+" "+oneLine(d.GoalAsk))
 	}
 	add("repository", d.Repo)
-	add("from", d.From)
+	add("from", oneName(d.From))
 	for _, pr := range d.PRs {
 		add("pr", pr.String())
 	}

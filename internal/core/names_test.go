@@ -1690,3 +1690,41 @@ func TestARenameReachesAnItemsFromLine(t *testing.T) {
 		t.Fatalf("from %q, %v", got.Dossier.From, err)
 	}
 }
+
+func TestAFromLineSaysAManagersNameOnce(t *testing.T) {
+	for _, tc := range []struct{ name, from, want string }{
+		{"a stored stutter", "manager x-name (x-name)", "manager x-name"},
+		{"an agent's stutter", "agent 9e99c130, working for manager x-name (x-name)", "agent 9e99c130, working for manager x-name"},
+		{"from before names", "chief master (mgr51)", "chief master"},
+		{"already once", "manager x-name", "manager x-name"},
+		{"a session the owner started", "agent 9e99c130, in a session you started", "agent 9e99c130, in a session you started"},
+		{"brackets that say something else", "manager x-name (old-note)", "manager x-name (old-note)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := DossierLines(Dossier{From: tc.from})
+			if len(lines) == 0 || lines[0][0] != "from" || lines[0][1] != tc.want {
+				t.Fatalf("lines %v, want from %q", lines, tc.want)
+			}
+		})
+	}
+}
+
+func TestARenameLeavesAnOldFromLineSayingTheNameOnce(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "old-name" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	it, err := w.core.Store.AddItem(Item{Kind: KindChore, Question: "q", Session: m.Session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.SaveDossier(it.Seq, Dossier{Goal: g.ID, From: "manager old-name (" + m.ID + ")"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.renameInItems(g.ID, "new-name", []string{"old-name", m.ID}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.core.Store.Item(it.Key())
+	if err != nil || got.Dossier.From != "manager new-name" {
+		t.Fatalf("from %q, %v", got.Dossier.From, err)
+	}
+}

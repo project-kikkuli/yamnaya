@@ -1356,3 +1356,53 @@ func TestNTakesTheOldNameOffTheRowsStuckLine(t *testing.T) {
 		t.Fatalf("board after the rename:\n%s", v)
 	}
 }
+
+func TestAGoalRowSaysHowItStandsNowNotWhatYmSaidThen(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		state   string
+		kind    string
+		payload string
+		want    string
+		absent  string
+	}{
+		{name: "stuck, renamed", state: core.GoalStuck, kind: core.EventStuck, payload: "manager old-row-name did not stay up", want: "manager new-row-name did not stay up", absent: "old-row-name"},
+		{name: "recovered after being stuck", state: core.GoalActive, kind: core.EventStuck, payload: "manager old-row-name did not stay up", want: "stuck · ", absent: "old-row-name"},
+		{name: "ym's word on a red run", state: core.GoalActive, kind: core.EventCIRed, payload: "manager old-row-name saw CI red", want: "ci-red · ", absent: "old-row-name"},
+		{name: "what a manager wrote", state: core.GoalActive, kind: core.EventUpdate, payload: "parser merged, old-row-name was a typo", want: "parser merged, old-row-name was a typo"},
+		{name: "a work resume's reason", state: core.GoalActive, kind: core.EventWorkResumed, payload: "owner asked for TSV too", want: "owner asked for TSV too"},
+		{name: "a done summary", state: core.GoalActive, kind: core.EventDone, payload: "shipped the importer", want: "shipped the importer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, ms := goalSetup(t, "make login faster")
+			if _, err := c.Rename(ms[0].ID, "old-row-name"); err != nil {
+				t.Fatal(err)
+			}
+			g, err := c.Store.Goal(ms[0].GoalID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.state == core.GoalStuck {
+				g.State, g.Evidence = tc.state, tc.payload
+				if err := c.Store.SaveGoal(g); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, _, err := c.Store.AddGoalEvent(core.GoalEvent{Goal: g.ID, Kind: tc.kind, Payload: tc.payload, Created: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Rename(ms[0].ID, "new-row-name"); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = 220
+			row := ansi.Strip(m.nodeLines(-1, m.board.Tree[0], 0))
+			if !strings.Contains(row, tc.want) {
+				t.Fatalf("row %q, want %q", row, tc.want)
+			}
+			if tc.absent != "" && strings.Contains(row, tc.absent) {
+				t.Fatalf("row %q shows %q", row, tc.absent)
+			}
+		})
+	}
+}

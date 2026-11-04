@@ -364,6 +364,12 @@ type Feed struct {
 	Touched []string `json:",omitempty"`
 }
 
+// PeopleWrote reports whether the event's payload is what a manager or agent wrote, rather than ym's wording of what happened then: that
+// wording names the goal as it was, so it is history and does not say how the goal stands now.
+func (e GoalEvent) PeopleWrote() bool {
+	return e.Kind == EventUpdate || e.Kind == EventDone || e.Kind == EventWorkResumed
+}
+
 // feedRecent is how many of a goal's newest events the board carries.
 const feedRecent = 30
 

@@ -366,6 +366,19 @@ func nameIn(text, name string, olds []string) string {
 	return text
 }
 
+var nameInBrackets = regexp.MustCompile(`([a-z0-9-]+) \(([a-z0-9-]+)\)`)
+
+// oneName is a from line with a name once: lines from before names read "manager x (mgr1)", which a rename would turn into "manager x (x)".
+func oneName(from string) string {
+	return nameInBrackets.ReplaceAllStringFunc(from, func(hit string) string {
+		m := nameInBrackets.FindStringSubmatch(hit)
+		if m[1] == m[2] || idShaped.MatchString(m[2]) {
+			return m[1]
+		}
+		return hit
+	})
+}
+
 // renameInGoal carries a new name to the text ym stored on the goal's row: why it stands as it does.
 func (s *Store) renameInGoal(id, name string, olds []string) error {
 	defer s.invalidate()
@@ -634,7 +647,7 @@ func (c *Core) renameInItems(id, name string, olds []string) error {
 	for _, it := range items {
 		if it.Dossier.Goal == id || it.Dossier.Chief == id {
 			d := it.Dossier
-			d.GoalName, d.From = name, nameIn(d.From, name, olds)
+			d.GoalName, d.From = name, oneName(nameIn(d.From, name, olds))
 			if err := c.Store.SaveDossier(it.Seq, d); err != nil {
 				return err
 			}

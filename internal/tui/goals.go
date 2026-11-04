@@ -259,10 +259,14 @@ func (m Model) nodeLines(i int, n core.Node, depth int) string {
 	}
 	st := nodeStats(n)
 	switch {
+	case n.Goal != nil && n.Goal.State == core.GoalStuck && n.Goal.Evidence != "":
+		what += pal.dim.Render("  " + oneLine(n.Goal.Evidence))
 	case st.Progress != "":
 		what += pal.dim.Render("  " + oneLine(st.Progress) + " · " + age(m.board.At, st.ProgressAt))
+	case n.Feed.Latest != nil && n.Feed.Latest.PeopleWrote():
+		what += pal.dim.Render("  " + oneLine(n.Feed.Latest.Payload))
 	case n.Feed.Latest != nil:
-		what += pal.dim.Render("  " + n.Feed.Latest.Payload)
+		what += pal.dim.Render("  " + n.Feed.Latest.Kind + " · " + age(m.board.At, n.Feed.Latest.Created))
 	}
 	indent := strings.Repeat("  ", depth)
 	line := mark + indent + head + " " + stand + " " + briefTag(m.board.At, n) + " "
