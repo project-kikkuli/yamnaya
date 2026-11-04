@@ -1554,3 +1554,139 @@ func TestARefusedRelaysRecNamesWhatItWasForAndNoCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestABackfillRetitlesTheBriefPage(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		brief bool
+		chief bool
+		first string
+		keeps string
+	}{
+		{name: "a goal with no brief yet", first: "# good-name: make the export stream", keeps: "Not started yet"},
+		{name: "a goal with a recorded brief", brief: true, first: "# good-name: make the export stream", keeps: "halfway there"},
+		{name: "a chief with no brief yet", chief: true, first: "# ops-lead", keeps: "its remit"},
+		{name: "a chief with a recorded brief", chief: true, brief: true, first: "# ops-lead", keeps: "halfway there"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "before-name" }
+			var id, path, session, oldTitle string
+			if tc.chief {
+				m, err := w.core.NewChief("ops-lead", "its remit", "/repo/august", "", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, path, session, oldTitle = m.ID, m.BriefPath, m.Session, "# "+m.ID
+				if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET name='Ops Lead' WHERE 'mgr'||num=?`, m.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				g, m := w.goal(t, "make the export stream", "/repo/august")
+				id, path, session, oldTitle = g.ID, m.BriefPath, m.Session, "# "+g.ID+": make the export stream"
+				unname(t, w, g.ID, m.ID, "make the export stream")
+			}
+			w.core.Store.invalidate()
+			if tc.brief {
+				if _, err := w.core.WriteBrief(session, Brief{Assessment: "halfway there", Changed: "a", Uncertainty: "b", Next: "c", WaitingOn: "d"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, rest, _ := strings.Cut(string(raw), "\n")
+			if err := os.WriteFile(path, []byte(oldTitle+"\n"+rest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			w.core.Namer = func(string) string { return "good-name" }
+			if n, err := w.core.NameUnnamed(); err != nil || n != 1 {
+				t.Fatalf("named %d, %v", n, err)
+			}
+			raw, err = os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, rest, _ := strings.Cut(string(raw), "\n")
+			if first != tc.first || !strings.Contains(rest, tc.keeps) || strings.Contains(string(raw), id+":") {
+				t.Fatalf("brief page opens %q, want %q keeping %q:\n%s", first, tc.first, tc.keeps, raw)
+			}
+		})
+	}
+}
+
+func TestARenameTakesTheOldNameOffWhatTheRowStores(t *testing.T) {
+	for _, tc := range []struct {
+		name, lastError string
+		want            []string
+	}{
+		{"a stuck goal", "", []string{"manager new-name did not stay up"}},
+		{"a stuck goal whose last launch names it", "branch old-name exists", []string{"manager new-name did not stay up", "last launch failed: branch new-name exists"}},
+		{"a longer name stays", "see old-name-2 here", []string{"manager new-name did not stay up", "see old-name-2 here"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "old-name" }
+			g, m := w.goal(t, "anything", "/repo/august")
+			now, err := w.core.Store.Manager(m.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now.Session, now.Failures, now.LastError, now.NextAttempt = "", stuckFailures, tc.lastError, w.clock.Add(time.Hour)
+			if err := w.core.Store.SaveManager(now); err != nil {
+				t.Fatal(err)
+			}
+			w.supervise(t)
+			was, err := w.core.Store.Goal(g.ID)
+			if err != nil || was.State != GoalStuck || !strings.Contains(was.Evidence, "old-name") {
+				t.Fatalf("goal %+v, %v; want it stuck naming old-name", was, err)
+			}
+			before, _ := w.core.Store.GoalEvents(g.ID)
+			if _, err := w.core.Rename(g.ID, "new-name"); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := w.core.Store.Goal(g.ID)
+			for _, want := range tc.want {
+				if !strings.Contains(got.Evidence, want) {
+					t.Errorf("evidence %q, want %q", got.Evidence, want)
+				}
+			}
+			if rest := strings.ReplaceAll(got.Evidence, "old-name-2", ""); strings.Contains(rest, "old-name") {
+				t.Errorf("evidence %q still shows the old name", got.Evidence)
+			}
+			mine, _ := w.core.Store.Manager(m.ID)
+			if rest := strings.ReplaceAll(mine.LastError, "old-name-2", ""); strings.Contains(rest, "old-name") {
+				t.Errorf("last error %q still shows the old name", mine.LastError)
+			}
+			w.supervise(t)
+			after, _ := w.core.Store.GoalEvents(g.ID)
+			if len(after) != len(before) {
+				t.Errorf("a rename raised events: %+v", after[len(before):])
+			}
+			if again, _ := w.core.Store.Goal(g.ID); again.Evidence != got.Evidence {
+				t.Errorf("the next check rewrote evidence to %q", again.Evidence)
+			}
+		})
+	}
+}
+
+func TestARenameReachesAnItemsFromLine(t *testing.T) {
+	w := newOrgWorld(t)
+	w.core.Namer = func(string) string { return "old-name" }
+	g, m := w.goal(t, "anything", "/repo/august")
+	it, err := w.core.Store.AddItem(Item{Kind: KindChore, Question: "q", Session: m.Session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.Store.SaveDossier(it.Seq, Dossier{Goal: g.ID, GoalName: "old-name", From: "agent a1, working for manager old-name"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Rename(g.ID, "new-name"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.core.Store.Item(it.Key())
+	if err != nil || got.Dossier.From != "agent a1, working for manager new-name" {
+		t.Fatalf("from %q, %v", got.Dossier.From, err)
+	}
+}

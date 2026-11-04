@@ -1324,3 +1324,35 @@ func TestTheCursorAndTheFoldShowOnTheQueueAtEveryWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestNTakesTheOldNameOffTheRowsStuckLine(t *testing.T) {
+	m, c, ms := goalSetup(t, "make login faster")
+	if _, err := c.Rename(ms[0].ID, "old-row-name"); err != nil {
+		t.Fatal(err)
+	}
+	now, err := c.Store.Manager(ms[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := c.Store.Goal(now.GoalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.State, g.Evidence = core.GoalStuck, "manager old-row-name did not stay up after 3 launches in a row"
+	if err := c.Store.SaveGoal(g); err != nil {
+		t.Fatal(err)
+	}
+	m = to(t, refresh(t, m), isNode(ms[0].ID))
+	m = press(t, m, "N", "ctrl+u")
+	m = press(t, m, strings.Split("new-row-name", "")...)
+	m = press(t, m, "enter")
+	if m.mode == modeInput {
+		t.Fatalf("rename left the input open:\n%s", m.View().Content)
+	}
+	m = refresh(t, m)
+	m.width = 180
+	v := strings.ReplaceAll(ansi.Strip(m.View().Content), "old-row-name is now new-row-name", "")
+	if !strings.Contains(v, "manager new-row-name did not stay up") || strings.Contains(v, "old-row-name") {
+		t.Fatalf("board after the rename:\n%s", v)
+	}
+}

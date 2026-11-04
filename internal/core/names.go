@@ -336,20 +336,62 @@ func (c *Core) Rename(ref, name string) (string, error) {
 	}); err != nil {
 		return "", err
 	}
-	return old, c.renamed(m, g, isGoal, title, name)
+	return old, c.renamed(m, g, isGoal, title, name, old, m.Shown())
 }
 
 // renamed carries a new name to what holds a copy of it: the brief page's title and the items from the goal or chief.
-func (c *Core) renamed(m Manager, g Goal, isGoal bool, title, name string) error {
-	if err := retitle(m.BriefPath, title); err != nil {
+func (c *Core) renamed(m Manager, g Goal, isGoal bool, title, name string, olds ...string) error {
+	if err := retitle(cmp.Or(m.BriefPath, g.BriefPath), title); err != nil {
 		return err
 	}
+	var errs []error
 	if isGoal {
-		if err := c.renameInItems(g.ID, name); err != nil {
-			return err
-		}
+		errs = append(errs, c.renameInItems(g.ID, name, olds), c.Store.renameInGoal(g.ID, name, olds))
 	}
-	return c.renameInItems(m.ID, name)
+	if m.ID != "" {
+		errs = append(errs, c.renameInItems(m.ID, name, olds), c.Store.renameInManager(m.ID, name, olds))
+	}
+	return errors.Join(errs...)
+}
+
+// nameIn is text with each old name or id of a goal or chief as name; a longer name that merely starts with one stays.
+func nameIn(text, name string, olds []string) string {
+	for _, old := range olds {
+		if old == "" || old == name {
+			continue
+		}
+		re := regexp.MustCompile(`(^|[^a-z0-9-])` + regexp.QuoteMeta(old) + `($|[^a-z0-9-])`)
+		text = re.ReplaceAllStringFunc(text, func(hit string) string { return strings.Replace(hit, old, name, 1) })
+	}
+	return text
+}
+
+// renameInGoal carries a new name to the text ym stored on the goal's row: why it stands as it does.
+func (s *Store) renameInGoal(id, name string, olds []string) error {
+	defer s.invalidate()
+	var evidence string
+	if err := s.db.QueryRow(`SELECT evidence FROM ym_goals WHERE 'goal' || num = ?`, id).Scan(&evidence); err != nil {
+		return err
+	}
+	if now := nameIn(evidence, name, olds); now != evidence {
+		_, err := s.db.Exec(`UPDATE ym_goals SET evidence = ? WHERE 'goal' || num = ?`, now, id)
+		return err
+	}
+	return nil
+}
+
+// renameInManager carries a new name to the error ym stored on the manager's or chief's row.
+func (s *Store) renameInManager(id, name string, olds []string) error {
+	defer s.invalidate()
+	var last string
+	if err := s.db.QueryRow(`SELECT last_error FROM ym_managers WHERE 'mgr' || num = ?`, id).Scan(&last); err != nil {
+		return err
+	}
+	if now := nameIn(last, name, olds); now != last {
+		_, err := s.db.Exec(`UPDATE ym_managers SET last_error = ? WHERE 'mgr' || num = ?`, now, id)
+		return err
+	}
+	return nil
 }
 
 // retitle puts title on the first line of the brief page at path, which a page always opens with.
@@ -386,18 +428,22 @@ func (c *Core) NameUnnamed() (int, error) {
 			continue
 		}
 		base, source := c.suggest(g.Ask)
-		note(c.Store.setName(g.ID, "", source, func(now string, taken map[string]bool) (string, error) {
+		name, err := c.Store.setName(g.ID, "", source, func(now string, taken map[string]bool) (string, error) {
 			if now != "" {
 				return "", nil
 			}
 			return unique(base, taken), nil
-		}))
+		})
+		note(name, err)
+		if name != "" && err == nil {
+			errs = append(errs, c.renamed(o.Managers[g.ManagerID], g, true, name+": "+shortName(g.Ask), name, g.ID, g.ManagerID, o.Managers[g.ManagerID].Name))
+		}
 	}
 	for _, m := range o.Managers {
 		if m.Host != "" || m.Role != RoleChief || validName.MatchString(m.Name) {
 			continue
 		}
-		note(c.Store.setName("", m.ID, "", func(now string, taken map[string]bool) (string, error) {
+		name, err := c.Store.setName("", m.ID, "", func(now string, taken map[string]bool) (string, error) {
 			if validName.MatchString(now) {
 				return "", nil
 			}
@@ -406,7 +452,11 @@ func (c *Core) NameUnnamed() (int, error) {
 				base = "chief"
 			}
 			return unique(base, taken), nil
-		}))
+		})
+		note(name, err)
+		if name != "" && err == nil {
+			errs = append(errs, c.renamed(m, Goal{}, false, name, name, m.ID, m.Name))
+		}
 	}
 	return named, errors.Join(errs...)
 }
@@ -483,7 +533,7 @@ func (c *Core) BetterNames() (int, error) {
 			continue
 		}
 		named++
-		errs = append(errs, c.renamed(o.Managers[g.ManagerID], g, true, name+": "+shortName(g.Ask), name))
+		errs = append(errs, c.renamed(o.Managers[g.ManagerID], g, true, name+": "+shortName(g.Ask), name, g.Name))
 	}
 	return named, errors.Join(errs...)
 }
@@ -576,7 +626,7 @@ func (o Org) ItemName(it Item) string {
 }
 
 // renameInItems keeps the name saved with each item from the goal or chief id, which ym item show prints, in step with a rename.
-func (c *Core) renameInItems(id, name string) error {
+func (c *Core) renameInItems(id, name string, olds []string) error {
 	items, err := c.Store.Items(ItemFilter{})
 	if err != nil {
 		return err
@@ -584,7 +634,7 @@ func (c *Core) renameInItems(id, name string) error {
 	for _, it := range items {
 		if it.Dossier.Goal == id || it.Dossier.Chief == id {
 			d := it.Dossier
-			d.GoalName = name
+			d.GoalName, d.From = name, nameIn(d.From, name, olds)
 			if err := c.Store.SaveDossier(it.Seq, d); err != nil {
 				return err
 			}
