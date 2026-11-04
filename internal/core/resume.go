@@ -112,7 +112,7 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 	if err != nil {
 		var wait *QuotaWait
 		if errors.As(err, &wait) {
-			c.retryQuota(m.Session, err)
+			c.retryResume(m.Session, err)
 			m.Failures, m.NextAttempt = max(m.Failures-1, 0), c.now().Add(QuotaRecheck)
 		}
 		m.LastError = "resume failed: " + err.Error()
@@ -207,13 +207,13 @@ func (c *Core) ReviveWork(b Board) error {
 			who := "session " + Short(l.Session) + " (" + l.Key + ")"
 			_, resumed, err := r.Resume(l.Session, workResumeText, "")
 			c.noteResult(who, l.Session, resumed, err)
-			c.retryQuota(l.Session, err)
+			c.retryResume(l.Session, err)
 			continue
 		}
 		who := "agent " + Short(l.Session) + " (" + l.Key + ")"
 		_, resumed, err := r.Resume(l.Session, workResumeText, "")
 		c.noteResult(who, l.Session, resumed, err)
-		c.retryQuota(l.Session, err)
+		c.retryResume(l.Session, err)
 		if err != nil {
 			errs = append(errs, c.tellWork(b, m, l.Session, EventResumeFailed,
 				fmt.Sprintf("%s's pane went and ym could not resume it: %v. Its worktree %s keeps what it wrote; ym revive %s tries again.", who, err, l.Path, l.Key),
@@ -236,7 +236,7 @@ func (c *Core) ReviveWork(b Board) error {
 		}
 		err := r.Bring(Live{Session: Session{ID: o.ID, Harness: o.Harness, Profile: o.Profile, ConfigRoot: o.ConfigRoot, Cwd: o.Cwd}}, workResumeText)
 		c.noteResult("session "+Short(o.ID)+" in "+o.Cwd, o.ID, true, err)
-		c.retryQuota(o.ID, err)
+		c.retryResume(o.ID, err)
 	}
 	return errors.Join(errs...)
 }

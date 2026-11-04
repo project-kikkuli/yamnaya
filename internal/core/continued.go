@@ -65,8 +65,14 @@ func (s *Store) ContinueSession(old, next, harness, profile, root string) error 
 		{`DELETE FROM ym_off WHERE target = ?`, []any{old}},
 		{`UPDATE ym_vibes SET session = ? WHERE session = ?`, []any{next, old}},
 		{`UPDATE ym_vibes SET target = ? WHERE target = ?`, []any{next, old}},
-		{`INSERT OR IGNORE INTO ym_agent_reports (session, head, said, at) SELECT ?, head, said, at FROM ym_agent_reports WHERE session = ?`, []any{next, old}},
+		{`UPDATE OR REPLACE ym_agent_reports SET session = ? WHERE session = ?`, []any{next, old}},
 		{`UPDATE OR IGNORE ym_phases SET project = ? WHERE project = ?`, []any{next, old}},
+		{`UPDATE OR IGNORE ym_names SET project = ? WHERE project = ?`, []any{next, old}},
+		{`UPDATE OR IGNORE ym_merges SET project = ? WHERE project = ?`, []any{next, old}},
+		{`UPDATE ym_merges SET into_project = ? WHERE into_project = ?`, []any{next, old}},
+		{`UPDATE OR REPLACE ym_session_asks SET session = ? WHERE session = ?`, []any{next, old}},
+		{`UPDATE OR IGNORE ym_waiting_dismissed SET session = ? WHERE session = ?`, []any{next, old}},
+		{`UPDATE OR REPLACE ym_session_seen SET session = ? WHERE session = ?`, []any{next, old}},
 	} {
 		if _, err = tx.Exec(q.sql, q.args...); err != nil {
 			return err
@@ -87,4 +93,15 @@ func currentManagerSession(tx *sql.Tx, m *Manager, num int64) error {
 		return err
 	}
 	return tx.QueryRow(`SELECT session, harness, profile, config_root FROM ym_managers WHERE num = ?`, num).Scan(&m.Session, &m.Harness, &m.Profile, &m.ConfigRoot)
+}
+
+// RetireItem dismisses an item whose question has answered itself, without telling the session that happened to file it.
+func (s *Store) RetireItem(ref, reason string) error {
+	it, err := s.Transition(ref, ItemDismissed, reason)
+	if err != nil {
+		return err
+	}
+	defer s.invalidate()
+	_, err = s.db.Exec(`UPDATE ym_items SET delivered_at = ? WHERE seq = ?`, now(), it.Seq)
+	return err
 }

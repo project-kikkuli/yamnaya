@@ -42,6 +42,12 @@ func (l launcher) turnEnded(s core.Live, fleet *core.Fleet) error {
 		if cp.Status != core.Waiting || l.core == nil {
 			return fmt.Errorf("%s is %s or has a live action", core.Short(cp.ID), cp.Status)
 		}
+		if _, stopped, err := l.core.SilentQuotaStop(cp); stopped {
+			if err != nil {
+				return fmt.Errorf("cannot switch waiting session: %w", err)
+			}
+			continue
+		}
 		mainAt, err := l.core.InspectHandoff(cp)
 		if err != nil {
 			return fmt.Errorf("cannot switch waiting session: %w", err)
@@ -60,7 +66,7 @@ func (l launcher) turnEnded(s core.Live, fleet *core.Fleet) error {
 			if e.Harness != cp.Harness || e.Session != cp.ID || profile.ID(e.Profile) != profile.ID(cp.Profile) || e.Account == "" || e.Account != cp.Account || e.Seen.Before(mainAt) || e.Seen.After(now) || mainAt.After(now) {
 				continue
 			}
-			_, verified = trueExhaustion(e, fleet.Limits, now)
+			verified = !e.Recovered && e.Reason == quotaReason(e.Harness)
 			if verified {
 				break
 			}

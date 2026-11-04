@@ -80,7 +80,14 @@ func (l launcher) portSwitch(rec launch.Record, live core.Live, dest profile.Pro
 	once.resumeNote, once.operation = "", moved.Session
 	msg, err := once.revive(moved)
 	if err != nil {
-		msg = fmt.Sprintf("resume failed: %v; ym revive %s tries again", err, moved.Key)
+		msg = fmt.Sprintf("resume failed: %v; ym serve tries again", err)
+	} else if m, err = loadMigration(dir, source.Harness, source.Session); err != nil {
+		return none, err
+	} else {
+		m.State = "running"
+		if err = saveMigration(dir, m); err != nil {
+			return none, err
+		}
 	}
 	return core.SwitchOutcome{Message: fmt.Sprintf("ported %s to %s/%s as %s: %s", core.Short(source.Session), dest.Harness, dest.ID, core.Short(moved.Session), msg)}, nil
 }
@@ -129,7 +136,7 @@ func (m migration) portWritten() bool {
 }
 
 // finishPort points the record and everything waiting on the old id at the written port, from whichever step an earlier attempt
-// stopped at: each step holds when repeated, and the migration says running only once they all have.
+// stopped at: each step holds when repeated. The migration says running only once the session has come back.
 func (l launcher) finishPort(rec launch.Record, m migration) (launch.Record, error) {
 	dir := filepath.Dir(l.records.Dir)
 	old, dest := m.Source.Session, m.Destination
@@ -142,10 +149,6 @@ func (l launcher) finishPort(rec launch.Record, m migration) (launch.Record, err
 		}
 	}
 	if err := l.core.Store.ContinueSession(old, m.Head, dest.Harness, dest.ID, dest.Root); err != nil {
-		return rec, err
-	}
-	m.State = "running"
-	if err := saveMigration(dir, m); err != nil {
 		return rec, err
 	}
 	return rec, settleFailover(dir, m.Source.Harness, old, dest)
@@ -166,8 +169,10 @@ func (l launcher) finishWritten(m migration) (launch.Record, error) {
 	return l.finishPort(rec, m)
 }
 
-// recoverPort finishes a port an earlier attempt left part way and brings the session back, unless it has since been ended.
-func (l launcher) recoverPort(m migration) error {
+// recoverPort finishes a port an earlier attempt left part way and brings the session back, once nothing holds it: ym off, the owner's
+// throttle or a destination that has run out each wait, saying so on the row, and a session since ended stays ended.
+func (l launcher) recoverPort(m migration, b core.Board) error {
+	dir := filepath.Dir(l.records.Dir)
 	rec, err := l.finishWritten(m)
 	if errors.Is(err, profile.ErrOperationBusy) {
 		return nil
@@ -175,13 +180,81 @@ func (l launcher) recoverPort(m migration) error {
 	if err != nil {
 		return err
 	}
-	if _, state := l.state(rec); state == "running" || state == core.LaunchUnknown || rec.IsLanded() || rec.Killed.After(m.Since) {
+	done := func() error {
+		m.State, m.Blocked = "running", ""
+		return saveMigration(dir, m)
+	}
+	_, state := l.state(rec)
+	if state == core.LaunchUnknown {
 		return nil
+	}
+	if state == "running" || rec.IsLanded() || rec.Killed.After(m.Since) {
+		return done()
+	}
+	if l.core.Off(rec.Session) {
+		return l.holdPending(m, heldOff)
+	}
+	if b.ThrottleHolds(rec.Session) {
+		return l.holdPending(m, heldThrottled)
+	}
+	if out := l.loginOut(m.Destination); !out.IsZero() {
+		return l.holdPending(m, fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, quotaReset(out)))
 	}
 	once := l
 	once.resumeNote, once.operation = "", rec.Session
-	_, err = once.revive(rec)
-	return err
+	if _, err = once.revive(rec); err != nil {
+		return l.holdPending(m, "resume failed: "+err.Error())
+	}
+	return done()
+}
+
+// holdPending shows why a written port has not come back yet; recoverPort tries again next pass.
+func (l launcher) holdPending(m migration, why string) error {
+	if m.Blocked == why {
+		return nil
+	}
+	m.Blocked = why
+	return saveMigration(filepath.Dir(l.records.Dir), m)
+}
+
+// isPort reports whether session is the far end of a port, so a lost conversation there is an error and never a fresh start.
+func (l launcher) isPort(session string) bool {
+	if l.core == nil || l.core.Store == nil {
+		return false
+	}
+	continued, err := l.core.Store.Continued()
+	if err != nil {
+		return true
+	}
+	for _, next := range continued {
+		if next == session {
+			return true
+		}
+	}
+	return false
+}
+
+// handoffs are the migration records by launch key, read once per sweep.
+func (l launcher) handoffs() map[string]migration {
+	files, _ := filepath.Glob(filepath.Join(filepath.Dir(l.records.Dir), "migrations", "*.json"))
+	out := map[string]migration{}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var m migration
+		if json.Unmarshal(raw, &m) == nil && m.Version != 0 {
+			out[m.Source.Key] = m
+		}
+	}
+	return out
+}
+
+// pendingHandoff reports a handoff under way whose stopped source must not be cleaned up: the switch itself stopped it, and landing it
+// would drop the note and crew the handoff still has to deliver. A queued switch has not stopped anything, and an owner's kill ends it.
+func pendingHandoff(m migration, rec launch.Record) bool {
+	return m.Version != 0 && m.State != "running" && m.State != "queued" && !rec.Killed.After(m.Since)
 }
 
 // portedTo is the session that carries session's conversation now, finishing a port an earlier attempt left part way, so a resume of

@@ -280,3 +280,109 @@ func TestQuotaHandoffCountsASubagentKilledWithItsProcessAsOver(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationTellsAGoneTranscriptFromOneItCannotRead(t *testing.T) {
+	const id = "quota-session"
+	for _, c := range []struct {
+		name  string
+		setup func(*testing.T, string)
+		found bool
+		fails bool
+	}{
+		{name: "never had a transcript", setup: func(*testing.T, string) {}},
+		{name: "transcript holds a turn", found: true, setup: func(t *testing.T, root string) {
+			putConversation(t, root, quotaUser+"\n")
+		}},
+		{name: "transcript holds no turn", setup: func(t *testing.T, root string) {
+			putConversation(t, root, `{"type":"system"}`+"\n")
+		}},
+		{name: "transcript unreadable", fails: true, setup: func(t *testing.T, root string) {
+			p := putConversation(t, root, quotaUser+"\n")
+			if err := os.Chmod(p, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(p, 0600) })
+		}},
+		{name: "config root missing", fails: true, setup: func(t *testing.T, root string) {
+			if err := os.RemoveAll(root); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "claude")
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			c.setup(t, root)
+			a := &Adapter{Dir: root}
+			path, err := a.Conversation(id)
+			if (err != nil) != c.fails || (path != "") != c.found {
+				t.Fatalf("path=%q err=%v, want found=%v fails=%v", path, err, c.found, c.fails)
+			}
+			if c.fails || c.found {
+				matches, _ := filepath.Glob(filepath.Join(root, "projects", "*", "*"))
+				before := len(matches)
+				a.Unstart(id)
+				matches, _ = filepath.Glob(filepath.Join(root, "projects", "*", "*.noturn"))
+				if len(matches) != 0 || before > 1 {
+					t.Fatalf("Unstart renamed a conversation it could not prove empty: %v", matches)
+				}
+			}
+		})
+	}
+}
+
+func putConversation(t *testing.T, root, data string) string {
+	t.Helper()
+	p := filepath.Join(root, "projects", "-work", "quota-session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestSilentQuotaStopReadsOnlyTheDialogOverAnEndedTurn(t *testing.T) {
+	captured, err := os.ReadFile("testdata/silent-quota-dialog.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := string(captured)
+	ended := `{"type":"assistant","sessionId":"quota-session","timestamp":"2026-11-04T00:56:00Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"FINISHED"}]}}`
+	for _, c := range []struct {
+		name, screen, main string
+		stopped            bool
+		fails              bool
+	}{
+		{name: "the captured screen over an ended turn", screen: real, main: ended, stopped: true},
+		{name: "the captured screen over a turn the limit stopped", screen: real, main: strings.ReplaceAll(quotaLine, "2026-11-02T16:20:58.760Z", "2026-11-04T01:03:52Z"), stopped: true},
+		{name: "the captured screen over an open turn", screen: real, main: quotaTool, stopped: true, fails: true},
+		{name: "the captured screen after a later prompt", screen: real, main: ended + "\n" + strings.ReplaceAll(quotaUser, "2026-11-02T16:20:58.372Z", "2026-11-04T01:00:00Z"), stopped: true, fails: true},
+		{name: "a stop the transcript records is the strict path's", screen: quotaDialog, main: quotaLine},
+		{name: "the options quoted, composer below", screen: real + "\n❯ continue working\n", main: ended},
+		{name: "another dialog under a rule", screen: strings.ReplaceAll(real, "1. Stop and wait for limit to reset", "1. Yes"), main: ended},
+		{name: "no rule above the options", screen: strings.ReplaceAll(real, "▔", ""), main: ended},
+		{name: "a rule of something else", screen: strings.ReplaceAll(real, "▔", "x"), main: ended},
+		{name: "an ordinary screen", screen: "❯ what next\n", main: ended},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "projects", "-work", "quota-session.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(quotaUser+"\n"+c.main+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			writeState(t, root, 42, map[string]any{"pid": 42, "sessionId": "quota-session", "cwd": "/work", "status": "waiting", "statusUpdatedAt": 1793636458947})
+			a := &Adapter{Dir: root, Now: time.Now, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+			_, stopped, err := a.SilentQuotaStop(core.Session{ID: "quota-session", PID: 42, Cwd: "/work"}, c.screen)
+			if stopped != c.stopped || (err != nil) != c.fails {
+				t.Fatalf("stopped=%v err=%v, want stopped=%v fails=%v", stopped, err, c.stopped, c.fails)
+			}
+		})
+	}
+}

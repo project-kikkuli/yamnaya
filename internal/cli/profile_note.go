@@ -25,6 +25,9 @@ func switchNote(m migration, tasks []string) string {
 			note += " Reason: " + strings.TrimSuffix(m.Reason, ".") + "."
 		}
 	}
+	if m.Destination.Harness != "" && m.Source.Harness != m.Destination.Harness {
+		note += " The port to " + m.Destination.Harness + " carried this conversation's prompts and replies only, so no tool calls or results of earlier turns are recorded here: check the filesystem and git for what they did."
+	}
 	if len(tasks) > 0 {
 		note += " These background tasks were still running and ended with the switch; re-check each one and rerun it if its result is missing: " + strings.Join(tasks, "; ") + "."
 	}

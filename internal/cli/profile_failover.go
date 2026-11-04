@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,8 +20,21 @@ type failoverAttempt struct {
 	State core.FailoverState   `json:"state"`
 	Pools map[string]time.Time `json:"attempted_pools"`
 	Event string               `json:"event"`
-	// NextTry holds back a retry after a switch that failed to apply.
-	NextTry time.Time `json:"next_try,omitzero"`
+	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile.
+	Failed map[string]time.Time `json:"failed,omitempty"`
+}
+
+// untried is the logins this attempt has not just failed to land on.
+func (a failoverAttempt) untried(ps []profile.Profile, now time.Time) []profile.Profile {
+	return slices.DeleteFunc(slices.Clone(ps), func(p profile.Profile) bool { return a.Failed[p.Account].After(now) })
+}
+
+// failed holds back the login a switch could not land on.
+func (a *failoverAttempt) failed(account string, until time.Time) {
+	if a.Failed == nil {
+		a.Failed = map[string]time.Time{}
+	}
+	a.Failed[account] = until
 }
 
 func failoverPath(dir, harness, session string) string {
@@ -49,18 +63,20 @@ func saveFailover(dir, h string, a failoverAttempt) error {
 	return profile.Write(failoverPath(dir, h, a.State.Session), b)
 }
 
-// loginWindow reports whether w, a window that stops the whole login rather than one model, is used up on the login.
-func loginWindow(w core.Limit, harness, id, account string, now time.Time) bool {
-	if w.Harness != harness || w.Used < 100 || !w.ResetsAt.After(now) {
-		return false
-	}
-	if harness == "codex" && !strings.HasPrefix(w.Name, "codex ") || harness == "claude" && w.Name != "5h" && w.Name != "7d" {
+// loginRow reports whether w is a row about the whole login rather than one model.
+func loginRow(w core.Limit, harness, id, account string) bool {
+	if w.Harness != harness || harness == "codex" && !strings.HasPrefix(w.Name, "codex ") || harness == "claude" && w.Name != "5h" && w.Name != "7d" {
 		return false
 	}
 	if w.Account == "" {
 		return profile.ID(w.Profile) == profile.ID(id)
 	}
 	return w.Account == account
+}
+
+// loginWindow reports whether w, a window that stops the whole login, is used up.
+func loginWindow(w core.Limit, harness, id, account string, now time.Time) bool {
+	return w.Used >= 100 && w.ResetsAt.After(now) && loginRow(w, harness, id, account)
 }
 
 // exhaustedUntil is the reset of the login's latest used-up window, zero while it has usage left.
@@ -73,6 +89,21 @@ func exhaustedUntil(limits []core.Limit, harness, id, account string, now time.T
 	}
 	return reset
 }
+
+// showsUsable reports whether the login's own rows show usage left, which lifts a bar recorded when it ran out: it reset early.
+func showsUsable(limits []core.Limit, p profile.Profile, now time.Time) bool {
+	seen := false
+	for _, w := range limits {
+		if w.ResetsAt.After(now) && loginRow(w, p.Harness, p.ID, p.Account) {
+			if w.Used >= 100 {
+				return false
+			}
+			seen = true
+		}
+	}
+	return seen
+}
+
 func trueExhaustion(e core.Exhaustion, windows []core.Limit, now time.Time) (time.Time, bool) {
 	if e.Recovered || e.Account == "" || e.Seen.IsZero() {
 		return time.Time{}, false
@@ -93,6 +124,43 @@ func quotaReason(harness string) string {
 		return "usage_limit_exceeded"
 	}
 	return "subscription_rate_limit"
+}
+
+// silentStops are the sessions held at the quota dialog with no event to show for it, as they stop on starting on a used-up login without
+// running a turn. That is the session's own quota stop like any other.
+func (l launcher) silentStops(b core.Board) []core.Exhaustion {
+	if l.core == nil {
+		return nil
+	}
+	var out []core.Exhaustion
+	for _, s := range b.Sessions {
+		if s.Remote != "" || s.ID == "" || s.Account == "" || s.Status != core.Waiting || s.Prompt != nil {
+			continue
+		}
+		at, stopped, err := l.core.SilentQuotaStop(s.Session)
+		if err != nil || !stopped {
+			continue
+		}
+		out = append(out, core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("dialog-%s-%d", s.ID, at.Unix()), Seen: at})
+	}
+	return out
+}
+
+// verifiedStop reports a quota stop proved by the session itself, sat at the quota dialog on the turn the event names, however its limit
+// rows read: they lag, and a row at 99% does not un-stop it. The reset is unknown until a row shows it.
+func (l launcher) verifiedStop(e core.Exhaustion, b core.Board) (time.Time, bool) {
+	if l.core == nil || e.Recovered || e.Account == "" || e.Seen.IsZero() || e.Reason != quotaReason(e.Harness) {
+		return time.Time{}, false
+	}
+	s, alive := b.Session(e.Session)
+	if !alive || s.Remote != "" || s.Status != core.Waiting || s.Prompt != nil || s.Account != e.Account {
+		return time.Time{}, false
+	}
+	at, err := l.core.InspectHandoff(s.Session)
+	if err != nil || e.Seen.Before(at) {
+		return time.Time{}, false
+	}
+	return exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), true
 }
 
 // noteLimitRows files the owner's item for each login a live session runs on that a limit row shows used up, though no turn has stopped
@@ -129,7 +197,10 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, limits []core.Limit
 		cwd = cwds[0]
 	}
 	for _, p := range ps {
-		if p.Harness != e.Harness || p.Account == "" || p.Account == e.Account || pools[p.Account].After(now) || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero() {
+		if p.Harness != e.Harness || p.Account == "" || p.Account == e.Account || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero() {
+			continue
+		}
+		if pools[p.Account].After(now) && !showsUsable(limits, p, now) {
 			continue
 		}
 		if p.SubscriptionSafe(cwd) {
@@ -160,6 +231,9 @@ func (l launcher) Failover(b core.Board) error {
 	if err := l.settleBlocked(dir); err != nil {
 		return err
 	}
+	if err := l.closeQuotaItems(dir, b); err != nil {
+		return err
+	}
 	killed := map[string]bool{}
 	if l.core != nil {
 		kills, err := l.core.Store.Kills(time.Time{})
@@ -171,12 +245,19 @@ func (l launcher) Failover(b core.Board) error {
 		}
 	}
 	notices := []error{l.noteLimitRows(dir, ps, b)}
-	for _, e := range b.Fleet.Exhaustions {
+	silent := l.silentStops(b)
+	for _, e := range append(slices.Clone(b.Fleet.Exhaustions), silent...) {
 		reset, actual := trueExhaustion(e, b.Fleet.Limits, b.At)
+		if !actual {
+			reset, actual = l.verifiedStop(e, b)
+		}
+		if !actual && slices.ContainsFunc(silent, func(s core.Exhaustion) bool { return s.Event == e.Event }) {
+			reset, actual = exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), true
+		}
 		if !actual {
 			continue
 		}
-		notices = append(notices, l.fileQuotaItem(dir, ps, e, reset, b.Fleet.Limits, b.At))
+		notices = append(notices, l.fileQuotaItem(dir, ps, e, cmp.Or(exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), reset), b.Fleet.Limits, b.At))
 		s, alive := b.Session(e.Session)
 		if !alive || s.Remote != "" {
 			continue
@@ -203,8 +284,8 @@ func (l launcher) Failover(b core.Board) error {
 		if pending.Version != 0 && pending.State != "running" {
 			continue
 		}
-		target, chooseErr := failoverDestination(ps, e, b.Fleet.Limits, a.Pools, b.At, rec.Worktree.Path)
-		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && (chooseErr != nil || b.At.Before(a.NextTry))) {
+		target, chooseErr := failoverDestination(a.untried(ps, b.At), e, b.Fleet.Limits, a.Pools, b.At, rec.Worktree.Path)
+		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
 			continue
 		}
 		if err := switchIdentity(s, rec); err != nil {
@@ -228,8 +309,13 @@ func (l launcher) Failover(b core.Board) error {
 		if err = saveFailover(dir, e.Harness, a); err != nil {
 			return err
 		}
-		until := reset.UTC().Format(time.RFC3339)
-		note := fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window, which resets %s. ym moved this same conversation from profile %s to %s profile %s. Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded.", e.Harness, until, e.Profile, target.Harness, target.ID)
+		until := quotaReset(reset)
+		note := fmt.Sprintf("The prior turn stopped because the %s subscription exhausted its usage window, which resets %s. ym moved this same conversation from profile %s to %s profile %s.", e.Harness, until, e.Profile, target.Harness, target.ID)
+		if target.Harness == e.Harness {
+			note += " Inspect recorded tool results and filesystem effects before continuing the unfinished work. Do not blindly replay the previous prompt or repeat a tool action whose effects are already recorded."
+		} else {
+			note += " Inspect filesystem effects before continuing the unfinished work, and do not blindly replay the previous prompt."
+		}
 		out, switchErr := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", e.Harness, profile.ID(e.Profile), until))
 		switch {
 		case errors.Is(switchErr, profile.ErrOperationBusy):
@@ -239,7 +325,7 @@ func (l launcher) Failover(b core.Board) error {
 		case switchErr != nil:
 			a.State.Status = "blocked"
 			a.State.Reason = switchErr.Error()
-			a.NextTry = b.At.Add(core.QuotaRecheck)
+			a.failed(target.Account, b.At.Add(core.QuotaRecheck))
 		case out.Queued:
 			a.State.Status = "queued"
 			a.State.Reason = out.Message

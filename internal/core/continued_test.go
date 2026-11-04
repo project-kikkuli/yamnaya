@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -31,8 +32,20 @@ func TestAContinuedSessionCarriesWhatWaitsOnItsOldID(t *testing.T) {
 			read: `SELECT target FROM ym_off`, want: next},
 		{name: "vibe follows", seed: `INSERT INTO ym_vibes (place, why, session, harness, target, at) VALUES ('p', 'w', ?, 'claude', '', 'now')`, args: []any{old},
 			read: `SELECT session FROM ym_vibes`, want: next},
-		{name: "last report follows", seed: `INSERT INTO ym_agent_reports (session, head, said, at) VALUES (?, 'h', 's', 'now')`, args: []any{old},
-			read: `SELECT session FROM ym_agent_reports WHERE session != '` + old + `'`, want: next},
+		{name: "last report moves", seed: `INSERT INTO ym_agent_reports (session, head, said, at) VALUES (?, 'h', 's', 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_agent_reports`, want: next},
+		{name: "project name follows", seed: `INSERT INTO ym_names (project, name) VALUES (?, 'renamed')`, args: []any{old},
+			read: `SELECT project FROM ym_names`, want: next},
+		{name: "merge from it follows", seed: `INSERT INTO ym_merges (project, into_project) VALUES (?, 'other')`, args: []any{old},
+			read: `SELECT project FROM ym_merges`, want: next},
+		{name: "merge into it follows", seed: `INSERT INTO ym_merges (project, into_project) VALUES ('other', ?)`, args: []any{old},
+			read: `SELECT into_project FROM ym_merges`, want: next},
+		{name: "waiting ask follows", seed: `INSERT INTO ym_session_asks (session, text, at) VALUES (?, 't', 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_session_asks`, want: next},
+		{name: "dismissed reply follows", seed: `INSERT INTO ym_waiting_dismissed (session, reply, at) VALUES (?, 'r', 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_waiting_dismissed`, want: next},
+		{name: "opened mark follows", seed: `INSERT INTO ym_session_seen (session, at) VALUES (?, 'now')`, args: []any{old},
+			read: `SELECT session FROM ym_session_seen`, want: next},
 		{name: "phases follow", seed: `INSERT INTO ym_phases (project, phases, idx) VALUES (?, '[]', 0)`, args: []any{old},
 			read: `SELECT project FROM ym_phases`, want: next},
 		{name: "delivered message keeps its session", seed: `INSERT INTO ym_messages (session, text, state, created_at) VALUES (?, 'x', 'sent', 'now')`, args: []any{old},
@@ -263,6 +276,71 @@ func TestEveryRefusedSessionComesBackOnceAfterTheReset(t *testing.T) {
 	}
 }
 
+func TestAFailedResumeComesBackWithoutARestart(t *testing.T) {
+	w, r := resumeWorld(t)
+	_, m := w.goal(t, "ship the importer", "/repo/august")
+	w.supervise(t)
+	r.state(m.Session, "running")
+	r.launched = append(r.launched, Launched{Key: "wt-a", Session: "agent-a", State: "gone", Parent: m.Session})
+	r.fail["agent-a"] = errors.New("native login required")
+	w.clock = w.clock.Add(ResumePace)
+	if err := w.core.ReviveWork(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	delete(r.fail, "agent-a")
+	w.clock = w.clock.Add(ResumeRetry - ResumePace)
+	if err := w.core.ReviveWork(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.resumed) != 0 {
+		t.Fatalf("retried at once: %+v", r.resumed)
+	}
+	w.clock = w.clock.Add(2 * ResumePace)
+	if err := w.core.ReviveWork(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.resumed) != 1 || r.resumed[0].session != "agent-a" {
+		t.Fatalf("resumed %+v", r.resumed)
+	}
+}
+
+func TestARefusalInANewWindowIsANewEvent(t *testing.T) {
+	w, r := resumeWorld(t)
+	g, m := w.goal(t, "ship the importer", "/repo/august")
+	w.supervise(t)
+	r.state(m.Session, "running")
+	r.launched = append(r.launched, Launched{Key: "wt-a", Session: "agent-a", State: "gone", Parent: m.Session})
+	first := w.clock.Add(time.Hour).Truncate(time.Hour).Add(30 * time.Minute)
+	refuse := func(until time.Time) int {
+		t.Helper()
+		r.fail["agent-a"] = &QuotaWait{Harness: "claude", Login: "default", Key: "wt-a", Until: until}
+		w.clock = w.clock.Add(QuotaRecheck + ResumePace)
+		if err := w.core.ReviveWork(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
+		events, err := w.core.Store.GoalEvents(g.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, e := range events {
+			if e.Kind == EventResumeFailed {
+				n++
+			}
+		}
+		return n
+	}
+	if got := refuse(first); got != 1 {
+		t.Fatalf("%d events", got)
+	}
+	if got := refuse(first.Add(time.Second)); got != 1 {
+		t.Fatalf("a second of jitter made %d events", got)
+	}
+	if got := refuse(first.Add(7 * 24 * time.Hour)); got != 2 {
+		t.Fatalf("a new window made %d events, want 2", got)
+	}
+}
+
 func TestAMovedResetMakesOneResumeFailedEvent(t *testing.T) {
 	w, r := resumeWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
@@ -289,5 +367,46 @@ func TestAMovedResetMakesOneResumeFailedEvent(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Fatalf("%d resume-failed events, want 1", failed)
+	}
+}
+
+func TestASwitchStoppingASessionDoesNotReadAsItsExit(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		switching *Switching
+		told      bool
+	}{
+		{"an ordinary exit is reported", nil, true},
+		{"a switch under way is not", &Switching{To: "claude-work"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, r := resumeWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			w.supervise(t)
+			r.state(m.Session, "running")
+			o, err := w.core.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = w.core.Store.Link("agent-a", m.Session); err != nil {
+				t.Fatal(err)
+			}
+			b := w.board(t)
+			b.Launched = append(b.Launched, Launched{Key: "wt-a", Session: "agent-a", State: "exited 143", Parent: m.Session, Path: "/wt/a", Switching: c.switching})
+			if err = w.core.noticeExits(b, o); err != nil {
+				t.Fatal(err)
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			told := false
+			for _, e := range events {
+				told = told || e.Kind == EventAgentStopped
+			}
+			if told != c.told {
+				t.Fatalf("told=%v, want %v: %+v", told, c.told, events)
+			}
+		})
 	}
 }

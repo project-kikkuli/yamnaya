@@ -5,7 +5,10 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/project-kikkuli/yamnaya/internal/nativefile"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -79,27 +82,49 @@ func (a *Adapter) Resume(id string) []string { return []string{a.Bin, "resume", 
 
 // Transcript is the path of thread id's rollout, empty when Codex keeps none.
 func (a *Adapter) Transcript(id string) string {
+	path, _ := a.Conversation(id)
+	return path
+}
+
+// Conversation is the path of thread id's rollout, empty when it verifiably has none, and an error when ym cannot tell: a locked state
+// database or an unreadable rollout is not a lost conversation. A rollout moved from where the database says is looked for by its id.
+func (a *Adapter) Conversation(id string) (string, error) {
+	if _, err := os.Stat(a.Home); err != nil {
+		return "", fmt.Errorf("codex home: %w", err)
+	}
 	if db, ok := a.db(); ok {
 		var path string
 		err := db.QueryRow(`SELECT rollout_path FROM threads WHERE id=?`, id).Scan(&path)
 		if err == nil {
-			if _, err = os.Stat(path); err == nil {
-				return path
+			_, err = os.Stat(path)
+			if err == nil {
+				return path, nil
 			}
-			return ""
-		}
-		if err != sql.ErrNoRows {
-			return ""
+			if !errors.Is(err, fs.ErrNotExist) {
+				return "", fmt.Errorf("codex rollout: %w", err)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("codex state database: %w", err)
 		}
 	}
 	var paths []string
+	var unreadable error
 	for _, dir := range []string{"sessions", "archived_sessions"} {
 		filepath.WalkDir(filepath.Join(a.Home, dir), func(path string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !nativefile.IsTranscript(path) {
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					unreadable = err
+				}
+				return nil
+			}
+			if d.IsDir() || !nativefile.IsTranscript(path) {
 				return nil
 			}
 			f, err := nativefile.Open(path)
 			if err != nil {
+				if strings.Contains(filepath.Base(path), id) {
+					unreadable = err
+				}
 				return nil
 			}
 			line, _ := bufio.NewReader(f).ReadBytes('\n')
@@ -118,9 +143,12 @@ func (a *Adapter) Transcript(id string) string {
 	}
 	sort.Strings(paths)
 	if len(paths) > 0 {
-		return paths[len(paths)-1]
+		return paths[len(paths)-1], nil
 	}
-	return ""
+	if unreadable != nil {
+		return "", fmt.Errorf("codex rollouts: %w", unreadable)
+	}
+	return "", nil
 }
 
 type thread struct {

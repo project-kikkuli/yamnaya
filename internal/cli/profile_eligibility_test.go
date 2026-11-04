@@ -149,7 +149,7 @@ func TestQuotaSwitchEligibilityBindsMainProofAccountAndEveryCopy(t *testing.T) {
 			host := quotaHost{text: "quota dialog"}
 			want := false
 			switch name {
-			case "quota stopped", "idle", "background child", "waiting secondary copy", "later child ledger", "canonical source alias", "resumed into exhausted login":
+			case "not exhausted", "reset window", "quota stopped", "idle", "background child", "waiting secondary copy", "later child ledger", "canonical source alias", "resumed into exhausted login":
 				want = true
 			}
 			switch name {

@@ -4,6 +4,10 @@ package claude
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -269,20 +273,68 @@ func (a *Adapter) Transcript(id string) string {
 	return ""
 }
 
-// Unstart moves aside session id's transcript when it holds no turn, as a session ended before its first turn leaves, since Claude
-// Code neither resumes such a session nor starts one under its id while the file is there.
+// Conversation is the path of session id's transcript when it holds a turn to resume, empty when it verifiably has none, and an error
+// when ym cannot tell: a missing config root or an unreadable file is not a lost conversation.
+func (a *Adapter) Conversation(id string) (string, error) {
+	if _, err := os.Stat(a.Dir); err != nil {
+		return "", fmt.Errorf("claude config root: %w", err)
+	}
+	dirs, err := os.ReadDir(filepath.Join(a.Dir, "projects"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("claude projects: %w", err)
+	}
+	var unreadable error
+	for _, d := range dirs {
+		p := filepath.Join(a.Dir, "projects", d.Name(), id+".jsonl")
+		_, err := os.Lstat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			unreadable = err
+			continue
+		}
+		turn, err := readTurn(p)
+		if err != nil {
+			return "", fmt.Errorf("claude transcript: %w", err)
+		}
+		if turn {
+			return p, nil
+		}
+		return "", nil
+	}
+	return "", unreadable
+}
+
+// Unstart moves aside session id's transcript when it verifiably holds no turn, as a session ended before its first turn leaves, since
+// Claude Code neither resumes such a session nor starts one under its id while the file is there.
 func (a *Adapter) Unstart(id string) error {
 	p := a.transcript("", id)
-	if p == "" || hasTurn(p) {
+	if p == "" {
+		return nil
+	}
+	turn, err := readTurn(p)
+	if err != nil {
+		return fmt.Errorf("claude transcript: %w", err)
+	}
+	if turn {
 		return nil
 	}
 	return os.Rename(p, p+".noturn")
 }
 
 func hasTurn(path string) bool {
+	turn, _ := readTurn(path)
+	return turn
+}
+
+func readTurn(path string) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer f.Close()
 	r := bufio.NewReaderSize(f, 1<<16)
@@ -290,10 +342,13 @@ func hasTurn(path string) bool {
 		line, err := r.ReadBytes('\n')
 		var rec struct{ Type string }
 		if json.Unmarshal(line, &rec) == nil && (rec.Type == "user" || rec.Type == "assistant") {
-			return true
+			return true, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return false, nil
 		}
 		if err != nil {
-			return false
+			return false, err
 		}
 	}
 }

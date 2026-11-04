@@ -9,6 +9,9 @@ import (
 // QuotaRecheck is how often ym asks again whether a session refused for an exhausted login can come back now.
 const QuotaRecheck = time.Minute
 
+// ResumeRetry is how long ym waits before trying again a resume that failed for any other reason.
+const ResumeRetry = 5 * time.Minute
+
 // QuotaWait is a resume ym refused because the session's login is out of its subscription limit and no other login is usable.
 type QuotaWait struct {
 	Harness, Login, Key string
@@ -16,33 +19,40 @@ type QuotaWait struct {
 }
 
 func (q *QuotaWait) Error() string {
-	return fmt.Sprintf("%s login %s is out of its subscription limit until %s and no other usable login of any harness is configured; ym resumes it after that. ym switch %s --profile <id> moves it now, ym revive %s --anyway resumes it if the limit reset early",
+	return fmt.Sprintf("%s login %s is out of its subscription limit until %s and no other login ym can verify as usable; ym resumes it after that. ym switch %s --profile <id> moves it now, ym revive %s --anyway resumes it if the limit reset early",
 		q.Harness, q.Login, q.Until.UTC().Format(time.RFC3339), q.Key, q.Key)
 }
 
-// resumeFailedKey makes one event of a refusal however the login's recorded reset moves, and one per distinct error otherwise.
+// resumeFailedKey makes one event of a refusal per login and window, however a second or so of a provider's jitter moves the reset, and
+// one per distinct error otherwise.
 func resumeFailedKey(session string, err error) string {
 	var wait *QuotaWait
 	if errors.As(err, &wait) {
-		return "resume-failed\x00" + session + "\x00quota\x00" + wait.Harness + "/" + wait.Login
+		return "resume-failed\x00" + session + "\x00quota\x00" + wait.Harness + "/" + wait.Login + "\x00" + wait.Until.Truncate(time.Hour).UTC().Format(time.RFC3339)
 	}
 	return "resume-failed\x00" + session + "\x00" + err.Error()
 }
 
-// retryQuota makes a refusal for an exhausted login cost neither the resume pace nor the session's one try: it is asked again after QuotaRecheck.
-func (c *Core) retryQuota(session string, err error) {
-	var wait *QuotaWait
-	if !errors.As(err, &wait) {
+// retryResume asks again after a resume that failed, as whatever stopped it may clear: a login being fixed, a limit resetting. A refusal
+// for an exhausted login costs neither the resume pace nor the session's one try.
+func (c *Core) retryResume(session string, err error) {
+	if err == nil {
 		return
 	}
+	var wait *QuotaWait
+	quota := errors.As(err, &wait)
 	r := &c.recovery
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.last = r.before
 	if r.recheck == nil {
 		r.recheck = map[string]time.Time{}
 	}
-	r.recheck[session] = c.now().Add(QuotaRecheck)
+	if quota {
+		r.last = r.before
+		r.recheck[session] = c.now().Add(QuotaRecheck)
+		return
+	}
+	r.recheck[session] = c.now().Add(ResumeRetry)
 }
 
 // CanResume reports whether the resume pace allows bringing a session back now.

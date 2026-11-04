@@ -17,7 +17,25 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
-const waitingBlocker = "the session waits at the quota dialog: "
+const (
+	waitingBlocker = "the session waits at the quota dialog: "
+	heldOff        = "ym is off for this session"
+	heldThrottled  = "the owner's throttle holds this session"
+)
+
+// heldNoLonger reports a blocker that only said why a hold waited, which the hold's end clears.
+func (m migration) heldNoLonger() bool { return m.Blocked == heldOff || m.Blocked == heldThrottled }
+
+// showHeld says on the row why a switch is not applying, or clears that.
+func (l launcher) showHeld(m migration, why string) error {
+	return l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
+		if latest.Blocked == why || latest.Destination.ID != m.Destination.ID {
+			return false
+		}
+		latest.Blocked, latest.Fingerprint = why, ""
+		return true
+	})
+}
 
 type migration struct {
 	ResumeNote  string          `json:"resume_note,omitempty"`
@@ -202,7 +220,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 			continue
 		}
 		if m.portWritten() {
-			if err = l.recoverPort(m); err != nil {
+			if err = l.recoverPort(m, b); err != nil {
 				return err
 			}
 			continue
@@ -265,8 +283,22 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if !live && (landed || killed || m.State == "queued") {
 			continue
 		}
-		if l.core.Off(m.Source.Session) || b.ThrottleHolds(m.Source.Session) {
+		if l.core.Off(m.Source.Session) {
+			if err = l.showHeld(m, heldOff); err != nil {
+				return err
+			}
 			continue
+		}
+		if b.ThrottleHolds(m.Source.Session) {
+			if err = l.showHeld(m, heldThrottled); err != nil {
+				return err
+			}
+			continue
+		}
+		if m.heldNoLonger() {
+			if err = l.showHeld(m, ""); err != nil {
+				return err
+			}
 		}
 		if s, ok := b.Session(m.Source.Session); ok {
 			if err := l.turnEnded(s, nil); err != nil {
@@ -416,6 +448,7 @@ func (l launcher) PendingSwitches() map[string]core.Switching {
 			Version int    `json:"version"`
 			State   string `json:"state"`
 			Blocked string `json:"blocked"`
+			Head    string `json:"published_head"`
 			Source  struct {
 				Harness string `json:"harness"`
 				Session string `json:"session"`
@@ -433,6 +466,9 @@ func (l launcher) PendingSwitches() map[string]core.Switching {
 			to = m.Destination.Harness + "/" + to
 		}
 		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: to, Blocked: m.Blocked}
+		if m.Head != "" {
+			out[m.Destination.Harness+":"+m.Head] = core.Switching{To: to, Blocked: m.Blocked}
+		}
 	}
 	return out
 }

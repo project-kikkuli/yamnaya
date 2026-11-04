@@ -175,6 +175,18 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 }
 
 // transcript is the path of rec's conversation, empty when its harness keeps none.
+// conversation is the path of rec's conversation, empty when it verifiably has none, and an error when ym cannot tell. Only verified
+// absence lets anything start over in its place.
+func conversation(rec launch.Record) (string, error) {
+	if rec.Session == "" {
+		return "", nil
+	}
+	if rec.Harness == codex.Name {
+		return recordCodex(rec).Conversation(rec.Session)
+	}
+	return recordClaude(rec).Conversation(rec.Session)
+}
+
 func transcript(rec launch.Record) string {
 	if rec.Session == "" {
 		return ""
@@ -795,10 +807,15 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
-	if rec.Session == "" {
-		var err error
-		if rec, err = l.freshLogin(rec); err != nil {
-			return "", err
+	if l.operation != rec.Session || rec.Session == "" {
+		path, err := conversation(rec)
+		if err != nil {
+			return "", fmt.Errorf("cannot read the conversation of %s, so ym leaves it untouched: %w", rec.Key, err)
+		}
+		if path == "" {
+			if rec, err = l.freshLogin(rec); err != nil {
+				return "", err
+			}
 		}
 	}
 	if moved, msg, err := l.offWall(rec, l.resumeNote); moved || err != nil {
@@ -830,7 +847,14 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	if !ok || rec.Session != session {
 		return "", false, fmt.Errorf("no session launched by ym is %s: %w", session, core.ErrNotFound)
 	}
-	resumed := transcript(rec) != ""
+	path, err := conversation(rec)
+	if err != nil {
+		return "", false, fmt.Errorf("cannot read the conversation of %s, so ym leaves it untouched: %w", rec.Key, err)
+	}
+	resumed := path != ""
+	if !resumed && l.isPort(session) {
+		return "", false, fmt.Errorf("the conversation ported to %s is not visible on %s; ym will not start it over in its place", core.Short(session), rec.Harness)
+	}
 	if resumed {
 		if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
 			return l.runsAs(rec.Key, session), resumed, err
@@ -1042,6 +1066,7 @@ func (l launcher) Sweep(seen map[string]string) error {
 	dirs := sync.OnceValue(cwds)
 	work := sync.OnceValue(l.goalWork)
 	keep := func(session, parent string) bool { return work()(session, parent) }
+	handoffs := l.handoffs()
 	var errs []error
 	for _, rec := range all {
 		if rec.Repo == "" && rec.Worktree.GitDir != "" {
@@ -1059,6 +1084,9 @@ func (l launcher) Sweep(seen map[string]string) error {
 		}
 		_, st := l.state(rec)
 		if !landsAlone(rec, st, time.Now(), keep) {
+			continue
+		}
+		if pendingHandoff(handoffs[rec.Key], rec) {
 			continue
 		}
 		if rec.Blocked != "" && rec.Stamp == launch.Stamp(rec.Worktree.Path) {

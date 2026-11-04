@@ -22,6 +22,9 @@ func (c *Core) noticeExits(b Board, o Org) error {
 		if _, isManager := o.ManagerOf(l.Session); isManager {
 			continue
 		}
+		if l.Switching != nil {
+			continue
+		}
 		text := fmt.Sprintf("agent %s (%s) stopped: its process %s. Exited, cleaned up (recoverable: ym revive %s); ym removes %s and keeps any work no remote holds.",
 			Short(l.Session), l.Key, exitText(l.State), l.Key, l.Path)
 		if err := c.noticeAgent(b, o, l.Session, EventAgentStopped, text, "exit\x00"+l.Session+"\x00"+l.State); err != nil {

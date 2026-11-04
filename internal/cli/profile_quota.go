@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,26 +19,40 @@ import (
 )
 
 type quotaNotice struct {
-	Harness string    `json:"harness"`
-	Account string    `json:"account"`
-	Reset   time.Time `json:"reset"`
-	Item    string    `json:"item"`
+	Harness string `json:"harness"`
+	Profile string `json:"profile,omitempty"`
+	Account string `json:"account"`
+	// Reset is the latest window this item covers; Resets every one seen, so windows alternating never file again.
+	Reset  time.Time   `json:"reset"`
+	Resets []time.Time `json:"resets,omitempty"`
+	Item   string      `json:"item"`
 }
 
-// quotaNoticePath is per login: its account, or its profile when no account is known yet.
-func quotaNoticePath(dir, harness, id, account string) string {
-	login := account
-	if login == "" {
-		login = "profile:" + profile.ID(id)
+// quotaNoticePaths are where one login's notice lives: under its profile and, once known, its account, so a login whose account turns
+// up later, or two names for one account, keep one item.
+func quotaNoticePaths(dir, harness, id, account string) []string {
+	name := func(login string) string {
+		sum := sha256.Sum256([]byte(harness + "\x00" + login))
+		return filepath.Join(dir, "quota-items", harness+"-"+hex.EncodeToString(sum[:12])+".json")
 	}
-	sum := sha256.Sum256([]byte(harness + "\x00" + login))
-	return filepath.Join(dir, "quota-items", harness+"-"+hex.EncodeToString(sum[:12])+".json")
+	paths := []string{name("profile:" + profile.ID(id))}
+	if account != "" {
+		paths = append(paths, name(account))
+	}
+	return paths
 }
 
 // sameQuotaWindow allows for providers reporting one window's reset a second or so apart; any further apart is another window, whose
 // item must state its own reset.
 func sameQuotaWindow(a, b time.Time) bool {
-	return a.Sub(b).Abs() < time.Minute
+	return !a.IsZero() && !b.IsZero() && a.Sub(b).Abs() < time.Minute
+}
+
+func quotaReset(reset time.Time) string {
+	if reset.IsZero() {
+		return "at a time not yet known"
+	}
+	return reset.UTC().Format(time.RFC3339)
 }
 
 // fileQuotaItem tells the owner once per login and reset window that the login ran out, with how its work can continue.
@@ -44,29 +60,98 @@ func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaust
 	if l.core == nil {
 		return nil
 	}
-	path := quotaNoticePath(dir, e.Harness, e.Profile, e.Account)
-	raw, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
+	paths := quotaNoticePaths(dir, e.Harness, e.Profile, e.Account)
 	var filed quotaNotice
-	if err == nil {
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
 		if err = json.Unmarshal(raw, &filed); err != nil {
 			return err
 		}
-		if sameQuotaWindow(filed.Reset, reset) {
-			return nil
+		break
+	}
+	if filed.Item != "" && (reset.IsZero() || slices.ContainsFunc(filed.Resets, func(t time.Time) bool { return sameQuotaWindow(t, reset) })) {
+		return nil
+	}
+	if filed.Item == "" || !filed.Reset.IsZero() {
+		added, err := l.core.AddOwnerItem(quotaItem(ps, e, reset, limits, now))
+		if err != nil {
+			return err
+		}
+		filed.Item = added.Key()
+	}
+	filed.Harness, filed.Profile, filed.Account = e.Harness, e.Profile, cmp.Or(e.Account, filed.Account)
+	filed.Resets = append(filed.Resets, reset)
+	if reset.After(filed.Reset) {
+		filed.Reset = reset
+	}
+	b, err := json.Marshal(filed)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err = profile.Write(path, b); err != nil {
+			return err
 		}
 	}
-	added, err := l.core.AddOwnerItem(quotaItem(ps, e, reset, limits, now))
+	return nil
+}
+
+// closeQuotaItems retires an owner item once its question has answered itself: its window passed, or no session is left on the login.
+func (l launcher) closeQuotaItems(dir string, b core.Board) error {
+	if l.core == nil {
+		return nil
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "quota-items", "*.json"))
+	if len(files) == 0 {
+		return nil
+	}
+	all, err := l.records.All()
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(quotaNotice{Harness: e.Harness, Account: e.Account, Reset: reset, Item: added.Key()})
-	if err != nil {
-		return err
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var n quotaNotice
+		if err = json.Unmarshal(raw, &n); err != nil {
+			return err
+		}
+		passed := !n.Reset.IsZero() && b.At.After(n.Reset)
+		on := func(harness, id, account string) bool {
+			return harness == n.Harness && (n.Account != "" && account == n.Account || profile.ID(id) == profile.ID(n.Profile))
+		}
+		needed := slices.ContainsFunc(b.Sessions, func(s core.Live) bool { return s.Remote == "" && on(s.Harness, s.Profile, s.Account) }) ||
+			slices.ContainsFunc(all, func(r launch.Record) bool {
+				return !r.IsLanded() && r.Killed.IsZero() && on(r.Harness, r.Profile, r.Account)
+			})
+		if !passed && needed {
+			continue
+		}
+		it, err := l.core.Store.Item(n.Item)
+		if err == nil && it.State == core.ItemOpen {
+			reason := "no session is left on this login"
+			if passed {
+				reason = "the limit has reset"
+			}
+			if err = l.core.Store.RetireItem(n.Item, reason); err != nil {
+				return err
+			}
+		} else if !passed {
+			continue
+		}
+		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
-	return profile.Write(path, b)
+	return nil
 }
 
 func quotaItem(ps []profile.Profile, e core.Exhaustion, reset time.Time, limits []core.Limit, now time.Time) core.Item {
@@ -81,6 +166,9 @@ func quotaItem(ps []profile.Profile, e core.Exhaustion, reset time.Time, limits 
 	}
 	login := strings.Join(names, ", ")
 	when := reset.UTC().Format("Jan 2 15:04 UTC")
+	if reset.IsZero() {
+		when = "at a time not yet known"
+	}
 	it := core.Item{Kind: core.KindDecision, Session: e.Session, Harness: e.Harness,
 		Question: fmt.Sprintf("%s login %s hit its subscription limit and resets %s; how should its work continue?", e.Harness, login, when),
 		Evidence: []string{"ym usage", "account " + e.Account},
@@ -103,7 +191,7 @@ func quotaItem(ps []profile.Profile, e core.Exhaustion, reset time.Time, limits 
 		return it
 	}
 	it.Options = []core.Option{
-		{Label: "switch to " + target.ID, Effect: "ym moves quota-stopped sessions to profile " + target.ID + " by itself; ym profiles default " + e.Harness + " " + target.ID + " makes new launches use it too"},
+		{Label: "switch to " + target.ID, Effect: "ym moves each session to profile " + target.ID + " once it stops on this limit; ym switch <session> --profile " + target.ID + " moves one now; ym profiles default " + e.Harness + " " + target.ID + " makes new launches use it too"},
 		wait, add,
 	}
 	if port.Label != "" {
@@ -139,7 +227,7 @@ func (l launcher) wall(rec launch.Record) (reset time.Time, target profile.Profi
 	if err != nil {
 		return
 	}
-	target, _ = failoverDestination(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
+	target, _ = failoverDestination(a.untried(ps, now), core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
 	return
 }
 
@@ -189,22 +277,41 @@ func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg strin
 		return false, "", nil
 	}
 	notice := l.noteWall(rec, ps, account, reset)
-	if target.ID == "" {
-		return true, "", errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
-	}
 	dir := filepath.Dir(l.records.Dir)
-	a, err := loadFailover(dir, rec.Harness, rec.Session)
-	if err != nil {
-		return true, "", err
-	}
-	if a.State.Status == "blocked" {
-		a.State.Target = target.ID
+	var failure error
+	for target.ID != "" {
+		a, err := loadFailover(dir, rec.Harness, rec.Session)
+		if err != nil {
+			return true, "", err
+		}
+		a.State.Session, a.State.Profile, a.State.Account, a.State.Reset = rec.Session, profile.ID(rec.Profile), account, reset
+		if a.State.Status == "blocked" || a.State.Status == "" {
+			a.State.Status, a.State.Target = "blocked", target.ID
+			if err = saveFailover(dir, rec.Harness, a); err != nil {
+				return true, "", err
+			}
+		}
+		out, err := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", rec.Harness, profile.ID(rec.Profile), quotaReset(reset)))
+		if err == nil {
+			return true, out.Message, nil
+		}
+		if pending, loadErr := loadMigration(dir, rec.Harness, rec.Session); errors.Is(err, profile.ErrOperationBusy) || loadErr != nil || pending.Version != 0 && pending.State != "running" {
+			return true, "", err
+		}
+		failure = err
+		a.failed(target.Account, time.Now().Add(core.QuotaRecheck))
+		a.State.Reason = err.Error()
 		if err = saveFailover(dir, rec.Harness, a); err != nil {
 			return true, "", err
 		}
+		if _, target, _, _, err = l.wall(rec); err != nil {
+			return true, "", err
+		}
 	}
-	out, err := l.failoverSwitch(rec, target, note, fmt.Sprintf("the %s login %s is out of its subscription limit until %s", rec.Harness, profile.ID(rec.Profile), reset.UTC().Format(time.RFC3339)))
-	return true, out.Message, err
+	if failure != nil {
+		return true, "", errors.Join(failure, notice)
+	}
+	return true, "", errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
 }
 
 // freshLogin picks the login a session with no conversation to carry starts on: its own unless that is used up, else another of its
@@ -222,7 +329,7 @@ func (l launcher) freshLogin(rec launch.Record) (launch.Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	target, err := failoverTarget(ps, core.Exhaustion{Harness: rec.Harness, Account: account}, l.limits(), a.Pools, time.Now(), rec.Worktree.Path)
+	target, err := failoverTarget(a.untried(ps, time.Now()), core.Exhaustion{Harness: rec.Harness, Account: account}, l.limits(), a.Pools, time.Now(), rec.Worktree.Path)
 	if err != nil {
 		return rec, errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
 	}

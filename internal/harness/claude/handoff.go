@@ -36,6 +36,46 @@ func (a *Adapter) QuotaDialog(text string) bool {
 	return false
 }
 
+// silentQuotaDialog reports the quota dialog as Claude shows it the moment it starts on a used-up login: no turn ran, so no hit-limit line
+// sits above it, only the dialog's own top rule. The rule tells it from those lines quoted in scrollback or another dialog's options.
+func silentQuotaDialog(text string) bool {
+	lines := screen.Lines(text)
+	if len(lines) < 6 {
+		return false
+	}
+	end := lines[len(lines)-5:]
+	for i := range end {
+		end[i] = strings.TrimSpace(strings.TrimPrefix(end[i], "❯"))
+	}
+	rule := strings.Trim(lines[len(lines)-6], "▔") == "" && lines[len(lines)-6] != ""
+	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
+}
+
+// SilentQuotaStop proves a session is held at the rule-topped quota dialog on a turn that is over, whether it ended normally, as starting on
+// a used-up login leaves it, or on a quota error that scrolled away. stopped is false when text is not that dialog.
+func (a *Adapter) SilentQuotaStop(s core.Session, text string) (at time.Time, stopped bool, err error) {
+	if !silentQuotaDialog(text) || a.QuotaDialog(text) {
+		return time.Time{}, false, nil
+	}
+	st, ok := a.state(s.PID)
+	if !ok || st.SessionID != s.ID || st.Status != "waiting" {
+		return time.Time{}, true, fmt.Errorf("native waiting state is unreadable or changed")
+	}
+	path := a.transcript(s.Cwd, s.ID)
+	sc, err := a.handoffScan(path)
+	if err != nil {
+		return time.Time{}, true, err
+	}
+	quota := sc.LastStop == "stop_sequence" && !sc.QuotaAt.IsZero() && !sc.QuotaSidechain
+	if sc.SessionID != s.ID || sc.LastType != "assistant" || !sc.Stopped || sc.LastStop != "end_turn" && !quota || sc.UserAt.After(sc.LastAt) {
+		return time.Time{}, true, fmt.Errorf("the turn behind the quota dialog has not ended")
+	}
+	if err = a.handoffChildren(s, path); err != nil {
+		return time.Time{}, true, err
+	}
+	return sc.LastAt, true, nil
+}
+
 func (a *Adapter) handoffScan(path string) (scan, error) {
 	root, err := filepath.EvalSymlinks(a.Dir)
 	if err != nil {
@@ -137,13 +177,18 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 	if sc.SessionID != s.ID || sc.QuotaAt.IsZero() || sc.QuotaSidechain || !sc.Stopped || sc.LastStop != "stop_sequence" || sc.LastType != "assistant" || sc.UserAt.After(sc.QuotaAt) {
 		return time.Time{}, fmt.Errorf("main turn has no matching terminal subscription quota error")
 	}
+	return sc.QuotaAt, a.handoffChildren(s, path)
+}
+
+// handoffChildren proves nothing the session spawned is still working.
+func (a *Adapter) handoffChildren(s core.Session, path string) error {
 	list := a.Procs
 	if list == nil {
 		list = proc.List
 	}
 	ps, err := list()
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 	table := proc.Index(ps)
 	var run time.Time
@@ -156,7 +201,7 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 	}
 	children, err := a.stoppedChildren(path, s.ID, run)
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 	rootOf := a.RootOf
 	if rootOf == nil {
@@ -164,7 +209,7 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 	}
 	selected, err := filepath.EvalSymlinks(a.Dir)
 	if err != nil {
-		return time.Time{}, err
+		return err
 	}
 	inspected := map[int]bool{}
 	for changed := true; changed; {
@@ -193,16 +238,16 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 			}
 			physical, err := filepath.EvalSymlinks(root)
 			if err != nil || physical != selected || !readable || native.Status != "idle" {
-				return time.Time{}, fmt.Errorf("native child pid %d is active, outside the selected root, or unknown", p.PID)
+				return fmt.Errorf("native child pid %d is active, outside the selected root, or unknown", p.PID)
 			}
 			ownPath := a.transcript(native.Cwd, native.SessionID)
 			own, err := a.handoffScan(ownPath)
 			if err != nil || own.SessionID != native.SessionID || !stoppedChild(own) {
-				return time.Time{}, fmt.Errorf("native child pid %d has no proven completed turn", p.PID)
+				return fmt.Errorf("native child pid %d has no proven completed turn", p.PID)
 			}
 			nested, err := a.stoppedChildren(ownPath, native.SessionID, time.Time{})
 			if err != nil {
-				return time.Time{}, err
+				return err
 			}
 			for id := range nested {
 				children[id] = true
@@ -210,5 +255,5 @@ func (a *Adapter) InspectHandoff(s core.Session) (time.Time, error) {
 			inspected[p.PID], changed = true, true
 		}
 	}
-	return sc.QuotaAt, nil
+	return nil
 }
