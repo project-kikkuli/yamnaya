@@ -38,13 +38,17 @@ func (m *Meter) refreshPrices() {
 	if err != nil {
 		return
 	}
+	// Close takes scanMu, so once it returns nothing here writes to a state dir its owner may be deleting.
+	m.scanMu.Lock()
+	defer m.scanMu.Unlock()
+	if m.closing.Load() {
+		return
+	}
 	if err := writeFile(path, b); err != nil {
 		return
 	}
 	if p, err := ParsePrices(b); err == nil {
-		m.scanMu.Lock()
 		m.prices = p
-		m.scanMu.Unlock()
 		m.mu.Lock()
 		m.last = time.Time{}
 		m.mu.Unlock()
