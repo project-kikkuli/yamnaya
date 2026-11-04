@@ -1513,3 +1513,44 @@ func TestAClosureReadsItsChiefByNameInTheEndedList(t *testing.T) {
 		})
 	}
 }
+
+func TestARefusedRelaysRecNamesWhatItWasForAndNoCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"a close of a goal by its id", []string{"goal", "close", "goal3", "--as", "abandoned", "--why", "x", "--by", "home/mgr2"}, "send the same request for box/far-goal again once box can take it"},
+		{"a close by its name", []string{"goal", "close", "far-goal", "--as", "abandoned", "--why", "x"}, "send the same request for box/far-goal again once box can take it"},
+		{"a steer of a chief by its id", []string{"goal", "steer", "--text", "plan", "mgr51"}, "send the same request for box/far-chief again once box can take it"},
+		{"a chief no name is known for", []string{"goal", "close", "mgr99", "--as", "abandoned", "--why", "x"}, "send the same request for chief on box again once box can take it"},
+		{"a goal no name is known for", []string{"goal", "close", "goal99", "--as", "abandoned", "--why", "x"}, "send the same request for goal on box again once box can take it"},
+		{"nothing it acts on", []string{"item", "answer", "#3", "yes"}, "send the same request again once box can take it"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "anything", "/repo/august")
+			raw, err := json.Marshal(map[string]any{"managers": []Manager{{ID: "mgr51", Role: RoleChief, Name: "far-chief"}}, "goals": []Goal{{ID: "goal3", Name: "far-goal"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.Store.KeepBoard("box", time.Now(), raw); err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(relayYM{Args: tc.args, Requester: m.Session})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.tellOutcome(Relay{Seq: 9, Dest: "box", Kind: RelayYM, Body: string(body)}, RelayRef{Final: true, Error: "exit status 3: refused"}); err != nil {
+				t.Fatal(err)
+			}
+			items, err := w.core.Store.Items(ItemFilter{})
+			if err != nil || len(items) != 1 {
+				t.Fatalf("items %+v, %v", items, err)
+			}
+			if items[0].Rec != tc.want {
+				t.Fatalf("rec %q, want %q", items[0].Rec, tc.want)
+			}
+		})
+	}
+}

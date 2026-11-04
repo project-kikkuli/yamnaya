@@ -53,6 +53,19 @@ func (c *Core) noteRelayed(r Relay, out string, err error, ref *RelayRef) error 
 	return nil
 }
 
+// againRec recommends what to do about a command a host refused for good, naming what it was for and no command: the one it ran would not
+// run here as it reads.
+func againRec(o Org, y relayYM, host string) string {
+	target := relayTarget(y.Args)
+	if len(y.Args) > 2 && y.Args[0] == "goal" && y.Args[1] == "close" {
+		target = y.Args[2]
+	}
+	if target == "" {
+		return fmt.Sprintf("send the same request again once %s can take it", host)
+	}
+	return fmt.Sprintf("send the same request for %s again once %s can take it", o.RefOf(RemoteKey(host, target)), host)
+}
+
 // relayWhy is what went wrong with a relayed command, without the command as the far ym ran it, which holds ids.
 func relayWhy(y relayYM, text string) string {
 	raw := strings.Join(y.Args, " ")
@@ -317,7 +330,7 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	}
 	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{cmd},
 		Question: fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why),
-		Rec:      fmt.Sprintf("rerun %s once %s can take it", cmd, r.Dest)}
+		Rec:      againRec(o, y, r.Dest)}
 	if len(y.Args) > 1 && y.Args[0] == "goal" && strings.HasPrefix(y.Args[1], "--") {
 		it.Question = fmt.Sprintf("ym goal on %s did not start %q: %s", r.Dest, clip(oneLine(y.Args[len(y.Args)-1]), lineMax), why)
 		it.Rec = fmt.Sprintf("rerun ym goal --host %s once its refusal is dealt with, or start the goal on a host that can take it", r.Dest)
