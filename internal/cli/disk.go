@@ -185,7 +185,7 @@ func noteWatchOff(dir, why string, log io.Writer, file func(why string) error) e
 }
 
 func fileWatchOff(why string) error {
-	return detach("item", "add", "--session", diskItemSession, "--to", "owner", "--kind", "chore",
+	return detach("item", "add", "--session", diskItemSession, "--to", "owner", "--kind", "chore", "--do", "fix ym's disk watcher", "--impact", "agents",
 		"--question", "ym serve on this host is not watching the disk: "+why,
 		"--rec", "Fix what stops ym reading this user's home from the OS, then ym service restart; until then nothing reclaims disk here and ym disk says so.")
 }

@@ -721,3 +721,25 @@ func TestAYmOffTheOwnersStateTouchesOnlyWorktreesInsideItsRehearsalRoot(t *testi
 		})
 	}
 }
+
+func TestTheWatcherOffItemIsReadyForTheOwner(t *testing.T) {
+	var args []string
+	old := detach
+	detach = func(a ...string) error { args = a; return nil }
+	defer func() { detach = old }()
+	if err := fileWatchOff("no such user"); err != nil {
+		t.Fatal(err)
+	}
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("YAMNAYA_STATE_DIR", dir)
+	root := NewRoot()
+	root.SetArgs(args)
+	var out strings.Builder
+	root.SetOut(&out)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("ym %v: %v", args, err)
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		t.Fatal("printed no item id")
+	}
+}
