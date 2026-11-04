@@ -194,7 +194,7 @@ func (m Model) boardTree() []treeNode {
 			return nil
 		}
 		out := m.goalSections(n)
-		count := len(n.Agents)
+		count := len(n.Agents) + len(n.Verifiers) + len(n.DormantVerifiers)
 		if n.Live != nil {
 			count++
 		}

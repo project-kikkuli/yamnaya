@@ -643,3 +643,30 @@ func TestChiefSessionIsNotLabelledManagerOnTheBoard(t *testing.T) {
 		}
 	}
 }
+
+func TestGoalSessionsHeadingCountsEveryListedSession(t *testing.T) {
+	live := func(id string) core.Live {
+		return core.Live{Session: core.Session{ID: id, Title: "title-" + id, Status: core.Busy}}
+	}
+	lead := live("lead")
+	for _, tc := range []struct {
+		name string
+		node core.Node
+		want string
+	}{
+		{"manager only", core.Node{Live: &lead}, "SESSIONS (1)"},
+		{"no manager session", core.Node{Agents: []core.Live{live("kid")}}, "SESSIONS (1)"},
+		{"manager, agent, verifier and finished verifier", core.Node{Live: &lead, Agents: []core.Live{live("kid")}, Verifiers: []core.Live{live("check")}, DormantVerifiers: []core.Dormant{{Key: "old", Title: "old check", State: "exited"}}}, "SESSIONS (4)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := treeModel()
+			n := tc.node
+			n.Manager, n.Goal, n.Standing = core.Manager{ID: "g", Name: "g"}, &core.Goal{ID: "g", Ask: "ask"}, core.StandMoving
+			m.board.Tree = []core.Node{n}
+			m.mode, m.goal, m.page = modeGoal, "g", nil
+			if content := ansi.Strip(m.View().Content); !strings.Contains(content, tc.want) {
+				t.Fatalf("want %s on the page:\n%s", tc.want, content)
+			}
+		})
+	}
+}
