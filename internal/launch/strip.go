@@ -164,8 +164,18 @@ func trackedBuildFile(root, dir string, files []string) bool {
 	return false
 }
 
-// Pinned says why the worktree at path must stay for what it holds beyond its commits, or "" when removing it loses none of that.
+// Pinned says why the worktree at path must stay for what it holds beyond its commits, or "" when removing it loses none of that
+// once its uncommitted work is bundled. A bundle records a repository among the untracked files only as a commit id, so that stays.
 func Pinned(path string) (keep, why string) {
+	out, err := gitEnv(path, nil, nil, "--no-optional-locks", "-c", "core.fsmonitor=false", "ls-files", "--others", "--exclude-standard", "--directory", "-z")
+	if err != nil {
+		return KeepFailing, err.Error()
+	}
+	for _, e := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
+		if holdsRepo(filepath.Join(path, e)) {
+			return KeepNested, "holds a repository under " + e
+		}
+	}
 	keep, why, _ = keepContents(path)
 	return keep, why
 }

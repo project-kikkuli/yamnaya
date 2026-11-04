@@ -231,7 +231,7 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 	if isGoal {
 		goal = g.ID
 	}
-	err = c.teardown(m, goal, targets)
+	stayed, err := c.teardown(m, goal, targets)
 	what, id := "retired chief "+m.Shown(), m.Shown()
 	if isGoal {
 		what, id = "killed "+g.Shown(), g.Shown()
@@ -239,11 +239,12 @@ func (c *Core) KillGoal(b Board, ref string) (string, error) {
 			what = g.Shown() + " stays " + g.State
 		}
 	}
-	return fmt.Sprintf("%s: %s; ym revive %s brings it back", what, count(len(targets), "session"), id), err
+	return fmt.Sprintf("%s: %s; ym revive %s brings it back%s", what, count(len(targets), "session"), id, stayedNote(stayed)), err
 }
 
 // teardown ends targets, each session's work kept for ym revive under m, and any verifier goal still has open.
-func (c *Core) teardown(m Manager, goal string, targets []Live) error {
+func (c *Core) teardown(m Manager, goal string, targets []Live) ([]string, error) {
+	var stayed []string
 	stopped := make([]error, len(targets))
 	var wg sync.WaitGroup
 	for i, s := range targets {
@@ -259,8 +260,12 @@ func (c *Core) teardown(m Manager, goal string, targets []Live) error {
 		if c.Launches == nil {
 			continue
 		}
-		if _, err := c.Launches.End(s.Key(), m.ID); err != nil && !errors.Is(err, ErrNotFound) {
+		msg, err := c.Launches.End(s.Key(), m.ID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			errs = append(errs, err)
+		}
+		if _, where, ok := strings.Cut(msg, WorktreeStaysAt); ok {
+			stayed = append(stayed, where)
 		}
 	}
 	if goal != "" {
@@ -273,7 +278,17 @@ func (c *Core) teardown(m Manager, goal string, targets []Live) error {
 			}
 		}
 	}
-	return errors.Join(errs...)
+	return stayed, errors.Join(errs...)
+}
+
+// WorktreeStaysAt marks where End's message, which may have crossed from another host, says the session's worktree stayed.
+const WorktreeStaysAt = "; its worktree stays at "
+
+func stayedNote(stayed []string) string {
+	if len(stayed) == 0 {
+		return ""
+	}
+	return "; " + count(len(stayed), "worktree") + " stayed: " + strings.Join(stayed, "; ")
 }
 
 // SignalFunc is how c signals a process: Signal, else proc.Signal.

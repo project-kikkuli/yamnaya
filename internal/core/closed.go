@@ -17,6 +17,7 @@ type Closed struct {
 	Elsewhere   []string
 	Pending     string
 	Output      string
+	Stayed      []string
 }
 
 func (c Closed) String() string {
@@ -31,7 +32,7 @@ func (c Closed) String() string {
 	if len(c.Elsewhere) > 0 {
 		fmt.Fprintf(&sb, ", open items on %s dismissed once it hears", strings.Join(c.Elsewhere, ", "))
 	}
-	fmt.Fprintf(&sb, "; ym revive %s brings it back", c.Goal)
+	fmt.Fprintf(&sb, "; ym revive %s brings it back%s", c.Goal, stayedNote(c.Stayed))
 	for _, pr := range c.PRs {
 		fmt.Fprintf(&sb, "\nstill open: %s", pr)
 	}

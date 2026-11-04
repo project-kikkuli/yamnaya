@@ -67,18 +67,7 @@ func Stash(path, key, dir string) (Recovery, error) {
 	r.Origin, _ = git(path, "remote", "get-url", "origin")
 	tip := "HEAD"
 	if t.Files > 0 {
-		index := filepath.Join(dir, key+".index")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return r, err
-		}
-		defer os.Remove(index)
-		env := []string{"GIT_INDEX_FILE=" + index}
-		for _, args := range [][]string{{"read-tree", "HEAD"}, {"add", "-A"}} {
-			if _, err := gitEnv(path, env, nil, args...); err != nil {
-				return r, err
-			}
-		}
-		tree, err := gitEnv(path, env, nil, "write-tree")
+		tree, err := worktreeTree(path, key, dir)
 		if err != nil {
 			return r, err
 		}
@@ -98,6 +87,76 @@ func Stash(path, key, dir string) (Recovery, error) {
 	}
 	_, err = git(path, append([]string{"bundle", "create", "--quiet", r.Bundle, ref, "--not", "--remotes"}, defaults(path)...)...)
 	return r, err
+}
+
+// worktreeTree writes the tree of everything in the worktree at path that git add -A takes, leaving its index alone.
+func worktreeTree(path, key, dir string) (string, error) {
+	index := filepath.Join(dir, key+".index")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	defer os.Remove(index)
+	env := []string{"GIT_INDEX_FILE=" + index}
+	for _, args := range [][]string{{"read-tree", "HEAD"}, {"add", "-A"}} {
+		if _, err := gitEnv(path, env, nil, args...); err != nil {
+			return "", err
+		}
+	}
+	return gitEnv(path, env, nil, "write-tree")
+}
+
+// What a checkout at a recorded worktree's path says about the bundle of that worktree's work.
+const (
+	// WorkHere is the same worktree holding every commit and every file of the bundle: it has nothing to put back.
+	WorkHere = iota
+	// WorkMissing is the same worktree, clean at the recorded commit: the bundle's files apply to it.
+	WorkMissing
+	// WorkChanged is the same worktree differing from the bundle, so neither dropping it nor applying it is safe.
+	WorkChanged
+	// WorkElsewhere is some other checkout.
+	WorkElsewhere
+)
+
+// Standing compares the checkout at w's path with this bundle of w taken at head. It is w while it shares w's repository and is on
+// w's branch, or with no branch while head is behind it, so a HEAD that moved on stays w. Only comparing the content can prove the
+// bundle holds nothing more, because a worktree added again by hand on the same branch is w by every other measure.
+func (r Recovery) Standing(w Worktree, head, key string) int {
+	common, err := git(w.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || !samePath(common, w.GitDir) {
+		return WorkElsewhere
+	}
+	behind := head != "" && local("--git-dir="+w.GitDir, "merge-base", "--is-ancestor", head, Head(w.Path)) == nil
+	branch, _ := git(w.Path, "symbolic-ref", "--short", "-q", "HEAD")
+	if branch != w.Branch || branch == "" && !behind {
+		return WorkElsewhere
+	}
+	if !behind {
+		return WorkChanged
+	}
+	if r.Work == "" {
+		return WorkHere
+	}
+	if r.Fetch(w.GitDir, key) != nil {
+		return WorkChanged
+	}
+	want, err := git(w.Path, "rev-parse", recoveryRef(key)+"^{tree}")
+	if err != nil {
+		return WorkChanged
+	}
+	if tree, err := worktreeTree(w.Path, key, filepath.Dir(r.Bundle)); err == nil && tree == want {
+		return WorkHere
+	}
+	status, err := look(w.Path, "status", "--porcelain", "--untracked-files=normal")
+	if err == nil && status == "" && Head(w.Path) == head {
+		return WorkMissing
+	}
+	return WorkChanged
+}
+
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // Fetch brings the bundled commits of key into the repository at gitDir, so its worktree can be recreated at them.

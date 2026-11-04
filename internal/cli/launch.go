@@ -981,14 +981,22 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	}
 	was := rec
 	clones := l.clones(rec)
+	kept := ""
 	if rec.Recovery != (launch.Recovery{}) && launch.Head(rec.Worktree.Path) != "" {
-		// The worktree stayed when it ended, so its work never left and the bundle has nothing to put back.
-		if err := rec.Recovery.Drop(rec.Worktree.Path, rec.Key); err != nil {
-			return nil, "", err
+		switch rec.Recovery.Standing(rec.Worktree, rec.Head, rec.Key) {
+		case launch.WorkHere:
+			if err := rec.Recovery.Drop(rec.Worktree.Path, rec.Key); err != nil {
+				return nil, "", err
+			}
+			rec.Recovery = launch.Recovery{}
+		case launch.WorkChanged:
+			kept = fmt.Sprintf("its worktree changed since it ended, so the work ym saved stays in %s, not applied", rec.Recovery.Bundle)
+		case launch.WorkElsewhere:
+			return nil, "", fmt.Errorf("%s holds another checkout than %s's, so ym did not resume there and keeps its saved work in %s; move that checkout aside and revive again",
+				rec.Worktree.Path, rec.Key, rec.Recovery.Bundle)
 		}
-		rec.Recovery = launch.Recovery{}
 	}
-	if rec.Recovery != (launch.Recovery{}) {
+	if rec.Recovery != (launch.Recovery{}) && kept == "" {
 		for _, gd := range append([]string{rec.Worktree.GitDir}, clones...) {
 			if _, err := os.Stat(gd); err == nil && gd != "" {
 				if err := rec.Recovery.Fetch(gd, rec.Key); err != nil {
@@ -1003,7 +1011,9 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		return nil, "", err
 	}
 	rec.Worktree = back
-	if rec.Recovery != (launch.Recovery{}) && lost == "" {
+	if kept != "" {
+		lost = kept
+	} else if rec.Recovery != (launch.Recovery{}) && lost == "" {
 		if err := rec.Recovery.Apply(rec.Worktree.Path, rec.Key); err != nil {
 			return nil, "", fmt.Errorf("restore the work ym kill kept of %s: %w", rec.Key, err)
 		}
@@ -1286,12 +1296,17 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 		if head := launch.Head(rec.Worktree.Path); head != "" {
 			rec.Head = head
 		}
-		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {
-			return "", fmt.Errorf("keep the work of %s before removing %s: %w", rec.Key, rec.Worktree.Path, err)
-		}
 		if keep, reason := launch.Pinned(rec.Worktree.Path); keep != "" {
 			stays = reason
-		} else {
+		}
+		// A worktree that stays keeps its work whether or not the bundle could take it.
+		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {
+			if stays == "" {
+				return "", fmt.Errorf("keep the work of %s before removing %s: %w", rec.Key, rec.Worktree.Path, err)
+			}
+			rec.Recovery = launch.Recovery{}
+		}
+		if stays == "" {
 			if err := launch.Discard(rec.Worktree); err != nil {
 				return "", err
 			}
@@ -1299,7 +1314,7 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 				launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch, l.squash)
 			}
 		}
-		if rec.Recovery != (launch.Recovery{}) {
+		if rec.Recovery != (launch.Recovery{}) && stays == "" {
 			kept = fmt.Sprintf(", kept %s", core.Toll{Commits: rec.Recovery.Commits, Files: rec.Recovery.Files}.Work())
 		}
 	} else if _, err := os.Stat(rec.Worktree.GitDir); err == nil && rec.Worktree.GitDir != "" {
@@ -1316,7 +1331,7 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 	}
 	msg := fmt.Sprintf("killed %s%s; ym revive %s brings it back", rec.Key, kept, rec.Key)
 	if stays != "" {
-		msg += fmt.Sprintf("; its worktree stays at %s until ym gc can remove it: %s", rec.Worktree.Path, stays)
+		msg += fmt.Sprintf("%s%s until ym gc can remove it: %s", core.WorktreeStaysAt, rec.Worktree.Path, stays)
 	}
 	return msg, nil
 }

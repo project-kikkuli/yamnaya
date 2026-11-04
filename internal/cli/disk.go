@@ -452,6 +452,9 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState, pinned pinnedWork
 			fmt.Fprintln(w, "last pass, at tier 3:", b)
 		}
 	}
+	if pinned.Unknown != "" {
+		fmt.Fprintln(w, "worktrees kept for what they hold:", pinned.Unknown)
+	}
 	if len(pinned.Trees) > 0 {
 		fmt.Fprintf(w, "worktrees kept for what they hold, %s, as of the last gc or pass at %s:\n", gb(pinned.size()), pinned.At.Format(time.RFC3339))
 		for _, t := range pinned.Trees {

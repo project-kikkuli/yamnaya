@@ -23,12 +23,24 @@ type fakeLaunches struct {
 	launched  []Launched
 	// during runs while a start is in progress, as another ym process may.
 	during func()
+	// stays is where a session's worktree stayed when it ended, and why, by session.
+	stays map[string]string
 }
 
 func (l *fakeLaunches) End(ref, goal string) (string, error) {
 	l.forgot = append(l.forgot, ref)
 	l.w.stop(ref)
+	if where, ok := l.stays[ref]; ok {
+		return "killed " + ref + WorktreeStaysAt + where, nil
+	}
 	return "killed " + ref, nil
+}
+
+func (l *fakeLaunches) Weigh(string) (Toll, error) {
+	if l.stays != nil {
+		return Toll{Worktrees: 1}, nil
+	}
+	return Toll{}, nil
 }
 
 func (l *fakeLaunches) Launched() []Launched { return l.launched }

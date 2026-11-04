@@ -108,10 +108,12 @@ func (c *Core) archiveDone(b Board) error {
 			continue
 		}
 		toll := c.Weigh(targets)
-		if err := c.teardown(m, g.ID, targets); err != nil {
+		stayed, err := c.teardown(m, g.ID, targets)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("archive %s: %w", g.Shown(), err))
 			continue
 		}
+		toll.Worktrees = max(toll.Worktrees-len(stayed), 0)
 		_, _, err = c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalArchived, Created: now, Delivered: now,
 			Payload: fmt.Sprintf("%s done and quiet for %s, so its leftover sessions ended: %s; ym revive %s reopens the goal with them, ym revive <key> brings back one session", g.Shown(), DoneShown, toll, g.Shown())})
 		errs = append(errs, err)

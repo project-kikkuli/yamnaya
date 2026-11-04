@@ -18,6 +18,18 @@ func plant(t *testing.T, dir, rel string, text ...string) {
 	writeFile(t, filepath.Join(dir, rel), strings.Join(text, ""))
 }
 
+func nestedRepo(t *testing.T, wt, rel string) {
+	t.Helper()
+	inner := filepath.Join(wt, rel)
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, inner, "init", "-q")
+	plant(t, inner, "n.txt", "only here")
+	git(t, inner, "add", ".")
+	git(t, inner, "commit", "-q", "-m", "only here")
+}
+
 func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -68,6 +80,24 @@ func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 				plant(t, wt, ".env")
 				git(t, wt, "commit", "-q", "--allow-empty", "-m", "unpushed")
 			}, "holds git-ignored .env", []string{".env"}, 0, 1},
+			{"an untracked repository with a commit", func(t *testing.T, wt string) {
+				nestedRepo(t, wt, "nested")
+			}, "holds a repository under nested/", []string{"nested/n.txt", "nested/.git"}, 1, 0},
+			{"an untracked repository deep in an untracked directory", func(t *testing.T, wt string) {
+				nestedRepo(t, wt, "a/b/nested")
+			}, "holds a repository under a/", []string{"a/b/nested/n.txt"}, 1, 0},
+			{"an untracked repository with no commit yet", func(t *testing.T, wt string) {
+				git(t, wt, "init", "-q", "fresh")
+				plant(t, wt, "fresh/n.txt")
+			}, "holds a repository under fresh/", []string{"fresh/n.txt"}, 0, 0},
+			{"an untracked directory with its own .git file", func(t *testing.T, wt string) {
+				plant(t, wt, "linked/.git", "gitdir: /nowhere\n")
+				plant(t, wt, "linked/n.txt")
+			}, "holds a repository under linked/", []string{"linked/n.txt"}, 1, 0},
+			{"an untracked Mercurial checkout", func(t *testing.T, wt string) {
+				plant(t, wt, "vendor/.hg/store/data")
+				plant(t, wt, "vendor/n.txt")
+			}, "holds a repository under vendor/", []string{"vendor/.hg/store/data", "vendor/n.txt"}, 2, 0},
 			{"a repository under an ignored directory", func(t *testing.T, wt string) {
 				git(t, wt, "init", "-q", "scratch/clone")
 			}, "holds a repository under scratch/", []string{"scratch/clone/.git"}, 0, 0},
@@ -132,8 +162,8 @@ func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 				if !strings.Contains(string(landing), c.why) {
 					t.Errorf("landing log %q does not say %q", landing, c.why)
 				}
-				if path.name != "serve's cleanup" && (!strings.Contains(msg, wt) || !strings.Contains(msg, c.why)) {
-					t.Errorf("the end said %q; want where the worktree stayed and %q", msg, c.why)
+				if path.name != "serve's cleanup" && (!strings.Contains(msg, wt) || !strings.Contains(msg, c.why) || strings.Contains(msg, ", kept ")) {
+					t.Errorf("the end said %q; want where the worktree stayed and %q, and no claim of a bundle", msg, c.why)
 				}
 
 				all, _ := l.gcWith([]string{repo}, true, false, launch.Policy{Idle: time.Nanosecond})
@@ -167,6 +197,129 @@ func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestEndingASessionWhoseWorkCannotBeBundledRefusesAndLosesNothing(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	wt := launch.WorktreePath(repo, "task")
+	git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+	plant(t, wt, "secret.txt", "only here")
+	unreadable := filepath.Join(wt, "secret.txt")
+	os.Chmod(unreadable, 0)
+	t.Cleanup(func() { os.Chmod(unreadable, 0o644) })
+	l := testLauncher(t, base)
+	rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: launch.Head(wt),
+		Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.End(rec.Key, ""); err == nil {
+		t.Fatal("ended a session whose work it could not bundle")
+	}
+	if _, err := os.Stat(unreadable); err != nil {
+		t.Fatalf("lost it: %v", err)
+	}
+	if after, _ := l.records.Find(rec.Key); after.IsLanded() {
+		t.Fatal("landed a session whose work it could not bundle")
+	}
+}
+
+func TestReviveDropsTheBundleOnlyWhenTheWorktreeProvablyHoldsItsWork(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	readd := func(t *testing.T, repo, wt string, args ...string) {
+		git(t, repo, "worktree", "remove", "--force", "--force", wt)
+		git(t, repo, append([]string{"worktree", "add", "-q"}, args...)...)
+	}
+	for _, c := range []struct {
+		name    string
+		change  func(t *testing.T, repo, wt, base string)
+		refused bool
+		bundle  bool
+		note    string
+		has     []string
+	}{
+		{"left as it stayed", func(*testing.T, string, string, string) {}, false, false, "", []string{".env", "notes.txt"}},
+		{"its work committed since", func(t *testing.T, repo, wt, base string) {
+			git(t, wt, "add", "notes.txt")
+			git(t, wt, "commit", "-q", "-m", "work")
+		}, false, false, "", []string{".env", "notes.txt"}},
+		{"edited since", func(t *testing.T, repo, wt, base string) {
+			plant(t, wt, "later.txt", "later")
+		}, false, true, "stays in", []string{".env", "notes.txt", "later.txt"}},
+		{"removed by hand and added again on its branch", func(t *testing.T, repo, wt, base string) {
+			readd(t, repo, wt, wt, "task")
+		}, false, false, "", []string{"notes.txt"}},
+		{"removed by hand and another branch added there", func(t *testing.T, repo, wt, base string) {
+			readd(t, repo, wt, "-b", "other", wt)
+		}, true, true, "", nil},
+		{"replaced by an unrelated checkout", func(t *testing.T, repo, wt, base string) {
+			git(t, repo, "worktree", "remove", "--force", "--force", wt)
+			git(t, base, "init", "-q", "-b", "task", wt)
+			git(t, wt, "commit", "-q", "--allow-empty", "-m", "unrelated")
+		}, true, true, "", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fakeAgent(t)
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo := filepath.Join(base, "repo")
+			plant(t, repo, ".gitignore", ".env\n")
+			git(t, repo, "add", ".")
+			git(t, repo, "commit", "-q", "-m", "root")
+			git(t, repo, "push", "-q", "origin", "main")
+			wt := launch.WorktreePath(repo, "task")
+			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+			plant(t, wt, ".env", "SECRET=1")
+			plant(t, wt, "notes.txt", "half done")
+			l := testLauncher(t, base)
+			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: launch.Head(wt),
+				Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			if err := l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			ended, _ := l.records.Find(rec.Key)
+			if ended.Recovery.Bundle == "" {
+				t.Fatalf("no bundle: %+v", ended.Recovery)
+			}
+			c.change(t, repo, wt, base)
+
+			msg, err := l.Revive(rec.Key)
+			if (err != nil) != c.refused {
+				t.Fatalf("revive said %q, %v; want refused %v", msg, err, c.refused)
+			}
+			if c.refused && !strings.Contains(err.Error(), ended.Recovery.Bundle) {
+				t.Errorf("the refusal %q does not name the bundle", err)
+			}
+			if !strings.Contains(msg, c.note) {
+				t.Errorf("revive said %q, want %q", msg, c.note)
+			}
+			if _, err := os.Stat(ended.Recovery.Bundle); (err == nil) != c.bundle {
+				t.Errorf("bundle on disk %v, want %v", err == nil, c.bundle)
+			}
+			for _, f := range c.has {
+				if _, err := os.Stat(filepath.Join(wt, f)); err != nil {
+					t.Errorf("%s missing after revive: %v", f, err)
+				}
+			}
+			if after, _ := l.records.Find(rec.Key); after.IsLanded() != c.refused || (after.Recovery != (launch.Recovery{})) != c.bundle {
+				t.Errorf("record landed %v, recovery %+v", after.IsLanded(), after.Recovery)
+			}
+		})
 	}
 }
 
@@ -213,6 +366,29 @@ func TestALaterGCRemovesAWorktreeThatStayedOnceNothingHoldsIt(t *testing.T) {
 	}
 	if p := readPinned(base); len(p.Trees) != 0 {
 		t.Fatalf("still saved as pinned: %+v", p)
+	}
+}
+
+func TestYmDiskSaysWhenItHasNoListOfPinnedWorktrees(t *testing.T) {
+	for _, c := range []struct {
+		name, file, want string
+	}{
+		{"before any gc", "", "not measured yet"},
+		{"corrupt", "{not json", "cannot read"},
+		{"no time", `{"Trees":null}`, "cannot read"},
+		{"nothing pinned", `{"At":"2026-11-04T12:00:00Z"}`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if c.file != "" {
+				plant(t, dir, "pinned.json", c.file)
+			}
+			var b strings.Builder
+			printDisk(&b, nil, diskState{}, readPinned(dir))
+			if got := b.String(); c.want != "" && !strings.Contains(got, c.want) || c.want == "" && got != "" || strings.Contains(got, "0001-01-01") {
+				t.Fatalf("ym disk said %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

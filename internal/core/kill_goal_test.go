@@ -3,6 +3,7 @@ package core
 import (
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -96,5 +97,41 @@ func TestKillingAChiefRetiresItAloneAndItsGoalsReportUp(t *testing.T) {
 	}
 	if _, alive := b.Session(m.Session); !alive || o.Above(o.Managers[m.ID].ParentID) != Owner {
 		t.Fatalf("its goal's manager alive %v reports to %q; want running and reporting to the owner", alive, o.Above(o.Managers[m.ID].ParentID))
+	}
+}
+
+func TestEndingAGoalNamesEachWorktreeThatStayedAndCountsOnlyThoseThatWent(t *testing.T) {
+	const stay = "/wt/agent-1 until ym gc can remove it: holds git-ignored .env"
+	for _, tc := range []struct {
+		name string
+		end  func(t *testing.T, w *orgWorld, b Board, g Goal) string
+	}{
+		{"kill", func(t *testing.T, w *orgWorld, b Board, g Goal) string {
+			msg, err := w.core.KillGoal(b, g.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return msg
+		}},
+		{"close", func(t *testing.T, w *orgWorld, b Board, g Goal) string {
+			closed, err := w.core.CloseGoal(b, CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: "not needed"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closed.Toll.Worktrees != closed.Toll.Sessions-1 {
+				t.Errorf("counted %s with one worktree staying", closed.Toll)
+			}
+			return closed.String()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, "ship the importer", "/repo/august")
+			w.spawn("agent-1", m.Session)
+			w.launches.stays = map[string]string{"agent-1": stay}
+			if msg := tc.end(t, w, w.board(t), g); !strings.Contains(msg, "1 worktree stayed: "+stay) {
+				t.Fatalf("said %q, want %q named", msg, stay)
+			}
+		})
 	}
 }

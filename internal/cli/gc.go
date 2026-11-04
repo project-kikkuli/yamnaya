@@ -221,14 +221,27 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 type pinnedWorktrees struct {
 	At    time.Time
 	Trees []launch.Sweep
+	// Unknown says why there is no such list to read.
+	Unknown string `json:"-"`
 }
 
 func pinnedPath(dir string) string { return filepath.Join(dir, "pinned.json") }
 
 func readPinned(dir string) pinnedWorktrees {
 	var p pinnedWorktrees
-	if raw, err := os.ReadFile(pinnedPath(dir)); err == nil {
-		json.Unmarshal(raw, &p)
+	raw, err := os.ReadFile(pinnedPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		p.Unknown = "not measured yet, no gc or pass has run"
+		return p
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &p)
+	}
+	if err == nil && p.At.IsZero() {
+		err = errors.New("it has no time")
+	}
+	if err != nil {
+		return pinnedWorktrees{Unknown: fmt.Sprintf("cannot read %s: %v", pinnedPath(dir), err)}
 	}
 	return p
 }

@@ -187,7 +187,9 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 			return out, err
 		}
 	}
-	if err := c.teardown(m, g.ID, targets); err != nil {
+	stayed, err := c.teardown(m, g.ID, targets)
+	out.Stayed, out.Toll.Worktrees = stayed, max(out.Toll.Worktrees-len(stayed), 0)
+	if err != nil {
 		return out, fmt.Errorf("%s is closed as %s, but its sessions did not all end; run the close again to finish: %w", g.Shown(), out.Disposition, err)
 	}
 	return out, nil
