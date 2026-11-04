@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -27,7 +28,30 @@ func TestMain(m *testing.M) {
 		p.hues = append(p.hues, lipgloss.NewStyle())
 	}
 	pal = p
-	os.Exit(agenttest.Run(m))
+	dir, err := hideInstalledYm()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := agenttest.Run(m)
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// hideInstalledYm puts an old ym first on PATH: every board warns when a newer one is there, and this machine's can be replaced mid-run.
+func hideInstalledYm() (string, error) {
+	dir, err := os.MkdirTemp("", "tui-path")
+	if err != nil {
+		return "", err
+	}
+	stub := filepath.Join(dir, "ym")
+	if err := os.WriteFile(stub, nil, 0o755); err != nil {
+		return dir, err
+	}
+	if err := os.Chtimes(stub, time.Unix(1, 0), time.Unix(1, 0)); err != nil {
+		return dir, err
+	}
+	return dir, os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func usePalette(t *testing.T, color bool) {
