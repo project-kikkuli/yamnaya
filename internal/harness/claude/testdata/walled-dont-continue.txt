@@ -1,0 +1,9 @@
+  ⎿  You've hit your weekly limit · resets 3am (UTC)
+● Usage limit reached · continuing automatically at 3am · esc to cancel
+✻ Brewed for 4s · done 9:07 AM
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?
+   ❯ 1. Stop and wait for limit to reset
+     2. Don’t continue automatically
+     3. Switch to usage credits
+   Enter to confirm · Esc to cancel

@@ -59,7 +59,11 @@ func Defaults() []Profile {
 		if root == "" {
 			root = filepath.Join(home, "."+h)
 		}
+		// A credential store only belongs to a default whose root was chosen with it: alone it is one a session's login passed down.
 		secure, set := os.LookupEnv("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+		if !explicit {
+			secure, set = "", false
+		}
 		sqliteRoot := ""
 		sqliteEnv, sqliteSet := os.LookupEnv("CODEX_SQLITE_HOME")
 		if h == "codex" {
@@ -126,6 +130,17 @@ func decodeDefaults(b []byte) ([]Profile, error) {
 	err := json.Unmarshal(b, &ps)
 	return ps, err
 }
+
+// healInherited drops a credential store an earlier ym pinned to a default it was only passed down to.
+func healInherited(ps []Profile) []Profile {
+	for i := range ps {
+		if ps[i].ID == "default" && !ps[i].Explicit {
+			ps[i].SecureStorage, ps[i].SecureStorageSet = "", false
+		}
+	}
+	return ps
+}
+
 func withAccounts(saved []Profile) []Profile {
 	ps := slices.Clone(saved)
 	for i := range ps {
@@ -329,7 +344,7 @@ func defaultsAt(dir string) ([]Profile, error) {
 	path := filepath.Join(dir, "profile-defaults.json")
 	if info, err := os.Stat(path); err == nil {
 		if ps, ok, err := unchanged[[]Profile](path, info); ok && err == nil {
-			return withAccounts(ps), nil
+			return withAccounts(healInherited(ps)), nil
 		}
 	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
@@ -342,7 +357,7 @@ func defaultsAt(dir string) ([]Profile, error) {
 	}
 	ps, err := readDecoded(path, decodeDefaults)
 	if err == nil {
-		return withAccounts(ps), nil
+		return withAccounts(healInherited(ps)), nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err

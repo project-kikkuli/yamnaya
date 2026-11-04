@@ -302,6 +302,11 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 				return err
 			}
 		}
+		if decided, err := l.redecidePort(m, rec); err != nil {
+			return err
+		} else if decided {
+			continue
+		}
 		if s, ok := b.Session(m.Source.Session); ok {
 			if err := l.turnEnded(s, nil); err != nil {
 				if err = l.showWaiting(m, s, err); err != nil {
@@ -344,7 +349,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 			}
 			if m.State != "queued" && l.core != nil {
 				text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s that has not finished: %v. ym keeps trying; ym revive %s brings it back by hand.", core.Short(m.Source.Session), m.Source.Key, m.Destination.ID, attemptErr, m.Source.Key)
-				if err = l.core.NoticeStuckSwitch(b, m.Source.Session, text); err != nil {
+				if err = l.core.NoticeStuckSwitch(b, m.Source.Session, m.Since.Unix(), text); err != nil {
 					return err
 				}
 			}
@@ -379,7 +384,7 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 		return err
 	}
 	now, limits := l.now(), l.limits()
-	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path, a.holdsPort(ps, core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, now))
+	target, err := l.destination(dir, a, ps, core.Exhaustion{Harness: m.Source.Harness, Profile: m.Source.Profile, Account: m.Source.Account}, m.Source.Worktree.Path, limits, now)
 	if err != nil {
 		return block()
 	}
@@ -390,16 +395,50 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 		ref = m.Source.Session
 	}
 	_, err = next.QueueProfileSwitch(ref, target.ID, m.Reason)
-	if answeredUnusable(err) {
+	if err != nil && !errors.Is(err, profile.ErrOperationBusy) {
 		a.failed(target.Account, now.Add(core.QuotaRecheck), err)
 		if err := saveFailover(dir, m.Source.Harness, a); err != nil {
 			return err
 		}
-	}
-	if err != nil && !errors.Is(err, profile.ErrOperationBusy) {
 		return block()
 	}
 	return nil
+}
+
+// redecidePort puts a failover's queued port through the gate again until it applies: a login of the session's own harness may have come back.
+// decided is whether anything but applying it follows.
+func (l launcher) redecidePort(m migration, rec launch.Record) (decided bool, err error) {
+	if m.State != "queued" || m.Destination.Harness == m.Source.Harness {
+		return false, nil
+	}
+	dir := filepath.Dir(l.records.Dir)
+	a, err := loadFailover(dir, m.Source.Harness, m.Source.Session)
+	if err != nil || !failoverPending(a) {
+		return false, err
+	}
+	ps, err := profile.Load(dir)
+	if err != nil {
+		return true, err
+	}
+	target, err := l.destination(dir, a, ps, core.Exhaustion{Harness: m.Source.Harness, Profile: m.Source.Profile, Account: m.Source.Account}, m.Source.Worktree.Path, l.limits(), l.now())
+	if err != nil {
+		return true, l.updatePending(m.Source.Harness, m.Source.Session, func(latest *migration) bool {
+			latest.Blocked = err.Error()
+			return true
+		})
+	}
+	if target.Harness != m.Source.Harness {
+		return false, nil
+	}
+	ref := m.Source.Key
+	if rec.Key == "" {
+		ref = m.Source.Session
+	}
+	_, err = l.QueueProfileSwitch(ref, target.ID, m.Reason)
+	if errors.Is(err, profile.ErrOperationBusy) {
+		return true, nil
+	}
+	return true, err
 }
 
 // showWaiting says on the row why a switch cannot apply to a session stopped at the quota dialog, which never ends its turn by itself;
@@ -471,7 +510,7 @@ func (l launcher) atStopReasons(dir string) map[string]core.Switching {
 			login := profile.Profile{Harness: harness, ID: a.State.Profile, Account: a.On}
 			if !barredUntil(dir, login, limits, now).IsZero() {
 				record, _ := readBar(barPath(dir, login))
-				stop.Barred = "stopped at its limit earlier, " + barredText(record, a.State.Session)
+				stop.Barred = "stopped at its limit earlier, its login is out, " + barredText(record, a.State.Session)
 			}
 		}
 		stop.Blocked = stop.Barred

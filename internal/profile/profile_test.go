@@ -31,6 +31,7 @@ func TestDefaultsAreStableInsideNamedChildren(t *testing.T) {
 			} else if secure == "empty" {
 				t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "")
 			} else {
+				t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "chosen"))
 				t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", filepath.Join(t.TempDir(), "secure"))
 			}
 			original, err := Load(dir)
@@ -415,5 +416,62 @@ func TestLoadCostDoesNotGrowWithAnUnchangedAccountFile(t *testing.T) {
 	}
 	if grew := after.TotalAlloc - before.TotalAlloc; grew > 1<<20 {
 		t.Fatalf("second load allocated %d bytes for a 4 MiB file it had already read", grew)
+	}
+}
+
+func TestACredentialStoreIsPinnedToDefaultOnlyWithTheRootChosenWithIt(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		root, store string
+		agent       string
+		pinned      string
+		written     bool
+	}{
+		{name: "a plain shell with only the store", store: "/other/login"},
+		{name: "an agent of another login", root: "/other/login", store: "/other/login", agent: "claude-work"},
+		{name: "an owner's root and store", root: "/chosen", store: "/chosen/secure", pinned: "/chosen/secure"},
+		{name: "a state dir an earlier ym pinned wrongly", store: "/other/login", written: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := isolated(t)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.Unsetenv("YAMNAYA_PROFILE")
+			t.Setenv("CLAUDE_CONFIG_DIR", c.root)
+			if c.root == "" {
+				os.Unsetenv("CLAUDE_CONFIG_DIR")
+			}
+			t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", c.store)
+			if c.agent != "" {
+				t.Setenv("YAMNAYA_PROFILE", c.agent)
+			}
+			if c.written {
+				home, _ := os.UserHomeDir()
+				raw := `[{"harness":"claude","id":"default","label":"default","root":"` + filepath.Join(home, ".claude") + `","secure_storage":"` + c.store + `","secure_storage_set":true}]`
+				if err := os.WriteFile(filepath.Join(dir, "profile-defaults.json"), []byte(raw), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ps, err := Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := Find(ps, "claude", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.SecureStorage != c.pinned || p.SecureStorageSet != (c.pinned != "") {
+				t.Fatalf("store %q set %v, want %q", p.SecureStorage, p.SecureStorageSet, c.pinned)
+			}
+			argv := strings.Join(p.Argv([]string{"claude"}), " ")
+			if env := "CLAUDE_SECURESTORAGE_CONFIG_DIR=" + c.store; strings.Contains(argv, env) != (c.pinned != "") {
+				t.Fatalf("argv %q", argv)
+			}
+			environ := strings.Join(p.Environment([]string{"CLAUDE_SECURESTORAGE_CONFIG_DIR=" + c.store}), " ")
+			if c.pinned == "" && strings.Contains(environ, c.store) {
+				t.Fatalf("environment keeps the inherited store: %q", environ)
+			}
+		})
 	}
 }

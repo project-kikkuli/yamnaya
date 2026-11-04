@@ -155,8 +155,10 @@ func recordProfile(rec launch.Record) profile.Profile {
 		p.RootValue = rec.RootValue
 		p.RootSet = rec.RootSet
 		p.Explicit = rec.ConfigExplicit
-		p.SecureStorage = rec.SecureStorage
-		p.SecureStorageSet = rec.SecureStorageSet
+		if rec.ConfigExplicit || profile.ID(rec.Profile) != "default" {
+			p.SecureStorage = rec.SecureStorage
+			p.SecureStorageSet = rec.SecureStorageSet
+		}
 	}
 	return p
 }
@@ -231,7 +233,7 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 	limits, now := l.limits(), l.now()
 	for _, guessed := range []bool{false, true} {
 		for _, p := range ps {
-			if p.Harness != harness || p.DefaultConstraint() != nil || !barredUntil(dir, p, limits, now).IsZero() && (!guessed || stopEvidence(dir, failoverAttempt{}, p, limits, now)) {
+			if p.Harness != harness || p.DefaultConstraint() != nil || !barredUntil(dir, p, limits, now).IsZero() && (!guessed || barEvidence(dir, p, limits, now)) {
 				continue
 			}
 			if p.ID == "default" || p.Account != "" {

@@ -526,6 +526,7 @@ func TestRealWalledResumeScreensAreReadAsWhatTheyAre(t *testing.T) {
 		{file: "walled-c-after-exit.txt", silent: true},
 		{file: "walled-d-esc-dialog.txt"},
 		{file: "walled-hit-line-dialog.txt", silent: true, strict: true},
+		{file: "walled-dont-continue.txt", silent: true, strict: true},
 	} {
 		t.Run(c.file, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join("testdata", c.file))

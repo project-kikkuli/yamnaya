@@ -106,20 +106,8 @@ func (l launcher) wall(rec launch.Record) (until time.Time, target profile.Profi
 	if err != nil {
 		return
 	}
-	usable := usableLogins(dir, a, ps, limits, now)
-	e := core.Exhaustion{Harness: rec.Harness, Account: source.Account}
-	if target, _ = failoverTarget(usable, e, rec.Worktree.Path); target.ID != "" || !stopEvidence(dir, a, source, limits, now) {
-		return
-	}
-	target, _ = failoverDestination(usable, e, rec.Worktree.Path, a.holdsPort(ps, e, now))
+	target, _ = l.destination(dir, a, ps, core.Exhaustion{Harness: rec.Harness, Profile: source.ID, Account: source.Account}, rec.Worktree.Path, limits, now)
 	return
-}
-
-// stopEvidence is whether a bar proves enough to port a conversation under a new id: its own stop on the login, a row at the limit or a reset
-// the login stated. One stop's guess by another session does not, so a session that merely exited waits it out.
-func stopEvidence(dir string, a failoverAttempt, p profile.Profile, limits []core.Limit, now time.Time) bool {
-	b, err := readBar(barPath(dir, p))
-	return err == nil && (b.Known || a.On == p.Account || !exhaustedUntil(limits, p.Harness, p.ID, p.Account, now).IsZero())
 }
 
 // refusal is the error for a resume onto rec's used-up login, or nil when it has usage left or another login can take the session.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
@@ -29,38 +30,26 @@ type failoverAttempt struct {
 	On       string `json:"on,omitempty"`
 	// Continues is when Claude's footer said it carries on by itself.
 	Continues time.Time `json:"continues,omitzero"`
-	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile. Answered marks those that
-	// said themselves they cannot be used; any other failure was the attempt's, and FailedWhy says what it was.
+	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile; FailedWhy says why.
 	Failed    map[string]time.Time `json:"failed,omitempty"`
-	Answered  map[string]bool      `json:"answered,omitempty"`
 	FailedWhy string               `json:"failed_why,omitempty"`
 }
 
 // failed holds back the login a switch could not land on, because of err.
 func (a *failoverAttempt) failed(account string, until time.Time, err error) {
 	if a.Failed == nil {
-		a.Failed, a.Answered = map[string]time.Time{}, map[string]bool{}
+		a.Failed = map[string]time.Time{}
 	}
-	if a.Answered == nil {
-		a.Answered = map[string]bool{}
-	}
-	a.Failed[account], a.Answered[account], a.FailedWhy = until, answeredUnusable(err), err.Error()
-}
-
-// holdsPort is why this conversation cannot go to the last resort yet: a login of its harness whose switch failed for a reason that says nothing
-// about the login gets tried again first.
-func (a failoverAttempt) holdsPort(ps []profile.Profile, e core.Exhaustion, now time.Time) error {
-	for _, p := range ps {
-		if p.Harness == e.Harness && p.Account != e.Account && p.Account != "" && a.Failed[p.Account].After(now) && !a.Answered[p.Account] {
-			return fmt.Errorf("the switch to login %s failed and ym tries it again shortly: %s", p.ID, a.FailedWhy)
-		}
-	}
-	return nil
+	a.Failed[account], a.FailedWhy = until, err.Error()
 }
 
 // noteStop tells the login's record of a stop of this conversation once.
 func (a *failoverAttempt) noteStop(dir string, p profile.Profile, e core.Exhaustion, at, reset time.Time, limits []core.Limit) error {
 	if a.Recorded == e.Event || a.Recorded != "" && strings.HasPrefix(a.Recorded, e.Event+"-") {
+		if a.On != p.Account {
+			a.On = p.Account
+			return saveFailover(dir, e.Harness, *a)
+		}
 		return nil
 	}
 	if a.Recorded == "" || !strings.HasPrefix(e.Event, a.Recorded+"-") {
@@ -256,6 +245,7 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 	if l.core == nil || !l.core.CanResume() {
 		return nil
 	}
+	l.core.ResumedNow()
 	selected := profile.Profile{Harness: e.Harness, ID: profile.ID(e.Profile), Account: e.Account}
 	if err := claimLogin(dir, selected, now); err != nil {
 		return err
@@ -265,18 +255,28 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 	once := l
 	once.operation = rec.Session
 	once.resumeNote = fmt.Sprintf("ym: the subscription limit on login %s has passed, so ym resumed this conversation on it. Carry on with any unfinished work.", profile.ID(e.Profile))
-	_, err := l.core.Stop(s)
+	err := prepareRecord(rec)
+	if err == nil {
+		_, err = resumeArgv(rec, once.resumeNote)
+	}
+	stopped := false
+	if err == nil {
+		_, err = l.core.Stop(s)
+		stopped = err == nil
+	}
 	if err == nil {
 		_, err = once.revive(rec)
 	}
 	if err != nil {
 		a.State.Status, a.State.Reason = "blocked", "could not continue after the limit passed: "+err.Error()
 		a.failed(e.Account, now.Add(core.QuotaRecheck), err)
-		if released := releaseClaim(dir, selected); released != nil {
-			return released
+		if stopped {
+			rec.Revive = true
+			l.srv.Kill(tmux.SessionName(rec.Key))
+			if err := l.records.Save(rec); err != nil {
+				return err
+			}
 		}
-	} else {
-		l.core.ResumedNow()
 	}
 	return saveFailover(dir, e.Harness, a)
 }
@@ -323,22 +323,6 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, cwds ...string) (pr
 	return profile.Profile{}, errNoUsablePool
 }
 
-// failoverDestination is a usable login of e's harness, which keeps the conversation's id, else of the other harness as the last resort.
-func failoverDestination(ps []profile.Profile, e core.Exhaustion, cwd string, wait error) (profile.Profile, error) {
-	target, err := failoverTarget(ps, e, cwd)
-	if err == nil {
-		return target, nil
-	}
-	if wait != nil {
-		return profile.Profile{}, wait
-	}
-	other, otherErr := failoverTarget(ps, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, cwd)
-	if otherErr != nil {
-		return profile.Profile{}, err
-	}
-	return other, nil
-}
-
 func (l launcher) Failover(b core.Board) error {
 	dir := filepath.Dir(l.records.Dir)
 	ps, err := profile.Load(dir)
@@ -362,11 +346,21 @@ func (l launcher) Failover(b core.Board) error {
 	if err != nil {
 		return err
 	}
-	hung := map[string]bool{}
 	silent, unproven := l.silentStops(b)
 	var notices []error
+	showing := map[string]bool{}
+	show := func(e core.Exhaustion) {
+		showing[e.Account] = true
+		if p, err := profile.Find(ps, e.Harness, e.Profile); err == nil {
+			notices = append(notices, setShowing(dir, l.stopLogin(p, e.Session), true))
+		}
+	}
 	for _, stop := range unproven {
+		show(stop)
 		notices = append(notices, l.showUnproven(dir, ps, stop, b.At, b.Fleet.Limits))
+	}
+	for _, stop := range silent {
+		show(stop.Exhaustion)
 	}
 	events := make([]core.Exhaustion, 0, len(b.Fleet.Exhaustions)+len(silent))
 	for _, e := range b.Fleet.Exhaustions {
@@ -377,13 +371,24 @@ func (l launcher) Failover(b core.Board) error {
 	for _, s := range silent {
 		events = append(events, s.Exhaustion)
 	}
+	standing, err := l.standingStops(dir, ps, b, events)
+	if err != nil {
+		return err
+	}
+	events = append(events, standing...)
 	for _, e := range events {
 		screen := slices.IndexFunc(silent, func(s silentStop) bool { return s.Exhaustion.Event == e.Event })
+		stands := slices.ContainsFunc(standing, func(s core.Exhaustion) bool { return s.Session == e.Session })
+		if screen < 0 && !stands && l.copiedStop(e) {
+			continue
+		}
 		reset, actual, dialog, selfContinues := time.Time{}, false, false, false
 		at := e.Seen
 		if screen >= 0 {
 			reset, actual, dialog, selfContinues = silent[screen].Reset, true, true, silent[screen].SelfContinues
 			at = b.At
+		} else if stands {
+			actual = true
 		} else if reset, actual = trueExhaustion(e, b.Fleet.Limits, b.At); !actual {
 			var stuck error
 			reset, actual, stuck = l.verifiedStop(e, b)
@@ -391,6 +396,7 @@ func (l launcher) Failover(b core.Board) error {
 			if s, alive := b.Session(e.Session); actual && alive {
 				at = b.At
 				e.Event += fmt.Sprintf("-%d", s.PID)
+				show(e)
 			}
 			if stuck != nil {
 				e.Reason = stuck.Error()
@@ -414,7 +420,7 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		if selfContinues && a.Recorded != recorded {
 			a.Continues = reset
-			if a.Continues.IsZero() || a.Continues.After(at.Add(longestWindow)) {
+			if !a.Continues.After(at) || a.Continues.After(at.Add(longestWindow)) {
 				a.Continues = at.Add(unknownResetBar)
 			}
 			if err = saveFailover(dir, e.Harness, a); err != nil {
@@ -461,9 +467,11 @@ func (l launcher) Failover(b core.Board) error {
 			}
 			continue
 		}
-		wait := a.holdsPort(ps, e, b.At)
-		_, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, wait)
-		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
+		target, chooseErr := l.destination(dir, a, ps, e, rec.Worktree.Path, b.Fleet.Limits, b.At)
+		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil && a.State.Reason == chooseErr.Error()) {
+			continue
+		}
+		if a.Event == e.Event && a.State.Status == "blocked" && a.Failed[a.State.Target].After(b.At) {
 			continue
 		}
 		a.Event = e.Event
@@ -477,20 +485,6 @@ func (l launcher) Failover(b core.Board) error {
 			continue
 		}
 		if l.core != nil && !l.core.CanResume() {
-			continue
-		}
-		target, unanswered, checkErr := l.checkedDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, hung, wait)
-		if unanswered.ID != "" || checkErr != nil {
-			a.State.Status = "blocked"
-			a.State.Target = ""
-			if checkErr != nil {
-				a.State.Reason = checkErr.Error()
-			} else {
-				a.State.Reason = l.unansweredReason(unanswered)
-			}
-			if err = saveFailover(dir, e.Harness, a); err != nil {
-				return err
-			}
 			continue
 		}
 		a.State.Target = target.ID
@@ -532,8 +526,49 @@ func (l launcher) Failover(b core.Board) error {
 			return err
 		}
 	}
-	notices = append(notices, l.settleLogins(dir, ps, b, all))
+	notices = append(notices, l.settleLogins(dir, ps, b, all, showing))
 	return errors.Join(notices...)
+}
+
+// standingStops are stops ym saw that the session's prompt coming back says nothing about: Esc cancels Claude's wait, not the stop, so a
+// conversation still idle on the login it stopped on, with no turn since and the login never usable since, stays stopped.
+func (l launcher) standingStops(dir string, ps []profile.Profile, b core.Board, events []core.Exhaustion) ([]core.Exhaustion, error) {
+	var out []core.Exhaustion
+	for _, s := range b.Sessions {
+		if s.Remote != "" || s.ID == "" || s.Account == "" || slices.ContainsFunc(events, func(e core.Exhaustion) bool { return e.Session == s.ID }) {
+			continue
+		}
+		a, err := loadFailover(dir, s.Harness, s.ID)
+		if err != nil {
+			return nil, err
+		}
+		if a.On == "" || a.On != s.Account {
+			continue
+		}
+		p := profile.Profile{Harness: s.Harness, ID: profile.ID(s.Profile), Account: s.Account}
+		if s.Status == core.Busy || barredUntil(dir, p, b.Fleet.Limits, b.At).IsZero() {
+			a.On = ""
+			if err = saveFailover(dir, s.Harness, a); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if s.Status == core.Idle {
+			out = append(out, core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: a.Recorded, Seen: b.At})
+		}
+	}
+	return out, nil
+}
+
+// copiedStop is a ledger stop older than the session's arrival on the login it is charged to: a switch copies the transcript, so that line is
+// the other login's history.
+func (l launcher) copiedStop(e core.Exhaustion) bool {
+	rec, ok := l.records.Find(e.Session)
+	if !ok || rec.Account != e.Account || !e.Seen.Before(rec.AttachedAt) {
+		return false
+	}
+	m, err := loadMigration(filepath.Dir(l.records.Dir), e.Harness, e.Session)
+	return err == nil && m.Version != 0 && m.Destination.Account == e.Account
 }
 
 // failoverSwitch is the one place ym moves a conversation off an exhausted login by itself, with note as its next message. A refused

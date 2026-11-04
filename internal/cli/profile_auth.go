@@ -20,7 +20,7 @@ var errStatusUnanswered = errors.New("native status check did not answer")
 // statusTimeout is how long a native status check may take: it runs out of serve's pass, and an answer however late is worth having.
 const statusTimeout = time.Minute
 
-// loginUnusable is the login's own answer that it cannot be used, the one failure that says something about it rather than about the attempt.
+// loginUnusable is the login's own answer that it is signed out, the one failure that says something about it rather than about the attempt.
 type loginUnusable struct{ error }
 
 func (e loginUnusable) Unwrap() error { return e.error }
@@ -46,7 +46,7 @@ func switchAuthentication(p profile.Profile, cwd string) error {
 func loginConfigured(p profile.Profile, cwd string) error {
 	login := loginRequired(p)
 	if p.Account == "" || !p.SubscriptionSafe(cwd) {
-		return loginUnusable{fmt.Errorf("%s", login)}
+		return fmt.Errorf("%s", login)
 	}
 	if p.Harness == "codex" {
 		var auth struct {
@@ -54,7 +54,7 @@ func loginConfigured(p profile.Profile, cwd string) error {
 		}
 		data, err := os.ReadFile(filepath.Join(p.Root, "auth.json"))
 		if err != nil || json.Unmarshal(data, &auth) != nil || auth.Mode != "chatgpt" {
-			return loginUnusable{fmt.Errorf("%s (ChatGPT subscription authentication required)", login)}
+			return fmt.Errorf("%s (ChatGPT subscription authentication required)", login)
 		}
 	}
 	return nil
@@ -80,7 +80,7 @@ func nativeStatus(p profile.Profile, timeout time.Duration) error {
 		return fmt.Errorf("%s: %w", login, errStatusUnanswered)
 	}
 	if err != nil {
-		return loginUnusable{fmt.Errorf("%s (native status unavailable or logged out)", login)}
+		return fmt.Errorf("%s (native status unavailable or logged out)", login)
 	}
 	if p.Harness == "claude" {
 		var status struct {
@@ -92,7 +92,7 @@ func nativeStatus(p profile.Profile, timeout time.Duration) error {
 		}
 	}
 	if profile.Identity(p) != p.Account {
-		return loginUnusable{fmt.Errorf("%s (native account changed)", login)}
+		return fmt.Errorf("%s (native account changed)", login)
 	}
 	return nil
 }

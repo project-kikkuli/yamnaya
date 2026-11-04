@@ -36,8 +36,8 @@ type wireWorld struct {
 const wireIdle = "✻ Done\n────────────────\n❯ \n────────────────\n"
 
 const wireClaude = `#!/bin/bash
-case " $* " in *" auth status "*|*" login status "*) [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false}'; exit 0; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
-root="$CLAUDE_CONFIG_DIR"
+case " $* " in *" auth status "*|*" login status "*) [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/fail" ] && exit 3; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false}'; exit 0; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
+root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
 printf '%s %s %s\n' "$YAMNAYA_PROFILE" "$CLAUDE_SECURESTORAGE_CONFIG_DIR" "$root" >> "$WIRE_LOG.env"
@@ -58,7 +58,7 @@ func wireTurn(id string, at time.Time) string {
 `, id, at.Add(-time.Minute).UTC().Format(time.RFC3339Nano), id, at.UTC().Format(time.RFC3339Nano))
 }
 
-func newWireWorld(t *testing.T) *wireWorld {
+func newWireWorld(t *testing.T, inherited ...string) *wireWorld {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -79,6 +79,14 @@ func newWireWorld(t *testing.T) *wireWorld {
 	}
 	t.Setenv(profile.EnvKey("claude"), t.TempDir())
 	t.Setenv(profile.EnvKey("codex"), t.TempDir())
+	if len(inherited) > 0 {
+		for _, k := range []string{"CLAUDE_SECURESTORAGE_CONFIG_DIR", "YAMNAYA_PROFILE"} {
+			os.Unsetenv(k)
+		}
+		t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", inherited[0])
+		os.Unsetenv(profile.EnvKey("claude"))
+		t.Setenv("HOME", state)
+	}
 	if err := os.WriteFile(filepath.Join(bins, "claude"), []byte(wireClaude), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -344,8 +352,8 @@ func TestWireARowBelowEvidenceRefreshedEveryPassCannotLoopARestart(t *testing.T)
 		seven float64
 		lifts int
 	}{
-		{name: "89%", five: -1, seven: 89, lifts: 1},
-		{name: "20%", five: -1, seven: 20, lifts: 1},
+		{name: "89%", five: -1, seven: 89},
+		{name: "20%", five: -1, seven: 20},
 		{name: "91% is no evidence", five: -1, seven: 91},
 		{name: "one window low, one at its limit", five: 40, seven: 100},
 	} {
@@ -567,7 +575,7 @@ func TestWireAFailedStopWhileContinuingIsTriedAgain(t *testing.T) {
 	if after := w.bar(t, w.def); !after.Until.Equal(stop.Until) {
 		t.Fatalf("a failed stop changed the bar: %+v", after)
 	}
-	w.pass(t, 2*time.Minute)
+	w.pass(t, selfContinueGrace+time.Minute)
 	if got := len(w.starts(t)); got != 2 {
 		t.Fatalf("%d landings after the stop could work", got)
 	}
@@ -898,7 +906,7 @@ func TestWireARefreshedRowCannotLoopARealDialog(t *testing.T) {
 				w.pass(t, time.Minute)
 				w.row(t, w.def, -1, 50, reset)
 			}
-			if got := len(w.starts(t)); got > 2 {
+			if got := len(w.starts(t)); got != 1 {
 				t.Fatalf("%d landings in 8 passes: %+v", got, w.bar(t, w.def))
 			}
 		})
@@ -1310,11 +1318,24 @@ func TestOneLandingClaimsTheAttemptAfterAStop(t *testing.T) {
 
 // Claude stores its credentials where this variable points, so an inherited one would run a login on another's account.
 func TestWireALaunchNeverKeepsAnInheritedCredentialStore(t *testing.T) {
-	for _, id := range []string{"default", "claude-work"} {
-		t.Run(id, func(t *testing.T) {
-			w := newWireWorld(t)
-			t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/wrong/credentials")
-			if id != "default" {
+	for _, c := range []struct {
+		name  string
+		login string
+		fresh bool
+	}{
+		{name: "default, inherited after its state dir", login: "default"},
+		{name: "claude-work, inherited after its state dir", login: "claude-work"},
+		{name: "default, inherited as its state dir was made", login: "default", fresh: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var w *wireWorld
+			if c.fresh {
+				w = newWireWorld(t, "/wrong/credentials")
+			} else {
+				w = newWireWorld(t)
+				t.Setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "/wrong/credentials")
+			}
+			if c.login != "default" {
 				setRecordProfile(&w.rec, w.work)
 				if err := w.l.records.Save(w.rec); err != nil {
 					t.Fatal(err)
@@ -1495,19 +1516,47 @@ func countPorts(w *wireWorld) *int {
 	return &ports
 }
 
-// A check that does not answer says nothing about a login: it never costs it its place, and the port, which has no way back, waits for an answer.
-func TestWireAnUnansweredCheckNeverPortsASession(t *testing.T) {
+// The one gate on a port, by every route: only positive evidence about every other login of the harness opens it, and anything else keeps the
+// session on its login with the reason on its row.
+func TestWirePortGate(t *testing.T) {
+	put := func(file string) func(*testing.T, *wireWorld) {
+		return func(t *testing.T, w *wireWorld) { putProfileFile(t, filepath.Join(w.work.Root, file), "") }
+	}
 	for _, c := range []struct {
-		name, check string
-		timeout     time.Duration
-		lands       bool
-		ports       bool
+		name    string
+		setup   func(*testing.T, *wireWorld)
+		timeout time.Duration
+		lands   bool
+		ports   bool
 	}{
-		{name: "times out once then answers usable", check: "slow", lands: true},
-		{name: "always takes 5s", check: "five", lands: true},
-		{name: "never answers", check: "hang"},
-		{name: "slower than the timeout", check: "hang", timeout: 2 * time.Second},
-		{name: "answers unusable", check: "out", ports: true},
+		{name: "evidence: a row at its limit", ports: true, setup: func(t *testing.T, w *wireWorld) { w.exhaust(t, w.work) }},
+		{name: "evidence: a stated reset", ports: true, setup: func(t *testing.T, w *wireWorld) {
+			if err := recordStop(w.state, w.work, *w.clock, w.clock.Add(time.Hour), nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "evidence: an answered sign-out", ports: true, setup: put("out")},
+		{name: "unknown: times out once, then answers usable", lands: true, setup: put("slow")},
+		{name: "unknown: always takes 5s", lands: true, setup: put("five")},
+		{name: "unknown: never answers", setup: put("hang")},
+		{name: "unknown: slower than the timeout", timeout: 2 * time.Second, setup: put("hang")},
+		{name: "unknown: a status that exits non-zero", setup: put("fail")},
+		{name: "unknown: another session's guessed bar", setup: func(t *testing.T, w *wireWorld) {
+			if err := recordStop(w.state, w.work, *w.clock, time.Time{}, nil); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unknown: a claim", setup: func(t *testing.T, w *wireWorld) {
+			if err := updateBar(w.state, w.work, func(b *loginBar) error { b.Claim = w.clock.Add(time.Hour); return nil }); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "unknown: a truncated identity", setup: func(t *testing.T, w *wireWorld) {
+			putProfileFile(t, filepath.Join(w.work.Root, ".claude.json"), "{")
+		}},
+		{name: "unknown: a truncated settings file", setup: func(t *testing.T, w *wireWorld) {
+			putProfileFile(t, filepath.Join(w.work.Root, "settings.json"), "{")
+		}},
 	} {
 		for _, route := range portRoutes() {
 			t.Run(route.name+"/"+c.name, func(t *testing.T) {
@@ -1516,26 +1565,23 @@ func TestWireAnUnansweredCheckNeverPortsASession(t *testing.T) {
 				w.l.statuses.timeout = c.timeout
 				ports := countPorts(w)
 				route.ready(t, w)
-				putProfileFile(t, filepath.Join(w.work.Root, c.check), "")
-				var last error
+				c.setup(t, w)
 				landed := func() bool {
 					rec, _ := w.l.records.Find(w.rec.Key)
 					return rec.Profile == "claude-work"
 				}
-				for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline) && !landed() && (*ports == 0); time.Sleep(time.Second) {
+				var last error
+				for i, deadline := 0, time.Now().Add(9*time.Second); (i < 3 || c.lands && time.Now().Before(deadline)) && !landed() && *ports == 0; i++ {
 					last = route.attempt(t, w)
+					if c.lands {
+						time.Sleep(time.Second)
+					}
 				}
-				if landed() != c.lands {
-					t.Fatalf("on claude-work %v, want %v; starts %q, last %v, row %q", landed(), c.lands, w.starts(t), last, w.rowText(t))
+				if landed() != c.lands || (*ports > 0) != c.ports {
+					t.Fatalf("on claude-work %v, %d ports; want %v, %v; last %v, row %q", landed(), *ports, c.lands, c.ports, last, w.rowText(t))
 				}
-				if (*ports > 0) != c.ports {
-					t.Fatalf("%d ports, want any %v; last %v, row %q", *ports, c.ports, last, w.rowText(t))
-				}
-				if a, _ := loadFailover(w.state, "claude", profileConversation); !c.ports && a.Failed[w.work.Account].After(*w.clock) {
-					t.Fatalf("an unanswered check held claude-work back: %+v", a.Failed)
-				}
-				if !c.lands && !c.ports && route.name == "a stop on screen" && !strings.Contains(w.rowText(t), "has not answered") {
-					t.Fatalf("row %q", w.rowText(t))
+				if !c.lands && !c.ports && route.name == "a stop on screen" && !strings.Contains(w.rowText(t), "stopped at its limit: ") {
+					t.Fatalf("no reason on the row: %q", w.rowText(t))
 				}
 			})
 		}
@@ -1550,8 +1596,9 @@ func TestWireAFailedSwitchNeverPortsWhileItsLoginCanBeTriedAgain(t *testing.T) {
 			w.addCodex(t)
 			ports := countPorts(w)
 			route.ready(t, w)
+			fails := 1
 			if route.name == "revive of an exited session" {
-				fails, list := 1, w.c.Procs
+				list := w.c.Procs
 				w.c.Procs = func() ([]proc.Proc, error) {
 					if fails > 0 {
 						fails--
@@ -1560,7 +1607,6 @@ func TestWireAFailedSwitchNeverPortsWhileItsLoginCanBeTriedAgain(t *testing.T) {
 					return list()
 				}
 			} else {
-				fails := 1
 				w.c.Signal = func(pid int, sig syscall.Signal) error {
 					if fails > 0 {
 						fails--
@@ -1570,20 +1616,355 @@ func TestWireAFailedSwitchNeverPortsWhileItsLoginCanBeTriedAgain(t *testing.T) {
 				}
 			}
 			var seen []string
-			for i := 0; i < 6; i++ {
-				err := route.attempt(t, w)
-				seen = append(seen, fmt.Sprint(err))
+			for range 6 {
+				seen = append(seen, fmt.Sprint(route.attempt(t, w)))
 				if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile == "claude-work" {
 					break
 				}
 			}
-			if *ports != 0 {
-				t.Fatalf("%d ports: %q", *ports, seen)
-			}
-			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
-				t.Fatalf("on %q, row %q: %q", rec.Profile, w.rowText(t), seen)
+			if rec, _ := w.l.records.Find(w.rec.Key); *ports != 0 || rec.Profile != "claude-work" || fails != 0 {
+				t.Fatalf("%d ports, on %q, fails left %d, row %q: %q", *ports, rec.Profile, fails, w.rowText(t), seen)
 			}
 		})
+	}
+}
+
+// A failover's queued port goes through the gate again until it applies.
+func TestWireAQueuedPortIsReDecidedWhenALoginOfItsHarnessComesBack(t *testing.T) {
+	w := newWireWorld(t)
+	w.addCodex(t)
+	w.land(t)
+	ports := countPorts(w)
+	ps, err := profile.Load(w.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cx, err := profile.Find(ps, "codex", "codex-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := w.l.records.Find(w.rec.Key)
+	if err = saveMigration(w.state, migration{Version: 1, Source: rec, Destination: cx, State: "queued", Since: *w.clock}); err != nil {
+		t.Fatal(err)
+	}
+	if err = saveFailover(w.state, "claude", failoverAttempt{Event: "e", On: w.def.Account, State: core.FailoverState{Session: profileConversation, Profile: "default", Account: w.def.Account, Status: "queued", Target: cx.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	w.exhaust(t, w.def, w.other)
+	if err = recordStop(w.state, w.work, *w.clock, time.Time{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	w.pass(t, time.Minute)
+	if m, _ := loadMigration(w.state, "claude", profileConversation); !strings.Contains(m.Blocked, "guess") && !strings.Contains(m.Blocked, "may still take it") || *ports != 0 {
+		t.Fatalf("migration %+v, %d ports", m, *ports)
+	}
+	w.row(t, w.work, -1, 10, w.clock.Add(24*time.Hour))
+	w.pass(t, time.Minute)
+	w.pass(t, time.Minute)
+	if rec, _ = w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" || *ports != 0 {
+		t.Fatalf("on %q, %d ports", rec.Profile, *ports)
+	}
+}
+
+// addSession lands another conversation on the login, at the screen its login prints.
+func (w *wireWorld) addSession(t *testing.T, i int, p profile.Profile) string {
+	t.Helper()
+	id := fmt.Sprintf("44444444-4444-4444-8444-%012d", i)
+	rec := launch.Record{Key: fmt.Sprintf("more%d", i), Harness: "claude", Session: id, Worktree: launch.Worktree{Path: w.cwd}}
+	setRecordProfile(&rec, p)
+	if err := w.l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	putProfileFile(t, filepath.Join(p.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd), id+".jsonl"), wireTurn(id, w.clock.Add(-time.Minute)))
+	once := w.l
+	once.anyway = true
+	if _, err := once.revive(rec); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestWireOneFailedLandingStopsNobody(t *testing.T) {
+	w := newWireWorld(t)
+	w.exhaust(t, w.work, w.other)
+	w.screen(t, w.def, wireDialog(t), "waiting")
+	w.land(t)
+	more := []string{w.addSession(t, 1, w.def), w.addSession(t, 2, w.def)}
+	time.Sleep(time.Second)
+	w.pass(t, time.Minute)
+	*w.clock = w.bar(t, w.def).Until
+	path := os.Getenv("PATH")
+	t.Setenv("PATH", strings.SplitN(path, ":", 2)[1])
+	for range 3 {
+		*w.clock = w.clock.Add(time.Minute)
+		b, err := w.c.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = w.l.Failover(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", path)
+	b, err := w.c.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range append(more, profileConversation) {
+		if _, alive := b.Session(id); !alive {
+			t.Fatalf("session %s was stopped for a landing that could not happen", id)
+		}
+	}
+	if bar := w.bar(t, w.def); !bar.Claim.After(*w.clock) {
+		t.Fatalf("the failed landing gave up the claim: %+v", bar)
+	}
+}
+
+func TestWireTheFirstLandingAfterAStopClaimsIt(t *testing.T) {
+	t.Run("continuing in place", func(t *testing.T) {
+		w := newWireWorld(t)
+		w.exhaust(t, w.work, w.other)
+		w.screen(t, w.def, wireDialog(t), "waiting")
+		w.land(t)
+		w.addSession(t, 1, w.def)
+		time.Sleep(time.Second)
+		w.pass(t, time.Minute)
+		*w.clock = w.bar(t, w.def).Until
+		before := len(w.starts(t))
+		for range 3 {
+			w.pass(t, 20*time.Second)
+		}
+		if got := len(w.starts(t)) - before; got != 1 {
+			t.Fatalf("%d landings inside the claim", got)
+		}
+	})
+	t.Run("moving onto a login whose stop was never tested", func(t *testing.T) {
+		w := newWireWorld(t)
+		w.addCodex(t)
+		ports := countPorts(w)
+		w.exhaust(t, w.other)
+		if err := recordStop(w.state, w.work, w.clock.Add(-50*time.Hour), time.Time{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		w.screen(t, w.def, wireDialog(t), "waiting")
+		w.land(t)
+		second := w.addSession(t, 1, w.def)
+		time.Sleep(time.Second)
+		for range 3 {
+			w.pass(t, 20*time.Second)
+		}
+		rec, _ := w.l.records.Find(second)
+		first, _ := w.l.records.Find(w.rec.Key)
+		if *ports != 0 || first.Profile == "claude-work" && rec.Profile == "claude-work" {
+			t.Fatalf("%d ports; on %q and %q", *ports, first.Profile, rec.Profile)
+		}
+	})
+}
+
+// A live stop is a wall now, so a reset that reads as already passed is not known: the real footer's bare clock, seen in the hour after that clock.
+func TestWireALiveWallWhoseClockJustPassedKeepsItsBar(t *testing.T) {
+	for _, screen := range []struct{ file, status string }{{"walled-a-first-landing.txt", "idle"}, {"walled-c-after-exit.txt", "waiting"}} {
+		for _, used := range []float64{-1, 50, 99} {
+			t.Run(fmt.Sprintf("%s/row %v", screen.file, used), func(t *testing.T) {
+				w := newWireWorld(t)
+				w.exhaust(t, w.work, w.other)
+				clock := strings.ToLower(time.Now().UTC().Add(-30 * time.Minute).Format("3:04pm"))
+				w.screen(t, w.def, strings.ReplaceAll(wireScreen(t, screen.file), "3am", clock), screen.status)
+				if used >= 0 {
+					w.row(t, w.def, -1, used, w.clock.Add(24*time.Hour))
+				}
+				w.land(t)
+				for range 5 {
+					w.pass(t, time.Minute)
+				}
+				bar := w.bar(t, w.def)
+				if got := len(w.starts(t)); got != 1 || bar.Known || !bar.Until.After(*w.clock) {
+					t.Fatalf("%d landings, bar %+v", got, bar)
+				}
+			})
+		}
+	}
+}
+
+// The dialog's second option has varied, so what identifies it is the rest; with no time in it the reset comes from the hit-limit line.
+func TestWireTheDialogAfterAResumeWithANoteIsAStop(t *testing.T) {
+	for _, used := range []float64{50, 100} {
+		for _, elsewhere := range []bool{true, false} {
+			t.Run(fmt.Sprintf("row %.0f/elsewhere %v", used, elsewhere), func(t *testing.T) {
+				w := newWireWorld(t)
+				putProfileFile(t, w.transcript(t, w.def), wireWall(w.clock.Add(-time.Minute)))
+				text, reset := w.walled(t, "walled-dont-continue.txt")
+				w.row(t, w.def, -1, used, reset)
+				if !elsewhere {
+					w.exhaust(t, w.work, w.other)
+				}
+				w.screen(t, w.def, text, "waiting")
+				w.land(t)
+				w.scan(t)
+				for range 3 {
+					w.pass(t, time.Minute)
+				}
+				rec, _ := w.l.records.Find(w.rec.Key)
+				if elsewhere != (rec.Profile == "claude-work") {
+					t.Fatalf("on %q, row %q", rec.Profile, w.rowText(t))
+				}
+				if bar := w.bar(t, w.def); !bar.Known || !bar.Until.Equal(reset) {
+					t.Fatalf("bar %+v, reset %v", bar, reset)
+				}
+			})
+		}
+	}
+}
+
+// A row can lift a bar only while no stop shows on a screen, and a stop's stated reset stands against it until then.
+func TestWireARowCannotLiftAStopShowingOnScreen(t *testing.T) {
+	w := newWireWorld(t)
+	w.exhaust(t, w.work, w.other)
+	text, reset := w.walled(t, "walled-a-first-landing.txt")
+	w.screen(t, w.def, text, "idle")
+	w.land(t)
+	w.pass(t, time.Minute)
+	for range 3 {
+		w.row(t, w.def, -1, 50, reset)
+		w.pass(t, time.Minute)
+	}
+	if bar := w.bar(t, w.def); !bar.Known || !bar.Until.Equal(reset) || barredUntil(w.state, w.def, w.l.limits(), *w.clock).IsZero() {
+		t.Fatalf("a row lifted a stop on screen: %+v", bar)
+	}
+	if !strings.Contains(w.rowText(t), "resets ") || len(w.items(t)) != 1 {
+		t.Fatalf("row %q, items %+v", w.rowText(t), w.items(t))
+	}
+	after, _ := w.walled(t, "walled-b-esc-footer.txt")
+	w.screen(t, w.def, after, "idle")
+	time.Sleep(300 * time.Millisecond)
+	w.pass(t, time.Minute)
+	w.row(t, w.def, -1, 50, reset)
+	w.pass(t, time.Minute)
+	if got := barredUntil(w.state, w.def, w.l.limits(), *w.clock); !got.IsZero() {
+		t.Fatalf("still barred with the stop gone and a newer row: %+v", w.bar(t, w.def))
+	}
+}
+
+// Esc cancels Claude's wait, and a stop ym saw stays a stop though only the record holds it now.
+func TestWireASilentDialogSeenBeforeEscStaysAStop(t *testing.T) {
+	w := newWireWorld(t)
+	w.exhaust(t, w.def, w.work, w.other)
+	text, _ := w.walled(t, "walled-c-after-esc.txt")
+	w.screen(t, w.def, text, "waiting")
+	w.land(t)
+	w.pass(t, time.Minute)
+	after, _ := w.walled(t, "walled-d-esc-dialog.txt")
+	w.screen(t, w.def, after, "idle")
+	time.Sleep(300 * time.Millisecond)
+	w.pass(t, time.Minute)
+	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
+		t.Fatalf("on %q", rec.Profile)
+	}
+	w.row(t, w.work, -1, 10, w.clock.Add(24*time.Hour))
+	for range 2 {
+		w.pass(t, time.Minute)
+	}
+	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
+		t.Fatalf("still on %q, row %q", rec.Profile, w.rowText(t))
+	}
+}
+
+// A switch copies the transcript, so a stop line older than the session's arrival is the other login's history.
+func TestWireACopiedStopLineIsChargedToNoOne(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		fresh bool
+	}{{name: "a copied line"}, {name: "a stop after it arrived", fresh: true}} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			putProfileFile(t, w.transcript(t, w.def), wireWall(time.Now().Add(-time.Hour)))
+			w.screen(t, w.def, wireDialog(t), "waiting")
+			w.land(t)
+			w.pass(t, time.Minute)
+			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
+				t.Fatalf("on %q", rec.Profile)
+			}
+			if c.fresh {
+				f, err := os.OpenFile(w.transcript(t, w.work), os.O_APPEND|os.O_WRONLY, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fmt.Fprint(f, wireWall(time.Now().Add(time.Minute)))
+				f.Close()
+			}
+			w.scan(t)
+			w.row(t, w.work, -1, 100, w.clock.Add(24*time.Hour))
+			w.pass(t, time.Minute)
+			if got := !w.bar(t, w.work).Stopped.IsZero(); got != c.fresh {
+				t.Fatalf("stop on claude-work %v, want %v: %+v", got, c.fresh, w.bar(t, w.work))
+			}
+		})
+	}
+}
+
+func TestConcurrentFilingFilesOneItemAndClosingFindsAny(t *testing.T) {
+	w := newWireWorld(t)
+	if err := recordStop(w.state, w.def, *w.clock, time.Time{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := profile.Load(w.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := w.l.noteLogin(w.state, ps, w.def, profileConversation, nil, *w.clock); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if items := w.items(t); len(items) != 1 {
+		t.Fatalf("%d items", len(items))
+	}
+	if err = updateBar(w.state, w.def, func(b *loginBar) error { b.Item, b.Filing, b.Said = "", time.Time{}, ""; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err = w.l.noteLogin(w.state, ps, w.def, profileConversation, nil, *w.clock); err != nil {
+		t.Fatal(err)
+	}
+	if err = w.l.closeLoginItem(w.state, w.def, "usable"); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range w.items(t) {
+		if it.State == core.ItemOpen {
+			t.Fatalf("an orphan stayed open: %+v", it)
+		}
+	}
+}
+
+// A login the owner names takes that one hit with a warning, as ym switch does, and the stop it meets moves the session on.
+func TestWireNamingABarredLoginWarnsAndAStopMovesItOn(t *testing.T) {
+	w := newWireWorld(t)
+	if err := recordStop(w.state, w.def, *w.clock, w.clock.Add(time.Hour), nil); err != nil {
+		t.Fatal(err)
+	}
+	w.screen(t, w.def, wireDialog(t), "waiting")
+	dir := filepath.Join(w.state, "fresh")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started, err := w.l.Start(core.NewLaunch{Harness: "claude", Directory: dir, Slug: "named", Prompt: "go", Profile: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(started.Message, "login default is out of its subscription limit until") {
+		t.Fatalf("no warning: %q", started.Message)
+	}
+	if rec, ok := w.l.records.Find(started.Key); !ok || rec.Profile != "default" {
+		t.Fatalf("the login the owner named was not used: %+v", rec)
+	}
+	unnamed, err := w.l.selectProfile("claude", "")
+	if err != nil || unnamed.ID == "default" {
+		t.Fatalf("an unnamed launch took the barred login: %+v, %v", unnamed, err)
 	}
 }
 
@@ -1629,18 +2010,18 @@ func TestABarredOtherHarnessCannotBePortedOnto(t *testing.T) {
 	subscriptionIdentity(t, &cx)
 	now := *w.clock
 	for _, p := range []profile.Profile{w.def, w.work, w.other} {
-		if err = recordStop(w.state, p, now, time.Time{}, nil); err != nil {
+		if err = recordStop(w.state, p, now, now.Add(time.Hour), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	dest := func() (profile.Profile, error) {
 		ps, _ := profile.Load(w.state)
-		return failoverDestination(usableLogins(w.state, failoverAttempt{}, ps, nil, now), core.Exhaustion{Harness: "claude", Account: w.def.Account}, w.cwd, nil)
+		return w.l.destination(w.state, failoverAttempt{}, ps, core.Exhaustion{Harness: "claude", Profile: "default", Account: w.def.Account}, w.cwd, nil, now)
 	}
 	if got, err := dest(); err != nil || got.Harness != "codex" {
 		t.Fatalf("every claude login barred: %+v, %v", got, err)
 	}
-	if err = recordStop(w.state, cx, now, time.Time{}, nil); err != nil {
+	if err = recordStop(w.state, cx, now, now.Add(time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := dest(); err == nil {

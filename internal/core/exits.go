@@ -41,7 +41,7 @@ func exitText(state string) string {
 	return strings.Replace(state, "exited", "exited with status", 1)
 }
 
-// NoticeStuckSwitch tells whoever runs session, once, that a switch which stopped it has not been able to bring it back.
-func (c *Core) NoticeStuckSwitch(b Board, session, text string) error {
-	return c.noticeAgent(b, b.Org, session, EventAgentStopped, text, "switch-stuck\x00"+session)
+// NoticeStuckSwitch tells whoever runs session, once for each switch, that one which stopped it has not been able to bring it back.
+func (c *Core) NoticeStuckSwitch(b Board, session string, episode int64, text string) error {
+	return c.noticeAgent(b, b.Org, session, EventAgentStopped, text, fmt.Sprintf("switch-stuck\x00%s\x00%d", session, episode))
 }

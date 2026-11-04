@@ -178,7 +178,6 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	return scopedArgv(rec, argv), nil
 }
 
-// transcript is the path of rec's conversation, empty when its harness keeps none.
 // conversation is the path of rec's conversation, empty when it verifiably has none, and an error when ym cannot tell. Only verified
 // absence lets anything start over in its place.
 func conversation(rec launch.Record) (string, error) {
@@ -191,6 +190,7 @@ func conversation(rec launch.Record) (string, error) {
 	return recordClaude(rec).Conversation(rec.Session)
 }
 
+// transcript is the path of rec's conversation, empty when its harness keeps none.
 func transcript(rec launch.Record) string {
 	if rec.Session == "" {
 		return ""
@@ -548,7 +548,13 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 			return core.Started{}, err
 		}
 	}
-	return l.started(rec), nil
+	started := l.started(rec)
+	if n.Profile != "" {
+		if until := barredUntil(filepath.Dir(l.records.Dir), selected, l.limits(), l.now()); !until.IsZero() {
+			started.Message += fmt.Sprintf("\nlogin %s is out of its subscription limit until %s; ym moves this session once it stops there", selected.ID, quotaReset(until))
+		}
+	}
+	return started, nil
 }
 
 func (l launcher) started(rec launch.Record) core.Started {

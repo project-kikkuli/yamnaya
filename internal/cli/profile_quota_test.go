@@ -1998,11 +1998,11 @@ func TestARecoveredPortWaitsForWhatHoldsIt(t *testing.T) {
 		// told is how many times its manager hears it cannot come back.
 		told int
 	}{
-		{name: "ym off", blocker: heldOff, hold: func(t *testing.T, w queueWorld, _ profile.Profile) func() {
+		{name: "ym off", blocker: heldOff, told: 1, hold: func(t *testing.T, w queueWorld, _ profile.Profile) func() {
 			w.l.core.Store.SetOff(ported, true)
 			return func() { w.l.core.Store.SetOff(ported, false) }
 		}},
-		{name: "throttled", blocker: heldThrottled, hold: func(t *testing.T, w queueWorld, _ profile.Profile) func() {
+		{name: "throttled", blocker: heldThrottled, told: 1, hold: func(t *testing.T, w queueWorld, _ profile.Profile) func() {
 			dir := t.TempDir()
 			if err := (pressure.Throttle{Blanket: true}).Save(dir); err != nil {
 				t.Fatal(err)

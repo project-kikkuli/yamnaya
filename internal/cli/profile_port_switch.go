@@ -191,15 +191,15 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	if state == "running" || rec.IsLanded() || rec.Killed.After(m.Since) {
 		return done()
 	}
-	if l.core.Off(rec.Session) {
-		return l.holdPending(m, heldOff)
-	}
-	if b.ThrottleHolds(rec.Session) || b.ThrottleHolds(m.Source.Session) {
-		return l.holdPending(m, heldThrottled)
-	}
 	stuck := func(why string) error {
 		text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s, and its port is written but cannot come back yet: %s. ym keeps trying; ym revive %s brings it back by hand.", core.Short(rec.Session), rec.Key, m.Destination.ID, why, rec.Key)
-		return errors.Join(l.core.NoticeStuckSwitch(b, rec.Session, text), l.holdPending(m, why))
+		return errors.Join(l.core.NoticeStuckSwitch(b, rec.Session, m.Since.Unix(), text), l.holdPending(m, why))
+	}
+	if l.core.Off(rec.Session) {
+		return stuck(heldOff)
+	}
+	if b.ThrottleHolds(rec.Session) || b.ThrottleHolds(m.Source.Session) {
+		return stuck(heldThrottled)
 	}
 	if out := l.loginOut(m.Destination); !out.IsZero() {
 		return stuck(fmt.Sprintf("%s is out of its subscription limit until %s", m.Destination.ID, quotaReset(out)))

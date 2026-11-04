@@ -17,7 +17,7 @@ import (
 )
 
 // dialogTail matches the quota dialog read with no spaces or line breaks, as a narrow pane wraps it anywhere.
-var dialogTail = regexp.MustCompile(`^Whatdoyouwanttodo\?1\.Stopandwaitforlimittoreset2\.Waithere,thencontinueautomaticallyat(.*)3\.SwitchtousagecreditsEntertoconfirm·Esctocancel$`)
+var dialogTail = regexp.MustCompile(`^Whatdoyouwanttodo\?1\.Stopandwaitforlimittoreset2\.(.*)3\.SwitchtousagecreditsEntertoconfirm·Esctocancel$`)
 
 // quotaDialogLines are the screen's lines with a quota dialog at the bottom put back as the five lines it is at full width, however the
 // pane wrapped it, so what is above it can be read as it stands.
@@ -37,7 +37,7 @@ func quotaDialogLines(text string) []string {
 		if m == nil {
 			continue
 		}
-		return append(slices.Clone(lines[:start]), "What do you want to do?", "1. Stop and wait for limit to reset", "2. Wait here, then continue automatically at "+m[1], "3. Switch to usage credits", "Enter to confirm · Esc to cancel")
+		return append(slices.Clone(lines[:start]), "What do you want to do?", "1. Stop and wait for limit to reset", "2. "+m[1], "3. Switch to usage credits", "Enter to confirm · Esc to cancel")
 	}
 	return lines
 }
@@ -48,7 +48,7 @@ func (a *Adapter) QuotaDialog(text string) bool {
 		return false
 	}
 	end := lines[len(lines)-5:]
-	if end[0] != "What do you want to do?" || end[1] != "1. Stop and wait for limit to reset" || !strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") || end[3] != "3. Switch to usage credits" || end[4] != "Enter to confirm · Esc to cancel" {
+	if end[0] != "What do you want to do?" || end[1] != "1. Stop and wait for limit to reset" || !strings.HasPrefix(end[2], "2. ") || end[3] != "3. Switch to usage credits" || end[4] != "Enter to confirm · Esc to cancel" {
 		return false
 	}
 	above := lines[max(0, len(lines)-9) : len(lines)-5]
@@ -73,14 +73,14 @@ func silentQuotaDialog(text string) bool {
 	}
 	end := lines[len(lines)-5:]
 	rule := dialogRule.MatchString(lines[len(lines)-6])
-	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
+	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
 }
 
 // quotaFooter matches the footer read with no spaces or line breaks.
 var quotaFooter = regexp.MustCompile(`^⚠Usagelimitreached·limitresets(.+?)Continuingautomaticallyat.+?·esctocancel`)
 
-// hitLimitZone finds the zone on the hit-limit line, the one place a clock-only reset says which it means.
-var hitLimitZone = regexp.MustCompile(`You'vehityour(?:weekly)?limit·resets[^(]*\(([^)]+)\)`)
+// hitLimitLine is the hit-limit line read with no spaces: when the limit resets, and the one place a clock-only reset says which zone it means.
+var hitLimitLine = regexp.MustCompile(`You['’]vehityour(?:weekly)?limit·resets((?:[A-Z][a-z]{2}\d{1,2},)?\d{1,2}(?::\d{2})?(?:am|pm))(?:\(([^)]+)\))?`)
 
 // footerStop reads the footer Claude shows when a turn hits the limit, and what it says about the reset. It sits below the input box, under
 // the box's closing rule: anything typed or pasted is above that rule, and anything a reply prints is above the box.
@@ -112,21 +112,34 @@ func footerStop(text string, now time.Time) (time.Time, bool) {
 	return readReset(text, m[1], now), true
 }
 
+// hitLine is the last hit-limit line on the screen, nil with none.
+func hitLine(text string) []string {
+	all := hitLimitLine.FindAllStringSubmatch(strings.Join(strings.Fields(text), ""), -1)
+	if len(all) == 0 {
+		return nil
+	}
+	return all[len(all)-1]
+}
+
 // readReset reads a reset on the screen, in the zone the screen's hit-limit line names when it names one itself.
 func readReset(text, reset string, now time.Time) time.Time {
-	if m := hitLimitZone.FindStringSubmatch(strings.Join(strings.Fields(text), "")); m != nil && !strings.Contains(reset, "(") {
-		reset += "(" + m[1] + ")"
+	if m := hitLine(text); m != nil && m[2] != "" && !strings.Contains(reset, "(") {
+		reset += "(" + m[2] + ")"
 	}
 	return parseQuotaReset(reset, now)
 }
 
-// dialogReset is the time the quota dialog's second option names, zero when no such dialog shows.
+// dialogReset is when the quota dialog says the limit resets: the time its second option names when it names one, else the hit-limit line's.
 func dialogReset(text string, now time.Time) time.Time {
 	lines := quotaDialogLines(text)
-	for _, line := range lines[max(0, len(lines)-5):] {
-		if at, ok := strings.CutPrefix(line, "2. Wait here, then continue automatically at "); ok {
-			return readReset(text, strings.ReplaceAll(at, " ", ""), now)
-		}
+	if len(lines) < 5 || lines[len(lines)-5] != "What do you want to do?" {
+		return time.Time{}
+	}
+	if _, at, ok := strings.Cut(strings.ReplaceAll(lines[len(lines)-3], " ", ""), "automaticallyat"); ok {
+		return readReset(text, at, now)
+	}
+	if m := hitLine(text); m != nil {
+		return readReset(text, m[1], now)
 	}
 	return time.Time{}
 }
@@ -189,7 +202,7 @@ func (a *Adapter) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, 
 	reset, footer := footerStop(text, now())
 	if !footer {
 		reset = dialogReset(text, now())
-		if !silentQuotaDialog(text) || a.QuotaDialog(text) {
+		if !silentQuotaDialog(text) {
 			return core.QuotaStop{Reset: reset}, false, nil
 		}
 	}
