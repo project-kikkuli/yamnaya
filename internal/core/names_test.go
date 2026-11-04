@@ -1728,3 +1728,66 @@ func TestARenameLeavesAnOldFromLineSayingTheNameOnce(t *testing.T) {
 		t.Fatalf("from %q, %v", got.Dossier.From, err)
 	}
 }
+
+func TestAnItemFromBeforeNamesFollowsItsChief(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		from  string
+		scope string
+		state string
+		via   string
+		want  string
+	}{
+		{name: "open, waiting on a chief, a backfill then a rename", from: "chief Sub Chief (ID)", scope: "/src/app/.git", state: ItemOpen, via: "backfill", want: "chief under-chief"},
+		{name: "closed, a backfill then a rename", from: "chief Sub Chief (ID)", scope: "/src/app/.git", state: ItemDismissed, via: "backfill", want: "chief under-chief"},
+		{name: "already backfilled, settled at serve start", from: "chief Sub Chief (ID)", scope: "/src/app/.git", state: ItemOpen, via: "settle", want: "chief under-chief"},
+		{name: "its id lost, the chief's workspace left", from: "chief Sub Chief", scope: "/state/chiefs/ID", state: ItemOpen, via: "settle", want: "chief under-chief"},
+		{name: "an agent of the chief", from: "agent 9e99c130, working for chief Sub Chief (ID)", scope: "/src/app/.git", state: ItemOpen, via: "settle", want: "agent 9e99c130, working for chief under-chief"},
+		{name: "another chief's item stays", from: "chief Other Chief (mgr77)", scope: "/src/app/.git", state: ItemOpen, via: "settle", want: "chief Other Chief"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "" }
+			boss := w.chief(t, "sub-chief")
+			_, m := w.goal(t, "anything", "/repo/august")
+			it, err := w.core.Store.AddItem(Item{Kind: KindDecision, Question: "q", Session: m.Session, Recipient: boss.ID, Scope: strings.ReplaceAll(tc.scope, "ID", boss.ID)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.Store.SaveDossier(it.Seq, Dossier{From: strings.ReplaceAll(tc.from, "ID", boss.ID)}); err != nil {
+				t.Fatal(err)
+			}
+			if tc.state != ItemOpen {
+				if _, err := w.core.Store.Transition(it.Key(), tc.state, "done with"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.via == "backfill" {
+				if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET name='Sub Chief' WHERE 'mgr'||num=?`, boss.ID); err != nil {
+					t.Fatal(err)
+				}
+				w.core.Store.invalidate()
+				if _, err := w.core.NameUnnamed(); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := w.core.SettleItemFroms(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.core.Rename(boss.ID, "under-chief"); err != nil {
+				t.Fatal(err)
+			}
+			got, err := w.core.Store.Item(it.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := DossierLines(got.Dossier)
+			at := slices.IndexFunc(lines, func(l [2]string) bool { return l[0] == "from" })
+			if at < 0 || lines[at][1] != tc.want {
+				t.Fatalf("from %v, want %q; stored %+v", lines, tc.want, got.Dossier)
+			}
+			if n, err := w.core.SettleItemFroms(); err != nil || n != 0 {
+				t.Fatalf("settling again changed %d, %v", n, err)
+			}
+		})
+	}
+}

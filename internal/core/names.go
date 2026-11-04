@@ -368,11 +368,21 @@ func nameIn(text, name string, olds []string) string {
 
 var nameInBrackets = regexp.MustCompile(`([a-z0-9-]+) \(([a-z0-9-]+)\)`)
 
-// oneName is a from line with a name once: lines from before names read "manager x (mgr1)", which a rename would turn into "manager x (x)".
-func oneName(from string) string {
+// noStutter is a from line with no "manager x (x)", which a rename makes of a line from before names. An id it still holds stays stored:
+// it is how a later rename finds who the line means.
+func noStutter(from string) string {
 	return nameInBrackets.ReplaceAllStringFunc(from, func(hit string) string {
-		m := nameInBrackets.FindStringSubmatch(hit)
-		if m[1] == m[2] || idShaped.MatchString(m[2]) {
+		if m := nameInBrackets.FindStringSubmatch(hit); m[1] == m[2] {
+			return m[1]
+		}
+		return hit
+	})
+}
+
+// oneName is a from line as a person reads it, with a name once and no id.
+func oneName(from string) string {
+	return nameInBrackets.ReplaceAllStringFunc(noStutter(from), func(hit string) string {
+		if m := nameInBrackets.FindStringSubmatch(hit); idShaped.MatchString(m[2]) {
 			return m[1]
 		}
 		return hit
@@ -645,15 +655,76 @@ func (c *Core) renameInItems(id, name string, olds []string) error {
 		return err
 	}
 	for _, it := range items {
-		if it.Dossier.Goal == id || it.Dossier.Chief == id {
-			d := it.Dossier
-			d.GoalName, d.From = name, oneName(nameIn(d.From, name, olds))
-			if err := c.Store.SaveDossier(it.Seq, d); err != nil {
-				return err
-			}
+		d := it.Dossier
+		owned := fromOwner(it) == id
+		if d.Goal != id && d.Chief != id && !owned {
+			continue
+		}
+		if owned {
+			d = ownedBy(it, id, name)
+		}
+		if d.Goal == id || d.Chief == id {
+			d.GoalName = name
+		}
+		d.From = noStutter(nameIn(d.From, name, olds))
+		if err := c.Store.SaveDossier(it.Seq, d); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+var fromWithID = regexp.MustCompile(`\b(chief|manager) .+? \((mgr[0-9]+)\)`)
+
+// fromOwner is the manager or chief a stored item comes from when only its words say so: a from line from before names, "chief x (mgr8)",
+// or the workspace of the chief that filed it. A dossier from then has no link to it.
+func fromOwner(it Item) string {
+	if m := fromWithID.FindStringSubmatch(it.Dossier.From); m != nil {
+		return m[2]
+	}
+	if n := ScopeName(it.Scope); strings.HasPrefix(n, "mgr") && idShaped.MatchString(n) && it.Dossier.Goal == "" && it.Dossier.Chief == "" {
+		return n
+	}
+	return ""
+}
+
+// ownedBy is it's dossier linked to the manager or chief id, its from line by name, so a later rename reaches it by the link.
+func ownedBy(it Item, id, name string) Dossier {
+	d := it.Dossier
+	if m := fromWithID.FindStringSubmatch(d.From); m != nil && m[2] == id {
+		d.From = strings.Replace(d.From, m[0], m[1]+" "+name, 1)
+	} else if strings.HasPrefix(d.From, "chief ") {
+		d.From = "chief " + name
+	}
+	if d.Goal == "" {
+		d.Chief, d.GoalName = id, name
+	}
+	return d
+}
+
+// SettleItemFroms links every stored item whose from line or workspace is all that says who it comes from, once that one has a name.
+func (c *Core) SettleItemFroms() (int, error) {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return 0, err
+	}
+	items, err := c.Store.Items(ItemFilter{})
+	if err != nil {
+		return 0, err
+	}
+	settled := 0
+	var errs []error
+	for _, it := range items {
+		m, ok := o.Managers[fromOwner(it)]
+		if !ok || !validName.MatchString(m.Name) {
+			continue
+		}
+		err := c.Store.SaveDossier(it.Seq, ownedBy(it, m.ID, m.Name))
+		if errs = append(errs, err); err == nil {
+			settled++
+		}
+	}
+	return settled, errors.Join(errs...)
 }
 
 // settleParents turns a chief on another host, stored by name because its board had not shown it yet, into its id once o, merged

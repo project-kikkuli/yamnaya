@@ -126,6 +126,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 				if n, err := e.core.BetterNames(); err != nil || n > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), "renamed %d goals named when the namer failed: %v\n", n, err)
 				}
+				if n, err := e.core.SettleItemFroms(); err != nil || n > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "settled %d items' from lines: %v\n", n, err)
+				}
 				if err := e.core.LearnHostNames(); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "host names: %v\n", err)
 				}
