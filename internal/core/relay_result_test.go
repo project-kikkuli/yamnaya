@@ -2,7 +2,6 @@ package core
 
 import (
 	stderrors "errors"
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -507,8 +506,9 @@ func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
 		{name: "the local chief is killed after the command", underLocal: true, fedAnyway: true, stops: func(t *testing.T, s stage) { kill(t, s, s.local.ID) }},
 		{name: "the local chief is killed before the command", underLocal: true, before: func(t *testing.T, s stage) { kill(t, s, s.local.ID) }},
 	} {
-		for _, final := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s, final %v", tc.name, final), func(t *testing.T) {
+		for _, mode := range []string{"ran", "failing", "final"} {
+			final := mode == "final"
+			t.Run(tc.name+", "+mode, func(t *testing.T) {
 				f := newFleet(t)
 				chief := f.b.chief(t, "platform")
 				g, m := f.a.goal(t, "ship the fix", "/repo/app")
@@ -540,8 +540,11 @@ func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
 					tc.before(t, s)
 				}
 				f.a.core.RunSelf = func(args ...string) (string, error) {
-					if final {
+					switch mode {
+					case "final":
 						return "", Final(stderrors.New("the marker"))
+					case "failing":
+						return "", stderrors.New("the marker")
 					}
 					return "the marker", nil
 				}
@@ -579,5 +582,81 @@ func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAFailureHandedBackTellsOnlyWhoItWasLeftFromAndOffersOnlyADropThatWorks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// outside has a session the goal's feed does not reach ask, so it heard at the first refusal.
+		outside, carried bool
+		wantDrop         bool
+	}{
+		{name: "a requester the feed never reached", outside: true, wantDrop: true},
+		{name: "a relay this host still holds", wantDrop: true},
+		{name: "a relay another host carried on", carried: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.b.chief(t, "platform")
+			runs := f.a
+			if tc.carried {
+				runs = f.c
+			}
+			g, m := runs.goal(t, "ship the fix", "/repo/app")
+			if err := runs.core.Attach(m.ID, RemoteKey("b", chief.ID)); err != nil {
+				t.Fatal(err)
+			}
+			cycle := func() {
+				t.Helper()
+				for _, w := range []*orgWorld{f.a, f.c} {
+					if err := w.core.Loop(w.board(t)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cycleAll(f, 1)
+				if err := f.b.core.Loop(f.b.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cycle()
+			runs.core.RunSelf = func(args ...string) (string, error) { return "", stderrors.New("the marker") }
+			asks := chief.Session
+			if tc.outside {
+				asks = f.b.chief(t, "elsewhere").Session
+			}
+			f.b.core.Requester = func() string { return asks }
+			host := "a"
+			if tc.carried {
+				host = "c"
+			}
+			if err := f.b.core.AckGoal(RemoteKey(host, g.ID)); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				cycleAll(f, 1)
+			}
+			if _, err := runs.core.KillGoal(runs.board(t), g.ID); err != nil {
+				t.Fatal(err)
+			}
+			for range 5 {
+				cycle()
+			}
+			if n := recorded(t, f.b, asks, "the marker"); n != 1 {
+				t.Errorf("requester told %d times, want once", n)
+			}
+			msgs, err := f.b.core.Store.Messages(asks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range msgs {
+				if strings.Contains(m.Text, "the marker") && strings.Contains(m.Text, "ym relay drop") != tc.wantDrop {
+					t.Errorf("told %q, want drop advice %v", m.Text, tc.wantDrop)
+				}
+			}
+			if items, _ := f.b.core.Store.Items(ItemFilter{}); len(items) != 0 {
+				t.Errorf("b's items %+v, want none", items)
+			}
+		})
 	}
 }

@@ -229,20 +229,23 @@ func (c *Core) relayOutcome(r Relay, ref RelayRef) error {
 	if r.Kind != RelayYM {
 		return nil
 	}
-	if ref.Error != "" && !ref.Final {
-		fed, err := c.leftToFeed(r, ref)
-		if err != nil || fed {
-			return err
-		}
-		return c.tellOutcome(r, ref)
-	}
 	reported, err := c.Store.outcomeReported(r.Seq)
-	if err != nil || reported {
+	if err != nil {
 		return err
 	}
 	fed, err := c.leftToFeed(r, ref)
-	if err != nil || fed {
+	if err != nil {
 		return err
+	}
+	if ref.Error != "" && !ref.Final {
+		// Handed back, it is news only to a session it was left from; any other heard at the first refusal.
+		if fed != ref.Unfed || ref.Unfed && reported {
+			return nil
+		}
+		return c.tellOutcome(r, ref)
+	}
+	if reported || fed && !ref.Unfed {
+		return nil
 	}
 	if err := c.tellOutcome(r, ref); err != nil {
 		return err
@@ -275,11 +278,10 @@ func (c *Core) returnUnfed(o Org) error {
 		if o.feeds(u.ref.Goal, u.ref.Chief) {
 			continue
 		}
-		chief := u.ref.Chief
-		u.ref.Chief = ""
+		u.ref.Unfed = true
 		err := c.Relay(u.ref.Origin, RelayResult, u.ref)
 		if err == nil {
-			err = c.Store.markHeard(chief, []GoalEvent{{Seq: u.event}}, c.now())
+			err = c.Store.markHeard(u.ref.Chief, []GoalEvent{{Seq: u.event}}, c.now())
 		}
 		errs = append(errs, err)
 	}
@@ -322,11 +324,22 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 		}
 		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s: %s", cmd, r.Dest, out), false)
 	case !ref.Final:
+		text := fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle", cmd, r.Dest, oneLine(why))
 		drop := fmt.Sprintf("ym relay drop %d", r.Seq)
 		if ref.Holder != "" {
 			drop = fmt.Sprintf("ym relay drop %d on %s", ref.HolderSeq, ref.Holder)
 		}
-		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle, %s stops it", cmd, r.Dest, oneLine(why), drop), false)
+		if ref.Unfed {
+			// The host handing it back does not know who carried it there.
+			held, err := c.Store.relayHeld(r.Seq)
+			if err != nil {
+				return err
+			}
+			if !held {
+				return c.tell(b, y.Requester, text, false)
+			}
+		}
+		return c.tell(b, y.Requester, text+", "+drop+" stops it", false)
 	}
 	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{cmd},
 		Question: fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why),
@@ -375,7 +388,12 @@ func (s *Store) unfedOutcomes() ([]unfedOutcome, error) {
 	rows, err := s.db.Query(`SELECT r.outcome, e.seq FROM ym_relay_seen r JOIN ym_goal_events e
 		ON e.key = 'relayed:' || r.origin || ':' || r.origin_seq || ':' || IIF(json_extract(r.outcome, '$.final'), 'refused', 'done')
 		WHERE r.outcome != '' AND json_extract(r.outcome, '$.chief') IS NOT NULL AND NOT EXISTS
-		(SELECT 1 FROM ym_goal_event_deliveries d WHERE d.event = e.seq AND d.manager = json_extract(r.outcome, '$.chief'))`)
+		(SELECT 1 FROM ym_goal_event_deliveries d WHERE d.event = e.seq AND d.manager = json_extract(r.outcome, '$.chief'))
+		UNION ALL
+		SELECT f.outcome, e.seq FROM ym_relay_failed f JOIN ym_goal_events e
+		ON e.key = 'relayed:' || f.origin || ':' || f.origin_seq || ':failed'
+		WHERE NOT EXISTS (SELECT 1 FROM ym_relay_seen r WHERE r.origin = f.origin AND r.origin_seq = f.origin_seq) AND NOT EXISTS
+		(SELECT 1 FROM ym_goal_event_deliveries d WHERE d.event = e.seq AND d.manager = json_extract(f.outcome, '$.chief'))`)
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +411,23 @@ func (s *Store) unfedOutcomes() ([]unfedOutcome, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// noteFailedOutcome keeps how a ym command this host ran first failed while it is left to its goal's feed to tell.
+func (s *Store) noteFailedOutcome(ref RelayRef) error {
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT OR IGNORE INTO ym_relay_failed (origin, origin_seq, outcome) VALUES (?, ?, ?)`, ref.Origin, ref.OriginSeq, string(raw))
+	return err
+}
+
+// relayHeld reports whether this host still holds relay seq to send.
+func (s *Store) relayHeld(seq int64) (bool, error) {
+	var held bool
+	err := s.db.QueryRow(`SELECT delivered IS NULL FROM ym_relay WHERE seq = ?`, seq).Scan(&held)
+	return held, err
 }
 
 // ownRelay is the relay this host queued as seq.

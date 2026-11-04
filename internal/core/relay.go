@@ -152,6 +152,8 @@ type RelayRef struct {
 	Goal   string `json:"goal,omitempty"`
 	// Chief is the first chief above Goal on another host, as the host that ran it names it; that chief hears the goal's feed.
 	Chief string `json:"chief,omitempty"`
+	// Unfed is the host that ran it handing it back, because the feed of Goal stopped carrying it to Chief.
+	Unfed bool `json:"unfed,omitempty"`
 	// Holder and HolderSeq are the host carrying a relay on and its row there, once the origin no longer holds it.
 	Holder    string `json:"holder,omitempty"`
 	HolderSeq int64  `json:"holder_seq,omitempty"`
@@ -189,6 +191,12 @@ CREATE TABLE IF NOT EXISTS ym_relay_seen (
 	origin TEXT NOT NULL,
 	origin_seq INTEGER NOT NULL,
 	at INTEGER NOT NULL,
+	PRIMARY KEY (origin, origin_seq)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ym_relay_failed (
+	origin TEXT NOT NULL,
+	origin_seq INTEGER NOT NULL,
+	outcome TEXT NOT NULL,
 	PRIMARY KEY (origin, origin_seq)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS ym_relay_self (
@@ -660,6 +668,11 @@ func (c *Core) Receive(entries []Relay) (failed, done []RelayRef, err error) {
 				}
 			case !errors.Is(err, errUnusable):
 				failed = append(failed, ref)
+				if ref.Chief != "" {
+					if err := c.Store.noteFailedOutcome(ref); err != nil {
+						errs = append(errs, err)
+					}
+				}
 				continue
 			}
 		} else if r.Kind == RelayYM {
