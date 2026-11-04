@@ -43,7 +43,9 @@ type RemoteBoard struct {
 	Waiting  []RemoteWaiting
 	// Self is what the host calls itself; Managers, Goals and ManagerSessions are its goal tree, Standing how each of its managers
 	// and chiefs stands by its own reading.
-	Self             string
+	Self string
+	// Machine is the host's identity, which outlasts its names; empty from a host on an older ym.
+	Machine          string
 	Managers         []Manager
 	Goals            []Goal
 	VerifierSessions map[string]VerifierSession

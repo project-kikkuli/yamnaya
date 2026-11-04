@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ func fleetLine(f core.Fleet, now time.Time, width int, tag func(string) string) 
 	}
 	var labels []string
 	byLabel := map[string][]core.Limit{}
-	for _, l := range f.PerHost {
+	for _, l := range shownOrder(f.PerHost, tag) {
 		if byLabel[l.IdentityLabel()] == nil {
 			labels = append(labels, l.IdentityLabel())
 		}
@@ -67,6 +68,19 @@ func fleetLine(f core.Fleet, now time.Time, width int, tag func(string) string) 
 	return wrapRows("usage", parts, width)
 }
 
+// shownOrder puts this host's rows first, then the others by the name the board shows, keeping each host's own order.
+func shownOrder(rows []core.Limit, tag func(string) string) []core.Limit {
+	out := slices.Clone(rows)
+	shown := func(l core.Limit) string {
+		if l.Host == "" {
+			return ""
+		}
+		return tag(l.Host)
+	}
+	slices.SortStableFunc(out, func(a, b core.Limit) int { return strings.Compare(shown(a), shown(b)) })
+	return out
+}
+
 // wrapItems puts items after label on as many lines as width needs, breaking only between items and indenting each
 // continuation under the first item; width 0 keeps one line.
 func wrapItems(label string, items []string, width int) string {
@@ -77,7 +91,8 @@ func wrapItems(label string, items []string, width int) string {
 	return wrapRows(label, rows, width)
 }
 
-// wrapRows is wrapItems for rows of unbreakable cells: a row that fits no line of its own breaks between its cells.
+// wrapRows is wrapItems for rows of cells: a row that fits no line of its own breaks between its cells, and a cell wider than a whole
+// line breaks across lines, so nothing is cut.
 func wrapRows(label string, rows [][]string, width int) string {
 	const sep = "   "
 	lead := " " + label + " "
@@ -95,7 +110,7 @@ func wrapRows(label string, rows [][]string, width int) string {
 		} else if i > 0 {
 			line, used = line+sep, used+len(sep)
 		}
-		for j, cell := range row {
+		for j, cell := range splitWide(row, width-len(indent)-3) {
 			cw := ansi.StringWidth(cell)
 			if j > 0 && width > 0 && used+1+cw >= width {
 				breakTo(indent + "  ")
@@ -106,6 +121,22 @@ func wrapRows(label string, rows [][]string, width int) string {
 		}
 	}
 	return strings.Join(append(lines, line), "\n")
+}
+
+// splitWide breaks each cell wider than room into cells of at most room columns; room below 1 leaves them whole.
+func splitWide(row []string, room int) []string {
+	if room < 1 {
+		return row
+	}
+	var out []string
+	for _, cell := range row {
+		if ansi.StringWidth(cell) > room {
+			out = append(out, strings.Split(ansi.Hardwrap(cell, room, true), "\n")...)
+		} else {
+			out = append(out, cell)
+		}
+	}
+	return out
 }
 
 // spendText is the spend at API prices and its approximate share of each current limit window.

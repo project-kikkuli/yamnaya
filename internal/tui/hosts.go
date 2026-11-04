@@ -34,6 +34,11 @@ func (m Model) shownHosts() []string {
 			hosts = append(hosts, l.Host)
 		}
 	}
+	for _, r := range m.board.Fleet.Quiet {
+		if !slices.Contains(hosts, r.Host) {
+			hosts = append(hosts, r.Host)
+		}
+	}
 	return hosts
 }
 

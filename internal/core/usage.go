@@ -156,7 +156,9 @@ type Fleet struct {
 	At          time.Time
 	Limits      []Limit
 	// PerHost is each host's own report of each limit, in board order; Limits folds one account's reports into the newest.
-	PerHost  []Limit
+	PerHost []Limit
+	// Quiet are hosts known only by what they relayed whose every window has reset, with when they last reported.
+	Quiet    []RemoteBoard
 	Today    Spend
 	Week     Spend
 	Sessions map[string]SessionSpend

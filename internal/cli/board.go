@@ -30,6 +30,7 @@ type boardJSON struct {
 	Closed []itemJSON `json:"closed,omitempty"`
 	// Self is what this host calls itself; the rest is its goal tree and how each manager and chief stands by this host's reading.
 	Self             string                          `json:"self,omitempty"`
+	Machine          string                          `json:"machine,omitempty"`
 	Managers         []core.Manager                  `json:"managers,omitempty"`
 	Goals            []core.Goal                     `json:"goals,omitempty"`
 	ManagerSessions  map[string]string               `json:"manager_sessions,omitempty"`
@@ -192,6 +193,9 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 	}
 	out.VerifierSessions = b.VerifierSessions
 	out.Self, out.ManagerSessions, out.Standing = c.SelfName(), b.Org.Sessions, map[string]string{}
+	if out.Machine, err = c.Store.MachineID(); err != nil {
+		return out, err
+	}
 	if out.Feeds, err = c.Store.Feeds(); err != nil {
 		return out, err
 	}
@@ -278,7 +282,7 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		r.Waiting = append(r.Waiting, core.RemoteWaiting{Session: w.Session, Line: w.Line, Reply: w.Reply})
 	}
 	r.Self, r.Managers, r.Goals, r.ManagerSessions, r.Standing, r.Feeds, r.Fresh, r.Swollen = j.Self, j.Managers, j.Goals, j.ManagerSessions, j.Standing, j.Feeds, j.Fresh, j.Swollen
-	r.VerifierSessions = j.VerifierSessions
+	r.VerifierSessions, r.Machine = j.VerifierSessions, j.Machine
 	r.Missions, r.GoalStats = j.Missions, j.GoalStats
 	return r
 }

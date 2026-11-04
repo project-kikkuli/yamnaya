@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -42,7 +41,7 @@ func (m Model) usageText() string {
 	if !f.Ready {
 		b.WriteString("reading transcripts; spend fills in once the first scan ends\n")
 	}
-	f.Limits = slices.Clone(f.PerHost)
+	f.Limits = shownOrder(f.PerHost, m.hostTag)
 	for i, l := range f.Limits {
 		f.Limits[i].Host = localHost
 		if l.Host != "" {
@@ -56,6 +55,9 @@ func (m Model) usageText() string {
 		} else if r.Stale || r.Err != nil || r.Late(m.board.At) {
 			b.WriteString("usage on " + m.hostTag(r.Host) + ": last observed " + r.Usage.At.Format(time.RFC3339) + " (" + hostBrief(r, m.board.At) + ")\n")
 		}
+	}
+	for _, r := range f.Quiet {
+		b.WriteString("usage on " + m.hostTag(r.Host) + ": last observed " + r.At.Format(time.RFC3339) + " (every window has reset)\n")
 	}
 	return b.String()
 }

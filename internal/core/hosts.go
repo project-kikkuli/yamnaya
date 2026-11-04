@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS ym_relayed_usage (
 	host TEXT PRIMARY KEY,
 	body TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ym_machine (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	machine TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ym_launch_target (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	host TEXT NOT NULL

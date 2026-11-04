@@ -409,6 +409,11 @@ func (c *Core) SelfName() string {
 	if r, err := c.Store.RelaySelf(); err == nil && r.Name != "" {
 		return r.Name
 	}
+	return osHostName()
+}
+
+// osHostName is this host's own name, which it goes by until a host carrying its relays names it.
+func osHostName() string {
 	h, err := os.Hostname()
 	if err != nil {
 		return "localhost"
@@ -490,7 +495,7 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 		return RelayReply{}, err
 	}
 	if req.Usage != nil && req.From != "" {
-		if err := c.Store.keepRelayedUsage(req.From, *req.Usage); err != nil {
+		if err := c.Store.keepRelayedUsage(req.From, *req.Usage, c.now()); err != nil {
 			return RelayReply{}, err
 		}
 	}

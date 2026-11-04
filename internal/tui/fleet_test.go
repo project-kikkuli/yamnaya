@@ -49,6 +49,7 @@ func fleetModel(t *testing.T, now time.Time, count, width, height int) Model {
 	m, c, _ := setup(t)
 	local, remoteBoards := fleetRows(now, count)
 	c.Meter = meter{local}
+	c.Now = func() time.Time { return now }
 	c.Remotes, c.ShowRemotes = &remotes{boards: remoteBoards}, true
 	m.width, m.height, m.peaks.hidden = width, height, true
 	m = refresh(t, m)
@@ -174,6 +175,47 @@ func TestAFullScreenKeepsTheSelectedRowAndAllItsUsageWhereItFits(t *testing.T) {
 			for _, n := range numbers {
 				if !strings.Contains(view, n) {
 					t.Errorf("the screen lost %q:\n%s", n, view)
+				}
+			}
+		})
+	}
+}
+
+func TestToplineRowsSortByTheNameShown(t *testing.T) {
+	now := time.Date(2026, 11, 3, 21, 5, 41, 0, time.UTC)
+	f := core.Fleet{Ready: true, At: now, PerHost: []core.Limit{
+		{Harness: "claude", Profile: "default", Name: "7d", Used: 1, ResetsAt: now.Add(time.Hour), Seen: now},
+		{Host: "a.example", Harness: "claude", Profile: "default", Name: "7d", Used: 2, ResetsAt: now.Add(time.Hour), Seen: now},
+		{Host: "b.example", Harness: "claude", Profile: "default", Name: "7d", Used: 3, ResetsAt: now.Add(time.Hour), Seen: now},
+		{Host: "c.example", Harness: "claude", Profile: "default", Name: "7d", Used: 4, ResetsAt: now.Add(time.Hour), Seen: now},
+	}}
+	tags := map[string]string{"a.example": "@zulu", "b.example": "@mike", "c.example": "@alpha"}
+	text := ansi.Strip(fleetLine(f, now, 200, func(h string) string { return tags[h] }))
+	at := func(s string) int { return strings.Index(text, s) }
+	if !(at("local") < at("@alpha") && at("@alpha") < at("@mike") && at("@mike") < at("@zulu")) {
+		t.Errorf("rows out of shown order:\n%s", text)
+	}
+}
+
+func TestLongNamesStayWholeAndDistinctAtPhoneWidth(t *testing.T) {
+	now := time.Date(2026, 11, 3, 21, 5, 41, 0, time.UTC)
+	for _, width := range []int{30, 44, 60} {
+		t.Run(fmt.Sprintf("%d cols", width), func(t *testing.T) {
+			long := "@a-very-long-nickname-that-runs-well-past-a-phone-screen-"
+			row := func(host string) core.Limit {
+				return core.Limit{Host: host, Harness: "claude", Profile: "default", Name: "7d", Used: 9, ResetsAt: now.Add(time.Hour), Seen: now}
+			}
+			f := core.Fleet{Ready: true, At: now, PerHost: []core.Limit{row("one"), row("two")}}
+			text := ansi.Strip(fleetLine(f, now, width, func(h string) string { return long + h }))
+			for _, l := range strings.Split(text, "\n") {
+				if ansi.StringWidth(l) >= width {
+					t.Errorf("line of %d columns would be cut at %d: %q", ansi.StringWidth(l), width, l)
+				}
+			}
+			joined := strings.ReplaceAll(strings.Join(strings.Fields(text), ""), " ", "")
+			for _, h := range []string{"one", "two"} {
+				if !strings.Contains(joined, long+h) {
+					t.Errorf("%s not whole in\n%s", long+h, text)
 				}
 			}
 		})
