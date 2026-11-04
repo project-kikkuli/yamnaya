@@ -2,9 +2,11 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
 
@@ -49,9 +51,15 @@ func (m Model) usageText() string {
 		}
 	}
 	usage.Render(&b, f, m.host, 15)
+	relayed := func(host string) bool {
+		return slices.ContainsFunc(f.PerHost, func(l core.Limit) bool { return l.Host == host }) ||
+			slices.ContainsFunc(f.Quiet, func(q core.RemoteBoard) bool { return q.Host == host })
+	}
 	for _, r := range m.board.Remotes {
 		if r.Usage == nil {
-			b.WriteString("usage on " + m.hostTag(r.Host) + ": unknown; snapshot has no profile usage\n")
+			if !relayed(r.Host) {
+				b.WriteString("usage on " + m.hostTag(r.Host) + ": unknown; snapshot has no profile usage\n")
+			}
 		} else if r.Stale || r.Err != nil || r.Late(m.board.At) {
 			b.WriteString("usage on " + m.hostTag(r.Host) + ": last observed " + r.Usage.At.Format(time.RFC3339) + " (" + hostBrief(r, m.board.At) + ")\n")
 		}

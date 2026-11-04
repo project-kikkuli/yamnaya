@@ -221,3 +221,34 @@ func TestLongNamesStayWholeAndDistinctAtPhoneWidth(t *testing.T) {
 		})
 	}
 }
+
+// A host known through an item snapshot has no read usage, but what it relayed is still known.
+func TestTheUsageScreenCallsAHostUnknownOnlyWhenNothingIsKnown(t *testing.T) {
+	now := time.Date(2026, 11, 3, 21, 5, 41, 0, time.UTC)
+	row := core.Limit{Host: "laptop", Harness: "claude", Profile: "default", Name: "7d", Used: 31, ResetsAt: now.Add(time.Hour), Seen: now}
+	for _, tc := range []struct {
+		name    string
+		fleet   core.Fleet
+		unknown bool
+		quiet   bool
+	}{
+		{"nothing relayed", core.Fleet{}, true, false},
+		{"live rows", core.Fleet{PerHost: []core.Limit{row}}, false, false},
+		{"every window reset", core.Fleet{Quiet: []core.RemoteBoard{{Host: "laptop", At: now}}}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c, _ := setup(t)
+			c.Meter = meter{core.Fleet{Ready: true, At: now}}
+			m.board.At, m.board.Fleet = now, tc.fleet
+			m.board.Fleet.Ready = true
+			m.board.Remotes = []core.RemoteBoard{{Host: "laptop", At: now}}
+			text := m.usageText()
+			if got := strings.Contains(text, "usage on @laptop: unknown"); got != tc.unknown {
+				t.Errorf("unknown line = %v, want %v:\n%s", got, tc.unknown, text)
+			}
+			if got := strings.Contains(text, "every window has reset"); got != tc.quiet {
+				t.Errorf("reset line = %v, want %v:\n%s", got, tc.quiet, text)
+			}
+		})
+	}
+}
