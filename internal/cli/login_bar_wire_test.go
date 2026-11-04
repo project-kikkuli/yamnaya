@@ -785,12 +785,13 @@ func TestWireAHungStatusCheckHoldsNoCycleAndNoItemCallsItSignedOut(t *testing.T)
 	if took := time.Since(started); took > 10*time.Second {
 		t.Fatalf("Failover took %v on hung checks", took)
 	}
-	t.Logf("first pass, with the item to file: %v", time.Since(started))
 	started = time.Now()
 	if err = w.l.Failover(b); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("next pass: %v", time.Since(started))
+	if took := time.Since(started); took >= authBudget {
+		t.Fatalf("a later pass waited %v on checks already past their budget", took)
+	}
 	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
 		t.Fatalf("session on %q", rec.Profile)
 	}
@@ -1700,7 +1701,7 @@ func TestWireOneFailedLandingStopsNobody(t *testing.T) {
 	w.pass(t, time.Minute)
 	*w.clock = w.bar(t, w.def).Until
 	path := os.Getenv("PATH")
-	t.Setenv("PATH", strings.SplitN(path, ":", 2)[1])
+	t.Setenv("PATH", t.TempDir()+":/usr/bin:/bin")
 	for range 3 {
 		*w.clock = w.clock.Add(time.Minute)
 		b, err := w.c.Board()
@@ -1890,14 +1891,16 @@ func TestWireACopiedStopLineIsChargedToNoOne(t *testing.T) {
 			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
 				t.Fatalf("on %q", rec.Profile)
 			}
+			line := strings.ReplaceAll(wireWall(time.Now().Add(-time.Hour)), `"isApiErrorMessage"`, `"copy":1,"isApiErrorMessage"`)
 			if c.fresh {
-				f, err := os.OpenFile(w.transcript(t, w.work), os.O_APPEND|os.O_WRONLY, 0o600)
-				if err != nil {
-					t.Fatal(err)
-				}
-				fmt.Fprint(f, wireWall(time.Now().Add(time.Minute)))
-				f.Close()
+				line = wireWall(time.Now().Add(time.Minute))
 			}
+			f, err := os.OpenFile(w.transcript(t, w.work), os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprint(f, line)
+			f.Close()
 			w.scan(t)
 			w.row(t, w.work, -1, 100, w.clock.Add(24*time.Hour))
 			w.pass(t, time.Minute)
