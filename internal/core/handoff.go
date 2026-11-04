@@ -114,6 +114,9 @@ type QuotaStopUnproven struct{ Cause error }
 func (e *QuotaStopUnproven) Error() string { return e.Cause.Error() }
 func (e *QuotaStopUnproven) Unwrap() error { return e.Cause }
 
+// deliveryInBox is how long a paste with no confirmed submission can pass for what sits in the box: its check takes seconds, the rest is for a late pass.
+const deliveryInBox = 5 * time.Minute
+
 // Drafting reports text sitting in s's input box that someone may be typing: a delivery of ym's own still on its way is not that.
 func (c *Core) Drafting(s Live) bool {
 	handle, host, why := c.locate(s.TTY)
@@ -128,5 +131,8 @@ func (c *Core) Drafting(s Live) bool {
 	if err != nil {
 		return true
 	}
-	return !slices.ContainsFunc(sent, func(m Message) bool { return m.State == MsgUncertain && holds(box, typedTail(m.Text)) })
+	return !slices.ContainsFunc(sent, func(m Message) bool {
+		tail := typedTail(m.Text)
+		return m.State == MsgUncertain && tail != "" && time.Since(m.Delivered) < deliveryInBox && holds(box, tail)
+	})
 }
