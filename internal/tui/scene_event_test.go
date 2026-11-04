@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func TestSceneResumesWithTheCurrentBoardAfterEvents(t *testing.T) {
 				m.board, m.loaded, m.width, m.height = workBoard(), true, 174, 72
 				m.board.Tree[0].Standing = core.StandMoving
 				m.peaks.hidden, m.peaks.theme, m.peaks.dark = false, "kaiju", true
-				m.out = &output{rate: 1e9}
+				m.out = &output{sent: 1e9, spent: 1}
 				m.firstContent()
 				page := m.prepareView()
 				m.page = &page
@@ -99,7 +100,7 @@ func TestPendingSceneWaitsForFocusAndTerminalOutput(t *testing.T) {
 	m.board, m.loaded, m.width, m.height = workBoard(), true, 160, 48
 	m.board.Tree[0].Standing = core.StandMoving
 	m.peaks.hidden, m.peaks.theme = false, "kaiju"
-	m.out = &output{rate: 1e9}
+	m.out = &output{sent: 1e9, spent: 1}
 	page := m.prepareView()
 	m.page = &page
 	m.settle(true)
@@ -160,7 +161,7 @@ func TestTheSceneOnScreenIsAFreshPaintOfEveryFrame(t *testing.T) {
 			m.board, m.loaded, m.width, m.height = workBoard(), true, 100, 32
 			m.board.Tree[0].Standing = core.StandMoving
 			m.peaks.hidden, m.peaks.theme, m.peaks.dark = false, theme.Name(), true
-			m.out = &output{rate: 1e9}
+			m.out = &output{sent: 1e9, spent: 1}
 			page := m.prepareView()
 			m.page = &page
 			text := tableText(page)
@@ -224,5 +225,34 @@ func TestATickOfTheSameBoardBuildsNoRanges(t *testing.T) {
 	first := m.boardScene()
 	if second := m.boardScene(); len(first.Ranges) == 0 || &first.Ranges[0] != &second.Ranges[0] {
 		t.Fatal("the same generation built its ranges again")
+	}
+}
+
+func TestTheWholeSceneArrivesOnALinkSlowerThanTheScene(t *testing.T) {
+	old, colors, motion := pal, scene.Colors, scene.ReducedMotion
+	pal, scene.Colors, scene.ReducedMotion = newPalette(true), scene.TrueColor, false
+	t.Cleanup(func() { pal, scene.Colors, scene.ReducedMotion = old, colors, motion })
+	for _, theme := range []string{"kaiju", "islands"} {
+		for _, rate := range []float64{40e3, 100e3} {
+			t.Run(fmt.Sprint(theme, "/", rate), func(t *testing.T) {
+				m := New(&core.Core{})
+				m.board, m.loaded, m.width, m.height = workBoard(), true, 200, 50
+				m.board.Tree[0].Standing = core.StandMoving
+				m.peaks.hidden, m.peaks.theme, m.peaks.dark = false, theme, true
+				m.out = &output{sent: rate, spent: 1}
+				page := m.prepareView()
+				m.page = &page
+				arrived := false
+				for tick := 0; tick < 1000 && !arrived; tick++ {
+					m.peaks.start = m.peaks.start.Add(-scene.Step)
+					next, _ := m.Update(mountainFrame{})
+					m = next.(Model)
+					arrived = m.peaks.screen.left == 0
+				}
+				if !arrived {
+					t.Fatalf("%d cells still behind the scene after 1000 ticks with the scene moving on", m.peaks.screen.left)
+				}
+			})
+		}
 	}
 }

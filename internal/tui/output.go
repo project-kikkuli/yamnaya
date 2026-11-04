@@ -18,9 +18,26 @@ type output struct {
 	cond    *sync.Cond
 	pending []byte
 	writing bool
-	// rate is how many bytes a second the terminal has been taking, from writes too big to vanish into its buffer.
-	rate float64
+	// sent and spent are the bytes and seconds of the writes that show how fast the terminal takes them; their ratio is
+	// its rate.
+	sent, spent float64
+	// recent is how long the last writes took, the least of which is the terminal's latency whatever the write's size.
+	recent [8]time.Duration
+	writes int
+	// held is whether the last write waited.
+	held bool
 }
+
+const (
+	// bigWrite is more than a terminal's buffer swallows without waiting.
+	bigWrite = 32 << 10
+	// waited is how far past its latency a write has to run to have waited.
+	waited = 5 * time.Millisecond
+	// firstBudget is what a frame may send before anything is known of the terminal.
+	firstBudget = 16 << 10
+	// maxRate is more than any terminal takes.
+	maxRate = 1 << 30
+)
 
 // frameRate is how many frames a second the board renders.
 const frameRate = 30
@@ -59,17 +76,36 @@ func (o *output) run() {
 		_, _ = o.to.Write(b)
 		took := time.Since(start)
 		o.mu.Lock()
-		if len(b) >= 1<<10 {
-			sample := float64(len(b)) / max(took, time.Millisecond).Seconds()
-			if o.rate == 0 {
-				o.rate = sample
-			}
-			o.rate += (sample - o.rate) / 4
-		}
+		o.judge(len(b), took)
 		o.writing = false
 		o.mu.Unlock()
 		o.cond.Broadcast()
 	}
+}
+
+// judge takes what a write of n bytes shows of the terminal's rate. A write big enough not to vanish shows it, and so do
+// small ones that keep waiting; one small wait may be a hiccup. A write that used its budget and did not wait says
+// there was room for more, so the budget doubles.
+func (o *output) judge(n int, took time.Duration) {
+	if o.spent == 0 {
+		o.sent, o.spent = firstBudget, frameTime.Seconds()
+	}
+	o.recent[o.writes%len(o.recent)] = took
+	o.writes++
+	latency := took
+	for _, d := range o.recent[:min(o.writes, len(o.recent))] {
+		latency = min(latency, d)
+	}
+	held := took-latency >= waited
+	switch {
+	case n >= bigWrite || held && o.held:
+		o.sent = o.sent*3/4 + float64(n)
+		o.spent = o.spent*3/4 + took.Seconds()
+	case !held && 4*n >= int(o.sent/o.spent*frameTime.Seconds()):
+		o.spent /= 2
+	}
+	o.held = held
+	o.spent = max(o.spent, o.sent/maxRate)
 }
 
 // behind reports whether the terminal has yet to take everything written to it.
@@ -82,17 +118,17 @@ func (o *output) behind() bool {
 	return o.writing || len(o.pending) > 0
 }
 
-// budget is how many bytes the terminal takes within a frame, at least enough to measure it by.
+// budget is how many bytes the terminal takes within a frame, at least a few cells' worth.
 func (o *output) budget() int {
 	if o == nil {
 		return math.MaxInt
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.rate == 0 {
-		return 16 << 10
+	if o.spent == 0 {
+		return firstBudget
 	}
-	return max(3<<10, int(o.rate*frameTime.Seconds()))
+	return max(1<<9, int(o.sent/o.spent*frameTime.Seconds()))
 }
 
 // drain waits until the terminal has taken everything written to it.
