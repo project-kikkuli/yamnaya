@@ -981,6 +981,13 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	}
 	was := rec
 	clones := l.clones(rec)
+	if rec.Recovery != (launch.Recovery{}) && launch.Head(rec.Worktree.Path) != "" {
+		// The worktree stayed when it ended, so its work never left and the bundle has nothing to put back.
+		if err := rec.Recovery.Drop(rec.Worktree.Path, rec.Key); err != nil {
+			return nil, "", err
+		}
+		rec.Recovery = launch.Recovery{}
+	}
 	if rec.Recovery != (launch.Recovery{}) {
 		for _, gd := range append([]string{rec.Worktree.GitDir}, clones...) {
 			if _, err := os.Stat(gd); err == nil && gd != "" {
@@ -1268,12 +1275,13 @@ func (l launcher) End(ref, goal string) (string, error) {
 	return l.end(rec, goal, "killed")
 }
 
-// end closes rec's pane, bundles the worktree's work no remote holds, removes the worktree and marks rec landed for why.
+// end closes rec's pane, bundles the worktree's work no remote holds, removes the worktree unless gc would keep it for what it
+// holds, and marks rec landed for why. A worktree that stays is gc's from then on, whatever the record says.
 func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 	if err := l.srv.Kill(tmux.SessionName(rec.Key)); err != nil {
 		return "", err
 	}
-	kept := ""
+	kept, stays := "", ""
 	if _, err := os.Stat(rec.Worktree.Path); err == nil && !rec.Adopted && rec.Worktree.GitDir != "" {
 		if head := launch.Head(rec.Worktree.Path); head != "" {
 			rec.Head = head
@@ -1281,11 +1289,15 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 		if rec.Recovery, err = launch.Stash(rec.Worktree.Path, rec.Key, l.recoveryDir()); err != nil {
 			return "", fmt.Errorf("keep the work of %s before removing %s: %w", rec.Key, rec.Worktree.Path, err)
 		}
-		if err := launch.Discard(rec.Worktree); err != nil {
-			return "", err
-		}
-		if rec.Recovery == (launch.Recovery{}) {
-			launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch, l.squash)
+		if keep, reason := launch.Pinned(rec.Worktree.Path); keep != "" {
+			stays = reason
+		} else {
+			if err := launch.Discard(rec.Worktree); err != nil {
+				return "", err
+			}
+			if rec.Recovery == (launch.Recovery{}) {
+				launch.DropMerged(filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Branch, l.squash)
+			}
 		}
 		if rec.Recovery != (launch.Recovery{}) {
 			kept = fmt.Sprintf(", kept %s", core.Toll{Commits: rec.Recovery.Commits, Files: rec.Recovery.Files}.Work())
@@ -1296,10 +1308,17 @@ func (l launcher) end(rec launch.Record, goal, why string) (string, error) {
 		}
 	}
 	rec.Goal = goal
+	if stays != "" {
+		why += ", worktree stays: " + stays
+	}
 	if err := l.landed(rec, why); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("killed %s%s; ym revive %s brings it back", rec.Key, kept, rec.Key), nil
+	msg := fmt.Sprintf("killed %s%s; ym revive %s brings it back", rec.Key, kept, rec.Key)
+	if stays != "" {
+		msg += fmt.Sprintf("; its worktree stays at %s until ym gc can remove it: %s", rec.Worktree.Path, stays)
+	}
+	return msg, nil
 }
 
 // Weigh is what End would take on the launched session ref names: its worktree and the work in it no remote holds.

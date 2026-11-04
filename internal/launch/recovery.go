@@ -159,6 +159,11 @@ func (r Recovery) Apply(path, key string) error {
 			}
 		}
 	}
+	return r.Drop(path, key)
+}
+
+// Drop deletes the bundle and its ref once what they saved is back in the worktree at path.
+func (r Recovery) Drop(path, key string) error {
 	git(path, "update-ref", "-d", recoveryRef(key))
 	if r.Bundle != "" {
 		if err := os.Remove(r.Bundle); err != nil && !errors.Is(err, fs.ErrNotExist) {
