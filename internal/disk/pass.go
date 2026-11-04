@@ -20,6 +20,8 @@ type Report struct {
 	Quiet bool
 	// Blocked says the step wanted to free space and something running stopped it, so its cache is still there.
 	Blocked bool
+	// Risky says what the step may have broken for others.
+	Risky string
 }
 
 // Step is one thing a pass tries, run by every pass at Tier or higher, and at no higher than Until when that is set.

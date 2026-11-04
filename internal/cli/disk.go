@@ -47,6 +47,8 @@ type diskState struct {
 	FiledAt  time.Time `json:"filed_at,omitzero"`
 	// Blocked names what the last pass could not free because something running stopped it.
 	Blocked []string `json:"blocked,omitempty"`
+	// Risky names what the last pass may have broken for running work.
+	Risky []string `json:"risky,omitempty"`
 }
 
 // endEpisode closes the episode's owner item if it is still open, so a relapse starts from none, and forgets it.
@@ -285,8 +287,11 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "tier %d pass: %s has %.1f%% free\n", tier, low.Path, low.Free()*100)
 	var errs []error
-	var blocked []string
+	var blocked, risky []string
 	complete := disk.Run(ctx, r.steps, tier, r.env.Enough, func(rep disk.Report) {
+		if rep.Risky != "" {
+			risky = append(risky, rep.Step+": "+rep.Risky)
+		}
 		switch {
 		case rep.Err != nil:
 			fmt.Fprintf(w, "%s: %v\n", rep.Step, rep.Err)
@@ -316,7 +321,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 		return nil
 	}
 	st := readDiskState(r.dir)
-	st.Blocked = blocked
+	st.Blocked, st.Risky = blocked, risky
 	if !forced {
 		st.LastPass, st.LastTier = r.env.Now(), tier
 	}
@@ -366,7 +371,8 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	}
 	return core.Item{Kind: core.KindChore, DoLine: "Free disk on this host", Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
-		Rec:      fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work; new ym slot admissions wait below %.0f%% free.", largest, disk.Tier3Free*100),
+		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %.0f%% free new ym slot admissions wait, and ym also trims Go's build cache down to entries under 10 minutes old, so builds may fail on missing cache entries while that lasts; rerun them.",
+			largest, disk.Tier3Free*100),
 		Evidence: []string{log},
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
 }
@@ -384,6 +390,11 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 	for _, b := range st.Blocked {
 		if low {
 			fmt.Fprintln(w, "last pass could not free", b)
+		}
+	}
+	for _, b := range st.Risky {
+		if low {
+			fmt.Fprintln(w, "last pass, at under 5% free:", b)
 		}
 	}
 	if st.Filed != "" {

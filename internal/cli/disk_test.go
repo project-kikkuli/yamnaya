@@ -115,7 +115,7 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if it.Kind != core.KindChore || it.Recipient != core.Owner || !strings.Contains(it.Rec, "/home/me/dev 137.0 GiB") {
+	if it.Kind != core.KindChore || it.Recipient != core.Owner || !strings.Contains(it.Rec, "/home/me/dev 137.0 GiB") || !strings.Contains(it.Rec, "builds may fail") {
 		t.Fatalf("item %+v", it)
 	}
 	pass(c, 0)
@@ -478,5 +478,33 @@ func TestYmDiskNamesWhatAPassCouldNotFreeOnlyWhileTheDiskIsLow(t *testing.T) {
 				t.Fatalf("printed %q, want the line %v", b.String(), c.want)
 			}
 		})
+	}
+}
+
+func TestYmDiskSaysWhatTheLastPassRiskedOnlyWhileTheDiskIsLow(t *testing.T) {
+	dir := t.TempDir()
+	c := diskCore(t, dir)
+	free := 0.04
+	env := disk.Env{Paths: []string{"/x"}, Stat: usageAt(&free), Now: time.Now}
+	step := disk.Step{Name: "go", Tier: 3, Run: func(context.Context) disk.Report {
+		free = 0.15
+		return disk.Report{Did: "trimmed", Risky: "builds may have failed"}
+	}}
+	r := reclaimer{core: c, dir: dir, env: env, steps: []disk.Step{step}, log: func(string, string) error { return nil }}
+	if err := r.run(context.Background(), 0, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ownerItems(t, c); len(got) != 0 {
+		t.Fatalf("recovered enough yet filed %+v", got)
+	}
+	for _, x := range []struct {
+		free uint64
+		want bool
+	}{{150, true}, {400, false}} {
+		var b strings.Builder
+		printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: x.free}}, readDiskState(dir))
+		if got := strings.Contains(b.String(), "builds may have failed"); got != x.want {
+			t.Errorf("free %d printed %q, want %v", x.free, b.String(), x.want)
+		}
 	}
 }

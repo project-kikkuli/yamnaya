@@ -168,7 +168,7 @@ func TestGoTrimRemovesOldestFirstAndSparesWhatARunningBuildMayHold(t *testing.T)
 			})
 			e := goEnvFor(dir, map[string]float64{dir: 0.01})
 			e.Dry = c.dry
-			r := goTrim(context.Background(), e, c.floor)
+			r := goTrim(context.Background(), e, c.floor, goMinAge)
 			if r.Err != nil || r.Skipped != "" {
 				t.Fatalf("report %+v", r)
 			}
@@ -200,7 +200,7 @@ func TestGoTrimStopsWhenTheDiskHasEnoughFree(t *testing.T) {
 		}
 		return Usage{Path: dir, Dev: 1, Total: 1000, Avail: avail}, nil
 	}
-	goTrim(context.Background(), e, 0)
+	goTrim(context.Background(), e, 0, goMinAge)
 	left := 0
 	for _, f := range files {
 		if _, err := os.Stat(f); err == nil {
@@ -224,7 +224,7 @@ func TestCacheStepsLeaveAloneWhatTheyMayNotTouchOrWhatIsNotInstalled(t *testing.
 		name string
 		run  func(context.Context, Env) Report
 	}{
-		{"go", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0) }},
+		{"go", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0, goMinAge) }},
 		{"uv", func(ctx context.Context, e Env) Report { return uvCache(ctx, e, "prune") }},
 		{"pnpm", pnpmPrune},
 		{"brew", brewCleanup},
@@ -418,7 +418,7 @@ func TestTheFloorSaysWhenAgeHeldItBack(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dir, files := goCache(t, 3, 1<<10, func(int) time.Duration { return c.age })
 			e := goEnvFor(dir, map[string]float64{dir: 0.01})
-			r := goTrim(context.Background(), e, 1<<10)
+			r := goTrim(context.Background(), e, 1<<10, goMinAge)
 			if r.Blocked != c.blocked {
 				t.Fatalf("report %+v", r)
 			}
@@ -466,5 +466,50 @@ func TestWorktreesGoOnlyFromAFilesystemItselfUnderTier2(t *testing.T) {
 		if got := e.Reapable()(c.path); got != c.want {
 			t.Errorf("Reapable(%s) force %v = %v, want %v", c.path, c.force, got, c.want)
 		}
+	}
+}
+
+func TestOnlyTier3TakesGoEntriesARunningBuildMayHold(t *testing.T) {
+	ages := map[string]time.Duration{"old": 3 * time.Hour, "under 2h": 90 * time.Minute, "under 1h": 30 * time.Minute, "just written": time.Minute}
+	for _, c := range []struct {
+		tier int
+		gone map[string]bool
+	}{
+		{1, map[string]bool{"old": true}},
+		{2, map[string]bool{"old": true}},
+		{3, map[string]bool{"old": true, "under 2h": true, "under 1h": true}},
+	} {
+		t.Run(fmt.Sprintf("tier %d", c.tier), func(t *testing.T) {
+			names := []string{"old", "under 2h", "under 1h", "just written"}
+			dir, files := goCache(t, len(names), 1<<10, func(i int) time.Duration { return ages[names[i]] })
+			for i, f := range files {
+				at := time.Now().Add(-ages[names[i]])
+				if err := os.Truncate(f, goFloor); err != nil {
+					t.Fatal(err)
+				}
+				os.Chtimes(f, at, at)
+			}
+			e := goEnvFor(dir, map[string]float64{dir: 0.01})
+			e.May = func(p string) bool { return p == dir }
+			e.Dry = false
+			e.Home = t.TempDir()
+			e.Now = time.Now
+			var risky string
+			steps := append(CacheSteps(e), HardSteps(e)...)
+			steps = slices.DeleteFunc(steps, func(s Step) bool { return !strings.HasPrefix(s.Name, "go cache") })
+			Run(context.Background(), steps, c.tier, func() bool { return false }, func(r Report) {
+				if r.Risky != "" {
+					risky = r.Risky
+				}
+			})
+			for i, n := range names {
+				if _, err := os.Stat(files[i]); (err != nil) != c.gone[n] {
+					t.Errorf("%s gone %v, want %v", n, err != nil, c.gone[n])
+				}
+			}
+			if (risky != "") != (c.tier == 3) {
+				t.Errorf("tier %d says risky %q", c.tier, risky)
+			}
+		})
 	}
 }

@@ -18,6 +18,9 @@ const (
 	// goMinAge spares entries a running build may hold: go refreshes an entry's mtime only once it is over an hour old, so a
 	// build can hold an entry up to that old, and the second hour covers builds that run long under load.
 	goMinAge = 2 * time.Hour
+	// goDesperateMinAge is what tier 3 spares. Under an hour old a running build may hold an entry, and removing it fails that
+	// build; below 5% free that is the cheaper failure, as running out breaks every session.
+	goDesperateMinAge = 10 * time.Minute
 	// goFloor is what the Go build cache keeps at tier 2, enough to not rebuild the standard library from nothing.
 	goFloor = 1 << 30
 	// staleAge is how long a temp build dir or DerivedData entry goes unchanged before it counts as abandoned.
@@ -42,7 +45,7 @@ func CacheSteps(e Env) []Step {
 		step("brew cleanup", brewCleanup),
 		step("docker builder prune", dockerPrune),
 		step("xcode deriveddata", derivedData),
-		step("go cache trim", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0) }),
+		step("go cache trim", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0, goMinAge) }),
 	}
 }
 
@@ -50,7 +53,14 @@ func CacheSteps(e Env) []Step {
 // clean, which takes everything prune would, replaces prune at tier 2.
 func HardSteps(e Env) []Step {
 	return []Step{
-		{Name: "go cache floor", Tier: 2, Run: func(ctx context.Context) Report { return goTrim(ctx, e, goFloor) }},
+		{Name: "go cache floor", Tier: 2, Until: 2, Run: func(ctx context.Context) Report { return goTrim(ctx, e, goFloor, goMinAge) }},
+		{Name: "go cache floor, recent entries too", Tier: 3, Run: func(ctx context.Context) Report {
+			r := goTrim(ctx, e, goFloor, goDesperateMinAge)
+			if r.Freed > 0 && !e.Dry {
+				r.Risky = "builds may have failed on missing cache entries"
+			}
+			return r
+		}},
 		{Name: "uv prune", Tier: 1, Until: 1, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "prune") }},
 		{Name: "uv clean", Tier: 2, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean") }},
 	}
@@ -77,9 +87,9 @@ type goFile struct {
 }
 
 // goTrim removes Go build cache entries oldest first until the disk has enough free or the cache is down to floor,
-// sparing goMinAge. It reads each entry's mtime again just before removing it, as go's own trim does, and leaves the
+// sparing minAge. It reads each entry's mtime again just before removing it, as go's own trim does, and leaves the
 // cache's bookkeeping files alone; go treats a missing entry as a miss and rebuilds it.
-func goTrim(ctx context.Context, e Env, floor int64) Report {
+func goTrim(ctx context.Context, e Env, floor int64, minAge time.Duration) Report {
 	dir := goEnv(ctx, e, "GOCACHE")
 	switch {
 	case dir == "" || dir == "off":
@@ -114,7 +124,7 @@ func goTrim(ctx context.Context, e Env, floor int64) Report {
 		}
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].at.Before(files[j].at) })
-	cutoff := e.Now().Add(-goMinAge)
+	cutoff := e.Now().Add(-minAge)
 	var freed, since int64
 	removed := 0
 	for _, f := range files {
@@ -144,7 +154,7 @@ func goTrim(ctx context.Context, e Env, floor int64) Report {
 	did := fmt.Sprintf("%s %d of %d entries in %s", verb, removed, len(files), dir)
 	held := floor > 0 && total-freed > floor && removed < len(files) && !files[removed].at.Before(cutoff)
 	if held {
-		did += fmt.Sprintf(", %s more is under %v old and running builds may hold it", Bytes(total-freed-floor), goMinAge)
+		did += fmt.Sprintf(", %s more is under %v old and running builds may hold it", Bytes(total-freed-floor), minAge)
 	}
 	return Report{Did: did, Freed: freed, Quiet: removed == 0, Blocked: held}
 }
