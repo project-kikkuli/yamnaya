@@ -8,9 +8,12 @@ import (
 )
 
 type ItemSnapshot struct {
-	At      time.Time         `json:"at"`
-	Items   []Item            `json:"items"`
-	Parents map[string]string `json:"parents,omitempty"`
+	// Machine is the snapshot's machine, whatever it is called; HostNames are what else it may have gone by. An older peer sends neither.
+	Machine   string            `json:"machine,omitempty"`
+	HostNames []string          `json:"host_names,omitempty"`
+	At        time.Time         `json:"at"`
+	Items     []Item            `json:"items"`
+	Parents   map[string]string `json:"parents,omitempty"`
 	// Names are this host's goals and chiefs by name, so a host that only hears from it through relays can name them.
 	Names map[string]string `json:"names,omitempty"`
 }
@@ -51,7 +54,11 @@ func (c *Core) itemSnapshot() (*ItemSnapshot, error) {
 			names[id] = g.Shown()
 		}
 	}
-	return &ItemSnapshot{At: c.now(), Items: items, Parents: parents, Names: names}, nil
+	machine, err := c.Store.MachineID()
+	if err != nil {
+		return nil, err
+	}
+	return &ItemSnapshot{Machine: machine, HostNames: []string{osHostName()}, At: c.now(), Items: items, Parents: parents, Names: names}, nil
 }
 
 func (c *Core) itemSnapshots() (map[string]ItemSnapshot, error) {
@@ -82,6 +89,61 @@ func (c *Core) keepItemSnapshots(snapshots map[string]ItemSnapshot) error {
 		if _, err := c.Store.db.Exec(`INSERT INTO ym_host_items(host,at,items) VALUES(?,?,?)
 			ON CONFLICT(host) DO UPDATE SET at=excluded.at,items=excluded.items WHERE excluded.at >= ym_host_items.at`, host, snap.At.UnixNano(), raw); err != nil {
 			return err
+		}
+	}
+	return c.dropRenamedSnapshots()
+}
+
+// dropRenamedSnapshots leaves each machine one snapshot, its newest, and none of this machine's own, so hosts stop passing old names
+// around. A snapshot from before snapshots named their machine goes when its name is one a machine says it went by, or this one's.
+func (c *Core) dropRenamedSnapshots() error {
+	snapshots, err := c.Store.itemSnapshots()
+	if err != nil {
+		return err
+	}
+	own, err := c.Store.MachineID()
+	if err != nil {
+		return err
+	}
+	newest, went := map[string]string{}, map[string]string{}
+	for _, host := range slices.Sorted(maps.Keys(snapshots)) {
+		snap := snapshots[host]
+		if snap.Machine == "" {
+			continue
+		}
+		if cur, ok := newest[snap.Machine]; !ok || snapshots[cur].At.Before(snap.At) {
+			newest[snap.Machine] = host
+		}
+	}
+	for _, snap := range snapshots {
+		for _, name := range snap.HostNames {
+			if snap.Machine != "" {
+				went[name] = newest[snap.Machine]
+			}
+		}
+	}
+	for host, snap := range snapshots {
+		to, gone := "", false
+		switch {
+		case snap.Machine == own:
+			gone = true
+		case snap.Machine != "":
+			to, gone = newest[snap.Machine], newest[snap.Machine] != host
+		case host == osHostName():
+			gone = true
+		default:
+			to, gone = went[host]
+		}
+		if !gone {
+			continue
+		}
+		if _, err := c.Store.db.Exec(`DELETE FROM ym_host_items WHERE host=?`, host); err != nil {
+			return err
+		}
+		if to != "" {
+			if err := c.Store.moveNickname(host, to); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

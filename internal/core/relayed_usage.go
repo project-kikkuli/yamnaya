@@ -63,12 +63,18 @@ func (s *Store) keepRelayedUsage(host string, u RelayUsage, now time.Time) error
 			return err
 		}
 		if u.Machine != "" {
-			if _, err := s.db.Exec(`UPDATE OR IGNORE ym_host_nicknames SET host=? WHERE host=? AND host NOT IN (SELECT name FROM ym_hosts)`, host, name); err != nil {
+			if err := s.moveNickname(name, host); err != nil {
 				return err
 			}
 		}
 	}
 	_, err = s.db.Exec(`INSERT INTO ym_relayed_usage(host,body) VALUES(?,?) ON CONFLICT(host) DO UPDATE SET body=excluded.body`, host, string(raw))
+	return err
+}
+
+// moveNickname hands a renamed machine's nickname to its new name, unless the old name is a host ym reaches or the new one has its own.
+func (s *Store) moveNickname(from, to string) error {
+	_, err := s.db.Exec(`UPDATE OR IGNORE ym_host_nicknames SET host=? WHERE host=? AND host NOT IN (SELECT name FROM ym_hosts)`, to, from)
 	return err
 }
 

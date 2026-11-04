@@ -77,12 +77,20 @@ func (s *Store) ForgetHost(host string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	items, err := s.db.Exec(`DELETE FROM ym_host_items WHERE host=?`, host)
+	if err != nil {
+		return false, err
+	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
 	}
 	m, err := relayed.RowsAffected()
-	return n+m > 0, err
+	if err != nil {
+		return false, err
+	}
+	k, err := items.RowsAffected()
+	return n+m+k > 0, err
 }
 
 // KnownHosts lists the remembered hosts, first used first.

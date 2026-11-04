@@ -2,10 +2,12 @@ package core
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestChiefInboxFollowsItemsAcrossHosts(t *testing.T) {
@@ -259,5 +261,165 @@ func TestAMachineItemFiledOnAHostWithARemoteChiefWaitsOnTheOwnerEverywhere(t *te
 	f.a.core.ShowRemotes = true
 	if b := f.a.board(t); !slices.ContainsFunc(b.Needs, isIt) {
 		t.Fatalf("the chief's host's board does not ask the owner: %+v", b.Needs)
+	}
+}
+
+func snapshotHosts(t *testing.T, w *orgWorld) []string {
+	t.Helper()
+	snapshots, err := w.core.Store.itemSnapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.Sorted(maps.Keys(snapshots))
+}
+
+// The real rename: rajatsmachine calls the laptop by a new name, and neither host keeps or passes back the laptop's old ones.
+func TestARenamedMachineIsOneHostWithEachItemOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		as   []string
+	}{
+		{"named once", []string{"laptop"}},
+		{"named again and again", []string{"laptop", "mac", "laptop", "book"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called, caller, net := relayedWorld(t)
+			if err := caller.core.Store.setRelaySelf(RelaySelf{}); err != nil {
+				t.Fatal(err)
+			}
+			_, mgr := caller.goal(t, "ship", "/repo/app")
+			it := caller.ask(t, mgr.Session, "ship the API?")
+			round := func() {
+				t.Helper()
+				for range 2 {
+					if err := caller.core.SyncRelays([]string{"rajatsmachine"}, net); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			round()
+			if hosts := snapshotHosts(t, called); !slices.Equal(hosts, []string{osHostName()}) {
+				t.Fatalf("first report under %v", hosts)
+			}
+			for _, as := range tc.as {
+				if _, err := caller.core.ServeSync(RelaySync{From: "rajatsmachine", As: as, Entries: []Relay{}, Ack: []int64{}}); err != nil {
+					t.Fatal(err)
+				}
+				caller.clock = caller.clock.Add(time.Minute)
+				called.clock = caller.clock
+				round()
+			}
+			last := tc.as[len(tc.as)-1]
+			if hosts := snapshotHosts(t, called); !slices.Equal(hosts, []string{last}) {
+				t.Errorf("called host keeps %v, want only %s", hosts, last)
+			}
+			if hosts := snapshotHosts(t, caller); !slices.Equal(hosts, []string{"rajatsmachine"}) {
+				t.Errorf("renamed host keeps %v, want only the host it reaches", hosts)
+			}
+			b, err := called.core.Board()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(b.Remotes) != 1 || b.Remotes[0].Host != last {
+				t.Errorf("hosts line %+v, want only %s", b.Remotes, last)
+			}
+			n := 0
+			for _, r := range b.Remotes {
+				for _, got := range r.Items {
+					if got.Seq == it.Seq {
+						n++
+					}
+				}
+			}
+			if n != 1 {
+				t.Errorf("the item is listed %d times", n)
+			}
+		})
+	}
+}
+
+func TestItemSnapshotsKeepToTheirOwnMachine(t *testing.T) {
+	at := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	own := func(t *testing.T, w *orgWorld) string {
+		t.Helper()
+		id, err := w.core.Store.MachineID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	for _, tc := range []struct {
+		name string
+		rows func(id string) map[string]ItemSnapshot
+		want []string
+	}{
+		{"a machine's older name goes", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"old": {Machine: "m1", At: at}, "new": {Machine: "m1", At: at.Add(time.Minute)}}
+		}, []string{"new"}},
+		{"an old name a peer passes back goes again", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"new": {Machine: "m1", At: at.Add(time.Hour)}, "old": {Machine: "m1", At: at.Add(time.Minute)}}
+		}, []string{"new"}},
+		{"this machine's own old name goes", func(id string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"old": {Machine: id, At: at}}
+		}, nil},
+		{"two machines stay two", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"a": {Machine: "m1", At: at}, "b": {Machine: "m2", At: at}}
+		}, []string{"a", "b"}},
+		{"a stray from before ids under the name its machine went by goes", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"dm6": {At: at}, "laptop": {Machine: "m1", HostNames: []string{"dm6"}, At: at}}
+		}, []string{"laptop"}},
+		{"a stray from before ids under this machine's own OS name goes", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{osHostName(): {At: at}}
+		}, nil},
+		{"older peers under two names both stay: nothing links them", func(string) map[string]ItemSnapshot {
+			return map[string]ItemSnapshot{"old": {At: at}, "new": {At: at.Add(time.Minute)}}
+		}, []string{"new", "old"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			if err := w.core.Store.setRelaySelf(RelaySelf{Name: "rajatsmachine"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.core.keepItemSnapshots(tc.rows(own(t, w))); err != nil {
+				t.Fatal(err)
+			}
+			if got := snapshotHosts(t, w); !slices.Equal(got, tc.want) {
+				t.Errorf("kept %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestForgettingAHostClearsItsItemSnapshot(t *testing.T) {
+	w := newOrgWorld(t)
+	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"box": {At: time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)}}); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := w.core.Store.ForgetHost("box"); err != nil || !known {
+		t.Fatalf("forget = %v, %v", known, err)
+	}
+	if got := snapshotHosts(t, w); len(got) != 0 {
+		t.Errorf("snapshots %v survive forgetting", got)
+	}
+	if b, err := w.core.Board(); err != nil || len(b.Remotes) != 0 {
+		t.Errorf("forgotten host still on the board: %+v, %v", b.Remotes, err)
+	}
+}
+
+func TestANicknameFollowsAMachineKnownOnlyByItsItems(t *testing.T) {
+	w := newOrgWorld(t)
+	at := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"old": {Machine: "m1", At: at}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Store.db.Exec(`INSERT INTO ym_host_nicknames(host,nick) VALUES('old','mac')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"new": {Machine: "m1", At: at.Add(time.Minute)}}); err != nil {
+		t.Fatal(err)
+	}
+	set, err := w.core.Store.SetNicknames()
+	if err != nil || set["new"] != "mac" {
+		t.Errorf("nicknames %v, %v; want new to keep mac", set, err)
 	}
 }
