@@ -76,6 +76,11 @@ func relayCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			if err := json.NewDecoder(cmd.InOrStdin()).Decode(&req); err != nil {
 				return fmt.Errorf("relay sync request: %w", err)
 			}
+			dir, err := stateDir()
+			if err != nil {
+				return err
+			}
+			e.core.OwnReport = func() *core.RelayUsage { return snapshotReport(dir) }
 			reply, err := e.core.ServeSync(req)
 			if err != nil {
 				fmt.Fprintln(cmd.ErrOrStderr(), err)
@@ -84,6 +89,24 @@ func relayCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		}),
 	})
 	return cmd
+}
+
+// snapshotReport is this host's own usage as its ym serve last wrote it, which a relay sync reads rather than scan transcripts; nil
+// with no snapshot, or one from a ym that names no machine.
+func snapshotReport(dir string) *core.RelayUsage {
+	raw, err := os.ReadFile(snapshotPath(dir))
+	if err != nil {
+		return nil
+	}
+	var j boardJSON
+	if json.Unmarshal(raw, &j) != nil || j.Machine == "" {
+		return nil
+	}
+	f := usageFromWire(j.Usage)
+	if f == nil {
+		return nil
+	}
+	return &core.RelayUsage{Machine: j.Machine, Ready: f.Ready, At: f.At, Limits: f.Limits, Today: f.Today, Week: f.Week}
 }
 
 // relayHosts carries relays between this host and every host ym remote reached.

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"time"
 
@@ -102,6 +103,76 @@ func (s *Store) relayedUsageBefore(host string, u RelayUsage, now time.Time) ([]
 		}
 	}
 	return out, rows.Err()
+}
+
+// storedReports are the rows held here, by the name each is held under.
+func (s *Store) storedReports() (map[string]RelayUsage, error) {
+	rows, err := s.db.Query(`SELECT host, body FROM ym_relayed_usage`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]RelayUsage{}
+	for rows.Next() {
+		var host, body string
+		var u RelayUsage
+		if err := rows.Scan(&host, &body); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal([]byte(body), &u) == nil {
+			out[host] = u
+		}
+	}
+	return out, rows.Err()
+}
+
+// keepReports takes the reports another host passed on: the newest of each machine's wins under the name it travelled with. This
+// machine's own and those of hosts forgotten here stay out, and so does an older peer's, which names no machine to keep it one row.
+func (c *Core) keepReports(reports map[string]RelayUsage) error {
+	own, err := c.Store.MachineID()
+	if err != nil {
+		return err
+	}
+	forgotten, err := c.Store.forgottenHosts()
+	if err != nil {
+		return err
+	}
+	stored, err := c.Store.storedReports()
+	if err != nil {
+		return err
+	}
+	self := c.SelfName()
+	for _, name := range slices.Sorted(maps.Keys(reports)) {
+		u := reports[name]
+		if u.Machine == "" || u.Machine == own || name == self || forgotten.has(name, u.Machine) {
+			continue
+		}
+		if slices.ContainsFunc(slices.Collect(maps.Values(stored)), func(o RelayUsage) bool { return o.Machine == u.Machine && !o.At.Before(u.At) }) {
+			continue
+		}
+		if err := c.Store.keepRelayedUsage(name, u, c.now()); err != nil {
+			return err
+		}
+		maps.DeleteFunc(stored, func(_ string, o RelayUsage) bool { return o.Machine == u.Machine })
+		stored[name] = u
+	}
+	return nil
+}
+
+// calledReports are what a called host hands back: the reports it holds and its own, so a host that only ever gets called still passes on.
+func (c *Core) calledReports() (map[string]RelayUsage, error) {
+	reports, err := c.Store.storedReports()
+	if err != nil {
+		return nil, err
+	}
+	own := c.ownUsage()
+	if c.OwnReport != nil {
+		own = c.OwnReport()
+	}
+	if own != nil {
+		reports[c.SelfName()] = *own
+	}
+	return reports, nil
 }
 
 func (s *Store) relayedUsageHosts() ([]string, error) {

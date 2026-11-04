@@ -380,7 +380,7 @@ func TestItemSnapshotsKeepToTheirOwnMachine(t *testing.T) {
 			if err := w.core.Store.setRelaySelf(RelaySelf{Name: "rajatsmachine"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.core.keepItemSnapshots(tc.rows(own(t, w))); err != nil {
+			if err := w.core.keepItemSnapshots("peer", tc.rows(own(t, w))); err != nil {
 				t.Fatal(err)
 			}
 			if got := snapshotHosts(t, w); !slices.Equal(got, tc.want) {
@@ -392,7 +392,7 @@ func TestItemSnapshotsKeepToTheirOwnMachine(t *testing.T) {
 
 func TestForgettingAHostClearsItsItemSnapshot(t *testing.T) {
 	w := newOrgWorld(t)
-	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"box": {At: time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)}}); err != nil {
+	if err := w.core.keepItemSnapshots("peer", map[string]ItemSnapshot{"box": {At: time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)}}); err != nil {
 		t.Fatal(err)
 	}
 	if known, err := w.core.Store.ForgetHost("box"); err != nil || !known {
@@ -409,13 +409,13 @@ func TestForgettingAHostClearsItsItemSnapshot(t *testing.T) {
 func TestANicknameFollowsAMachineKnownOnlyByItsItems(t *testing.T) {
 	w := newOrgWorld(t)
 	at := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
-	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"old": {Machine: "m1", At: at}}); err != nil {
+	if err := w.core.keepItemSnapshots("peer", map[string]ItemSnapshot{"old": {Machine: "m1", At: at}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.core.Store.db.Exec(`INSERT INTO ym_host_nicknames(host,nick) VALUES('old','mac')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"new": {Machine: "m1", At: at.Add(time.Minute)}}); err != nil {
+	if err := w.core.keepItemSnapshots("peer", map[string]ItemSnapshot{"new": {Machine: "m1", At: at.Add(time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}
 	set, err := w.core.Store.SetNicknames()

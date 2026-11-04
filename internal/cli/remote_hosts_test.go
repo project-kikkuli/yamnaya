@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -350,4 +351,66 @@ func TestAOneShotCommandWaitsForAHungHostOnlyOnce(t *testing.T) {
 	if took := time.Since(start); took > 150*time.Millisecond {
 		t.Fatalf("the second Boards waited %s more", took)
 	}
+}
+
+func TestForgetTakesEveryNameTheBoardShows(t *testing.T) {
+	for _, tc := range []struct{ name, ref string }{
+		{"full name", "prod-mac2"},
+		{"default nickname", "mac2"},
+		{"default nickname with its @", "@mac2"},
+		{"a nickname set for it", "book"},
+		{"a nickname set for it with its @", "@book"},
+	} {
+		for _, known := range []string{"reached", "items only"} {
+			t.Run(tc.name+" "+known, func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("YAMNAYA_STATE_DIR", dir)
+				path, err := core.DefaultStorePath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				c := &core.Core{}
+				if c.Store, err = core.OpenStore(path); err != nil {
+					t.Fatal(err)
+				}
+				defer c.Store.Close()
+				if known == "reached" {
+					err = c.Store.RecordHost("prod-mac2", time.Now())
+				} else {
+					_, err = c.ServeSync(core.RelaySync{From: "peer", As: "here", Entries: []core.Relay{}, Ack: []int64{}, ItemSnapshots: map[string]core.ItemSnapshot{"prod-mac2": {At: time.Now()}}})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(tc.name, "set for it") {
+					if _, err := c.Store.RenameHost("prod-mac2", "book"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				cmd := remoteForgetCmd()
+				cmd.SetArgs([]string{tc.ref})
+				cmd.SetOut(io.Discard)
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("forget %s: %v", tc.ref, err)
+				}
+				nicks, err := c.Store.ShownNicknames()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := nicks["prod-mac2"]; ok {
+					t.Errorf("forget %s left it shown: %v", tc.ref, nicks)
+				}
+			})
+		}
+	}
+	t.Run("a name the board does not show", func(t *testing.T) {
+		t.Setenv("YAMNAYA_STATE_DIR", t.TempDir())
+		cmd := remoteForgetCmd()
+		cmd.SetArgs([]string{"nosuch"})
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "does not remember") {
+			t.Errorf("forget nosuch = %v", err)
+		}
+	})
 }

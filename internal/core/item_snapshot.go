@@ -74,9 +74,14 @@ func (c *Core) itemSnapshots() (map[string]ItemSnapshot, error) {
 	return snapshots, nil
 }
 
-func (c *Core) keepItemSnapshots(snapshots map[string]ItemSnapshot) error {
+// keepItemSnapshots takes what from passed on; about a host forgotten here, only that host's own word counts.
+func (c *Core) keepItemSnapshots(from string, snapshots map[string]ItemSnapshot) error {
+	forgotten, err := c.Store.forgottenHosts()
+	if err != nil {
+		return err
+	}
 	for host, snap := range snapshots {
-		if host == c.SelfName() {
+		if host == c.SelfName() || forgotten.has(host, snap.Machine) {
 			continue
 		}
 		if err := c.Store.noteHostNames(namesInSnapshot(host, snap)); err != nil {

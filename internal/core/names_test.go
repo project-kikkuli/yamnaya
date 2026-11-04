@@ -1343,7 +1343,7 @@ func TestAChiefOnAnotherHostIsNamedFromWhatLasts(t *testing.T) {
 			w.core.Store.invalidate()
 		}, "peer/master"},
 		{"the names a snapshot sends", func(t *testing.T, w *orgWorld) {
-			if err := w.core.keepItemSnapshots(map[string]ItemSnapshot{"peer": {At: w.clock, Names: map[string]string{"mgr51": "master"}}}); err != nil {
+			if err := w.core.keepItemSnapshots("peer", map[string]ItemSnapshot{"peer": {At: w.clock, Names: map[string]string{"mgr51": "master"}}}); err != nil {
 				t.Fatal(err)
 			}
 		}, "peer/master"},

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"time"
 )
 
@@ -26,6 +28,10 @@ CREATE TABLE IF NOT EXISTS ym_host_items (
 CREATE TABLE IF NOT EXISTS ym_relayed_usage (
 	host TEXT PRIMARY KEY,
 	body TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ym_forgotten_hosts (
+	host TEXT PRIMARY KEY,
+	machine TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ym_machine (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -50,9 +56,11 @@ type KnownHost struct {
 
 // RecordHost remembers host, first used now when ym has not reached it before.
 func (s *Store) RecordHost(host string, at time.Time) error {
-	_, err := s.db.Exec(`INSERT INTO ym_hosts(name,first_used,last_seen) VALUES(?,?,?)
-		ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen`, host, at.UnixNano(), at.UnixNano())
-	return err
+	if _, err := s.db.Exec(`INSERT INTO ym_hosts(name,first_used,last_seen) VALUES(?,?,?)
+		ON CONFLICT(name) DO UPDATE SET last_seen=excluded.last_seen`, host, at.UnixNano(), at.UnixNano()); err != nil {
+		return err
+	}
+	return s.heardFrom(host, "")
 }
 
 // SeeHost marks a remembered host as answering at at; it never adds one.
@@ -61,8 +69,12 @@ func (s *Store) SeeHost(host string, at time.Time) error {
 	return err
 }
 
-// ForgetHost drops host and reports whether ym remembered it.
+// ForgetHost drops host and reports whether ym remembered it. What other hosts say about it stays out until it reports here itself.
 func (s *Store) ForgetHost(host string) (bool, error) {
+	machine, err := s.machineOfHost(host)
+	if err != nil {
+		return false, err
+	}
 	res, err := s.db.Exec(`DELETE FROM ym_hosts WHERE name=?`, host)
 	if err != nil {
 		return false, err
@@ -90,7 +102,54 @@ func (s *Store) ForgetHost(host string) (bool, error) {
 		return false, err
 	}
 	k, err := items.RowsAffected()
-	return n+m+k > 0, err
+	if err != nil || n+m+k == 0 {
+		return false, err
+	}
+	_, err = s.db.Exec(`INSERT INTO ym_forgotten_hosts(host,machine) VALUES(?,?) ON CONFLICT(host) DO UPDATE SET machine=excluded.machine`, host, machine)
+	return true, err
+}
+
+// machineOfHost is the machine a stored report or item snapshot names under host, "" when none does.
+func (s *Store) machineOfHost(host string) (string, error) {
+	var machine string
+	err := s.db.QueryRow(`SELECT COALESCE((SELECT json_extract(body,'$.machine') FROM ym_relayed_usage WHERE host=?),
+		(SELECT json_extract(CAST(items AS TEXT),'$.machine') FROM ym_host_items WHERE host=?), '')`, host, host).Scan(&machine)
+	return machine, err
+}
+
+// forgottenHosts are the hosts forgotten here, each with its machine when that was known.
+type forgottenHosts map[string]string
+
+// has reports whether a report under name from machine is about a forgotten host: its machine whatever it is called now, and its name
+// when either side names no machine.
+func (f forgottenHosts) has(name, machine string) bool {
+	if kept, ok := f[name]; ok && (kept == "" || machine == "" || kept == machine) {
+		return true
+	}
+	return machine != "" && slices.Contains(slices.Collect(maps.Values(f)), machine)
+}
+
+func (s *Store) forgottenHosts() (forgottenHosts, error) {
+	rows, err := s.db.Query(`SELECT host, machine FROM ym_forgotten_hosts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := forgottenHosts{}
+	for rows.Next() {
+		var host, machine string
+		if err := rows.Scan(&host, &machine); err != nil {
+			return nil, err
+		}
+		out[host] = machine
+	}
+	return out, rows.Err()
+}
+
+// heardFrom ends a host's forgetting: it reported here itself, or ym remote reached it.
+func (s *Store) heardFrom(host, machine string) error {
+	_, err := s.db.Exec(`DELETE FROM ym_forgotten_hosts WHERE host=? OR (machine<>'' AND machine=?)`, host, machine)
+	return err
 }
 
 // KnownHosts lists the remembered hosts, first used first.

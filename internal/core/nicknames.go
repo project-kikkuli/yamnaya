@@ -111,7 +111,7 @@ func (s *Store) HostNicknames() (map[string]string, error) {
 	return Nicknames(hosts, set), nil
 }
 
-// ShownNicknames names every host the board shows, those that only relay their usage here included.
+// ShownNicknames names every host the board shows, those known only by their usage or their items included.
 func (s *Store) ShownNicknames() (map[string]string, error) {
 	known, err := s.KnownHosts()
 	if err != nil {
@@ -124,6 +124,15 @@ func (s *Store) ShownNicknames() (map[string]string, error) {
 	hosts, err := s.relayedUsageHosts()
 	if err != nil {
 		return nil, err
+	}
+	snapshots, err := s.itemSnapshots()
+	if err != nil {
+		return nil, err
+	}
+	for h := range snapshots {
+		if !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
 	}
 	for _, h := range known {
 		hosts = append(hosts, h.Name)

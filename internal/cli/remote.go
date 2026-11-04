@@ -102,7 +102,7 @@ func rememberHost(host string) error {
 func remoteForgetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "forget <host>",
-		Short: "Stop showing a host's sessions on this board until ym remote reaches it again",
+		Short: "Stop showing a host on this board, by its full name or nickname, until it reports here itself or ym remote reaches it again",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := core.DefaultStorePath()
@@ -114,14 +114,14 @@ func remoteForgetCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
-			known, err := st.ForgetHost(args[0])
+			host, err := st.ResolveShownHost(args[0])
 			if err != nil {
 				return err
 			}
-			if !known {
-				return fmt.Errorf("ym does not remember %s", args[0])
+			if _, err := st.ForgetHost(host); err != nil {
+				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "forgot %s\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "forgot %s\n", host)
 			return nil
 		},
 	}

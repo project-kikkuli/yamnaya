@@ -308,3 +308,39 @@ func TestBoardBasesKeepOnlyTheNewest(t *testing.T) {
 		t.Errorf("newest base gone: %v", err)
 	}
 }
+
+func TestARelaySyncReportsFromTheSnapshotItsServeWrote(t *testing.T) {
+	at := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)
+	wire := usageWire(core.Fleet{Ready: true, At: at, Today: core.Spend{USD: 3}})
+	for _, tc := range []struct {
+		name  string
+		board *boardJSON
+		want  float64
+		has   bool
+	}{
+		{"this build's snapshot", &boardJSON{Machine: "m1", Usage: wire}, 3, true},
+		{"no snapshot yet", nil, 0, false},
+		{"a snapshot from before machine ids", &boardJSON{Usage: wire}, 0, false},
+		{"a snapshot with no usage", &boardJSON{Machine: "m1"}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.board != nil {
+				raw, err := json.Marshal(tc.board)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(snapshotPath(dir), raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := snapshotReport(dir)
+			if (got != nil) != tc.has {
+				t.Fatalf("report = %+v, want one: %v", got, tc.has)
+			}
+			if got != nil && (got.Today.USD != tc.want || got.Machine != "m1" || !got.At.Equal(at)) {
+				t.Errorf("report = %+v", got)
+			}
+		})
+	}
+}

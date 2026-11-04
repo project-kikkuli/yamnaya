@@ -81,6 +81,8 @@ type Core struct {
 	// Remotes are the other hosts ym routes commands to; ShowRemotes also puts their boards on this one.
 	Remotes     Remotes
 	ShowRemotes bool
+	// OwnReport is this host's own usage report where a process has no meter to read it from; nil reads the meter.
+	OwnReport func() *RelayUsage
 	// RunSelf runs this host's ym with args, for a relay that asks for a ym command; nil refuses such relays.
 	RunSelf func(args ...string) (string, error)
 	// Requester is the session running this ym, which hears how a command it queues for another host turns out; nil or "" is none.

@@ -124,6 +124,8 @@ type RelaySync struct {
 	ItemSnapshots map[string]ItemSnapshot `json:"item_snapshots,omitempty"`
 	// Usage is the caller's own limits and spend, for the board of a host that cannot read the caller.
 	Usage *RelayUsage `json:"usage,omitempty"`
+	// Reports are the other hosts' reports the caller holds, by the name it holds each under.
+	Reports map[string]RelayUsage `json:"reports,omitempty"`
 }
 
 // RelayReply is what the called host still has to carry, by its own seq.
@@ -137,6 +139,8 @@ type RelayReply struct {
 	// Done names the caller's ym commands this host ran, with what they printed.
 	Done          []RelayRef              `json:"done,omitempty"`
 	ItemSnapshots map[string]ItemSnapshot `json:"item_snapshots,omitempty"`
+	// Reports are the other hosts' reports this host holds, by the name it holds each under.
+	Reports map[string]RelayUsage `json:"reports,omitempty"`
 }
 
 // RelayRef names a relay on every host it passes through.
@@ -483,7 +487,16 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 			return RelayReply{}, err
 		}
 	}
-	if err := c.keepItemSnapshots(req.ItemSnapshots); err != nil {
+	if req.From != "" {
+		machine := req.ItemSnapshots[req.From].Machine
+		if req.Usage != nil && req.Usage.Machine != "" {
+			machine = req.Usage.Machine
+		}
+		if err := c.Store.heardFrom(req.From, machine); err != nil {
+			return RelayReply{}, err
+		}
+	}
+	if err := c.keepItemSnapshots(req.From, req.ItemSnapshots); err != nil {
 		return RelayReply{}, err
 	}
 	if req.Start != nil {
@@ -498,6 +511,9 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 		if err := c.Store.keepRelayedUsage(req.From, *req.Usage, c.now()); err != nil {
 			return RelayReply{}, err
 		}
+	}
+	if err := c.keepReports(req.Reports); err != nil {
+		return RelayReply{}, err
 	}
 	if err := c.noteRefused(req.Refused); err != nil {
 		return RelayReply{}, err
@@ -515,7 +531,8 @@ func (c *Core) ServeSync(req RelaySync) (RelayReply, error) {
 	}
 	launches, launchErr := c.Store.pendingLaunches()
 	snapshots, snapshotErr := c.itemSnapshots()
-	return RelayReply{Entries: out, Refused: refused, Done: done, Launches: launches, ItemSnapshots: snapshots}, errors.Join(recvErr, err, launchErr, snapshotErr)
+	reports, reportErr := c.calledReports()
+	return RelayReply{Entries: out, Refused: refused, Done: done, Launches: launches, ItemSnapshots: snapshots, Reports: reports}, errors.Join(recvErr, err, launchErr, snapshotErr, reportErr)
 }
 
 // SyncRelays carries relays between this host and each host it reaches: what is due there goes out, what that host holds comes back
@@ -556,12 +573,19 @@ func (c *Core) SyncRelays(hosts []string, cr Courier) error {
 		if err != nil {
 			return err
 		}
-		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}, ItemSnapshots: snapshots, Usage: usage})
+		reports, err := c.Store.storedReports()
+		if err != nil {
+			return err
+		}
+		reply, err := cr.Sync(h, RelaySync{From: self, As: h, Peers: peers, Entries: mine, Ack: []int64{}, ItemSnapshots: snapshots, Usage: usage, Reports: reports})
 		if err != nil {
 			errs = append(errs, fmt.Errorf("relay %s: %w", h, err))
 			continue
 		}
-		if err := c.keepItemSnapshots(reply.ItemSnapshots); err != nil {
+		if err := c.keepItemSnapshots(h, reply.ItemSnapshots); err != nil {
+			return err
+		}
+		if err := c.keepReports(reply.Reports); err != nil {
 			return err
 		}
 		if err := errors.Join(c.noteRefused(reply.Refused), c.noteDone(reply.Done)); err != nil {
