@@ -315,7 +315,7 @@ func TestTheNamerRunsOnALoginWithRoom(t *testing.T) {
 			var limits []core.Limit
 			for _, p := range ps {
 				if p.Harness == claude.Name && slices.Contains(tc.full, p.ID) {
-					limits = append(limits, core.Limit{Harness: claude.Name, Profile: p.ID, Account: p.Account, Used: 100, ResetsAt: future})
+					limits = append(limits, core.Limit{Harness: claude.Name, Profile: p.ID, Account: p.Account, Name: "7d", Used: 100, ResetsAt: future})
 				}
 			}
 			bin := t.TempDir()
