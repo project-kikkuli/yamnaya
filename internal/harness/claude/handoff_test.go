@@ -415,3 +415,84 @@ func rewrap(text string, width int) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+func TestTheQuotaFooterIsAStopOnlyUnderTheInputBox(t *testing.T) {
+	captured, err := os.ReadFile("testdata/quota-footer.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := string(captured)
+	now := time.Date(2026, 11, 4, 4, 31, 0, 0, time.UTC)
+	rule := strings.Repeat("─", 40)
+	footer := "⚠ Usage limit reached · limit resets 3am\nContinuing automatically at 3am · esc to cancel"
+	for _, c := range []struct {
+		name, screen string
+		want         bool
+	}{
+		{"the captured screen", real, true},
+		{"the captured screen wrapped narrow", rewrap(real, 30), true},
+		{"a reply reciting it above the box", footer + "\n✻ Done\n" + rule + "\n❯ \n" + rule + "\n⏵⏵ bypass permissions on\n", false},
+		{"typed into the box", "✻ Done\n" + rule + "\n❯ " + footer + "\n" + rule + "\n⏵⏵ bypass\n", false},
+		{"no input box", footer + "\n", false},
+		{"another warning under the box", "✻ Done\n" + rule + "\n❯ \n" + rule + "\n⚠ Auto-update failed\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, got := footerStop(c.screen, now); got != c.want {
+				t.Fatalf("footer=%v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestAQuotaResetReadsAsItsNextOccurrenceInTheRightZone(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("no zoneinfo")
+	}
+	utc := func(y int, m time.Month, d, h, min int) time.Time { return time.Date(y, m, d, h, min, 0, 0, time.UTC) }
+	t.Setenv("TZ", "UTC")
+	saved := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = saved })
+	for _, c := range []struct {
+		name, text string
+		now, want  time.Time
+	}{
+		{"later today", "3pm", utc(2026, 11, 4, 4, 31), utc(2026, 11, 4, 15, 0)},
+		{"already passed today means tomorrow", "3am", utc(2026, 11, 4, 4, 31), utc(2026, 11, 5, 3, 0)},
+		{"exactly now means tomorrow", "3am", utc(2026, 11, 4, 3, 0), utc(2026, 11, 5, 3, 0)},
+		{"with minutes", "3:30am", utc(2026, 11, 4, 3, 0), utc(2026, 11, 4, 3, 30)},
+		{"noon", "12pm", utc(2026, 11, 4, 4, 0), utc(2026, 11, 4, 12, 0)},
+		{"midnight", "12am", utc(2026, 11, 4, 4, 0), utc(2026, 11, 5, 0, 0)},
+		{"a named zone", "3am(America/New_York)", utc(2026, 11, 4, 4, 31), time.Date(2026, 11, 4, 3, 0, 0, 0, ny)},
+		{"a date", "Nov5,3am(UTC)", utc(2026, 11, 4, 4, 31), utc(2026, 11, 5, 3, 0)},
+		{"a date just past means next year", "Nov3,3am(UTC)", utc(2026, 11, 4, 4, 31), utc(2027, 11, 3, 3, 0)},
+		{"unreadable", "soon", utc(2026, 11, 4, 4, 31), time.Time{}},
+		{"an unknown zone", "3am(Mars/Olympus)", utc(2026, 11, 4, 4, 31), time.Time{}},
+		{"not a clock", "13am", utc(2026, 11, 4, 4, 31), time.Time{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseQuotaReset(c.text, c.now); !got.Equal(c.want) {
+				t.Fatalf("got %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+func TestRealScreensThatOnlyMentionAQuotaStopAreNotOne(t *testing.T) {
+	for _, name := range []string{"quota-fp-recited.txt", "quota-fp-askuser.txt"} {
+		t.Run(name, func(t *testing.T) {
+			captured, err := os.ReadFile(filepath.Join("testdata", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := &Adapter{}
+			if a.QuotaDialog(string(captured)) || silentQuotaDialog(string(captured)) {
+				t.Fatal("read as the quota dialog")
+			}
+			if _, ok := footerStop(string(captured), time.Now()); ok {
+				t.Fatal("read as the quota footer")
+			}
+		})
+	}
+}

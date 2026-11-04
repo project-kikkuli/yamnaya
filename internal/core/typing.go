@@ -64,7 +64,7 @@ func readComposer(host Host, h Handle, hn Harness, pid int, idle bool) (string, 
 		return "", false
 	}
 	if idle {
-		if h, ok := hn.(interface{ IdleComposer(string) (string, bool) }); ok {
+		if h, ok := hn.(IdleComposer); ok {
 			return h.IdleComposer(screen)
 		}
 	}

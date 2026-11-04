@@ -37,9 +37,9 @@ func (c *Core) InspectHandoff(s Session) (time.Time, error) {
 	return at, nil
 }
 
-// AtQuotaDialog reports whether s is showing its harness's quota dialog right now.
-func (c *Core) AtQuotaDialog(s Live) bool {
-	if s.Status != Waiting || s.Prompt != nil || s.Remote != "" {
+// AtQuotaStop reports whether s is showing its harness's quota stop right now: the dialog, or the footer an idle session shows.
+func (c *Core) AtQuotaStop(s Live) bool {
+	if s.Status != Waiting && s.Status != Idle || s.Prompt != nil || s.Remote != "" {
 		return false
 	}
 	h := c.harness(s.Harness)
@@ -58,7 +58,7 @@ func (c *Core) AtQuotaDialog(s Live) bool {
 	if _, prompt := h.ParsePrompt(screen); prompt {
 		return false
 	}
-	if i.QuotaDialog(screen) {
+	if s.Status == Waiting && i.QuotaDialog(screen) {
 		return true
 	}
 	if silent, ok := h.(SilentQuotaStopper); ok {
@@ -68,31 +68,38 @@ func (c *Core) AtQuotaDialog(s Live) bool {
 	return false
 }
 
-// SilentQuotaStopper is a harness that can show a session held at its quota dialog with no quota error behind it.
-type SilentQuotaStopper interface {
-	SilentQuotaStop(s Session, screen string) (time.Time, bool, error)
+// QuotaStop is a session held on its limit that only its screen shows: At dates the turn, Reset is what the screen says, zero when it
+// says nothing, and SelfContinues means the harness carries on by itself when the limit resets.
+type QuotaStop struct {
+	At, Reset     time.Time
+	SelfContinues bool
 }
 
-// SilentQuotaStop reports a session held at the quota dialog though no turn hit the limit: it started on a used-up login. stopped says
-// the dialog is up; an error says what about it cannot be proved, as QuotaStopUnproven.
-func (c *Core) SilentQuotaStop(s Session) (at time.Time, stopped bool, err error) {
+// SilentQuotaStopper is a harness that can show a session held on its limit with no quota error behind it, or whose rows say otherwise.
+type SilentQuotaStopper interface {
+	SilentQuotaStop(s Session, screen string) (QuotaStop, bool, error)
+}
+
+// SilentQuotaStop reports a session its screen shows held on its limit though nothing else says so. stopped says the screen shows that; an
+// error says what about it cannot be proved, as QuotaStopUnproven.
+func (c *Core) SilentQuotaStop(s Session) (stop QuotaStop, stopped bool, err error) {
 	i, ok := c.harness(s.Harness).(SilentQuotaStopper)
 	if !ok || s.Prompt != nil {
-		return time.Time{}, false, nil
+		return QuotaStop{}, false, nil
 	}
 	handle, host, why := c.locate(s.TTY)
 	if host == nil || why != "" {
-		return time.Time{}, false, nil
+		return QuotaStop{}, false, nil
 	}
 	screen, err := host.Screen(handle)
 	if err != nil {
-		return time.Time{}, false, nil
+		return QuotaStop{}, false, nil
 	}
-	at, stopped, err = i.SilentQuotaStop(s, screen)
+	stop, stopped, err = i.SilentQuotaStop(s, screen)
 	if err != nil {
-		return at, stopped, &QuotaStopUnproven{err}
+		return stop, stopped, &QuotaStopUnproven{err}
 	}
-	return at, stopped, nil
+	return stop, stopped, nil
 }
 
 // QuotaStopUnproven is a session at the quota dialog whose turn ym cannot prove over. It never ends the turn by itself, so whoever

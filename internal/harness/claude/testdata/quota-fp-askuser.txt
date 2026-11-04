@@ -1,0 +1,13 @@
+ ☐ Limit
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+     x
+  2. Wait here, then continue automatically at 3am
+     x
+  3. Switch to usage credits
+     x
+  4. Type something.
+────────────────────────────────────
+  5. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+

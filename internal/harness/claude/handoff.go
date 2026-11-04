@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,29 +72,106 @@ func silentQuotaDialog(text string) bool {
 	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
 }
 
-// SilentQuotaStop proves a session is held at the rule-topped quota dialog on a turn that is over, whether it ended normally, as starting on
-// a used-up login leaves it, or on a quota error that scrolled away. stopped is false when text is not that dialog.
-func (a *Adapter) SilentQuotaStop(s core.Session, text string) (at time.Time, stopped bool, err error) {
-	if !silentQuotaDialog(text) || a.QuotaDialog(text) {
-		return time.Time{}, false, nil
+// quotaFooter matches the footer under the input box, read with no spaces or line breaks: nothing a reply prints above the box can be it.
+var quotaFooter = regexp.MustCompile(`^─*⚠Usagelimitreached·limitresets(.+?)Continuingautomaticallyat.+?·esctocancel`)
+
+// footerStop reads the footer Claude shows under its input box when a turn hits the limit, and what it says about the reset.
+func footerStop(text string, now time.Time) (time.Time, bool) {
+	lines := screen.Lines(text)
+	box := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "❯") {
+			box = i
+			break
+		}
 	}
+	if box < 0 {
+		return time.Time{}, false
+	}
+	m := quotaFooter.FindStringSubmatch(strings.ReplaceAll(strings.Join(lines[box+1:], ""), " ", ""))
+	if m == nil {
+		return time.Time{}, false
+	}
+	return parseQuotaReset(m[1], now), true
+}
+
+var quotaClock = regexp.MustCompile(`^(?:([A-Z][a-z]{2})(\d{1,2}),)?(\d{1,2})(?::(\d{2}))?(am|pm)(?:\((.+)\))?$`)
+
+// parseQuotaReset reads when Claude says a limit resets, with spaces removed: a clock time, perhaps with a date and a zone. A bare time is
+// its next occurrence in the zone named, else this machine's, which is the one Claude prints in. Zero when it cannot be read.
+func parseQuotaReset(text string, now time.Time) time.Time {
+	m := quotaClock.FindStringSubmatch(text)
+	if m == nil {
+		return time.Time{}
+	}
+	loc := time.Local
+	if m[6] != "" {
+		named, err := time.LoadLocation(m[6])
+		if err != nil {
+			return time.Time{}
+		}
+		loc = named
+	}
+	hour, _ := strconv.Atoi(m[3])
+	minute, _ := strconv.Atoi(m[4])
+	if hour < 1 || hour > 12 || minute > 59 {
+		return time.Time{}
+	}
+	hour %= 12
+	if m[5] == "pm" {
+		hour += 12
+	}
+	local := now.In(loc)
+	if m[1] != "" {
+		month, err := time.Parse("Jan", m[1])
+		if err != nil {
+			return time.Time{}
+		}
+		day, _ := strconv.Atoi(m[2])
+		at := time.Date(local.Year(), month.Month(), day, hour, minute, 0, 0, loc)
+		if !at.After(now) {
+			at = at.AddDate(1, 0, 0)
+		}
+		return at
+	}
+	at := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
+	if !at.After(now) {
+		at = at.AddDate(0, 0, 1)
+	}
+	return at
+}
+
+// SilentQuotaStop proves a session is held on its limit by what its screen shows: the rule-topped dialog over a turn that is over, whether
+// it ended normally, as starting on a used-up login leaves it, or on a quota error that scrolled away; or the footer under its input box,
+// which reads idle and from which Claude carries on by itself at the reset. stopped is false when the screen shows neither.
+func (a *Adapter) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, bool, error) {
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+	reset, footer := footerStop(text, now())
+	if !footer && (!silentQuotaDialog(text) || a.QuotaDialog(text)) {
+		return core.QuotaStop{}, false, nil
+	}
+	stop := core.QuotaStop{Reset: reset, SelfContinues: footer}
 	st, ok := a.state(s.PID)
-	if !ok || st.SessionID != s.ID || st.Status != "waiting" {
-		return time.Time{}, true, fmt.Errorf("native waiting state is unreadable or changed")
+	if !ok || st.SessionID != s.ID || st.Status != "waiting" && (!footer || st.Status != "idle") {
+		return stop, true, fmt.Errorf("native waiting state is unreadable or changed")
 	}
 	path := a.transcript(s.Cwd, s.ID)
 	sc, err := a.handoffScan(path)
 	if err != nil {
-		return time.Time{}, true, err
+		return stop, true, err
 	}
 	quota := sc.LastStop == "stop_sequence" && !sc.QuotaAt.IsZero() && !sc.QuotaSidechain
 	if sc.SessionID != s.ID || sc.LastType != "assistant" || !sc.Stopped || sc.LastStop != "end_turn" && !quota || sc.UserAt.After(sc.LastAt) {
-		return time.Time{}, true, fmt.Errorf("the turn behind the quota dialog has not ended")
+		return stop, true, fmt.Errorf("the turn behind the quota stop has not ended")
 	}
 	if err = a.handoffChildren(s, path); err != nil {
-		return time.Time{}, true, err
+		return stop, true, err
 	}
-	return sc.LastAt, true, nil
+	stop.At = sc.LastAt
+	return stop, true, nil
 }
 
 func (a *Adapter) handoffScan(path string) (scan, error) {

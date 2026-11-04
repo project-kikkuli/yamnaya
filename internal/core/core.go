@@ -197,6 +197,11 @@ type Waiter interface {
 	Waiting(pid int) bool
 }
 
+// IdleComposer is a harness that can read the input box only when no turn is still working.
+type IdleComposer interface {
+	IdleComposer(screen string) (string, bool)
+}
+
 // Continuer is a harness whose conversations can continue under a new session id.
 type Continuer interface {
 	// Successor is the session id continues in, "" when it has not moved; a non-empty near, a running session, limits the look to sessions stored beside it.

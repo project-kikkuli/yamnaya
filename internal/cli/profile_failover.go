@@ -155,32 +155,42 @@ func quotaReason(harness string) string {
 	return "subscription_rate_limit"
 }
 
-// silentStops are the sessions held at the quota dialog with no event to show for it, as they stop on starting on a used-up login without
-// running a turn. That is the session's own quota stop like any other: one a session lands on is a new stop on that login, however long
-// ago its last turn ran, so it is known by the session, the login and the landing. unproven are those whose stop cannot be proved over.
-func (l launcher) silentStops(b core.Board) (stops, unproven []core.Exhaustion) {
+// selfContinueGrace is how long past its reset ym leaves a session whose harness carries on by itself.
+const selfContinueGrace = 5 * time.Minute
+
+// silentStop is a session only its screen shows held on its limit.
+type silentStop struct {
+	core.Exhaustion
+	core.QuotaStop
+}
+
+// silentStops are the sessions whose screen shows them held on their limit, whatever else says so: the dialog, which starting on a used-up
+// login shows without running a turn, and the footer an idle session shows. Either is the session's own quota stop like any other. One a
+// session lands on is a new stop on that login, however long ago its last turn ran, so it is known by the session, the login and the
+// landing. unproven are those whose stop cannot be proved over.
+func (l launcher) silentStops(b core.Board) (stops []silentStop, unproven []core.Exhaustion) {
 	if l.core == nil {
 		return nil, nil
 	}
 	for _, s := range b.Sessions {
-		if s.Remote != "" || s.ID == "" || s.Account == "" || s.Status != core.Waiting || s.Prompt != nil {
+		if s.Remote != "" || s.ID == "" || s.Account == "" || s.Status != core.Waiting && s.Status != core.Idle || s.Prompt != nil {
 			continue
 		}
-		at, stopped, err := l.core.SilentQuotaStop(s.Session)
+		stop, stopped, err := l.core.SilentQuotaStop(s.Session)
 		if !stopped {
 			continue
 		}
-		landed := at
+		landed := stop.At
 		if rec, ok := l.records.Find(s.ID); ok && rec.AttachedAt.After(landed) {
 			landed = rec.AttachedAt
 		}
-		e := core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("dialog-%s-%s-%d", s.ID, s.Account, landed.Unix()), Seen: landed}
+		e := core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: fmt.Sprintf("screen-%s-%s-%d", s.ID, s.Account, landed.Unix()), Seen: landed}
 		if err != nil {
 			e.Reason = err.Error()
 			unproven = append(unproven, e)
 			continue
 		}
-		stops = append(stops, e)
+		stops = append(stops, silentStop{e, stop})
 	}
 	return stops, unproven
 }
@@ -335,15 +345,25 @@ func (l launcher) Failover(b core.Board) error {
 	for _, stop := range unproven {
 		notices = append(notices, l.showUnproven(dir, ps, stop, b))
 	}
-	for _, e := range append(slices.Clone(b.Fleet.Exhaustions), silent...) {
-		reset, actual := trueExhaustion(e, b.Fleet.Limits, b.At)
-		dialog := false
-		if !actual {
+	events := make([]core.Exhaustion, 0, len(b.Fleet.Exhaustions)+len(silent))
+	for _, e := range b.Fleet.Exhaustions {
+		if !slices.ContainsFunc(silent, func(s silentStop) bool { return s.Exhaustion.Session == e.Session && s.Exhaustion.Account == e.Account }) {
+			events = append(events, e)
+		}
+	}
+	for _, s := range silent {
+		events = append(events, s.Exhaustion)
+	}
+	for _, e := range events {
+		screen := slices.IndexFunc(silent, func(s silentStop) bool { return s.Exhaustion.Event == e.Event })
+		reset, actual, dialog := time.Time{}, false, false
+		selfContinues := false
+		if screen >= 0 {
+			reset = cmp.Or(exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), silent[screen].Reset)
+			actual, dialog, selfContinues = true, true, silent[screen].SelfContinues
+		} else if reset, actual = trueExhaustion(e, b.Fleet.Limits, b.At); !actual {
 			reset, actual = l.verifiedStop(e, b)
 			dialog = actual
-		}
-		if !actual && slices.ContainsFunc(silent, func(s core.Exhaustion) bool { return s.Event == e.Event }) {
-			reset, actual, dialog = exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), true, true
 		}
 		if !actual {
 			continue
@@ -360,6 +380,15 @@ func (l launcher) Failover(b core.Board) error {
 			a.Stopped[e.Account] = e.Seen
 		}
 		stale := dialog && selectedErr == nil && a.State.Status != "continued" && a.cameBack(selected, b.Fleet.Limits, b.At)
+		if selfContinues {
+			// The footer outranks what rows say. Past its reset Claude carries on by itself, so ym only steps in if it plainly has not.
+			until := a.Pools[e.Account]
+			lapsed := !until.IsZero() && !until.After(b.At)
+			if lapsed && b.At.Sub(until) < selfContinueGrace {
+				continue
+			}
+			stale = lapsed
+		}
 		if !stale && l.loginInUse(e.Harness, e.Profile, e.Account, b, all) {
 			notices = append(notices, l.fileQuotaItem(dir, ps, e, cmp.Or(exhaustedUntil(b.Fleet.Limits, e.Harness, e.Profile, e.Account, b.At), reset), b.Fleet.Limits, b.At))
 		}

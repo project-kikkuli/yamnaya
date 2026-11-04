@@ -687,6 +687,15 @@ func (l launcher) state(rec launch.Record) (tmux.Pane, string) {
 	return p, paneState(p)
 }
 
+// paneDown gives the pane of a session this operation just stopped a moment to show it: its process has exited, but tmux tells a little later.
+func (l launcher) paneDown(rec launch.Record) (tmux.Pane, string) {
+	pane, st := l.state(rec)
+	for end := time.Now().Add(3 * time.Second); st == "running" && time.Now().Before(end); pane, st = l.state(rec) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	return pane, st
+}
+
 // missing is the state of a record whose tmux session is not there: gone, or unknown while the launch that saved it before
 // starting its session may still be starting it.
 func missing(rec launch.Record, now time.Time) string {
@@ -946,6 +955,9 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	}
 
 	pane, st := l.state(rec)
+	if st == "running" && l.operation == rec.Session {
+		pane, st = l.paneDown(rec)
+	}
 	if st == "running" {
 		return nil, "", fmt.Errorf("%s is running; ym open %s", rec.Key, rec.Key)
 	}

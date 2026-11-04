@@ -1,0 +1,14 @@
+  This machine is shared by many agents. Run every heavy command (test suites, builds, linters over a whole re
+  shared slots and runs the command niced. Quick commands need no slot. ym slot --status shows who holds and w
+● ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  What do you want to do?
+  1. Stop and wait for limit to reset
+  2. Wait here, then continue automatically at 3am
+  3. Switch to usage credits
+     Enter to confirm · Esc to cancel
+✻ Brewed for 8s · done 4:25 AM
+────────────────────────────────────
+❯ 
+────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+

@@ -438,8 +438,8 @@ func (l launcher) settleNote(m migration) error {
 	})
 }
 
-// atStopReasons are, by harness:session, why a session stopped on its limit cannot move. The board shows one only while the session is
-// held at the dialog, so it needs no expiry of its own.
+// atStopReasons are, by harness:session, why a session stopped on its limit cannot move. The board shows one only while the session's
+// screen shows that stop, so it needs no expiry of its own.
 func atStopReasons(dir string) map[string]core.Switching {
 	files, _ := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
 	out := map[string]core.Switching{}
@@ -452,9 +452,9 @@ func atStopReasons(dir string) map[string]core.Switching {
 		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" {
 			continue
 		}
-		why := "at quota dialog: " + a.State.Reason
+		why := "stopped at its limit: " + a.State.Reason
 		if a.State.Reason == errNoUsablePool.Error() {
-			why = "at quota dialog, no usable login, resets " + quotaReset(a.State.Reset)
+			why = "stopped at its limit, no usable login, resets " + quotaReset(a.State.Reset)
 		}
 		harness, _, _ := strings.Cut(filepath.Base(path), "-")
 		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: why}

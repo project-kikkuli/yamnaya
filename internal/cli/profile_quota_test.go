@@ -2474,8 +2474,8 @@ type silentHarness struct {
 	problem error
 }
 
-func (h silentHarness) SilentQuotaStop(core.Session, string) (time.Time, bool, error) {
-	return h.at, true, h.problem
+func (h silentHarness) SilentQuotaStop(core.Session, string) (core.QuotaStop, bool, error) {
+	return core.QuotaStop{At: h.at}, true, h.problem
 }
 
 func TestASessionHeldAtTheQuotaDialogWithNoEventMovesWithNoHuman(t *testing.T) {
@@ -2631,7 +2631,7 @@ func TestARowSaysWhyASessionAtTheQuotaDialogCannotMove(t *testing.T) {
 		want string
 	}
 	reason := func(reset time.Time) string {
-		return "at quota dialog, no usable login, resets " + reset.UTC().Format(time.RFC3339)
+		return "stopped at its limit, no usable login, resets " + reset.UTC().Format(time.RFC3339)
 	}
 	for _, c := range []struct {
 		name   string
@@ -2674,7 +2674,7 @@ func TestARowSaysWhyASessionAtTheQuotaDialogCannotMove(t *testing.T) {
 			tickFailover(t, w, now, events...)
 			want := reason(reset)
 			if !c.rows {
-				want = "at quota dialog, no usable login, resets at a time not yet known"
+				want = "stopped at its limit, no usable login, resets at a time not yet known"
 			}
 			if got := w.row(t); got != want {
 				t.Fatalf("row %q, want %q", got, want)
@@ -2786,7 +2786,7 @@ func TestEachLoginIsTriedOnceThenTheSessionStaysAndSaysWhy(t *testing.T) {
 			if got := strings.Join(path, " "); got != "claude-work personal" && got != "personal claude-work" {
 				t.Fatalf("the session went %q: it must try each login once", got)
 			}
-			if got := w.row(t); !strings.Contains(got, "at quota dialog, no usable login") {
+			if got := w.row(t); !strings.Contains(got, "stopped at its limit, no usable login") {
 				t.Fatalf("row %q, want why it stays", got)
 			}
 		})
@@ -3108,7 +3108,7 @@ func TestRowsSayWhyAStoppedSessionCannotMoveAndOnlyAtTheDialog(t *testing.T) {
 		make func(*testing.T, queueWorld, time.Time) []core.Exhaustion
 		want string
 	}{
-		{name: "the only target is signed out", want: "at quota dialog: ", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
+		{name: "the only target is signed out", want: "stopped at its limit: ", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
 			dir := strings.SplitN(os.Getenv("PATH"), ":", 2)[0]
 			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
 				t.Fatal(err)
@@ -3116,7 +3116,7 @@ func TestRowsSayWhyAStoppedSessionCannotMoveAndOnlyAtTheDialog(t *testing.T) {
 			quotaLimits(t, w.state, limit(w.def, 100, now.Add(time.Hour)), limit(w.work, 5, now.Add(time.Hour)), limit(personal(t, w), 100, now.Add(time.Hour)))
 			return []core.Exhaustion{quotaEvent(w, now)}
 		}},
-		{name: "a dialog it cannot prove over", want: "at quota dialog: a child is busy", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
+		{name: "a dialog it cannot prove over", want: "stopped at its limit: a child is busy", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
 			base := w.l.core.Harnesses[0].(turnHarness)
 			w.l.core.Harnesses = []core.Harness{silentHarness{base, errors.New("a child is busy")}}
 			quotaLimits(t, w.state, limit(w.work, 5, now.Add(time.Hour)))
@@ -3225,5 +3225,156 @@ func TestAnUnreadableConversationIsNotGoneToGC(t *testing.T) {
 	}
 	if !conversationGone(rec) {
 		t.Fatal("a removed conversation does not read as gone")
+	}
+}
+
+// wrappedHarness is the real profile harness over a session list a test controls, so core's assertions meet what the real binary wires.
+type wrappedHarness struct {
+	*profileHarness
+	session *core.Session
+}
+
+func (h wrappedHarness) Owns(p proc.Proc) bool { return p.PID == 4242 }
+func (h wrappedHarness) Discover(ps []proc.Proc) []core.Session {
+	var out []core.Session
+	for _, p := range ps {
+		if p.PID == 4242 {
+			s := *h.session
+			s.PID, s.TTY = p.PID, p.TTY
+			out = append(out, s)
+		}
+	}
+	return out
+}
+func (h wrappedHarness) ParsePrompt(string) (core.Prompt, bool) { return core.Prompt{}, false }
+
+// realScreenWorld is a session on the default login, behind the real wrapper, whose screen is text and transcript the shape Claude left.
+func realScreenWorld(t *testing.T, text, status, lastTurn string) queueWorld {
+	t.Helper()
+	w := newQueueWorld(t, "claude", "")
+	w.l.core.Harnesses = []core.Harness{wrappedHarness{&profileHarness{name: "claude", dir: w.state}, w.session}}
+	w.l.core.Hosts = []core.Host{quotaHost{text: text}}
+	cwd := w.rec.Worktree.Path
+	path := filepath.Join(w.def.Root, "projects", "-real", profileConversation+".jsonl")
+	user := `{"type":"user","sessionId":"` + profileConversation + `","timestamp":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano) + `","message":{"role":"user","content":"go"}}`
+	putProfileFile(t, path, user+"\n"+lastTurn+"\n")
+	if err := os.Remove(filepath.Join(w.def.Root, w.rel)); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"pid": 4242, "sessionId": profileConversation, "cwd": cwd, "status": status, "statusUpdatedAt": time.Now().UnixMilli()})
+	putProfileFile(t, filepath.Join(w.def.Root, "sessions", "4242.json"), string(raw))
+	return w
+}
+
+func TestARealQuotaStopMovesThroughTheRealHarness(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("..", "harness", "claude", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	ended := `{"type":"assistant","sessionId":"` + profileConversation + `","timestamp":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano) + `","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"FINISHED"}]}}`
+	footer := read("quota-footer.txt")
+	dialog := read("silent-quota-dialog.txt")
+	for _, c := range []struct {
+		name   string
+		screen string
+		status string
+		live   core.Status
+		used   float64
+		moved  bool
+	}{
+		{name: "dialog, row at 100", screen: dialog, status: "waiting", live: core.Waiting, used: 100, moved: true},
+		{name: "dialog with no row", screen: dialog, status: "waiting", live: core.Waiting, moved: true},
+		{name: "footer reads idle, row at 100", screen: footer, status: "idle", live: core.Idle, used: 100, moved: true},
+		{name: "footer outranks a row at 50", screen: footer, status: "idle", live: core.Idle, used: 50, moved: true},
+		{name: "a reply reciting the footer, composer below", screen: "⚠ Usage limit reached · limit resets 3am\nContinuing automatically at 3am · esc to cancel\n✻ Done\n" + strings.Repeat("─", 40) + "\n❯ \n" + strings.Repeat("─", 40) + "\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n", status: "idle", live: core.Idle, used: 50},
+		{name: "a reply reciting the dialog", screen: "● " + dialog + "\n✻ Brewed\n" + strings.Repeat("─", 40) + "\n❯ \n" + strings.Repeat("─", 40) + "\n", status: "idle", live: core.Idle, used: 50},
+		{name: "an ordinary idle screen", screen: "✻ Done\n❯ \n", status: "idle", live: core.Idle, used: 50},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := realScreenWorld(t, c.screen, c.status, ended)
+			w.session.Status = c.live
+			now := time.Now()
+			reset := now.Add(31 * time.Hour)
+			rows := []core.Limit{limit(w.work, 5, reset)}
+			if c.used > 0 {
+				rows = append(rows, limit(w.def, c.used, reset))
+			}
+			quotaLimits(t, w.state, rows...)
+			tickFailover(t, w, now)
+			rec, _ := w.l.records.Find(w.rec.Key)
+			if c.moved != (rec.Profile == "claude-work") {
+				t.Fatalf("session on %s, moved=%v", rec.Profile, c.moved)
+			}
+			items, err := w.l.core.Store.Items(core.ItemFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := map[bool]int{true: 1, false: 0}[c.moved]; len(items) != want {
+				t.Fatalf("items %d, want %d", len(items), want)
+			}
+		})
+	}
+}
+
+func TestAFooterStopWithNowhereToGoSaysWhyAndLeavesClaudeToContinue(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "harness", "claude", "testdata", "quota-footer.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := `{"type":"assistant","sessionId":"` + profileConversation + `","timestamp":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano) + `","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"FINISHED"}]}}`
+	w := realScreenWorld(t, string(b), "idle", ended)
+	w.session.Status = core.Idle
+	now := time.Now()
+	reset := now.Add(time.Hour)
+	quotaLimits(t, w.state, limit(w.def, 50, reset), limit(w.work, 100, reset), limit(personal(t, w), 100, reset))
+	tickFailover(t, w, now)
+	if got := w.row(t); !strings.Contains(got, "stopped at its limit, no usable login, resets ") {
+		t.Fatalf("row %q", got)
+	}
+	a, _ := loadFailover(w.state, "claude", profileConversation)
+	if a.State.Reset.IsZero() {
+		t.Fatalf("no reset from the footer or its rows: %+v", a.State)
+	}
+	until := a.Pools[w.def.Account]
+	tickFailover(t, w, until.Add(time.Minute))
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(w.ran); !os.IsNotExist(err) || *w.signals != 0 {
+		t.Fatalf("restarted on top of Claude's own continue: %v signals=%d", err, *w.signals)
+	}
+	items, _ := w.l.core.Store.Items(core.ItemFilter{})
+	if len(items) != 1 {
+		t.Fatalf("a false stop after the reset: %d items", len(items))
+	}
+	w.l.core.Hosts = []core.Host{quotaHost{text: "✻ Working\n❯ \n"}}
+	tickFailover(t, w, until.Add(2*time.Minute))
+	if got := w.row(t); strings.Contains(got, "stopped at its limit") {
+		t.Fatalf("the row still claims a stop once it continued: %q", got)
+	}
+	w.l.core.Hosts = []core.Host{quotaHost{text: string(b)}}
+	tickFailover(t, w, until.Add(selfContinueGrace+time.Minute))
+	if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != "default" {
+		t.Fatalf("a footer still up well past its reset was left: %q", got)
+	}
+}
+
+func TestAPaneOutlivingTheStopDoesNotFailTheResume(t *testing.T) {
+	w := newQueueWorld(t, "claude", "")
+	*w.alive = false
+	rec, _ := w.l.records.Find(w.rec.Key)
+	name := tmux.SessionName(rec.Key)
+	if _, err := w.l.srv.Start(w.l.conf, name, rec.Worktree.Path, []string{"sleep", "30"}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		w.l.srv.Kill(name)
+	}()
+	once := w.l
+	once.operation = rec.Session
+	if _, err := once.revive(rec); err != nil {
+		t.Fatalf("resume hit a pane the switch had just stopped: %v", err)
 	}
 }

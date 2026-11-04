@@ -14,6 +14,20 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
+// Every optional harness interface core asserts must pass through the wrapper, or the real binary silently loses it.
+var (
+	_ core.Harness            = (*profileHarness)(nil)
+	_ core.HandoffInspector   = (*profileHarness)(nil)
+	_ core.SilentQuotaStopper = (*profileHarness)(nil)
+	_ core.Onboarder          = (*profileHarness)(nil)
+	_ core.Waiter             = (*profileHarness)(nil)
+	_ core.Continuer          = (*profileHarness)(nil)
+	_ core.Messenger          = (*profileHarness)(nil)
+	_ core.Changing           = (*profileHarness)(nil)
+	_ core.IdleComposer       = (*profileHarness)(nil)
+	_ core.Locator            = (*profileHarness)(nil)
+)
+
 type profileHarness struct {
 	name, dir string
 	cache     core.ScanCache
@@ -34,6 +48,42 @@ func (h *profileHarness) InspectHandoff(s core.Session) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("native handoff inspection unavailable")
 	}
 	return i.InspectHandoff(s)
+}
+
+// SilentQuotaStop asks the adapter of the login s runs on, which holds its transcript and state.
+func (h *profileHarness) SilentQuotaStop(s core.Session, text string) (core.QuotaStop, bool, error) {
+	ps, as := h.all()
+	p, err := profile.Find(ps, h.name, s.Profile)
+	if err != nil || physicalProfileRoot(p.Root) != physicalProfileRoot(s.ConfigRoot) || p.Account == "" || p.Account != s.Account {
+		return core.QuotaStop{}, false, nil
+	}
+	i, ok := as[p.ID].(core.SilentQuotaStopper)
+	if !ok {
+		return core.QuotaStop{}, false, nil
+	}
+	return i.SilentQuotaStop(s, text)
+}
+
+// SessionCwd asks each login in turn where a session worked, as it may no longer run on any of them.
+func (h *profileHarness) SessionCwd(session string) string {
+	ps, as := h.all()
+	for _, q := range ps {
+		if l, ok := as[q.ID].(core.Locator); ok && q.Harness == h.name {
+			if cwd := l.SessionCwd(session); cwd != "" {
+				return cwd
+			}
+		}
+	}
+	return ""
+}
+
+// IdleComposer reads the input box only when the screen shows no turn still working, for the harnesses that can tell.
+func (h *profileHarness) IdleComposer(screen string) (string, bool) {
+	_, as := h.all()
+	if i, ok := as["default"].(core.IdleComposer); ok {
+		return i.IdleComposer(screen)
+	}
+	return as["default"].Composer(screen)
 }
 
 func (h *profileHarness) QuotaDialog(text string) bool {

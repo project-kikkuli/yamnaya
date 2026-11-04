@@ -1,0 +1,8 @@
+✻ Crunched for 3s · done 4:31 AM
+───────────────────────────────────────────
+❯ 
+───────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 3am
+    Continuing automatically at 3am · esc to cancel
+  Context: no messages yet
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
