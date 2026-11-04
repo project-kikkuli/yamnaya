@@ -579,3 +579,71 @@ func TestAYmWhoseHomeIsOverriddenReclaimsNothingReal(t *testing.T) {
 		t.Fatal("may reach a real cache")
 	}
 }
+
+func TestAWatcherThatCannotStartTellsTheOwnerOnce(t *testing.T) {
+	dir := t.TempDir()
+	var filed []string
+	file := func(why string) error { filed = append(filed, why); return nil }
+	var log strings.Builder
+	for _, why := range []string{"no such user", "no such user", "no such user"} {
+		if err := noteWatchOff(dir, why, &log, file); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(filed) != 1 || strings.Count(log.String(), "the watcher is off") != 1 {
+		t.Fatalf("filed %v, log %q", filed, log.String())
+	}
+	if err := noteWatchOff(dir, "", &log, file); err != nil {
+		t.Fatal(err)
+	}
+	if err := noteWatchOff(dir, "no such user", &log, file); err != nil {
+		t.Fatal(err)
+	}
+	if len(filed) != 2 {
+		t.Fatalf("a fresh failure after recovery filed %v", filed)
+	}
+}
+
+func TestGCForceRemovesProvenSubmodulesAndSaysSo(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "init", "-q", "--bare", "-b", "main", "dep.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "dep.git"), "dep")
+	git(t, filepath.Join(base, "dep"), "commit", "-q", "--allow-empty", "-m", "first")
+	git(t, filepath.Join(base, "dep"), "push", "-q", "origin", "HEAD:main")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	git(t, wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.Join(base, "dep.git"), "dep")
+	git(t, wt, "commit", "-q", "-m", "add dep")
+	git(t, wt, "push", "-q", "origin", "HEAD")
+	old := time.Now().Add(-launch.Idle - time.Hour)
+	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+	os.Remove(filepath.Join(admin, "logs", "HEAD"))
+	for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
+		os.Chtimes(p, old, old)
+	}
+	state := t.TempDir()
+	l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")},
+		removals: filepath.Join(state, "gc.log"), everywhere: true}
+	all, pruned := l.gc([]string{repo}, true, false)
+	var out strings.Builder
+	printSwept(&out, all, pruned, true)
+	if !strings.Contains(out.String(), "submodules proven") {
+		t.Fatalf("dry run said %q", out.String())
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("a dry run removed it")
+	}
+	l.gc([]string{repo}, false, false)
+	if _, err := os.Stat(wt); err == nil {
+		t.Fatal("kept a worktree whose submodules lose nothing")
+	}
+	logged, _ := os.ReadFile(l.removals)
+	if !strings.Contains(string(logged), "force-removed worktree") {
+		t.Fatalf("gc.log %q", logged)
+	}
+}

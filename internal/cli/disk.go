@@ -49,6 +49,8 @@ type diskState struct {
 	Blocked []string `json:"blocked,omitempty"`
 	// Risky names what the last pass may have broken for running work.
 	Risky []string `json:"risky,omitempty"`
+	// WatchOff is why this host's watcher could not start, once the owner has been told.
+	WatchOff string `json:"watch_off,omitempty"`
 }
 
 // endEpisode closes the episode's owner item if it is still open, so a relapse starts from none, and forgets it.
@@ -165,8 +167,32 @@ func (w *diskWatcher) tick() error {
 	return w.start()
 }
 
+// noteWatchOff tells the owner once that this host's real serve cannot watch the disk, and again only if the reason changes: nobody
+// chose this, and the disk filling would be the first sign otherwise. An empty why means it is fine again.
+func noteWatchOff(dir, why string, log io.Writer, file func(why string) error) error {
+	st := readDiskState(dir)
+	if st.WatchOff == why {
+		return nil
+	}
+	if why != "" {
+		fmt.Fprintln(log, "disk: the watcher is off:", why)
+		if err := file(why); err != nil {
+			return err
+		}
+	}
+	st.WatchOff = why
+	return st.save(dir)
+}
+
+func fileWatchOff(why string) error {
+	return detach("item", "add", "--session", diskItemSession, "--to", "owner", "--kind", "chore",
+		"--question", "ym serve on this host is not watching the disk: "+why,
+		"--rec", "Fix what stops ym reading this user's home from the OS, then ym service restart; until then nothing reclaims disk here and ym disk says so.")
+}
+
 // watchDisk reads free space every minute and starts the ordinary hourly gc, so neither depends on a launch happening.
 func watchDisk(ctx context.Context, l launcher, dir string, log io.Writer) {
+	noteWatchOff(dir, "", log, fileWatchOff)
 	w := &diskWatcher{dir: dir, paths: diskPaths(ctx), stat: disk.Stat, now: time.Now, log: log, dismiss: diskDismiss(l.core.Store),
 		start: func() error { return detach("disk", "reclaim", "--quiet") }}
 	tick := time.NewTicker(diskCheckEvery)
@@ -405,6 +431,11 @@ func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	cmd := &cobra.Command{Use: "disk", Short: "Show free space on the filesystems ym watches, the tier each is in and the current low-disk episode", Args: cobra.NoArgs}
 	cmd.RunE = with(func(e *env, cmd *cobra.Command, args []string) error {
+		if why, _ := core.DiskWatchOff(e.core.StateDir); why != "" {
+			fmt.Fprintln(cmd.OutOrStdout(), "watcher off:", why)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "watcher on")
+		}
 		printDisk(cmd.OutOrStdout(), disk.Each(disk.Stat, diskPaths(cmd.Context())), readDiskState(e.core.StateDir))
 		return nil
 	})
