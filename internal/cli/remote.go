@@ -28,29 +28,35 @@ const remoteBin = "~/.local/bin/ym"
 func remoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                "remote <host> [ym args...]",
-		Short:              "Run ym on a host over ssh: the board by default, or any ym command",
+		Short:              "Run ym on a host, by name or @nickname, over ssh: the board by default, or any ym command",
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if args[0] == "-h" || args[0] == "--help" {
 				return cmd.Help()
 			}
-			c := exec.Command(sshBin(), append(sshArgs(args[0]), remoteCommand(args[1:]))...)
+			host, err := sshTarget(args[0])
+			if err != nil {
+				return err
+			}
+			c := exec.Command(sshBin(), append(sshArgs(host), remoteCommand(args[1:]))...)
 			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if term.IsTerminal(os.Stdin.Fd()) && term.IsTerminal(os.Stdout.Fd()) {
-				c = (&remoteHosts{ssh: sshBin()}).Attach(args[0], args[1:]...)
+				c = (&remoteHosts{ssh: sshBin()}).Attach(host, args[1:]...)
 			}
-			err := c.Run()
+			err = c.Run()
 			exit, exited := err.(*exec.ExitError)
 			if exited && exit.ExitCode() == 255 {
-				(&remoteHosts{ssh: sshBin()}).drop(args[0])
+				(&remoteHosts{ssh: sshBin()}).drop(host)
 				os.Exit(255)
 			}
 			if err != nil && !exited {
 				return err
 			}
-			if err := rememberHost(args[0]); err != nil {
-				return err
+			if !exited || exit.ExitCode() >= 0 {
+				if err := rememberHost(host); err != nil {
+					return err
+				}
 			}
 			if exited {
 				os.Exit(exit.ExitCode())
@@ -60,6 +66,23 @@ func remoteCmd() *cobra.Command {
 	}
 	cmd.AddCommand(remoteInstallCmd(), remoteForgetCmd(), remoteRenameCmd(), remoteRepairCmd())
 	return cmd
+}
+
+// sshTarget is what ssh should connect to for ref: the host a @nickname stands for, anything else as written.
+func sshTarget(ref string) (string, error) {
+	if !strings.HasPrefix(ref, "@") {
+		return ref, nil
+	}
+	path, err := core.DefaultStorePath()
+	if err != nil {
+		return "", err
+	}
+	st, err := core.OpenStore(path)
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	return st.RouteHost(ref)
 }
 
 // rememberHost records host so this host's board reads its sessions from now on.
