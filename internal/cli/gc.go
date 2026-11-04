@@ -141,7 +141,7 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 		}
 	}
 	dirs = append(dirs, l.liveWorktrees(recs)...)
-	if p.Ignored {
+	if p.Idle < launch.Idle {
 		p.Recorded = recordedWorktrees(recs)
 	}
 	if p.Fresh == nil {
@@ -280,7 +280,7 @@ func gcCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comma
 	cmd := &cobra.Command{
 		Use: "gc [--dry-run]",
 		Short: ("Remove worktrees of known repositories and those under the repo roots (YAMNAYA_REPO_ROOTS, else ~/.config/wt-reap/roots, else ~/dev and ~/src; only ym's own worktrees under a YAMNAYA_STATE_DIR other than the default) that are clean, on a remote or squash-merged, " +
-			"untouched for 3 days and unused, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago " +
+			"untouched for 3 days, unused and holding nothing git-ignored outside the regenerable allowlist, then delete merged or squash-merged branches that no worktree uses and launch records landed over 14 days ago " +
 			"whose conversation transcripts are gone"),
 		Args: cobra.NoArgs,
 	}

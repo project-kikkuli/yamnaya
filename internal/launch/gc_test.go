@@ -43,7 +43,7 @@ func TestGCRemovesOnlyIdleUnusedWorktreesThatLoseNothing(t *testing.T) {
 		detach bool
 	}{
 		{"merged, idle", merged, old, false, false, "", false, false},
-		{"merged, idle, only ignored files", ignored, old, false, false, "", false, false},
+		{"merged, idle, an ignored .env", ignored, old, false, false, KeepIgnored, true, false},
 		{"pushed not merged, idle", pushed, old, false, false, "", true, false},
 		{"merged, touched today", merged, 0, false, false, KeepActive, true, false},
 		{"merged, idle, reflog rewritten by git gc today", expired, old, false, false, "", false, false},

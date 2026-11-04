@@ -30,14 +30,12 @@ const (
 	KeepModules = "submodules"
 )
 
-// Policy is how hard a gc reaps: Idle replaces the default idle time, Ignored also keeps a worktree holding git-ignored
-// files outside the regenerable allowlist, Enough keeps a worktree whose filesystem has enough free, and Fresh reads what
-// is in use again just before a removal, keeping the worktree when it cannot.
+// Policy is how hard a gc reaps: Idle replaces the default idle time, Enough keeps a worktree whose filesystem has enough
+// free, and Fresh reads what is in use again just before a removal, keeping the worktree when it cannot.
 type Policy struct {
-	Idle    time.Duration
-	Ignored bool
-	Enough  func(path string) bool
-	Fresh   func() ([]string, error)
+	Idle   time.Duration
+	Enough func(path string) bool
+	Fresh  func() ([]string, error)
 	// Recorded are worktrees of sessions ym means to resume though none has a pane, as after a restart: never reaped, may be stripped.
 	Recorded []string
 }
@@ -218,7 +216,7 @@ func Inside(path string, cwds []string) string {
 }
 
 // GC removes the linked worktrees of the repository at root that are clean, have every commit on a remote or in a
-// merged pull request, went untouched for Idle and hold no cwd in cwds, then deletes local branches merged into Base or
+// merged pull request, went untouched for Idle, hold no cwd in cwds and nothing ignored off the regenerable allowlist, then deletes local branches merged into Base or
 // squashed by a merged pull request that no worktree has checked out. With dry it only decides; with sizes it measures
 // every worktree it removes or keeps for dirt or local commits. A non-nil own leaves every other worktree and branch alone.
 func GC(root string, now time.Time, cwds []string, q *Squash, own *Owned, dry, sizes bool) (Swept, error) {
@@ -268,7 +266,7 @@ func GCWith(root string, now time.Time, cwds []string, q *Squash, own *Owned, dr
 			sw.Keep, sw.Why = KeepRecord, "its session is not landed"
 		}
 		if sw.Keep == "" {
-			sw.Keep, sw.Why, sw.Forced = keepContents(w.path, p.Ignored)
+			sw.Keep, sw.Why, sw.Forced = keepContents(w.path)
 		}
 		if sw.Keep == "" && p.Enough != nil && p.Enough(w.path) {
 			sw.Keep, sw.Why = KeepEnough, "its filesystem has enough free"
@@ -379,7 +377,7 @@ func recheck(root, path string, squashed bool, p Policy) (string, string) {
 	if local != "0" && !squashed {
 		return KeepLocal, local + " commits on no remote"
 	}
-	if keep, why, forced := keepContents(path, p.Ignored); keep != "" {
+	if keep, why, forced := keepContents(path); keep != "" {
 		return keep, why
 	} else if !forced {
 		return KeepModules, "git refused for submodules the index does not record"

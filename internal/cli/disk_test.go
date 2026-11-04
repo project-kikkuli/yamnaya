@@ -284,7 +284,7 @@ func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			all, _ := l.gcWith([]string{repo}, true, false, launch.Policy{Idle: time.Hour, Ignored: true})
+			all, _ := l.gcWith([]string{repo}, true, false, launch.Policy{Idle: time.Hour})
 			if len(all) != 1 || len(all[0].Trees) != 1 || all[0].Trees[0].Keep != c.want {
 				t.Fatalf("decided %+v, want keep %q", all, c.want)
 			}
@@ -396,7 +396,7 @@ func TestGCRemovesNothingWithoutTheProcessTable(t *testing.T) {
 	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
 	state := t.TempDir()
 	l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
-	all, _ := l.gcWith([]string{repo}, false, false, launch.Policy{Idle: time.Nanosecond, Ignored: true})
+	all, _ := l.gcWith([]string{repo}, false, false, launch.Policy{Idle: time.Nanosecond})
 	if len(all) != 1 || len(all[0].Errors) != 1 || len(all[0].Trees) != 0 {
 		t.Fatalf("swept %+v", all)
 	}
@@ -711,7 +711,7 @@ func TestAYmOffTheOwnersStateTouchesOnlyWorktreesInsideItsRehearsalRoot(t *testi
 				Worktree: launch.Worktree{Path: recPath, Branch: "feature", GitDir: recGit}}); err != nil {
 				t.Fatal(err)
 			}
-			l.gcWith(nil, false, false, launch.Policy{Idle: time.Hour, Ignored: true})
+			l.gcWith(nil, false, false, launch.Policy{Idle: time.Hour})
 			if _, err := os.Stat(wt); (err != nil) != c.gone {
 				t.Fatalf("worktree gone %v, want %v", err != nil, c.gone)
 			}

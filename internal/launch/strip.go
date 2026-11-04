@@ -20,14 +20,14 @@ import (
 var regenerableDirs = map[string]bool{
 	"node_modules": true, ".venv": true, "target": true, "__pycache__": true, ".pytest_cache": true, ".mypy_cache": true,
 	".ruff_cache": true, ".next": true, ".turbo": true, ".parcel-cache": true, ".gradle": true, ".tox": true, ".nox": true,
-	".svelte-kit": true,
+	".svelte-kit": true, "dist": true,
 }
 
 var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", ".eslintcache"}
 
-// targetBuildFiles are the build files whose being tracked beside it makes a target directory a build's output: unlike the rest
-// of the allowlist, which only its tool writes to, target is a name anyone might use for a folder.
-var targetBuildFiles = []string{"Cargo.toml", "pom.xml"}
+// buildFiles are the build files whose being tracked beside it makes a generically named directory a build's output: unlike the
+// rest of the allowlist, which only its tool writes to, these are names anyone might use for a folder.
+var buildFiles = map[string][]string{"target": {"Cargo.toml", "pom.xml"}, "dist": {"package.json"}}
 
 // checkoutFiles name what marks a checkout and may be a file: a linked git worktree's .git, and Fossil's checkout database.
 var checkoutFiles = []string{".git", ".fslckout", "_FOSSIL_"}
@@ -102,6 +102,10 @@ func selfIgnoringVenv(root, entry string) (string, bool) {
 // regenerable reports whether an ignored entry of the worktree at root is safe to delete: an allowlisted whole directory
 // holding no other repository or worktree, or an allowlisted file.
 func regenerable(root, entry string) bool {
+	return allowlisted(root, entry) && (!strings.HasSuffix(entry, "/") || !holdsRepo(filepath.Join(root, entry)))
+}
+
+func allowlisted(root, entry string) bool {
 	base := filepath.Base(strings.TrimSuffix(entry, "/"))
 	if !strings.HasSuffix(entry, "/") {
 		return slices.ContainsFunc(regenerableFiles, func(p string) bool {
@@ -112,15 +116,13 @@ func regenerable(root, entry string) bool {
 	if !regenerableDirs[base] {
 		return false
 	}
-	if base == "target" && !trackedBuildFile(root, filepath.Dir(strings.TrimSuffix(entry, "/"))) {
-		return false
-	}
-	return !holdsRepo(filepath.Join(root, entry))
+	files, generic := buildFiles[base]
+	return !generic || trackedBuildFile(root, filepath.Dir(strings.TrimSuffix(entry, "/")), files)
 }
 
-// trackedBuildFile reports whether HEAD holds one of targetBuildFiles as a file in dir; staged, a directory or a link do not count.
-func trackedBuildFile(root, dir string) bool {
-	for _, f := range targetBuildFiles {
+// trackedBuildFile reports whether HEAD holds one of files as a file in dir; staged, a directory or a link do not count.
+func trackedBuildFile(root, dir string, files []string) bool {
+	for _, f := range files {
 		out, err := look(root, "--literal-pathspecs", "ls-tree", "HEAD", "--", filepath.Join(dir, f))
 		if err == nil && (strings.HasPrefix(out, "100644 blob ") || strings.HasPrefix(out, "100755 blob ")) {
 			return true
@@ -130,9 +132,9 @@ func trackedBuildFile(root, dir string) bool {
 }
 
 // keepContents says why what lies in the worktree at path beyond its commits must stay: a repository nested at any depth under
-// an ignored directory always, with strict anything ignored off the allowlist, and a submodule not proven to lose nothing.
+// an ignored directory, anything ignored off the allowlist, and a submodule not proven to lose nothing.
 // Removing a worktree takes its ignored files and its submodules' git dirs with it. forced says it has submodules, all proven.
-func keepContents(path string, strict bool) (keep, why string, forced bool) {
+func keepContents(path string) (keep, why string, forced bool) {
 	if hidden, err := hiddenEdits(path); err != nil {
 		return KeepFailing, err.Error(), false
 	} else if hidden != "" {
@@ -142,8 +144,6 @@ func keepContents(path string, strict bool) (keep, why string, forced bool) {
 	if err != nil {
 		return KeepFailing, err.Error(), false
 	}
-	// --force takes everything ignored with it, so forcing always takes the strict rule
-	strict = strict || len(links) > 0
 	all, err := ignoredEntries(path)
 	if err != nil {
 		return KeepFailing, err.Error(), false
@@ -153,11 +153,9 @@ func keepContents(path string, strict bool) (keep, why string, forced bool) {
 			return KeepNested, "holds a repository under " + e, false
 		}
 	}
-	if strict {
-		for _, e := range all {
-			if !regenerable(path, e) {
-				return KeepIgnored, "holds git-ignored " + e, false
-			}
+	for _, e := range all {
+		if !allowlisted(path, e) {
+			return KeepIgnored, "holds git-ignored " + e, false
 		}
 	}
 	proven := map[string]bool{}
@@ -309,7 +307,7 @@ func proveSubmodule(path, recorded string, proven map[string]bool) string {
 	if linked, err := os.ReadDir(filepath.Join(gitDir, "worktrees")); err != nil && !errors.Is(err, fs.ErrNotExist) || len(linked) > 0 {
 		return "has linked worktrees of its own"
 	}
-	if keep, why, _ := keepContents(path, true); keep != "" {
+	if keep, why, _ := keepContents(path); keep != "" {
 		return "has " + keep + ": " + why
 	}
 	refs, err := remoteRefs(path)

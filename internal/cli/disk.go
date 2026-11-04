@@ -221,7 +221,7 @@ func diskMay(everywhere bool, stateDir string) func(string) bool {
 	}
 }
 
-// worktreeSteps are tier 2's worktree steps: gc at a short idle that spares ignored files outside the allowlist, then stripping
+// worktreeSteps are tier 2's worktree steps: gc at a short idle, then stripping
 // the allowlisted ignored files out of the worktrees gc kept.
 func (l launcher) worktreeSteps(repos []string, e disk.Env) []disk.Step {
 	var all []launch.Swept
@@ -229,7 +229,7 @@ func (l launcher) worktreeSteps(repos []string, e disk.Env) []disk.Step {
 	return []disk.Step{
 		{Name: "worktree gc", Tier: 2, Run: func(context.Context) disk.Report {
 			reapable = e.Reapable()
-			swept, pruned := l.gcWith(repos, e.Dry, e.Dry, launch.Policy{Idle: reapIdle, Ignored: true, Enough: func(p string) bool { return !reapable(p) }})
+			swept, pruned := l.gcWith(repos, e.Dry, e.Dry, launch.Policy{Idle: reapIdle, Enough: func(p string) bool { return !reapable(p) }})
 			all = swept
 			var b strings.Builder
 			printSwept(&b, swept, pruned, e.Dry)

@@ -99,7 +99,7 @@ func TestATier2ReapNeverLosesWork(t *testing.T) {
 			repo, wt := reapRepo(t)
 			q, cwds := c.setup(t, repo, wt)
 			head := Head(wt)
-			s, err := GCWith(repo, time.Now().Add(2*time.Hour), cwds, q, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+			s, err := GCWith(repo, time.Now().Add(2*time.Hour), cwds, q, nil, false, false, Policy{Idle: time.Hour})
 			if err != nil || len(s.Errors) > 0 {
 				t.Fatal(err, s.Errors)
 			}
@@ -138,7 +138,7 @@ func TestATier2ReapNeverLosesWork(t *testing.T) {
 				hb = failingHub{}
 			}
 			q := &Squash{Hub: hb, Cache: filepath.Join(t.TempDir(), "squash.json"), Now: time.Now}
-			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, q, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, q, nil, false, false, Policy{Idle: time.Hour})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,22 +161,56 @@ func (failingHub) Merged(_, _ string) ([]PR, error)      { return nil, os.ErrDea
 func (failingHub) Holding(_, _ string) ([]PR, error)     { return nil, os.ErrDeadlineExceeded }
 func (failingHub) Ancestor(_, _, _ string) (bool, error) { return false, os.ErrDeadlineExceeded }
 
-func TestTheOrdinaryGCStillRemovesAWorktreeHoldingIgnoredFilesAndAShortIdleOnlyAppliesToAReclaim(t *testing.T) {
-	repo, wt := reapRepo(t)
-	put(t, wt, ".env")
-	s, err := GC(repo, time.Now().Add(2*time.Hour), nil, nil, nil, true, false)
-	if err != nil || s.Trees[0].Keep != KeepActive {
-		t.Fatalf("2h idle under the ordinary gc: %+v %v", s.Trees, err)
+func TestTheOrdinaryGCKeepsAWorktreeHoldingAnythingIgnoredOffTheAllowlist(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		files []string
+		keep  string
+	}{
+		{"clean", nil, ""},
+		{"only regenerable ignored dirs", []string{"node_modules/a/b.js", "web/node_modules/c.js", "pkg/__pycache__/x.pyc", ".venv/lib/y.py"}, ""},
+		{"an ignored .env", []string{".env"}, KeepIgnored},
+		{"an ignored .env beside regenerable dirs", []string{".env", "node_modules/a/b.js"}, KeepIgnored},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo, wt := reapRepo(t)
+			for _, f := range c.files {
+				put(t, wt, f)
+			}
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, false, false)
+			if err != nil || s.Trees[0].Keep != c.keep {
+				t.Fatalf("decided %+v, %v, want keep %q", s.Trees, err, c.keep)
+			}
+			if _, err := os.Stat(wt); (err == nil) != (c.keep != "") {
+				t.Fatalf("worktree on disk %v with keep %q", err == nil, c.keep)
+			}
+			if c.keep != "" {
+				for _, f := range c.files {
+					if !exists(wt, f) {
+						t.Errorf("%s lost", f)
+					}
+				}
+			}
+		})
 	}
-	s, err = GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, true, false)
+}
+
+func TestAShortIdleOnlyAppliesToAReclaim(t *testing.T) {
+	repo, _ := reapRepo(t)
+	at := time.Now().Add(2 * time.Hour)
+	s, err := GC(repo, at, nil, nil, nil, true, false)
+	if err != nil || s.Trees[0].Keep != KeepActive {
+		t.Fatalf("ordinary gc at 2h idle: %+v %v", s.Trees, err)
+	}
+	s, err = GCWith(repo, at, nil, nil, nil, true, false, Policy{Idle: time.Hour})
 	if err != nil || s.Trees[0].Keep != "" {
-		t.Fatalf("3 days idle under the ordinary gc: %+v %v", s.Trees, err)
+		t.Fatalf("reclaim at 2h idle: %+v %v", s.Trees, err)
 	}
 }
 
 func TestAReapStopsRemovingOnceTheDiskHasEnough(t *testing.T) {
 	repo, wt := reapRepo(t)
-	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true, Enough: func(string) bool { return true }})
+	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Enough: func(string) bool { return true }})
 	if err != nil || s.Trees[0].Keep != KeepEnough {
 		t.Fatalf("%+v %v", s.Trees, err)
 	}
@@ -196,7 +230,7 @@ func TestStrippingTakesOnlyAllowlistedIgnoredEntriesAndLeavesWorkAlone(t *testin
 	}
 	idle := time.Now().Add(-24 * time.Hour)
 	os.Chtimes(wt, idle, idle)
-	s, err := GCWith(repo, time.Now(), nil, nil, nil, true, false, Policy{Idle: time.Hour, Ignored: true})
+	s, err := GCWith(repo, time.Now(), nil, nil, nil, true, false, Policy{Idle: time.Hour})
 	if err != nil || len(s.Trees) != 1 || s.Trees[0].Keep == "" {
 		t.Fatalf("%+v %v", s.Trees, err)
 	}
@@ -254,7 +288,7 @@ func TestAVirtualenvIgnoringItselfCountsAsRegenerable(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, ".venv", ".gitignore"), []byte("*\n"), 0o644)
 	put(t, repo, ".venv/pyvenv.cfg")
 	put(t, repo, ".venv/lib/x.py")
-	if keep, why, _ := keepContents(repo, true); keep != "" {
+	if keep, why, _ := keepContents(repo); keep != "" {
 		t.Fatalf("kept: %s %s", keep, why)
 	}
 	StripIgnored(Sweep{Path: repo}, false)
@@ -365,6 +399,27 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 			run(t, wt, "git", "push", "-q", "origin", "HEAD")
 			put(t, wt, "src/target/debug/app")
 		}, "", nil, []string{"src/target/debug/app"}},
+		{"a package's dist beside its tracked package.json", func(t *testing.T, repo, wt string) {
+			put(t, wt, "web/package.json")
+			run(t, wt, "git", "add", "web/package.json")
+			run(t, wt, "git", "commit", "-q", "-m", "package")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "web/dist/tsconfig.tsbuildinfo")
+		}, "", nil, []string{"web/dist/tsconfig.tsbuildinfo"}},
+		{"dist with its package.json only higher up", func(t *testing.T, repo, wt string) {
+			put(t, wt, "package.json")
+			run(t, wt, "git", "add", "package.json")
+			run(t, wt, "git", "commit", "-q", "-m", "package")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "web/dist/kept.js")
+		}, KeepIgnored, []string{"web/dist/kept.js"}, nil},
+		{"target beside a package.json, which builds no target", func(t *testing.T, repo, wt string) {
+			put(t, wt, "package.json")
+			run(t, wt, "git", "add", "package.json")
+			run(t, wt, "git", "commit", "-q", "-m", "package")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "target/kept.txt")
+		}, KeepIgnored, []string{"target/kept.txt"}, nil},
 		{"target beside an untracked build file", func(t *testing.T, repo, wt string) {
 			put(t, wt, "src/keep.rs")
 			run(t, wt, "git", "add", "src/keep.rs")
@@ -420,7 +475,7 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 		t.Run(c.name+"/reap", func(t *testing.T) {
 			repo, wt := reapRepo(t)
 			c.setup(t, repo, wt)
-			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -490,7 +545,7 @@ func TestASweepHeldUpByGhOrGitEndsAndKeepsTheWork(t *testing.T) {
 		defer func() { ghLimit = old }()
 		q := &Squash{Hub: GH{}, Cache: filepath.Join(t.TempDir(), "squash.json"), Now: time.Now}
 		start := time.Now()
-		s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, q, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+		s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, q, nil, false, false, Policy{Idle: time.Hour})
 		if err != nil || time.Since(start) > 30*time.Second {
 			t.Fatalf("%v after %v", err, time.Since(start))
 		}
@@ -665,7 +720,7 @@ func TestAWorktreeWithSubmodulesGoesOnlyWhenTheyAreProvenToLoseNothing(t *testin
 				}
 				repo, wt, dep := submoduleRepo(t)
 				c.setup(t, repo, wt, dep)
-				p := Policy{Idle: time.Hour, Ignored: true}
+				p := Policy{Idle: time.Hour}
 				if c.fresh != nil {
 					p.Fresh = func() ([]string, error) { c.fresh(t, repo, wt); return nil, nil }
 				}
@@ -695,7 +750,7 @@ func TestAStraySubmoduleGitDirKeepsTheWorktree(t *testing.T) {
 	gitDir, _ := git(dep, "rev-parse", "--absolute-git-dir")
 	stray := filepath.Join(filepath.Dir(gitDir), "gone")
 	run(t, filepath.Dir(gitDir), "git", "init", "-q", "--bare", "gone")
-	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour})
 	if err != nil || s.Trees[0].Keep != KeepModules {
 		t.Fatalf("decided %+v, %v", s.Trees[0], err)
 	}
@@ -707,7 +762,7 @@ func TestAStraySubmoduleGitDirKeepsTheWorktree(t *testing.T) {
 	}
 }
 
-func TestForcingTakesTheStrictIgnoredRuleEvenInAnOrdinaryGC(t *testing.T) {
+func TestAnOrdinaryGCKeepsASubmoduleWorktreeHoldingIgnoredFiles(t *testing.T) {
 	excluded := func(t *testing.T, dir string) {
 		t.Helper()
 		gitDir, _ := git(dir, "rev-parse", "--absolute-git-dir")
