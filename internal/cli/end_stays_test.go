@@ -30,6 +30,15 @@ func nestedRepo(t *testing.T, wt, rel string) {
 	git(t, inner, "commit", "-q", "-m", "only here")
 }
 
+// lfsAttributes puts *.png under filter=lfs and pushes that. The attribute alone decides, so no LFS driver need be installed.
+func lfsAttributes(t *testing.T, wt string) {
+	t.Helper()
+	plant(t, wt, ".gitattributes", "*.png filter=lfs diff=lfs merge=lfs -text\n")
+	git(t, wt, "add", ".gitattributes")
+	git(t, wt, "commit", "-q", "-m", "lfs")
+	git(t, wt, "push", "-q", "origin", "task")
+}
+
 func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -98,6 +107,27 @@ func TestEndingASessionLeavesAWorktreeGCWouldKeepForWhatItHolds(t *testing.T) {
 				plant(t, wt, "vendor/.hg/store/data")
 				plant(t, wt, "vendor/n.txt")
 			}, "holds a repository under vendor/", []string{"vendor/.hg/store/data", "vendor/n.txt"}, 2, 0},
+			{"an untracked LFS file", func(t *testing.T, wt string) {
+				lfsAttributes(t, wt)
+				plant(t, wt, "art/a.png", "real image")
+			}, "a bundle cannot hold: art/a.png", []string{"art/a.png"}, 1, 0},
+			{"a changed tracked LFS file", func(t *testing.T, wt string) {
+				lfsAttributes(t, wt)
+				plant(t, wt, "a.png", "real image")
+				git(t, wt, "add", "a.png")
+				git(t, wt, "commit", "-q", "-m", "image")
+				git(t, wt, "push", "-q", "origin", "task")
+				plant(t, wt, "a.png", "another image")
+			}, "a bundle cannot hold: a.png", []string{"a.png"}, 1, 0},
+			{"a staged new LFS file", func(t *testing.T, wt string) {
+				lfsAttributes(t, wt)
+				plant(t, wt, "a.png", "real image")
+				git(t, wt, "add", "a.png")
+			}, "a bundle cannot hold: a.png", []string{"a.png"}, 1, 0},
+			{"an untracked file under no filter beside the LFS attribute", func(t *testing.T, wt string) {
+				lfsAttributes(t, wt)
+				plant(t, wt, "notes.txt")
+			}, "", nil, 1, 0},
 			{"a repository under an ignored directory", func(t *testing.T, wt string) {
 				git(t, wt, "init", "-q", "scratch/clone")
 			}, "holds a repository under scratch/", []string{"scratch/clone/.git"}, 0, 0},
@@ -222,6 +252,9 @@ func TestEndingASessionWhoseWorkCannotBeBundledRefusesAndLosesNothing(t *testing
 	if err := l.records.Save(rec); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := l.srv.Start(l.conf, "repo-wt-task", wt, []string{"sleep", "600"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := l.End(rec.Key, ""); err == nil {
 		t.Fatal("ended a session whose work it could not bundle")
 	}
@@ -230,6 +263,25 @@ func TestEndingASessionWhoseWorkCannotBeBundledRefusesAndLosesNothing(t *testing
 	}
 	if after, _ := l.records.Find(rec.Key); after.IsLanded() {
 		t.Fatal("landed a session whose work it could not bundle")
+	}
+	if p, err := l.srv.Pane("repo-wt-task"); err == nil {
+		t.Fatalf("the pane outlived the end: %+v", p)
+	}
+
+	rec.Killed = time.Now().Add(-48 * time.Hour)
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Sweep(core.Stopped(l.Launched())); err == nil {
+		t.Fatal("serve's first try said nothing of the failure")
+	}
+	for range 3 {
+		if err := l.Sweep(core.Stopped(l.Launched())); err != nil {
+			t.Fatalf("serve repeated a failure nothing changed: %v", err)
+		}
+	}
+	if after, _ := l.records.Find(rec.Key); after.IsLanded() || after.Blocked == "" {
+		t.Fatalf("landed %v, blocked %q; want it held back with why", after.IsLanded(), after.Blocked)
 	}
 }
 

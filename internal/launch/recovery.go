@@ -67,7 +67,7 @@ func Stash(path, key, dir string) (Recovery, error) {
 	r.Origin, _ = git(path, "remote", "get-url", "origin")
 	tip := "HEAD"
 	if t.Files > 0 {
-		tree, err := worktreeTree(path, key, dir)
+		tree, err := worktreeTree(path, key, dir, false)
 		if err != nil {
 			return r, err
 		}
@@ -89,15 +89,23 @@ func Stash(path, key, dir string) (Recovery, error) {
 	return r, err
 }
 
-// worktreeTree writes the tree of everything in the worktree at path that git add -A takes, leaving its index alone.
-func worktreeTree(path, key, dir string) (string, error) {
+// worktreeTree writes the tree of everything in the worktree at path that git add -A takes, leaving its index alone. With cached it
+// starts from a copy of that index, whose file times spare hashing every tracked file again; a path force-added past an ignore
+// rule then counts too, so only a comparison that errs toward a difference may use it.
+func worktreeTree(path, key, dir string, cached bool) (string, error) {
 	index := filepath.Join(dir, key+".index")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	defer os.Remove(index)
 	env := []string{"GIT_INDEX_FILE=" + index}
-	for _, args := range [][]string{{"read-tree", "HEAD"}, {"add", "-A"}} {
+	steps := [][]string{{"read-tree", "HEAD"}, {"add", "-A"}}
+	if real, err := git(path, "rev-parse", "--path-format=absolute", "--git-path", "index"); cached && err == nil {
+		if raw, err := os.ReadFile(real); err == nil && os.WriteFile(index, raw, 0o600) == nil {
+			steps = steps[1:]
+		}
+	}
+	for _, args := range steps {
 		if _, err := gitEnv(path, env, nil, args...); err != nil {
 			return "", err
 		}
@@ -143,7 +151,7 @@ func (r Recovery) Standing(w Worktree, head, key string) int {
 	if err != nil {
 		return WorkChanged
 	}
-	if tree, err := worktreeTree(w.Path, key, filepath.Dir(r.Bundle)); err == nil && tree == want {
+	if tree, err := worktreeTree(w.Path, key, filepath.Dir(r.Bundle), true); err == nil && tree == want {
 		return WorkHere
 	}
 	status, err := look(w.Path, "status", "--porcelain", "--untracked-files=normal")

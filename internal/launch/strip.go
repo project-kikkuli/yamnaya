@@ -176,8 +176,40 @@ func Pinned(path string) (keep, why string) {
 			return KeepNested, "holds a repository under " + e
 		}
 	}
+	if lfs, err := uncommittedLFS(path); err != nil {
+		return KeepFailing, err.Error()
+	} else if lfs != "" {
+		return KeepDirty, "holds uncommitted LFS content a bundle cannot hold: " + lfs
+	}
 	keep, why, _ = keepContents(path)
 	return keep, why
+}
+
+// uncommittedLFS names an untracked or changed file of the worktree at path under filter=lfs, or "". A bundle takes its pointer only.
+func uncommittedLFS(path string) (string, error) {
+	base := []string{"--no-optional-locks", "-c", "core.fsmonitor=false"}
+	untracked, err := gitEnv(path, nil, nil, append(base, "ls-files", "--others", "--exclude-standard", "-z")...)
+	if err != nil {
+		return "", err
+	}
+	changed, err := gitEnv(path, nil, nil, append(base, "diff", "--name-only", "-z", "HEAD")...)
+	if err != nil {
+		return "", err
+	}
+	if untracked == "" && changed == "" {
+		return "", nil
+	}
+	out, err := gitEnv(path, nil, []byte(untracked+changed), append(base, "check-attr", "--stdin", "-z", "filter")...)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Split(out, "\x00")
+	for i := 0; i+2 < len(fields); i += 3 {
+		if fields[i+2] == "lfs" {
+			return fields[i], nil
+		}
+	}
+	return "", nil
 }
 
 // keepContents says why what lies in the worktree at path beyond its commits must stay: a repository nested at any depth under
