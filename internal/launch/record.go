@@ -55,6 +55,8 @@ type Record struct {
 	Seen time.Time `json:"seen,omitzero"`
 	// Killed is when ym kill ended the agent, so its exit waits out the same day of grace a signal death gets.
 	Killed time.Time `json:"killed,omitzero"`
+	// OwnStop says ym made Killed itself, to move the session: an owner's stop takes it back.
+	OwnStop bool `json:"own_stop,omitempty"`
 	// Landed is when ym ended the session and removed its worktree; ym revive recreates both from Worktree and Head.
 	Landed time.Time `json:"landed,omitzero"`
 	// Recovery is the work ym kill bundled out of the worktree before removing it; ym revive puts it back.

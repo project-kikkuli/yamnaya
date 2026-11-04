@@ -2899,36 +2899,29 @@ func TestWireADeliveryInTheBoxIsNoDraft(t *testing.T) {
 	}
 }
 
-// ym dying between a port's stop and its write leaves a kill mark that is ym's: the session is not ended by it. An owner's kill stands.
+// A port's own stop never reads as the owner's, and an owner's stop never reads as the port's, whichever comes first and however close, across a crash or a retry.
 func TestWireACrashBetweenAPortsStopAndItsWrite(t *testing.T) {
+	ownerStop := func(t *testing.T, w *wireWorld, s core.Live) {
+		t.Helper()
+		if _, err := w.c.Stop(s); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, c := range []struct {
-		name   string
-		owner  func(*testing.T, *wireWorld, core.Live)
-		closed bool
+		name                        string
+		before, grace, write, after func(*testing.T, *wireWorld, core.Live)
+		retry, closed               bool
 	}{
 		{name: "the mark is ym's own"},
-		{name: "the owner kills it while the record is in flight", closed: true, owner: func(t *testing.T, w *wireWorld, s core.Live) {
+		{name: "the owner ends it while the record is in flight", closed: true, after: func(t *testing.T, w *wireWorld, s core.Live) {
 			if _, err := w.l.End(s.Key(), ""); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "the owner stops it later", closed: true, owner: func(t *testing.T, w *wireWorld, s core.Live) {
-			rec, _ := w.l.records.Find(w.rec.Key)
-			m, err := loadMigration(w.state, "claude", profileConversation)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// A stop past the window: the record's clock says it was a later act.
-			m.StopAt = m.StopAt.Add(-time.Minute)
-			m.Since = m.StopAt
-			if err = saveMigration(w.state, m); err != nil {
-				t.Fatal(err)
-			}
-			rec.Killed = m.StopAt.Add(ownStopWindow + time.Second)
-			if err := w.l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-		}},
+		{name: "the owner stops it before ym's stop", closed: true, before: ownerStop},
+		{name: "the owner stops it inside ym's grace", closed: true, grace: ownerStop},
+		{name: "the owner stops it right after ym's stop", closed: true, write: ownerStop},
+		{name: "a retry stops it again after the owner did", closed: true, write: ownerStop, retry: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWireWorld(t)
@@ -2948,13 +2941,22 @@ func TestWireACrashBetweenAPortsStopAndItsWrite(t *testing.T) {
 			}
 			w.pass(t, time.Minute)
 			var saved migration
-			signal := w.c.Signal
+			graced, porting := false, false
 			w.c.Signal = func(pid int, sig syscall.Signal) error {
-				saved, _ = loadMigration(w.state, "claude", profileConversation)
-				if signal != nil {
-					return signal(pid, sig)
+				if porting {
+					saved, _ = loadMigration(w.state, "claude", profileConversation)
 				}
-				return syscall.Kill(pid, sig)
+				err := syscall.Kill(pid, sig)
+				if c.grace != nil && !graced {
+					graced = true
+					b, _ := w.c.Board()
+					s, _ := b.Session(profileConversation)
+					c.grace(t, w, s)
+				}
+				if errors.Is(err, syscall.ESRCH) {
+					return nil
+				}
+				return err
 			}
 			b, err := w.c.Board()
 			if err != nil {
@@ -2962,26 +2964,46 @@ func TestWireACrashBetweenAPortsStopAndItsWrite(t *testing.T) {
 			}
 			s, _ := b.Session(profileConversation)
 			rec, _ := w.l.records.Find(w.rec.Key)
-			plan := core.PortPlan{Close: func() {}, Write: func() (string, error) { return "", errors.New("unreachable") }}
-			w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) { return plan, nil }
 			crash := errors.New("ym died here")
-			plan.Write = func() (string, error) { return "", crash }
+			writes := 0
+			w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) {
+				return core.PortPlan{Close: func() {}, Write: func() (string, error) {
+					if writes++; c.write != nil && writes == 1 {
+						c.write(t, w, s)
+					}
+					return "", crash
+				}}, nil
+			}
 			m := migration{Version: 1, Source: rec, Destination: cx, State: "prepared", Since: time.Now()}
 			if err = saveMigration(w.state, m); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = w.l.portRecord(rec, s, m); !errors.Is(err, crash) {
-				t.Fatalf("portRecord: %v", err)
+			if c.before != nil {
+				c.before(t, w, s)
 			}
-			if saved.StopAt.IsZero() {
-				t.Fatalf("the stop was not on record before it happened: %+v", saved)
+			porting = true
+			if _, err = w.l.portRecord(rec, s, m); err == nil {
+				t.Fatal("portRecord wrote the port")
+			}
+			if c.retry {
+				if m, err = loadMigration(w.state, "claude", profileConversation); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = w.l.portRecord(rec, s, m); err == nil {
+					t.Fatal("the retry wrote the port")
+				}
+			}
+			if c.closed && writes > 1 {
+				t.Fatalf("wrote a port %d times over the owner's stop", writes)
 			}
 			// What the crash leaves: the record as it stood at the stop, and the stop's kill mark.
-			if err = saveMigration(w.state, saved); err != nil {
-				t.Fatal(err)
+			if saved.Version != 0 && !c.retry {
+				if err = saveMigration(w.state, saved); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if c.owner != nil {
-				c.owner(t, w, s)
+			if c.after != nil {
+				c.after(t, w, s)
 			}
 			w.restartServe(t)
 			*ports = 0

@@ -304,8 +304,11 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 	}
 	stopped := false
 	if err == nil {
-		_, err = l.core.Stop(s)
+		_, err = l.core.StopOwn(s)
 		stopped = err == nil
+	}
+	if latest, found := l.records.Find(rec.Key); err == nil && found && !latest.OwnStop && !latest.Killed.IsZero() {
+		return saveFailover(dir, e.Harness, a)
 	}
 	if err == nil {
 		_, err = once.revive(rec)
@@ -605,13 +608,13 @@ func (l launcher) Failover(b core.Board) error {
 // forgetOwnStop clears the kill mark of a stop ym made itself, so what later reads the mark sees only an owner's.
 func (l launcher) forgetOwnStop(key string) error {
 	rec, ok := l.records.Find(key)
-	if !ok {
+	if !ok || !rec.OwnStop {
 		return nil
 	}
 	if err := l.core.Store.ClearKill(rec.Session); err != nil {
 		return err
 	}
-	rec.Killed = time.Time{}
+	rec.Killed, rec.OwnStop = time.Time{}, false
 	return l.records.Save(rec)
 }
 

@@ -285,7 +285,24 @@ func (c *Core) SignalFunc() func(int, syscall.Signal) error {
 }
 
 // Stop sends SIGTERM to each process running s and waits for them to end. Its terminal, worktree and transcript stay.
-func (c *Core) Stop(s Live) (string, error) {
+func (c *Core) Stop(s Live) (string, error) { return c.stop(s, c.StopSession) }
+
+// StopOwn is Stop for ym's own reasons: its kill mark never takes the place of one an owner made, and reads as ym's.
+func (c *Core) StopOwn(s Live) (string, error) { return c.stop(s, c.ownStop) }
+
+func (c *Core) ownStop(session string) error {
+	if c.Store != nil {
+		if err := c.Store.RecordKill(session, c.now()); err != nil {
+			return err
+		}
+	}
+	if l, ok := c.Launches.(interface{ OwnStopped(string) error }); ok {
+		return l.OwnStopped(session)
+	}
+	return nil
+}
+
+func (c *Core) stop(s Live, mark func(string) error) (string, error) {
 	if s.Remote != "" {
 		return c.RunRemote(s.Remote, "kill", "--yes", "--stop", s.Key())
 	}
@@ -319,7 +336,7 @@ func (c *Core) Stop(s Live) (string, error) {
 		sent = append(sent, pid)
 	}
 	if len(sent) == 0 {
-		if err := c.StopSession(s.Key()); err != nil {
+		if err := mark(s.Key()); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("%s %s already ended", s.Harness, Short(s.Key())), nil
@@ -339,7 +356,7 @@ func (c *Core) Stop(s Live) (string, error) {
 	if len(left) > 0 {
 		return "", fmt.Errorf("%s %s still running (pid %s) after SIGTERM", s.Harness, Short(s.Key()), strings.Join(left, ", "))
 	}
-	if err := c.StopSession(s.Key()); err != nil {
+	if err := mark(s.Key()); err != nil {
 		return "", fmt.Errorf("killed %s %s; recording exit: %w", s.Harness, Short(s.Key()), err)
 	}
 	return fmt.Sprintf("killed %s %s", s.Harness, Short(s.Key())), nil

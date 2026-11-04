@@ -43,7 +43,7 @@ func (l launcher) Saw(sessions []core.Live) {
 		case rec.Seen.IsZero():
 			continue
 		case rec.IsLanded():
-			rec.Landed, rec.Killed, rec.Started, rec.Seen = time.Time{}, time.Time{}, now, now
+			rec.Landed, rec.Killed, rec.OwnStop, rec.Started, rec.Seen = time.Time{}, time.Time{}, false, now, now
 		case now.Sub(rec.Seen) >= seenRefresh:
 			rec.Seen = now
 		default:

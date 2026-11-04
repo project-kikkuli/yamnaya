@@ -1038,7 +1038,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		rec.NativePID = p.PID
 		rec.Dedicated = rec.Harness == codex.Name
 	}
-	rec.Landed, rec.Killed, rec.Revive, rec.Seen, rec.Goal, rec.Blocked, rec.Stamp = time.Time{}, time.Time{}, false, time.Time{}, "", "", ""
+	rec.Landed, rec.Killed, rec.OwnStop, rec.Revive, rec.Seen, rec.Goal, rec.Blocked, rec.Stamp = time.Time{}, time.Time{}, false, false, time.Time{}, "", "", ""
 	if rec != was {
 		if err := l.records.Save(rec); err != nil {
 			return nil, "", err
@@ -1325,7 +1325,17 @@ func (l launcher) SessionStopped(id string) error {
 	if !ok || rec.IsLanded() {
 		return nil
 	}
-	rec.Killed = time.Now()
+	rec.Killed, rec.OwnStop = time.Now(), false
+	return l.records.Save(rec)
+}
+
+// OwnStopped marks a stop ym made itself, leaving any mark an owner already made standing.
+func (l launcher) OwnStopped(id string) error {
+	rec, ok := l.records.Find(id)
+	if !ok || rec.IsLanded() || !rec.Killed.IsZero() && !rec.OwnStop {
+		return nil
+	}
+	rec.Killed, rec.OwnStop = time.Now(), true
 	return l.records.Save(rec)
 }
 

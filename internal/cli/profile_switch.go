@@ -309,12 +309,11 @@ func (l launcher) switchProfile(ref, id, reason string) (core.SwitchOutcome, err
 		if err = l.drainNative(children, live.PID); err != nil {
 			return none, errors.Join(err, hold())
 		}
-		if _, err = l.core.Stop(live); err != nil {
+		if _, err = l.core.StopOwn(live); err != nil {
 			return none, errors.Join(err, hold())
 		}
-		m.Since = time.Now()
-		if err = saveMigration(dir, m); err != nil {
-			return none, err
+		if latest, ok := l.records.Find(rec.Key); ok && m.ownerKilled(latest) {
+			return none, errors.Join(errors.New("the owner stopped it"), hold())
 		}
 	}
 	if err = l.awaitDrain(children); err != nil {

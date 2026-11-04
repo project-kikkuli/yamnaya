@@ -136,14 +136,12 @@ func (l launcher) portRecord(rec launch.Record, live core.Live, m migration) (la
 		}
 		defer plan.Close()
 		if live.ID != "" {
-			m.StopAt = time.Now()
-			if err = saveMigration(dir, m); err != nil {
-				return rec, err
-			}
-			if _, err = l.core.Stop(live); err != nil {
+			if _, err = l.core.StopOwn(live); err != nil {
 				return rec, fmt.Errorf("%w: %w", errPortRefused, err)
 			}
-			m.Since, m.StopAt = time.Now(), time.Time{}
+			if latest, ok := l.records.Find(rec.Key); ok && m.ownerKilled(latest) {
+				return rec, fmt.Errorf("%w: the owner stopped it", errPortRefused)
+			}
 		}
 		m.State = "prepared"
 		if err = saveMigration(dir, m); err != nil {
@@ -217,7 +215,7 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	if state == core.LaunchUnknown {
 		return nil
 	}
-	if state == "running" || rec.IsLanded() || rec.Killed.After(m.Since) {
+	if state == "running" || rec.IsLanded() || m.ownerKilled(rec) {
 		return done()
 	}
 	stuck := func(why string) error {
@@ -290,7 +288,7 @@ func (l launcher) handoffs() map[string]migration {
 // pendingHandoff reports a handoff under way whose stopped source must not be cleaned up: the switch itself stopped it, and landing it
 // would drop the note and crew the handoff still has to deliver. A queued switch has not stopped anything, and an owner's kill ends it.
 func pendingHandoff(m migration, rec launch.Record) bool {
-	return m.Version != 0 && m.State != "running" && m.State != "queued" && !rec.Killed.After(m.Since)
+	return m.Version != 0 && m.State != "running" && m.State != "queued" && !m.ownerKilled(rec)
 }
 
 // portedTo is the session that carries session's conversation now, finishing a port an earlier attempt left part way, so a resume of
