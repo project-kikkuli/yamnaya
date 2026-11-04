@@ -428,7 +428,7 @@ func (l launcher) Failover(b core.Board) error {
 			}
 		}
 		s, alive := b.Session(e.Session)
-		if !alive || s.Remote != "" {
+		if !alive || s.Remote != "" || l.core != nil && l.core.RowsUnloaded() {
 			continue
 		}
 		rec, ok := l.records.Find(e.Session)

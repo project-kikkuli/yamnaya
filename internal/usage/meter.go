@@ -107,6 +107,13 @@ func (m *Meter) Err() error {
 	return m.err
 }
 
+// Loaded reports whether a scan has finished, so Fleet's rows are what the ledger holds and not merely none read yet.
+func (m *Meter) Loaded() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.fleet.Ready
+}
+
 // Fleet returns the latest scan's view and starts a new scan in the background when the last is older than Every.
 func (m *Meter) Fleet(now time.Time) core.Fleet {
 	m.mu.Lock()

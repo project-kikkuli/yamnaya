@@ -504,6 +504,9 @@ func (l launcher) unansweredReason(p profile.Profile) string {
 // destination is where a conversation stopped on e's login goes: a login of its harness, which keeps its id, whose status check has answered,
 // else, past portGate, the other harness.
 func (l launcher) destination(dir string, a failoverAttempt, ps []profile.Profile, e core.Exhaustion, cwd string, limits []core.Limit, now time.Time) (profile.Profile, error) {
+	if l.core != nil && l.core.RowsUnloaded() {
+		return profile.Profile{}, errors.New("this login's usage has not been read yet")
+	}
 	usable := usableLogins(dir, a, ps, limits, now)
 	same := slices.DeleteFunc(slices.Clone(usable), func(p profile.Profile) bool { return p.Harness != e.Harness })
 	_, unanswered := l.loginChecks(same, e.Account)

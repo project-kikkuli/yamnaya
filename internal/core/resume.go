@@ -101,7 +101,7 @@ const workResumeText = "ym: this session stopped (its host restarted or its tmux
 // resumeManager continues m's own conversation when ym launched it and can; ok is false when there is nothing of it to resume.
 func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalEvent, start string) (Manager, bool) {
 	r, can := c.Launches.(Resumer)
-	if !can || m.Session == "" {
+	if !can || m.Session == "" || c.RowsUnloaded() {
 		return m, false
 	}
 	now, resumed, err := r.Resume(m.Session, c.resumeText(o, m, waiting, events), start)
@@ -181,7 +181,7 @@ func (c *Core) tellWork(b Board, m Manager, session, kind, text, key string) err
 // Managers and chiefs come back through Supervise; nothing of an ended goal or a retired manager comes back.
 func (c *Core) ReviveWork(b Board) error {
 	r, can := c.Launches.(Resumer)
-	if !can {
+	if !can || c.RowsUnloaded() {
 		return nil
 	}
 	kills, err := c.Store.Kills(timeZero)
@@ -497,4 +497,11 @@ func (c *Core) booted() time.Time {
 		return c.Boot()
 	}
 	return bootTime()
+}
+
+// RowsUnloaded is a meter that has not read its rows yet, as just after serve starts: a login with no row then may be one with no row read,
+// so nothing lands anywhere until it has.
+func (c *Core) RowsUnloaded() bool {
+	m, ok := c.Meter.(interface{ Loaded() bool })
+	return ok && !m.Loaded()
 }

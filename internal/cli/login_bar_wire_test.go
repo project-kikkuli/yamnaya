@@ -31,6 +31,7 @@ type wireWorld struct {
 	rec              launch.Record
 	clock            *time.Time
 	landed           bool
+	meter            *usage.Meter
 }
 
 const wireIdle = "✻ Done\n────────────────\n❯ \n────────────────\n"
@@ -119,6 +120,10 @@ func newWireWorld(t *testing.T, inherited ...string) *wireWorld {
 	m := usage.New(state)
 	t.Cleanup(func() { m.Close() })
 	c.Meter = m
+	w.meter = m
+	if _, err = m.Scan(time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	w.clock = &now
 	c.Now = func() time.Time { return *w.clock }
@@ -697,7 +702,7 @@ func TestWireAStopThatCannotBeProvedSaysWhyAndBarsTheLogin(t *testing.T) {
 			w.row(t, w.def, -1, 50, w.clock.Add(24*time.Hour))
 			w.screen(t, w.def, c.screen, "waiting")
 			w.land(t)
-			if _, err := w.c.Meter.(*usage.Meter).Scan(time.Now()); err != nil {
+			if _, err := w.meter.Scan(time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			for range 3 {
@@ -834,7 +839,7 @@ func wireWall(at time.Time) string {
 
 func (w *wireWorld) scan(t *testing.T) {
 	t.Helper()
-	if _, err := w.c.Meter.(*usage.Meter).Scan(time.Now()); err != nil {
+	if _, err := w.meter.Scan(time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1536,6 +1541,7 @@ func TestWirePortGate(t *testing.T) {
 			}
 		}},
 		{name: "evidence: an answered sign-out", ports: true, setup: put("out")},
+		{name: "no row at all is no evidence", lands: true, setup: func(*testing.T, *wireWorld) {}},
 		{name: "unknown: times out once, then answers usable", lands: true, setup: put("slow")},
 		{name: "unknown: always takes 5s", lands: true, setup: put("five")},
 		{name: "unknown: never answers", setup: put("hang")},
@@ -1966,6 +1972,73 @@ func TestWireNamingABarredLoginWarnsAndAStopMovesItOn(t *testing.T) {
 	if err != nil || unnamed.ID == "default" {
 		t.Fatalf("an unnamed launch took the barred login: %+v, %v", unnamed, err)
 	}
+}
+
+// Until the meter has read its rows a login with none may be walled, so the first pass after serve starts lands nothing and ports nothing.
+func TestWireTheFirstPassBeforeRowsAreReadMovesNothing(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		ready func(*testing.T, *wireWorld)
+		moved func(*wireWorld) bool
+	}{
+		{name: "a stop on screen", ready: func(t *testing.T, w *wireWorld) {
+			w.exhaust(t, w.other)
+			w.screen(t, w.def, wireDialog(t), "waiting")
+			w.land(t)
+		}, moved: func(w *wireWorld) bool {
+			rec, _ := w.l.records.Find(w.rec.Key)
+			return rec.Profile == "claude-work"
+		}},
+		{name: "a session ym's tmux lost", ready: func(t *testing.T, w *wireWorld) {
+			rec, _ := w.l.records.Find(w.rec.Key)
+			rec.Running = true
+			if err := w.l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+		}, moved: func(w *wireWorld) bool { return len(w.starts(t)) > 0 }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.addCodex(t)
+			ports := countPorts(w)
+			c.ready(t, w)
+			unread := usage.New(w.state)
+			t.Cleanup(func() { unread.Close() })
+			w.c.Meter = idleMeter{unread}
+			pass := func() {
+				*w.clock = w.clock.Add(time.Minute)
+				b, err := w.c.Board()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = errors.Join(w.l.RecoverProfiles(b), w.l.Failover(b), w.c.ReviveWork(b)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pass()
+			if c.moved(w) || *ports != 0 {
+				t.Fatalf("moved before any row was read: %d ports, starts %q", *ports, w.starts(t))
+			}
+			if _, err := unread.Scan(time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			pass()
+			time.Sleep(500 * time.Millisecond)
+			if !c.moved(w) {
+				t.Fatalf("still not moved once rows were read: starts %q, row %q", w.starts(t), w.rowText(t))
+			}
+		})
+	}
+}
+
+// idleMeter is the real meter with no scan started but the one the test asks for.
+type idleMeter struct{ *usage.Meter }
+
+func (m idleMeter) Fleet(now time.Time) core.Fleet {
+	if !m.Loaded() {
+		return core.Fleet{At: now}
+	}
+	return m.Meter.Fleet(now)
 }
 
 func TestLoginRecordKeepsEveryConcurrentWrite(t *testing.T) {

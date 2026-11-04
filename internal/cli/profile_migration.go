@@ -207,6 +207,9 @@ func (l launcher) recoverMigration(rec launch.Record) (launch.Record, error) {
 }
 
 func (l launcher) RecoverProfiles(b core.Board) error {
+	if l.core != nil && l.core.RowsUnloaded() {
+		return nil
+	}
 	dir := filepath.Dir(l.records.Dir)
 	files, _ := filepath.Glob(filepath.Join(dir, "migrations", "*.json"))
 	for _, path := range files {
