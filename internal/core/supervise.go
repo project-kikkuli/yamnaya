@@ -206,7 +206,7 @@ func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 	}
 	if m.Nudges < Nudges {
 		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs, refresh your brief with ym goal brief, and keep driving the goal to done; if it is blocked on something beyond your authority, escalate with ym item add.",
-			g.ID, g.LastMovedAt.Local().Format(time.Kitchen))
+			g.Shown(), g.LastMovedAt.Local().Format(time.Kitchen))
 		if err := c.tell(b, m.Session, text, false); err != nil {
 			return err
 		}

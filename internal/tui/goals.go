@@ -996,8 +996,8 @@ func relayWhat(r core.Relay) string {
 
 // closeGoal asks how the goal ended and why, then closes it as the owner: a chief's ym goal close, from the board.
 func (m *Model) closeGoal(n core.Node) {
-	goal := n.Goal.ID
-	m.askLine("close "+goal+" as? 1 finished, 2 superseded, 3 abandoned, 4 finished past the verifier", "", false, func(m Model, pick string) (tea.Model, tea.Cmd) {
+	goal, shown := n.Goal.ID, n.Goal.Ref()
+	m.askLine("close "+shown+" as? 1 finished, 2 superseded, 3 abandoned, 4 finished past the verifier", "", false, func(m Model, pick string) (tea.Model, tea.Cmd) {
 		order := core.CloseOrder{Ref: goal, Author: core.Owner}
 		switch strings.TrimSpace(pick) {
 		case "1", core.CloseFinished:
@@ -1014,7 +1014,7 @@ func (m *Model) closeGoal(n core.Node) {
 			m.message = "error: pick 1, 2, 3 or 4"
 			return m, nil
 		}
-		m.askLine("why close "+goal+" as "+order.As, "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
+		m.askLine("why close "+shown+" as "+order.As, "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
 			if strings.TrimSpace(why) == "" {
 				return m, nil
 			}
@@ -1040,10 +1040,10 @@ func (m *Model) dropPR(n core.Node) {
 		m.message = n.Goal.Shown() + " has no pull requests tied to it"
 		return
 	}
-	goal := n.Goal.ID
+	goal, shown := n.Goal.ID, n.Goal.Ref()
 	why := func(url string) func(Model, string) (tea.Model, tea.Cmd) {
 		return func(m Model, text string) (tea.Model, tea.Cmd) {
-			m.askLine("why "+url+" is not "+goal+"'s", "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
+			m.askLine("why "+url+" is not "+shown+"'s", "", false, func(m Model, why string) (tea.Model, tea.Cmd) {
 				if why == "" {
 					return m, nil
 				}
@@ -1051,10 +1051,10 @@ func (m *Model) dropPR(n core.Node) {
 				return m, m.do(func() (string, error) {
 					if host, rest, ok := core.SplitRemote(goal); ok && n.Goal.Host != "" {
 						_, err := c.RunOrRelay(host, "goal", "pr", "drop", rest, url, "--why", why)
-						return "dropped " + url + " from " + goal, err
+						return "dropped " + url + " from " + shown, err
 					}
 					_, _, err := c.DropGoalPR("", goal, url, why)
-					return "dropped " + url + " from " + goal, err
+					return "dropped " + url + " from " + shown, err
 				})
 			})
 			return m, nil
@@ -1065,13 +1065,13 @@ func (m *Model) dropPR(n core.Node) {
 		*m = next.(Model)
 		return
 	}
-	m.askLine(fmt.Sprintf("drop which pull request from %s? its number 1-%d, or its link", goal, len(prs)), "", false, func(m Model, text string) (tea.Model, tea.Cmd) {
+	m.askLine(fmt.Sprintf("drop which pull request from %s? its number 1-%d, or its link", shown, len(prs)), "", false, func(m Model, text string) (tea.Model, tea.Cmd) {
 		url := text
 		if i, err := strconv.Atoi(text); err == nil && i >= 1 && i <= len(prs) {
 			url = prs[i-1]
 		}
 		if !slices.Contains(prs, url) {
-			m.message = text + " is not one of " + goal + "'s pull requests"
+			m.message = text + " is not one of " + shown + "'s pull requests"
 			return m, nil
 		}
 		return why(url)(m, "")

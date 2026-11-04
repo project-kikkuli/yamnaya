@@ -78,14 +78,14 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 				fmt.Fprintf(cmd.OutOrStdout(), "%s is on %s, so the goal runs there: %s\n", dir, g.Host, g.Evidence)
 				return nil
 			}
-			if err := ensureWorkService(); err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but ym serve did not start: %v\n", g.ID, err)
+			if err := startService(); err != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but ym serve did not start: %v\n", g.Shown(), err)
 			}
 			if m.LastError != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s recorded, but its manager did not start: %s; ym serve retries with backoff\n", g.Shown(), m.LastError)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: its manager runs as %s\nbrief: %s\nopen: o on the board, or ym open %s\n", g.Shown(), core.Short(m.Session), g.BriefPath, m.Session)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: its manager runs as %s\nbrief: %s (%s)\nopen: o on the board, or ym open %s\n", g.Shown(), core.Short(m.Session), e.core.BriefURL(g.Shown()), g.BriefPath, m.Session)
 			return nil
 		}),
 	}
@@ -100,6 +100,9 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		goalBindCmd(with), goalResumeCmd(with), goalAssignCmd(with), goalAssignmentsCmd(with), goalReportCmd(with), goalAcceptCmd(with), goalSteerCmd(hosts), goalAdoptCmd(with), goalContextCmd(hosts), goalBriefCmd(with), goalPRCmd(hosts), goalRenameCmd(hosts))
 	return cmd
 }
+
+// startService is what a new goal or chief starts ym serve with.
+var startService = ensureWorkService
 
 // shown is how the goal, manager or chief with this id shows.
 func (e *env) shown(id string) string {
@@ -902,14 +905,14 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 				fmt.Fprintf(cmd.OutOrStdout(), "%s is on %s, so the chief runs there\n", dir, m.Host)
 				return nil
 			}
-			if err := ensureWorkService(); err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but ym serve did not start: %v\n", m.ID, err)
+			if err := startService(); err != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but ym serve did not start: %v\n", m.Shown(), err)
 			}
 			if m.LastError != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "chief %s recorded, but it did not start: %s; ym serve retries with backoff\n", m.Shown(), m.LastError)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "chief %s runs as %s\nbrief: %s\n", m.Shown(), core.Short(m.Session), m.BriefPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "chief %s runs as %s\nbrief: %s (%s)\n", m.Shown(), core.Short(m.Session), e.core.BriefURL(m.Shown()), m.BriefPath)
 			return nil
 		}),
 	}

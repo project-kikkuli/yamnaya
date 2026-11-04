@@ -461,7 +461,8 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	sb.WriteString("- Read only: do not edit, commit, push, merge, comment, or message anyone. Running tests, builds and the program to check behaviour is fine.\n")
 	sb.WriteString("- Check every part of the ask, not only what the summary mentions. A part not done, done differently than asked, or not shown to work is a failure.\n")
 	sb.WriteString("- A pull request marked as someone else's to land is context: whether it merged or has open threads is never a reason to fail.\n")
-	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.Shown(), g.Shown())
+	// A rename while it checks must not strand the one command a verifier has to run.
+	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.ID, g.ID)
 	sb.WriteString("  Each finding is one concrete, checkable line: what is missing or wrong, and where.\n")
 	sb.WriteString("- Then stop. ym ends this session.")
 	return sb.String()

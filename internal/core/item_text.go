@@ -66,5 +66,5 @@ func (c *Core) preparedBy(it Item) string {
 			return "; " + m.Label() + " was told to prepare it"
 		}
 	}
-	return "; " + it.Preparer + " was told to prepare it"
+	return "; " + c.RefName(it.Preparer) + " was told to prepare it"
 }

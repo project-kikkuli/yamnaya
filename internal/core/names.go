@@ -609,12 +609,27 @@ func (c *Core) settleParents(o Org) error {
 	return errors.Join(errs...)
 }
 
-// RefOf is how the manager or chief with this id is named across hosts.
+// RefOf is how the goal, manager or chief with this id is named across hosts; the id itself when o does not know it.
 func (o Org) RefOf(id string) string {
+	if g, ok := o.Goals[id]; ok {
+		return g.Ref()
+	}
 	if m, ok := o.Managers[id]; ok {
 		return m.Ref()
 	}
 	return id
+}
+
+// RefName is how a person reads the goal, manager or chief with this id, here or on another host whose board this one has.
+func (c *Core) RefName(id string) string {
+	o, err := c.LoadOrg()
+	if err != nil {
+		return id
+	}
+	if c.Remotes != nil {
+		c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	}
+	return o.RefOf(id)
 }
 
 // ActorShown is who a goal's closure says closed it, a chief by its name.

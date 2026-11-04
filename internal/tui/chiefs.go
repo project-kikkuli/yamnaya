@@ -127,7 +127,7 @@ func (m *Model) detach(n core.Node) {
 		chief = c.Manager.Label()
 	}
 	m.confirm("detach "+n.Manager.Label()+" from "+chief+"? it reports to you", m.do(func() (string, error) {
-		return id + " reports to you", m.core.Attach(id, "")
+		return n.Manager.Shown() + " reports to you", m.core.Attach(id, "")
 	}))
 }
 

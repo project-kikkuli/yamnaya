@@ -779,7 +779,7 @@ func needText(n core.Need) string {
 		}
 		return text
 	case n.Steer != nil:
-		return "steer " + n.Manager + " " + n.Steer.Text
+		return "steer " + n.ID() + " " + n.Steer.Text
 	case n.Relay != nil:
 		return "refused " + n.Relay.Dest + " " + relayWhat(*n.Relay) + " " + n.Relay.Error
 	}

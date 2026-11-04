@@ -294,13 +294,13 @@ func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 		return chief, nil
 	}
 	if boss.Role != RoleChief {
-		return "", fmt.Errorf("%s is a manager; only a chief has reports", chief)
+		return "", fmt.Errorf("%s is a manager; only a chief has reports", boss.Ref())
 	}
 	seen := map[string]bool{}
 	for at := boss.ID; at != "" && !seen[at]; at = o.Managers[at].ParentID {
 		seen[at] = true
 		if at == child.ID {
-			return "", fmt.Errorf("%s is under %s already; a chief cannot report to its own report", chief, child.Shown())
+			return "", fmt.Errorf("%s is under %s already; a chief cannot report to its own report", boss.Ref(), child.Shown())
 		}
 	}
 	return boss.ID, nil
@@ -423,7 +423,7 @@ func (c *Core) Steer(b Board, refs []string, subtree, owner bool, text string) (
 			}
 			sent[t.ID] = true
 			if err := c.tell(b, t.Session, text, owner); err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", t.ID, err))
+				errs = append(errs, fmt.Errorf("%s: %w", t.Shown(), err))
 			}
 		}
 	}

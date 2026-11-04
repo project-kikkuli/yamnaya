@@ -807,7 +807,7 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 			return fmt.Errorf("%w: %w", errUnusable, err)
 		}
 		if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
-			return c.tellManager(b, o, c.hereFrom(v.Author), fmt.Sprintf("ym: your steer of %s did not land: it has ended.", v.Target))
+			return c.tellManager(b, o, c.hereFrom(v.Author), fmt.Sprintf("ym: your steer of %s did not land: it has ended.", RemoteKey(c.SelfName(), m.Shown())))
 		}
 		_, err = c.applySteer(b, o, m, v.Text, c.hereFrom(v.Author))
 		return err
@@ -968,7 +968,7 @@ func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 	if _, _, remote := SplitRemote(author); !remote && o.Managers[author].Session == "" {
 		return nil
 	}
-	return c.tellManager(b, o, author, fmt.Sprintf("ym: your %s of %s was refused: it does not report to you.", what, v.Target))
+	return c.tellManager(b, o, author, fmt.Sprintf("ym: your %s of %s was refused: it does not report to you.", what, c.RefName(v.Target)))
 }
 
 // noteFinal records a relay this host refused for good where the owner reads its outcome: an item's history, or the goal's feed.
@@ -1001,14 +1001,14 @@ func (c *Core) noteFinal(r Relay, err error) error {
 			return nil
 		}
 		_, id, _ := SplitRemote(v.Target)
-		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, v.Author), why, r)
+		return c.noteGoal(id, fmt.Sprintf("the steer %q by %s", v.Text, c.RefName(v.Author)), why, r)
 	case RelayVouchedClose:
 		var v relayVouch
 		if json.Unmarshal([]byte(r.Body), &v) != nil {
 			return nil
 		}
 		_, id, _ := SplitRemote(v.Target)
-		return c.noteGoal(id, "the close by "+v.Author, why, r)
+		return c.noteGoal(id, "the close by "+c.RefName(v.Author), why, r)
 	}
 	return nil
 }

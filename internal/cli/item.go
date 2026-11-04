@@ -250,8 +250,8 @@ func itemCreateCmd(with func(runFunc) func(*cobra.Command, []string) error, revi
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), added.ID)
 			if added.Recipient != core.Owner {
-				if host, id, remote := core.SplitRemote(added.Recipient); remote {
-					fmt.Fprintf(e.nicked(cmd.ErrOrStderr()), "sent to %s on %s, who owns the answer; it comes back through ym item inbox\n", id, host)
+				if _, _, remote := core.SplitRemote(added.Recipient); remote {
+					fmt.Fprintf(e.nicked(cmd.ErrOrStderr()), "sent to %s, who owns the answer; it comes back through ym item inbox\n", e.core.RefName(added.Recipient))
 				} else if o, err := e.core.LoadOrg(); err == nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "sent to %s, who owns the answer; it comes back through ym item inbox\n", o.Managers[added.Recipient].Label())
 				}

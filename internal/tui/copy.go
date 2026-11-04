@@ -73,11 +73,11 @@ func (m Model) copyMenu(key string) (tea.Model, tea.Cmd) {
 	case "b":
 		if _, _, remote := core.SplitRemote(id); remote && n.Manager.Host != "" && n.Fresh.Brief != nil {
 			page := n.Fresh.Brief.Markdown(n.Manager.Label())
-			return m, m.copyOut(id+"'s brief", func() (string, error) { return page, nil })
+			return m, m.copyOut(n.Manager.Ref()+"'s brief", func() (string, error) { return page, nil })
 		}
-		return m, m.copyOut(id+"'s brief", func() (string, error) { return c.BriefPage(id) })
+		return m, m.copyOut(n.Manager.Ref()+"'s brief", func() (string, error) { return c.BriefPage(id) })
 	case "c":
-		return m, m.copyOut(id+"'s context", func() (string, error) {
+		return m, m.copyOut(n.Manager.Ref()+"'s context", func() (string, error) {
 			_, text, _, err := c.Context(id)
 			return text, err
 		})

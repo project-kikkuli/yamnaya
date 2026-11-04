@@ -241,7 +241,7 @@ func (c *Core) launchForeign(w RemoteAssignment) error {
 	}
 	n := *current.Launch
 	n.Assignment, n.Source, n.Session, n.Parent = current.Assignment.ID, current.Assignment.ID, current.Worker, c.localKey(current.Parent)
-	n.Prompt += fmt.Sprintf("\n\nAssignment %s generation %d belongs to %s/%s. Submit its terminal result with ym goal report %s --summary \"<result and evidence>\"; ym routes it to the originating manager for acceptance.", current.Assignment.ID, current.Assignment.Generation, current.Origin, current.Goal, current.Assignment.ID)
+	n.Prompt += fmt.Sprintf("\n\nAssignment %s generation %d belongs to %s. Submit its terminal result with ym goal report %s --summary \"<result and evidence>\"; ym routes it to the originating manager for acceptance.", current.Assignment.ID, current.Assignment.Generation, c.RefName(RemoteKey(current.Origin, current.Goal)), current.Assignment.ID)
 	if c.Launches == nil {
 		return errors.New("destination launcher is unavailable")
 	}

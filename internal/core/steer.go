@@ -220,7 +220,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
-			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), author))
+			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), c.RefName(author)))
 		}
 	}
 	return c.applySteer(b, o, m, text, author)

@@ -96,7 +96,11 @@ func outstandingIn(tx *sql.Tx, goal string) error {
 		return err
 	}
 	if n > 0 {
-		return fmt.Errorf("%s has %d outstanding assignments; inspect ym goal assignments and accept terminal reports with ym goal accept", goal, n)
+		g, err := goalIn(tx, goal)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s has %d outstanding assignments; inspect ym goal assignments and accept terminal reports with ym goal accept", g.Shown(), n)
 	}
 	return nil
 }
@@ -119,7 +123,7 @@ func (s *Store) openCompletion(v Verification) (Goal, Verification, error) {
 		return g, v, ErrStale
 	}
 	if g.Ended() {
-		return g, v, fmt.Errorf("%s is %s already", g.ID, g.State)
+		return g, v, fmt.Errorf("%s is %s already", g.Shown(), g.State)
 	}
 	if err = outstandingIn(tx, g.ID); err != nil {
 		return g, v, err
@@ -163,7 +167,7 @@ func workIn(tx *sql.Tx, goal, source, reason string, at time.Time) (bool, error)
 		return false, err
 	}
 	if g.State == GoalDropped || g.State == GoalKilled {
-		return false, fmt.Errorf("%s is %s; work cannot reopen it", goal, g.State)
+		return false, fmt.Errorf("%s is %s; work cannot reopen it", g.Shown(), g.State)
 	}
 	res, err := tx.Exec(`INSERT INTO ym_goal_work (goal,source,reason,created_at) VALUES (?,?,?,?) ON CONFLICT DO NOTHING`, goal, source, reason, stamp(at))
 	if err != nil {

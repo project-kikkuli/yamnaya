@@ -228,6 +228,9 @@ func (s *Store) Verifications(goal string) ([]Verification, error) {
 func (s *Store) OpenVerification(goal string) (Verification, error) {
 	v, err := scanVerification(s.db.QueryRow(`SELECT `+verificationCols+` FROM ym_goal_verifications WHERE goal = ? AND verdict = '' ORDER BY num DESC LIMIT 1`, goal))
 	if errors.Is(err, sql.ErrNoRows) {
+		if g, err := s.Goal(goal); err == nil {
+			goal = g.Shown()
+		}
 		return v, fmt.Errorf("goal %s has no verification under way: %w", goal, ErrNotFound)
 	}
 	return v, err

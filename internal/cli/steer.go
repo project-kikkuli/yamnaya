@@ -147,11 +147,29 @@ func goalAdoptCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 func goalContextCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var all, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "context [--all] <goal|manager|chief>",
-		Short: "Print what a goal or chief is about now, its revision and whether its manager adopted it; --all prints every revision",
-		Args:  cobra.ExactArgs(1),
+		Use:   "context [--all] [<goal|manager|chief>]",
+		Short: "Print what a goal or chief is about now, the calling manager's or chief's by default, its revision and whether its manager adopted it; --all prints every revision",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			m, text, rev, err := e.core.Context(args[0])
+			ref := ""
+			if len(args) == 1 {
+				ref = args[0]
+			} else {
+				c, err := e.caller()
+				if err != nil {
+					return err
+				}
+				o, err := e.core.LoadOrg()
+				if err != nil {
+					return err
+				}
+				mine, ok := o.ManagerOf(e.core.Resolve(c.Session))
+				if !ok {
+					return fmt.Errorf("session %s is not a manager or chief; name a goal or chief", core.Short(c.Session))
+				}
+				ref = mine.ID
+			}
+			m, text, rev, err := e.core.Context(ref)
 			if err != nil {
 				return err
 			}

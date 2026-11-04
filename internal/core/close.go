@@ -158,7 +158,7 @@ func (c *Core) applyClose(b Board, m Manager, g Goal, order CloseOrder) (Closed,
 			return out, err
 		}
 		now := c.now()
-		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, c.closerName(order.Author), order.Why, out.PRs), Key: closureKey(order.Author, now, int64(g.Version)), Created: now, Delivered: now}); err != nil {
+		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalClosed, Payload: closureText(disposition, c.RefName(order.Author), order.Why, out.PRs), Key: closureKey(order.Author, now, int64(g.Version)), Created: now, Delivered: now}); err != nil {
 			return out, err
 		}
 		if !g.Ended() {
@@ -258,7 +258,7 @@ func (c *Core) closeVouched(b Board, o Org, v relayVouch) error {
 	order.Author = c.hereFrom(v.Author)
 	if _, err := c.applyClose(b, m, g, order); err != nil {
 		if errors.Is(err, ErrFinal) {
-			return c.tellManager(b, o, order.Author, fmt.Sprintf("ym: your close of %s did not land: %s", v.Target, err))
+			return c.tellManager(b, o, order.Author, fmt.Sprintf("ym: your close of %s did not land: %s", RemoteKey(c.SelfName(), g.Shown()), err))
 		}
 		return err
 	}

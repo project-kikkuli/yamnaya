@@ -72,7 +72,8 @@ func (c *Core) chiefPrompt(sb *strings.Builder, o Org, m Manager) {
 		sb.WriteString("Act on it right away; do not wait for instructions. Plan how to carry it out, start a goal for each piece of work with ym goal --repo <repo> \"<ask>\", " +
 			"and write your first brief with ym goal brief. If goals already report to you, build on them rather than starting them again.\n\n")
 	}
-	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.Shown())
+	// A rename must not strand this line: an old name lists no reports, silently, and the prompt outlives it.
+	fmt.Fprintf(sb, "Your reports: ym goal list --under %s lists them with their goals, states and briefs.\n\n", m.ID)
 	fmt.Fprintf(sb, "Coordination workspace: %s. This directory is not a repository. Your reports retain their own repositories; use an explicit --repo when starting implementation agents.\n\n", m.Directory)
 	if m.Repo != "" {
 		fmt.Fprintf(sb, "Reference repository: %s. This is access for your work, not the repository identity of your reports or their requests.\n\n", m.Repo)
@@ -139,8 +140,8 @@ func (c *Core) steerRules(sb *strings.Builder, m Manager) {
 	if m.ParentID != "" {
 		who = "The owner or a chief above you"
 	}
-	fmt.Fprintf(sb, "- %s may steer you: a numbered revision of what you are about arrives as a message and replaces earlier direction where they differ. Rework your plan and your agents' course to fit, then run ym goal adopt %s --revision <N>; until you do, the board shows it not adopted and ym nudges you, then tells whoever steered. ym goal context %s prints the current revision.\n",
-		who, m.Shown(), m.Shown())
+	fmt.Fprintf(sb, "- %s may steer you: a numbered revision of what you are about arrives as a message and replaces earlier direction where they differ. Rework your plan and your agents' course to fit, then run ym goal adopt --revision <N>; until you do, the board shows it not adopted and ym nudges you, then tells whoever steered. ym goal context prints the current revision.\n",
+		who)
 }
 
 // planNow carries m's newest steer into its prompt, so a relaunch works to the plan as it stands.
@@ -154,15 +155,15 @@ func (c *Core) planNow(sb *strings.Builder, o Org, m Manager) {
 	if st.Adopted() {
 		sb.WriteString("You adopted it already.\n\n")
 	} else {
-		fmt.Fprintf(sb, "It is not adopted yet: rework your plan to fit it, then run ym goal adopt %s --revision %d.\n\n", m.Shown(), st.Revision)
+		fmt.Fprintf(sb, "It is not adopted yet: rework your plan to fit it, then run ym goal adopt --revision %d.\n\n", st.Revision)
 	}
 }
 
 // boss names who m's own escalations reach.
 func (c *Core) boss(o Org, m Manager) string {
 	if up := o.Above(m.ParentID); up != Owner {
-		if host, rest, remote := SplitRemote(up); remote {
-			return "your chief " + rest + " on " + host
+		if _, _, remote := SplitRemote(up); remote {
+			return "your chief " + c.RefName(up)
 		}
 		return "your chief " + o.Managers[up].Label()
 	}

@@ -606,7 +606,14 @@ func TestWhatAManagerIsToldNamesItWithoutItsId(t *testing.T) {
 	var prompt strings.Builder
 	w.core.managerPrompt(&prompt, o, o.Managers[m.ID])
 	w.core.chiefPrompt(&prompt, o, o.Managers[boss.ID])
-	texts := map[string]string{"prompts": prompt.String(), "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
+	if !strings.Contains(prompt.String(), "ym goal list --under "+boss.ID+" lists") {
+		t.Errorf("a chief's prompt must keep the one command a rename would strand on its id:\n%s", prompt.String())
+	}
+	if !strings.Contains(prompt.String(), "ym goal adopt --revision") || !strings.Contains(prompt.String(), "ym goal context prints") {
+		t.Errorf("prompts should name no goal in commands that need none:\n%s", prompt.String())
+	}
+	cleaned := strings.ReplaceAll(prompt.String(), "ym goal list --under "+boss.ID+" lists", "")
+	texts := map[string]string{"prompts": cleaned, "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
 	for what, text := range texts {
 		if !strings.Contains(text, "named-") {
 			t.Errorf("%s do not name it:\n%s", what, text)
@@ -1019,5 +1026,89 @@ func TestANamerThatStaysOutEndsThePassAndALaterOneFinishesIt(t *testing.T) {
 	o, _ := w.core.LoadOrg()
 	if got := o.Goals[ids[4]].Name; got != "good-name-5" {
 		t.Fatalf("last goal named %q", got)
+	}
+}
+
+func TestAWakeOrErrorAboutAGoalOrChiefNamesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text func(*testing.T, *orgWorld, Goal, Manager, Manager) string
+		want string
+	}{
+		{"the quiet nudge", func(t *testing.T, w *orgWorld, _ Goal, m, _ Manager) string {
+			w.spawn("agent-1", m.Session)
+			w.clock = w.clock.Add(2 * QuietAfter)
+			w.supervise(t)
+			return strings.Join(w.handedTo(m.Session), "\n")
+		}, "nothing has moved on goal named-goal since"},
+		{"the adopt nudge", func(t *testing.T, w *orgWorld, _ Goal, m, boss Manager) string {
+			w.steer(t, m.ID, "new plan", boss.ID)
+			w.clock = w.clock.Add(AdoptAfter + time.Minute)
+			w.supervise(t)
+			return strings.Join(w.handedTo(m.Session), "\n")
+		}, "ym goal adopt named-goal --revision 1"},
+		{"a goal with outstanding work", func(t *testing.T, w *orgWorld, g Goal, _, _ Manager) string {
+			tx, err := w.core.Store.db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec(`INSERT INTO ym_assignments (id,goal,state) VALUES ('a1',?,'outstanding')`, g.ID); err != nil {
+				t.Skip(err)
+			}
+			return outstandingIn(tx, g.ID).Error()
+		}, "named-goal has 1 outstanding"},
+		{"a goal with no verification under way", func(t *testing.T, w *orgWorld, g Goal, _, _ Manager) string {
+			_, err := w.core.Store.OpenVerification(g.ID)
+			return err.Error()
+		}, "goal named-goal has no verification"},
+		{"attaching under a manager on another host", func(t *testing.T, w *orgWorld, _ Goal, m, _ Manager) string {
+			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleManager, Name: "a-manager"}}}}}
+			return w.core.Attach(m.ID, "box/mgr9").Error()
+		}, "box/a-manager is a manager"},
+		{"what off holds, a goal", func(t *testing.T, _ *orgWorld, _ Goal, m, _ Manager) string {
+			return OffTarget{Manager: &m}.String()
+		}, "goal named-goal and every agent"},
+		{"what off holds, a chief", func(t *testing.T, _ *orgWorld, _ Goal, _, boss Manager) string {
+			return OffTarget{Manager: &boss}.String()
+		}, "chief named-chief and its own agents"},
+		{"an item's escalation in its history", func(t *testing.T, w *orgWorld, _ Goal, m, boss Manager) string {
+			it, err := w.core.Store.AddItem(Item{Kind: KindChore, Question: "q", DoLine: "do it", Rec: "r", Tried: "t", Evidence: []string{"e"}, Session: m.Session, Recipient: boss.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			up, err := w.core.Escalate(it.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := w.core.Store.Item(up.Key())
+			return got.History[len(got.History)-1].Text
+		}, "escalated to owner from named-chief"},
+		{"a report's chief on another host in its prompt", func(t *testing.T, w *orgWorld, _ Goal, m, _ Manager) string {
+			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleChief, Name: "far-chief"}}}}}
+			o, _ := w.core.LoadOrg()
+			m.ParentID = "box/mgr9"
+			o.Managers[m.ID] = m
+			return w.core.boss(o, m)
+		}, "your chief box/far-chief"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "named-goal" }
+			g, m := w.goal(t, "anything", "/repo/august")
+			boss := w.chief(t, "named-chief", m.ID)
+			if m, _ = w.core.Store.Manager(m.ID); m.ID == "" {
+				t.Fatal("no manager")
+			}
+			got := tc.text(t, w, g, m, boss)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			for _, id := range []string{g.ID + " ", m.ID + " ", boss.ID + " ", "mgr9"} {
+				if strings.Contains(got, id) {
+					t.Fatalf("%q shows id %q", got, id)
+				}
+			}
+		})
 	}
 }

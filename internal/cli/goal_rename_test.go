@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -347,3 +348,106 @@ func TestTheNamerRunsOnALoginWithRoom(t *testing.T) {
 type fixedLimits []core.Limit
 
 func (f fixedLimits) Fleet(time.Time) core.Fleet { return core.Fleet{Limits: f} }
+
+func TestWhatStartingAGoalOrChiefPrintsLeadsWithItsName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		chief   bool
+		service error
+		want    []string
+	}{
+		{name: "a goal", args: []string{"--name", "ship-it", "--repo", "DIR", "ship the thing"}, want: []string{"ship-it: its manager", "brief: " + core.BriefURL("ship-it") + " ("}},
+		{name: "a goal whose serve would not start", args: []string{"--name", "ship-it", "--repo", "DIR", "ship the thing"}, service: errors.New("no service"), want: []string{"ship-it recorded, but ym serve did not start"}},
+		{name: "a chief", args: []string{"ops-lead"}, chief: true, want: []string{"chief ops-lead runs as", "brief: " + core.BriefURL("ops-lead") + " ("}},
+		{name: "a chief whose serve would not start", args: []string{"ops-lead"}, chief: true, service: errors.New("no service"), want: []string{"chief ops-lead recorded, but ym serve did not start"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }, Launches: nameLaunches{}}
+			was := startService
+			startService = func() error { return tc.service }
+			defer func() { startService = was }()
+			with := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+			}
+			cmd := goalCmd(with, with)
+			if tc.chief {
+				cmd = chiefCmd(with, with)
+			}
+			args := slices.Clone(tc.args)
+			for i := range args {
+				if args[i] == "DIR" {
+					args[i] = dir
+				}
+			}
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, out.String())
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("printed %q, want %q", out.String(), want)
+				}
+			}
+			for _, line := range strings.Split(out.String(), "\n") {
+				before, _, _ := strings.Cut(line, " (/")
+				if strings.Contains(before, "goal1") || strings.Contains(before, "mgr1") {
+					t.Errorf("line %q leads with an id", line)
+				}
+			}
+		})
+	}
+}
+
+// nameLaunches starts a manager as a session id, so a test sees what a real start prints.
+type nameLaunches struct{ core.Launches }
+
+func (nameLaunches) Start(core.NewLaunch) (core.Started, error) {
+	return core.Started{Session: "abcd1234-0000"}, nil
+}
+
+func (nameLaunches) Dormant() []core.Dormant   { return nil }
+func (nameLaunches) Launched() []core.Launched { return nil }
+
+func TestGoalContextWithoutARefReadsTheCallersOwn(t *testing.T) {
+	dir := t.TempDir()
+	st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+	_, m, err := k.NewGoalNamed("ship-it", "ship the thing", dir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Session = "manager-session"
+	if err := st.SaveManager(m); err != nil {
+		t.Fatal(err)
+	}
+	with := func(run runFunc) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			return run(&env{core: k, session: "manager-session"}, cmd, args)
+		}
+	}
+	cmd := goalCmd(with, with)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"context"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("ym goal context: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "ship-it revision 0") || !strings.Contains(out.String(), "ship the thing") {
+		t.Fatalf("printed %q", out.String())
+	}
+}

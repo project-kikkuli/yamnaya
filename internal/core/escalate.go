@@ -31,7 +31,7 @@ func (c *Core) Escalate(ref string) (Item, error) {
 	if _, err := tx.Exec(`UPDATE ym_items SET recipient = '', preparer = '' WHERE seq = ?`, it.Seq); err != nil {
 		return it, err
 	}
-	if err := addEvent(tx, it.Key(), ItemOpen, ItemOpen, "escalated to owner from "+it.Recipient); err != nil {
+	if err := addEvent(tx, it.Key(), ItemOpen, ItemOpen, "escalated to owner from "+c.RefName(it.Recipient)); err != nil {
 		return it, err
 	}
 	if err := tx.Commit(); err != nil {

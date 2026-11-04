@@ -124,7 +124,7 @@ func (m Model) weighGoal(n core.Node) tea.Cmd {
 	c, b := m.core, m.board
 	id, label, host := n.Manager.ID, n.Manager.Label(), n.Manager.Host
 	if n.Goal != nil {
-		label = n.Goal.ID + " (" + oneLine(n.Goal.Ask) + ")"
+		label = n.Goal.Ref() + " (" + oneLine(n.Goal.Ask) + ")"
 	}
 	return func() tea.Msg {
 		keys := []string{"node:" + id}

@@ -61,21 +61,6 @@ func parseClosure(e GoalEvent) GoalClosure {
 	return out
 }
 
-// closerName is the closer with this id as a close's line shows it.
-func (c *Core) closerName(author string) string {
-	if author == Owner {
-		return author
-	}
-	o, err := c.LoadOrg()
-	if err != nil {
-		return author
-	}
-	if c.Remotes != nil {
-		c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
-	}
-	return o.RefOf(author)
-}
-
 // SettleClosures rewrites each close stored with its chief's id in its line to show the chief's name, and moves the id to the event's key.
 func (c *Core) SettleClosures() (int, error) {
 	events, err := scanEvents(c.Store.db.Query(`SELECT `+eventCols+` FROM ym_goal_events WHERE kind = ? AND key = ''`, EventGoalClosed))
@@ -89,7 +74,7 @@ func (c *Core) SettleClosures() (int, error) {
 		if author == Owner {
 			continue
 		}
-		payload := strings.Replace(e.Payload, " by chief "+author+": ", " by chief "+c.closerName(author)+": ", 1)
+		payload := strings.Replace(e.Payload, " by chief "+author+": ", " by chief "+c.RefName(author)+": ", 1)
 		_, err := c.Store.db.Exec(`UPDATE ym_goal_events SET payload = ?, key = ? WHERE seq = ?`, payload, closureKey(author, e.Created, e.Seq), e.Seq)
 		if errs = append(errs, err); err == nil {
 			settled++

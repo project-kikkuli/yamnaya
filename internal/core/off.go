@@ -148,9 +148,9 @@ func (t OffTarget) String() string {
 	case t.Manager == nil:
 		return "session " + Short(t.Session)
 	case t.Manager.GoalID != "":
-		return "goal " + t.Manager.GoalID + " (" + t.Manager.ID + ") and every agent under it"
+		return "goal " + t.Manager.Shown() + " and every agent under it"
 	}
-	return "chief " + t.Manager.Name + " (" + t.Manager.ID + ") and its own agents"
+	return "chief " + t.Manager.Shown() + " and its own agents"
 }
 
 // OffTargetOf reads ref as a goal, manager or chief, else as a session.
