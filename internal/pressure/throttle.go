@@ -91,11 +91,7 @@ func (t Throttle) Save(dir string) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "throttle.json")
-	if err = os.WriteFile(path+".new", raw, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(path+".new", path)
+	return replaceFile(filepath.Join(dir, "throttle.json"), raw)
 }
 
 // Signal sends sig to p unless its pid now names another process.
