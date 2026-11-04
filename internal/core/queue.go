@@ -689,6 +689,12 @@ func doLineAsks(do string) bool {
 	return strings.HasSuffix(do, "?") || strings.HasPrefix(do, "do you ") || askingWords[strings.TrimRight(first, ":,")]
 }
 
+// AsksTheOwner reports a decision whose row puts a question, so only words of the owner's or the rec can answer it.
+func (n Need) AsksTheOwner() bool {
+	it := n.Item
+	return it != nil && (it.Kind == KindDecision || it.Kind == KindDefault) && (strings.TrimSpace(it.DoLine) == "" || doLineAsks(it.DoLine))
+}
+
 func nobodyActs(o Org, it Item) bool {
 	if itemGoalEnded(o, it) {
 		return true

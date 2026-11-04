@@ -614,7 +614,7 @@ func (w *doWorld) rowOf(t *testing.T, has string) string {
 }
 
 func TestAnOpenedRowsFormsActThroughTheSamePathsAndGuards(t *testing.T) {
-	const chore, decision = "Wake the laptop", "Use the new store"
+	const chore, decision, asking = "Wake the laptop", "Use the new store", "Pick how proof is captured"
 	for _, tc := range []struct {
 		name, row, route string
 		form             url.Values
@@ -629,6 +629,10 @@ func TestAnOpenedRowsFormsActThroughTheSamePathsAndGuards(t *testing.T) {
 		{name: "a reply needs words", row: chore, route: "/reply/", form: url.Values{"text": {"  "}}, want: http.StatusBadRequest, state: core.ItemOpen},
 		{name: "done answers the item", row: chore, route: "/done/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "done"},
 		{name: "done is not for a row with a check mark", row: decision, route: "/done/", want: http.StatusConflict, state: core.ItemOpen},
+		{name: "done is not an answer to a row that asks", row: asking, route: "/done/", want: http.StatusConflict, state: core.ItemOpen},
+		{name: "a row that asks takes a reply", row: asking, route: "/reply/", form: url.Values{"text": {"the first"}}, want: http.StatusSeeOther, state: core.ItemAnswered, answer: "the first"},
+		{name: "a row that asks takes accept rec", row: asking, route: "/accept/", want: http.StatusSeeOther, state: core.ItemAnswered, answer: "the long rec"},
+		{name: "a row that asks can wait", row: asking, route: "/later/", form: url.Values{"when": {"1h"}}, want: http.StatusSeeOther, state: core.ItemSnoozed, snoozed: true},
 		{name: "later snoozes an item", row: chore, route: "/later/", form: url.Values{"when": {"1h"}}, want: http.StatusSeeOther, state: core.ItemSnoozed, snoozed: true},
 		{name: "later takes only its three", row: chore, route: "/later/", form: url.Values{"when": {"forever"}}, want: http.StatusBadRequest, state: core.ItemOpen},
 		{name: "later snoozes a pull request row", row: "repo#1", route: "/later/", form: url.Values{"when": {"tonight"}}, want: http.StatusSeeOther, pr: true},
@@ -656,6 +660,9 @@ func TestAnOpenedRowsFormsActThroughTheSamePathsAndGuards(t *testing.T) {
 			target := file(core.Item{Kind: core.KindChore, Question: "wake it", DoLine: chore, Session: "chore-session"})
 			if tc.row == decision {
 				target = file(core.Item{Kind: core.KindDecision, Question: "which store?", DoLine: decision, Session: "decision-session"})
+			}
+			if tc.row == asking {
+				target = file(core.Item{Kind: core.KindDecision, Question: "how?", DoLine: asking, Session: "asking-session"})
 			}
 			w.observe(t)
 			row := w.rowOf(t, tc.row)
@@ -723,6 +730,15 @@ func TestARowsFormsMatchWhatItCanDo(t *testing.T) {
 		{"an arrow chore", func(dir string) core.Item {
 			return core.Item{Kind: core.KindChore, Scope: dir, Question: "q", DoLine: "Use the store", Session: "a"}
 		}, false, []string{`/done/`, `/later/`, `/reply/`}, []string{`class="check"`, ">accept rec<", `action="/do/`}},
+		{"a decision that asks has no done", func(dir string) core.Item {
+			return core.Item{Kind: core.KindDecision, Scope: dir, Question: "q", DoLine: "Pick how to Use the store", Rec: "r", Session: "a"}
+		}, false, []string{">accept rec<", `/later/`, `/reply/`}, []string{`/done/`, `class="check"`}},
+		{"a decision with no do-line has no done", func(dir string) core.Item {
+			return core.Item{Kind: core.KindDecision, Scope: dir, Question: "Use the store?", Rec: "r", Session: "a"}
+		}, false, []string{">accept rec<", `/later/`, `/reply/`}, []string{`/done/`, `class="check"`}},
+		{"a held merge ask keeps done", func(dir string) core.Item {
+			return core.Item{Kind: core.KindChore, Scope: dir, Question: "Merge #7 Use the store", DoLine: "Merge #7 Use the store", Evidence: []string{"https://github.com/acme/repo/pull/7"}, Session: "a"}
+		}, false, []string{`/done/`, `/later/`, `/reply/`}, []string{`class="check"`}},
 		{"an item whose goal ended keeps reply and done, not the one tap", func(dir string) core.Item {
 			return core.Item{Kind: core.KindDecision, Scope: dir, Question: "q", DoLine: "Use the store", Rec: "r", Session: "a", Impact: core.ImpactProd}
 		}, true, []string{`/done/`, `/later/`, `/reply/`}, []string{`class="check"`, `action="/do/`, `/accept/`}},

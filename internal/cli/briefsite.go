@@ -283,7 +283,9 @@ func canLater(n core.Need, now time.Time) bool {
 
 func canReply(n core.Need) bool { return n.Item != nil && !n.Unrouted }
 
-func canDone(n core.Need) bool { return canReply(n) && n.Check() == core.CheckNone }
+func canDone(n core.Need) bool {
+	return canReply(n) && n.Check() == core.CheckNone && !n.AsksTheOwner()
+}
 
 // sameOrigin reports whether the browser says the form came from this site: the address the request reached, or the public URL a
 // proxy publishes it at, port included.
