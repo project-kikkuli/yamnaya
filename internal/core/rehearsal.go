@@ -49,7 +49,8 @@ func nearestRoot(dir string) string {
 	return root
 }
 
-// InRehearsal reports whether path, resolved, lies inside the rehearsal root holding stateDir. With no such root, nothing does.
+// InRehearsal reports whether path, resolved as far as it exists, lies inside the rehearsal root holding stateDir. With no such
+// root, nothing does.
 func InRehearsal(stateDir, path string) bool {
 	root := RehearsalRoot(stateDir)
 	if root == "" {
@@ -59,8 +60,21 @@ func InRehearsal(stateDir, path string) bool {
 	if err != nil {
 		return false
 	}
-	p, err := filepath.EvalSymlinks(path)
-	return err == nil && under(p, r)
+	return under(resolveExisting(path), r)
+}
+
+// resolveExisting resolves the longest part of path that exists, since a record's worktree may already be gone.
+func resolveExisting(path string) string {
+	rest := ""
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(real, rest)
+		}
+		if filepath.Dir(p) == p {
+			return filepath.Clean(path)
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+	}
 }
 
 // DefaultStateDir reports whether dir is the owner's own state dir, ~/.local/state/yamnaya.

@@ -774,3 +774,102 @@ func TestNoBackgroundGCStartsSoonAfterThisYmStarts(t *testing.T) {
 		})
 	}
 }
+
+func TestAYmOffTheOwnersStateLeavesARecordOutsideItsRootCompletelyAlone(t *testing.T) {
+	outside, err := os.MkdirTemp("/tmp", "ym-record-scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(outside)
+	outside, _ = filepath.EvalSymlinks(outside)
+	for _, c := range []struct {
+		name   string
+		root   bool
+		inside bool
+		locked bool
+		acted  bool
+	}{
+		{"outside the root, dirty", true, false, false, false},
+		{"outside the root, dirty and locked", true, false, true, false},
+		{"no root at all, dirty", false, false, false, false},
+		{"no root at all, dirty and locked", false, false, true, false},
+		{"inside the root, handled as ever", true, true, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			base, err := os.MkdirTemp(outside, "case")
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(base, "drill")
+			os.MkdirAll(root, 0o755)
+			state := filepath.Join(base, "private")
+			if c.root {
+				os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
+				state = filepath.Join(root, "state")
+			}
+			os.MkdirAll(state, 0o755)
+			where := filepath.Join(base, "real")
+			if c.inside {
+				where = filepath.Join(root, "real")
+			}
+			os.MkdirAll(where, 0o755)
+			git(t, where, "init", "-q", "-b", "main", "repo")
+			repo := filepath.Join(where, "repo")
+			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+			wt := launch.WorktreePath(repo, "task")
+			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+			work := filepath.Join(wt, "unsaved.txt")
+			os.WriteFile(work, []byte("work"), 0o644)
+			if c.locked {
+				git(t, repo, "worktree", "lock", wt)
+			}
+			l, err := newLauncher(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l.srv = &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+			l.stamp = ""
+			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-72 * time.Hour),
+				Killed: time.Now().Add(-48 * time.Hour), Repo: "repo", Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			if err := l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(state, "launches", rec.Key+".json")
+			before, _ := os.ReadFile(file)
+			conf := filepath.Join(state, "tmux.conf")
+			os.WriteFile(conf, []byte(tmux.ServerConf), 0o644)
+			name := tmux.SessionName(rec.Key)
+			if !c.acted {
+				if _, err := l.srv.Start(conf, name, base, []string{"sleep", "600"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seen := map[string]string{rec.Key: "gone"}
+			if err := l.Sweep(seen); err != nil && !c.acted {
+				t.Fatal(err)
+			}
+			if !c.acted {
+				if _, err := l.End(rec.Key, ""); err == nil {
+					t.Fatal("ended a session outside this ym's scope")
+				}
+				if _, err := os.ReadFile(work); err != nil {
+					t.Fatal("the worktree lost its work")
+				}
+				after, _ := os.ReadFile(file)
+				if string(after) != string(before) {
+					t.Fatalf("the record changed:\n%s", after)
+				}
+				if _, err := os.Stat(filepath.Join(state, "recovery")); err == nil {
+					t.Fatal("bundled work it does not own")
+				}
+				if p, err := l.srv.Pane(name); err != nil || p.Dead {
+					t.Fatalf("the pane went: %+v, %v", p, err)
+				}
+				return
+			}
+			if got, ok := l.records.Find(rec.Key); !ok || !got.IsLanded() || got.Recovery.Files != 1 {
+				t.Fatalf("record inside the root: %+v, found %v", got, ok)
+			}
+		})
+	}
+}

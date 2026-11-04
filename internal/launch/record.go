@@ -74,8 +74,12 @@ type Record struct {
 
 func (r Record) IsLanded() bool { return !r.Landed.IsZero() }
 
-// Records keeps one JSON file per launch under Dir.
-type Records struct{ Dir string }
+// Records keeps one JSON file per launch under Dir. A set Scope hides the records it refuses from everything that reads them, so
+// a ym holding a copy of another's records cannot act on them.
+type Records struct {
+	Dir   string
+	Scope func(Record) bool
+}
 
 func (r Records) path(key string) string { return filepath.Join(r.Dir, key+".json") }
 
@@ -112,7 +116,7 @@ func (r Records) All() ([]Record, error) {
 	}
 	var out []Record
 	for _, f := range files {
-		if rec, ok := read(f); ok {
+		if rec, ok := read(f); ok && (r.Scope == nil || r.Scope(rec)) {
 			out = append(out, rec)
 		}
 	}

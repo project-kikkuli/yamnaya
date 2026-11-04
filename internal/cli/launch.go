@@ -56,6 +56,11 @@ func newLauncher(dir string) (launcher, error) {
 		return l, err
 	}
 	l.everywhere = core.OwnerStateDir(dir)
+	if !l.everywhere {
+		l.records.Scope = func(rec launch.Record) bool {
+			return (rec.Worktree.Path == "" || core.InRehearsal(dir, rec.Worktree.Path)) && (rec.Worktree.GitDir == "" || core.InRehearsal(dir, rec.Worktree.GitDir))
+		}
+	}
 	conf := tmux.Conf()
 	if old, err := os.ReadFile(l.conf); err == nil && string(old) == conf {
 		return l, nil
