@@ -110,7 +110,7 @@ type Verification struct {
 	DecidedAt time.Time
 }
 
-// Fact is one deterministic check on a pull request the goal claims: merged, CI green on the merge commit, no open threads.
+// Fact is one deterministic check on a pull request the goal claims: merged, no red on the merge commit that is the goal's, no open threads.
 type Fact struct {
 	Snapshot string `json:"snapshot,omitempty"`
 	Revision string `json:"revision,omitempty"`

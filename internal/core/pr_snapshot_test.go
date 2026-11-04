@@ -9,6 +9,8 @@ type landingCall func(string) (Landing, error)
 
 func (f landingCall) Landing(url string) (Landing, error) { return f(url) }
 
+func (f landingCall) MergeJobs(string, string) ([]MergeJob, error) { return nil, nil }
+
 func TestFreshVerificationSurvivesCacheConvergenceAndIrrelevantMetadata(t *testing.T) {
 	for _, when := range []string{"before launch", "after launch", "during pass"} {
 		t.Run(when, func(t *testing.T) {

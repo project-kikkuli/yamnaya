@@ -32,7 +32,7 @@ type Core struct {
 	Git func(dir string) GitInfo
 	// PRs fetches pull request status for RefreshPRs.
 	PRs PRSource
-	// Landings reads whether a goal's pull requests merged green, for verification.
+	// Landings reads how a goal's pull requests landed, for verification.
 	Landings Landings
 	// Launches reports launched sessions that exited; nil shows none.
 	Launches Launches

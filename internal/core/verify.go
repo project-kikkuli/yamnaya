@@ -47,6 +47,8 @@ type Landing struct {
 // Landings reads a pull request's landing from GitHub.
 type Landings interface {
 	Landing(url string) (Landing, error)
+	// MergeJobs reads each job red on the merge commit and what the base branch says of it, for a merge with failed checks.
+	MergeJobs(url, mergeCommit string) ([]MergeJob, error)
 }
 
 // FinishGoal hands the goal the calling manager owns to verification: it is done only once its facts check and a fresh verifier
@@ -273,7 +275,7 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 				return c.Store.withdrawCompletion(g, v, "current PR facts prevent completion: "+f.String()+"; run ym goal done again", c.now())
 			}
 		}
-		if !slices.Equal(facts, v.Facts) {
+		if !slices.EqualFunc(facts, v.Facts, sameFact) {
 			return c.Store.withdrawCompletion(g, v, "current PR facts changed since verification began; run ym goal done again", c.now())
 		}
 		v.Facts, v.FactsAt = facts, c.now()
@@ -371,7 +373,7 @@ func prsOf(v Verification) []string {
 	return out
 }
 
-// checkFacts checks each pull request is merged, green on its merge commit, and has no unresolved review threads.
+// checkFacts checks each pull request is merged, has no red on its merge commit that is the goal's, and has no unresolved review threads.
 func (c *Core) checkFacts(prs []string, now time.Time) []Fact {
 	var out []Fact
 	for _, url := range prs {
@@ -390,19 +392,8 @@ func (c *Core) checkFacts(prs []string, now time.Time) []Fact {
 		}
 		switch l.State {
 		case "MERGED":
-			out = append(out, Fact{Check: "merged", Subject: url, Revision: l.Head + ":" + l.MergeCommit, Snapshot: jsonOf(cacheFact(l)), OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)})
-			ci := Fact{Check: "ci on merge commit", Subject: url, OK: true}
-			switch {
-			case l.Failed > 0:
-				ci.OK, ci.Detail = false, fmt.Sprintf("%d of %d checks failed on %s", l.Failed, l.Passed+l.Failed+l.Pending, shortSHA(l.MergeCommit))
-			case l.Pending > 0:
-				ci.Pending, ci.Detail = true, fmt.Sprintf("%d of %d checks still running on %s", l.Pending, l.Passed+l.Failed+l.Pending, shortSHA(l.MergeCommit))
-			case l.Passed == 0:
-				ci.Detail = "no checks ran on " + shortSHA(l.MergeCommit)
-			default:
-				ci.Detail = fmt.Sprintf("%d checks passed on %s", l.Passed, shortSHA(l.MergeCommit))
-			}
-			out = append(out, ci)
+			ci, settled := c.mergeCI(url, l)
+			out = append(out, Fact{Check: "merged", Subject: url, Revision: l.Head + ":" + l.MergeCommit, Snapshot: jsonOf(cacheFact(settled)), OK: true, Detail: "merged as " + shortSHA(l.MergeCommit)}, ci)
 		case "OPEN":
 			out = append(out, Fact{Check: "merged", Subject: url, Detail: "still open"})
 		case "CLOSED":
@@ -461,6 +452,7 @@ func (c *Core) verifierPrompt(o Org, g Goal, v Verification) string {
 	sb.WriteString("- Read only: do not edit, commit, push, merge, comment, or message anyone. Running tests, builds and the program to check behaviour is fine.\n")
 	sb.WriteString("- Check every part of the ask, not only what the summary mentions. A part not done, done differently than asked, or not shown to work is a failure.\n")
 	sb.WriteString("- A pull request marked as someone else's to land is context: whether it merged or has open threads is never a reason to fail.\n")
+	sb.WriteString("- A red check a fact above calls main's was red before the merge and is still red after it: report it as main's. One it calls since green on main passes on a later commit: report it as green on later main. Neither is a reason to fail. Any other red check is.\n")
 	fmt.Fprintf(&sb, "- When you have decided, run exactly one of:\n  ym goal verdict %s --pass --finding \"<what you checked>\"\n  ym goal verdict %s --fail --finding \"<concrete gap>\" --finding \"<another>\"\n", g.ID, g.ID)
 	sb.WriteString("  Each finding is one concrete, checkable line: what is missing or wrong, and where.\n")
 	sb.WriteString("- Then stop. ym ends this session.")

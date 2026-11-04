@@ -18,6 +18,8 @@ func (f fakeLandings) Landing(url string) (Landing, error) {
 	return l, nil
 }
 
+func (f fakeLandings) MergeJobs(string, string) ([]MergeJob, error) { return nil, nil }
+
 type verifyWorld struct {
 	*orgWorld
 	landings fakeLandings
