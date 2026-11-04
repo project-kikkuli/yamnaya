@@ -464,9 +464,15 @@ func (l launcher) backToHarness(m migration) (migration, int, error) {
 	limits, now := l.limits(), l.now()
 	source := profile.Profile{Harness: m.Source.Harness, ID: profile.ID(m.Source.Profile), Account: m.Source.Account}
 	if barredUntil(dir, source, limits, now).IsZero() {
-		stopped := m.State == "prepared"
+		rec, recorded := l.records.Find(m.Source.Key)
+		stopped := m.State == "prepared" && recorded && !rec.Killed.After(m.Since)
 		if err = os.Remove(migrationPath(dir, m.Source.Harness, m.Source.Session)); err != nil {
 			return m, backNone, err
+		}
+		if stopped {
+			if err = l.forgetOwnStop(m.Source.Key); err != nil {
+				return m, backNone, err
+			}
 		}
 		a.Returning = a.Returning || stopped
 		a.State.Target, a.State.Status, a.State.Reason = "", "continued", "its own login has usage again"
@@ -563,6 +569,9 @@ func (l launcher) atStopReasons(dir string) map[string]core.Switching {
 		if a.State.Status == "blocked" {
 			stop.Blocked = atStopReason(dir, a, harness)
 			stop.Down = stop.Blocked
+			if a.State.Reason == draftHolds {
+				stop.Barred = stop.Blocked
+			}
 		}
 		if stop.Blocked != "" {
 			out[harness+":"+a.State.Session] = stop

@@ -315,14 +315,8 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 		a.failed(e.Account, now.Add(core.QuotaRecheck), err)
 		if stopped {
 			a.Returning = true
-			if err := l.core.Store.ClearKill(rec.Session); err != nil {
+			if err := l.forgetOwnStop(rec.Key); err != nil {
 				return err
-			}
-			if back, ok := l.records.Find(rec.Key); ok {
-				back.Killed = time.Time{}
-				if err := l.records.Save(back); err != nil {
-					return err
-				}
 			}
 		}
 	}
@@ -522,6 +516,12 @@ func (l launcher) Failover(b core.Board) error {
 		}
 		until := barredUntil(dir, selected, b.Fleet.Limits, b.At)
 		if selfContinues && l.core.Drafting(s) {
+			if a.State.Reason != draftHolds {
+				a.Event, a.State = e.Event, core.FailoverState{Session: e.Session, Profile: e.Profile, Account: e.Account, Status: "blocked", Reason: draftHolds}
+				if err = saveFailover(dir, e.Harness, a); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if selfContinues {
@@ -602,6 +602,19 @@ func (l launcher) Failover(b core.Board) error {
 	return errors.Join(notices...)
 }
 
+// forgetOwnStop clears the kill mark of a stop ym made itself, so what later reads the mark sees only an owner's.
+func (l launcher) forgetOwnStop(key string) error {
+	rec, ok := l.records.Find(key)
+	if !ok {
+		return nil
+	}
+	if err := l.core.Store.ClearKill(rec.Session); err != nil {
+		return err
+	}
+	rec.Killed = time.Time{}
+	return l.records.Save(rec)
+}
+
 // bringBack retries the sessions ym stopped to continue and could not start again, paced like any landing. An owner's kill since ends that.
 func (l launcher) bringBack(dir string, killed map[string]bool, b core.Board, byID map[string]launch.Record) error {
 	files, err := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
@@ -645,6 +658,9 @@ func (l launcher) bringBack(dir string, killed map[string]bool, b core.Board, by
 	return nil
 }
 
+// draftHolds is why a stopped session with text in its input box stays put, as moving it would lose what someone is typing.
+const draftHolds = "a draft in its input box holds it on this login; send or clear it and ym moves it"
+
 // standingStops are stops ym saw that the session's prompt coming back says nothing about: Esc cancels Claude's wait, not the stop, so a
 // conversation still idle on the login it stopped on, with no turn since and the login never usable since, stays stopped.
 func (l launcher) standingStops(dir string, ps []profile.Profile, b core.Board, events []core.Exhaustion) ([]core.Exhaustion, error) {
@@ -672,7 +688,16 @@ func (l launcher) standingStops(dir string, ps []profile.Profile, b core.Board, 
 			}
 			continue
 		}
-		if s.Status == core.Idle && !l.core.Drafting(s) {
+		if s.Status == core.Idle && l.core.Drafting(s) {
+			if a.State.Reason != draftHolds {
+				a.State.Status, a.State.Reason = "blocked", draftHolds
+				if err = saveFailover(dir, s.Harness, a); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if s.Status == core.Idle {
 			out = append(out, core.Exhaustion{Harness: s.Harness, Profile: s.Profile, Account: s.Account, Session: s.ID, Reason: quotaReason(s.Harness), Event: a.Recorded, Seen: b.At})
 		}
 	}

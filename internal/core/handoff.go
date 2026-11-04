@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -113,12 +114,19 @@ type QuotaStopUnproven struct{ Cause error }
 func (e *QuotaStopUnproven) Error() string { return e.Cause.Error() }
 func (e *QuotaStopUnproven) Unwrap() error { return e.Cause }
 
-// Drafting reports text sitting in s's input box, which someone may be typing.
+// Drafting reports text sitting in s's input box that someone may be typing: a delivery of ym's own still on its way is not that.
 func (c *Core) Drafting(s Live) bool {
 	handle, host, why := c.locate(s.TTY)
 	if host == nil || why != "" {
 		return false
 	}
 	box, ok := readComposer(host, handle, c.harness(s.Harness), s.PID, true)
-	return ok && strings.TrimSpace(box) != ""
+	if !ok || strings.TrimSpace(box) == "" {
+		return false
+	}
+	sent, err := c.Store.Messages(s.ID)
+	if err != nil {
+		return true
+	}
+	return !slices.ContainsFunc(sent, func(m Message) bool { return m.State == MsgUncertain && holds(box, typedTail(m.Text)) })
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,9 +52,17 @@ func quotaItem(ps, usable []profile.Profile, unanswered map[string]bool, e core.
 	if p, err := failoverTarget(usable, core.Exhaustion{Harness: other, Account: e.Account}); err == nil && held == nil {
 		port = core.Option{Label: "move to " + other + "/" + p.ID, Effect: "with no " + e.Harness + " login left, ym ports each session to " + other + " login " + p.ID + " at its turn end, under a new session id, and keeps its manager and goal links"}
 	}
-	target, err := failoverTarget(usable, e)
+	answering := slices.DeleteFunc(slices.Clone(usable), func(p profile.Profile) bool { return unanswered[loginKey(p)] })
+	target, err := failoverTarget(answering, e)
 	it.DoLine = "Add a login or wait"
 	if err != nil {
+		for _, p := range usable {
+			if p.Harness == e.Harness && p.Account != e.Account && unanswered[loginKey(p)] {
+				it.Options, it.DoLine = []core.Option{wait, add}, "Wait for its status check"
+				it.Rec = "wait: " + unansweredReason(p)
+				return it
+			}
+		}
 		it.Options = []core.Option{wait, add}
 		it.Rec = "add a login if the work cannot wait until " + when + "; no other usable " + e.Harness + " login is configured on this host"
 		if held != nil {
@@ -73,12 +82,8 @@ func quotaItem(ps, usable []profile.Profile, unanswered map[string]bool, e core.
 	if port.Label != "" {
 		it.Options = append(it.Options, port)
 	}
-	why := "it is a different login with usage left"
-	if unanswered[target.Account] {
-		why = fmt.Sprintf("it is a different login, though its status check has not answered yet (ym profiles login %s %s if that lasts)", target.Harness, target.ID)
-	}
 	it.DoLine = "Switch login or wait"
-	it.Rec = "switch to " + target.ID + ": " + why + ", so work continues now instead of waiting until " + when
+	it.Rec = "switch to " + target.ID + ": it is a different login with usage left, so work continues now instead of waiting until " + when
 	return it
 }
 
