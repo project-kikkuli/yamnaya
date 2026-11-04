@@ -314,9 +314,9 @@ func (s *Store) Find(scope, ref string) (Item, error) {
 		}
 		var names []string
 		for _, it := range found {
-			names = append(names, it.Qualified())
+			names = append(names, it.refOtherThan(ref))
 		}
-		return Item{}, fmt.Errorf("item %s is ambiguous: %s; pass -p <project> or name:ID", ref, strings.Join(names, ", "))
+		return Item{}, fmt.Errorf("item %s is ambiguous: %s; name it by one of those", ref, strings.Join(names, ", "))
 	}
 	return Item{}, Final(fmt.Errorf("item %s: %w", ref, ErrNotFound))
 }

@@ -89,9 +89,17 @@ func (c *Core) FindItem(scope, ref string) (Item, error) {
 func ambiguousItems(ref string, found []Item) error {
 	var names []string
 	for _, f := range found {
-		names = append(names, f.Ref())
+		names = append(names, f.refOtherThan(ref))
 	}
 	return Final(fmt.Errorf("item %s is ambiguous across hosts: %s; name it with its host, as %s", ref, strings.Join(names, ", "), names[len(names)-1]))
+}
+
+// refOtherThan is the item's reference, or its number when that is what ref, found ambiguous, already says.
+func (it Item) refOtherThan(ref string) string {
+	if r := it.Ref(); !strings.EqualFold(r, ref) {
+		return r
+	}
+	return it.Key()
 }
 
 // Ref is the item's trailing reference, which ym item answer and the other item commands take: never a goal's or chief's id.

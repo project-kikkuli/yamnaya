@@ -825,6 +825,9 @@ const (
 	// question, and an item row's state and recipient too.
 	needRest = 39
 	itemRest = 60
+	// minRecipient and minQuestion are the least of an item row's recipient and question a long recipient leaves, so its key stays whole.
+	minRecipient = 8
+	minQuestion  = 20
 )
 
 // itemID names an item, with its project where the needs list mixes projects.
@@ -1068,8 +1071,10 @@ func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
 	for _, other := range m.items {
 		longest = max(longest, ansi.StringWidth(m.tagged(other.Host, m.board.Org.ItemLead(other))))
 	}
-	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), m.leadColumn(longest, itemRest)) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
+	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), m.leadColumn(longest, itemRest)) + " " + pad(it.State, 10) + " to "
 	ref := strings.TrimSpace(ids[it.Key()])
+	left := m.width - ansi.StringWidth(head) - ansi.StringWidth(ref) - 5
+	head += ansi.Truncate(m.recipientName(it), max(minRecipient, left-minQuestion), "…") + "  "
 	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
 	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)
 	if it.State != core.ItemOpen && i != m.cursor {

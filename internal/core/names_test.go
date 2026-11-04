@@ -683,3 +683,31 @@ func TestAnItemOfAChiefIsFoundByTheChiefsNameOrId(t *testing.T) {
 		})
 	}
 }
+
+func TestAnAmbiguousItemRefOffersRefsThatWorkWithoutAnId(t *testing.T) {
+	w := newOrgWorld(t)
+	boss := w.chief(t, "demo")
+	inChief, err := w.core.Store.AddItem(Item{Kind: KindDecision, Question: "which?", Session: boss.Session, Scope: "/state/chiefs/" + boss.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inRepo, err := w.core.Store.AddItem(Item{Kind: KindDecision, Question: "where?", Session: boss.Session, Scope: "/src/demo/.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = w.core.FindItem("", "demo:"+inChief.ID)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("FindItem = %v, want it ambiguous", err)
+	}
+	if strings.Contains(err.Error(), boss.ID) {
+		t.Fatalf("message shows the id: %v", err)
+	}
+	for _, it := range []Item{inChief, inRepo} {
+		if !strings.Contains(err.Error(), it.Key()) {
+			t.Fatalf("message does not offer %s: %v", it.Key(), err)
+		}
+		if got, err := w.core.FindItem("", it.Key()); err != nil || got.Seq != it.Seq {
+			t.Fatalf("the offered %s found #%d, %v", it.Key(), got.Seq, err)
+		}
+	}
+}

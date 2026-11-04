@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
@@ -165,5 +167,49 @@ func TestEveryCommandTakingAGoalOrChiefTakesItsNameOrId(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGoalUnderAChiefOnAnotherHostStoresTheChiefByItsIdGivenItsNameOrId(t *testing.T) {
+	for _, ref := range []string{"box/core-lead", "box/mgr9", "BOX/CORE-LEAD"} {
+		t.Run(ref, func(t *testing.T) {
+			t.Setenv("YAMNAYA_NO_SERVE", "1")
+			dir := t.TempDir()
+			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+			with := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+			}
+			hosts := func(run runFunc) func(*cobra.Command, []string) error {
+				return func(cmd *cobra.Command, args []string) error {
+					k.Remotes = &itemRemote{board: core.RemoteBoard{Host: "box", Managers: []core.Manager{{ID: "mgr9", Role: core.RoleChief, Name: "core-lead"}}}}
+					return run(&env{core: k}, cmd, args)
+				}
+			}
+			cmd := goalCmd(with, hosts)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs([]string{"--repo", dir, "--under", ref, "ship the thing"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("ym goal --under %s: %v\n%s", ref, err, out.String())
+			}
+			o, err := k.LoadOrg()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(o.Managers) != 1 {
+				t.Fatalf("managers %+v, want the goal's one", o.Managers)
+			}
+			for _, m := range o.Managers {
+				if m.ParentID != "box/mgr9" {
+					t.Fatalf("parent %q, want box/mgr9", m.ParentID)
+				}
+			}
+		})
 	}
 }

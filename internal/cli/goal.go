@@ -25,7 +25,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		Use:   "goal [--codex] [--host HOST] [--repo NAME|PATH] [--under CHIEF] [--name NAME] <ask>",
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
-		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
 			var requester string
 			if cl, err := e.caller(); err == nil {
 				requester = cl.Session
