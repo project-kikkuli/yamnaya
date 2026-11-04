@@ -827,8 +827,8 @@ func TestABoardsQueueRowsFollowARename(t *testing.T) {
 	if _, err := w.core.Rename(g.ID, "after-name"); err != nil {
 		t.Fatal(err)
 	}
-	if line, _ := RowLine(find(), "1", QueueWidth, w.clock); !strings.Contains(line, "after-name") {
-		t.Fatalf("row %q does not follow the rename", line)
+	if got := find().Name; got != "after-name" {
+		t.Fatalf("row named %q, want after-name", got)
 	}
 }
 

@@ -603,7 +603,7 @@ func TestAnIDSharedAcrossHostsGrantsNothing(t *testing.T) {
 					t.Fatalf("state %s steers %+v; acted %v, want %v", now.State, steers, acted, tc.reallyAbove)
 				}
 				if tc.reallyAbove {
-					if cl := f.b.closure(t, g.ID); cl != nil && cl.Actor != "chief "+local.ID {
+					if cl := f.b.closure(t, g.ID); cl != nil && cl.Actor != "chief "+local.Shown() {
 						t.Fatalf("actor %q, want the chief named as this host names it", cl.Actor)
 					}
 					if len(steers) > 0 && steers[0].Author != local.ID {
