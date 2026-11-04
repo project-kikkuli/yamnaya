@@ -349,7 +349,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 			}
 			if m.State != "queued" && l.core != nil {
 				text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s that has not finished: %v. ym keeps trying; ym revive %s brings it back by hand.", core.Short(m.Source.Session), m.Source.Key, m.Destination.ID, attemptErr, m.Source.Key)
-				if err = l.core.NoticeStuckSwitch(b, m.Source.Session, m.Since.Unix(), text); err != nil {
+				if err = l.core.NoticeStuckSwitch(b, m.Source.Session, m.Source.AttachedAt.Unix(), text); err != nil {
 					return err
 				}
 			}

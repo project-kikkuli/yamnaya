@@ -193,7 +193,7 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	}
 	stuck := func(why string) error {
 		text := fmt.Sprintf("agent %s (%s) was stopped for a login switch to %s, and its port is written but cannot come back yet: %s. ym keeps trying; ym revive %s brings it back by hand.", core.Short(rec.Session), rec.Key, m.Destination.ID, why, rec.Key)
-		return errors.Join(l.core.NoticeStuckSwitch(b, rec.Session, m.Since.Unix(), text), l.holdPending(m, why))
+		return errors.Join(l.core.NoticeStuckSwitch(b, rec.Session, m.Source.AttachedAt.Unix(), text), l.holdPending(m, why))
 	}
 	if l.core.Off(rec.Session) {
 		return stuck(heldOff)

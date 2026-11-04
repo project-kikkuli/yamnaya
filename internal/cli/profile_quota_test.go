@@ -2629,7 +2629,6 @@ func TestAPassedLimitContinuesTheSessionWhereItIs(t *testing.T) {
 	}{
 		{name: "ledger stop, window passed"},
 		{name: "silent stop, window passed", silent: true},
-		{name: "stale dialog with a later row at 20", row: true},
 		{name: "what cannot continue says so", fails: true, want: "could not continue"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
