@@ -705,7 +705,7 @@ func goalCloseCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				return err
 			}
 			if closed.Pending != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the close lands once that host confirms %s is above it, and %s hears if not\n", closed.Goal, closed.Pending, e.shown(order.Author), e.shown(order.Author))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the close lands once that host confirms %s is above it, and %s hears if not\n", closed.Goal, e.core.RefName(closed.Pending), e.core.RefName(order.Author), e.core.RefName(order.Author))
 				return nil
 			}
 			if line := closed.String(); line != "" {

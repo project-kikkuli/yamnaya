@@ -97,7 +97,7 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				return err
 			}
 			if st.Pending != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.Shown(), st.Pending, author, author)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s reports to %s on another host; the steer lands once that host confirms %s is above it, and %s hears if not\n", m.Shown(), e.core.RefName(st.Pending), e.core.RefName(author), e.core.RefName(author))
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s steered to revision %d; it shows unadopted until its manager runs ym goal adopt %s --revision %d\n", m.Shown(), st.Revision, m.Shown(), st.Revision)
