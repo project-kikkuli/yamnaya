@@ -304,7 +304,6 @@ func (a *Adapter) Conversation(id string) (string, error) {
 		if turn {
 			return p, nil
 		}
-		return "", nil
 	}
 	return "", unreadable
 }

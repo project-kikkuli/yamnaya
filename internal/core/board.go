@@ -581,7 +581,7 @@ func (c *Core) Board() (Board, error) {
 	if q, ok := c.Launches.(interface{ PendingSwitches() map[string]Switching }); ok {
 		pending := q.PendingSwitches()
 		for i := range b.Sessions {
-			if p, ok := pending[b.Sessions[i].Harness+":"+b.Sessions[i].ID]; ok && (!p.AtStop || b.Sessions[i].Status == Waiting) {
+			if p, ok := pending[b.Sessions[i].Harness+":"+b.Sessions[i].ID]; ok && (!p.AtStop || c.AtQuotaDialog(b.Sessions[i])) {
 				b.Sessions[i].Switching = &p
 			}
 		}

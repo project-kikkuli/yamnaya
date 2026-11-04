@@ -48,8 +48,10 @@ type migration struct {
 	State       string          `json:"state"`
 	Blocked     string          `json:"blocked,omitempty"`
 	Fingerprint string          `json:"fingerprint,omitempty"`
-	NoteRead    bool            `json:"note_read,omitempty"`
-	Crew        []busyCrew      `json:"crew,omitempty"`
+	// BlockedAt is when serve last tried it, so a host where nothing changes still tries again in time.
+	BlockedAt time.Time  `json:"blocked_at,omitzero"`
+	NoteRead  bool       `json:"note_read,omitempty"`
+	Crew      []busyCrew `json:"crew,omitempty"`
 	// Since is when the record began, or the switch's own stop: a kill stamp past it is the owner's, not the switch's.
 	Since time.Time `json:"since,omitzero"`
 }
@@ -318,7 +320,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 		if err != nil {
 			return err
 		}
-		if m.Blocked != "" && m.Fingerprint == fingerprint {
+		if m.Blocked != "" && m.Fingerprint == fingerprint && (m.BlockedAt.IsZero() || time.Since(m.BlockedAt) < core.ResumeRetry) {
 			continue
 		}
 		ref := m.Source.Key
@@ -334,7 +336,7 @@ func (l launcher) RecoverProfiles(b core.Board) error {
 				if latest.Destination.ID != m.Destination.ID {
 					return false
 				}
-				latest.Blocked, latest.Fingerprint = attemptErr.Error(), fingerprint
+				latest.Blocked, latest.Fingerprint, latest.BlockedAt = attemptErr.Error(), fingerprint, time.Now()
 				return true
 			})
 			if err != nil {
@@ -370,7 +372,8 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 	if err != nil {
 		return err
 	}
-	target, err := failoverDestination(ps, core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, l.limits(), a.Pools, time.Now(), m.Source.Worktree.Path)
+	now, limits := time.Now(), l.limits()
+	target, err := failoverDestination(a.candidates(ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, limits, nil, now, m.Source.Worktree.Path)
 	if err != nil {
 		return block()
 	}
@@ -435,8 +438,8 @@ func (l launcher) settleNote(m migration) error {
 	})
 }
 
-// atStopReasons are, by harness:session, why a session stopped on its limit cannot move: its failover found no usable login, nothing has
-// been queued, and its window has not passed. The board shows one only while the session waits at the dialog.
+// atStopReasons are, by harness:session, why a session stopped on its limit cannot move. The board shows one only while the session is
+// held at the dialog, so it needs no expiry of its own.
 func atStopReasons(dir string) map[string]core.Switching {
 	files, _ := filepath.Glob(filepath.Join(dir, "failovers", "*.json"))
 	out := map[string]core.Switching{}
@@ -446,14 +449,15 @@ func atStopReasons(dir string) map[string]core.Switching {
 			continue
 		}
 		var a failoverAttempt
-		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" || a.State.Target != "" || a.State.Reason != errNoUsablePool.Error() {
+		if json.Unmarshal(raw, &a) != nil || a.State.Status != "blocked" {
 			continue
 		}
-		if !a.State.Reset.IsZero() && !a.State.Reset.After(time.Now()) {
-			continue
+		why := "at quota dialog: " + a.State.Reason
+		if a.State.Reason == errNoUsablePool.Error() {
+			why = "at quota dialog, no usable login, resets " + quotaReset(a.State.Reset)
 		}
 		harness, _, _ := strings.Cut(filepath.Base(path), "-")
-		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: "at quota dialog, no usable login, resets " + quotaReset(a.State.Reset)}
+		out[harness+":"+a.State.Session] = core.Switching{AtStop: true, Blocked: why}
 	}
 	return out
 }
@@ -488,9 +492,9 @@ func (l launcher) PendingSwitches() map[string]core.Switching {
 		if m.Destination.Harness != m.Source.Harness {
 			to = m.Destination.Harness + "/" + to
 		}
-		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: to, Blocked: m.Blocked}
+		out[m.Source.Harness+":"+m.Source.Session] = core.Switching{To: to, Blocked: m.Blocked, Stopped: m.State != "queued"}
 		if m.Head != "" {
-			out[m.Destination.Harness+":"+m.Head] = core.Switching{To: to, Blocked: m.Blocked}
+			out[m.Destination.Harness+":"+m.Head] = core.Switching{To: to, Blocked: m.Blocked, Stopped: true}
 		}
 	}
 	return out

@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,13 +15,34 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-func (a *Adapter) QuotaDialog(text string) bool {
+// dialogTail matches the quota dialog read with no spaces or line breaks, as a narrow pane wraps it anywhere.
+var dialogTail = regexp.MustCompile(`^Whatdoyouwanttodo\?1\.Stopandwaitforlimittoreset2\.Waithere,thencontinueautomaticallyat(.*)3\.SwitchtousagecreditsEntertoconfirm·Esctocancel$`)
+
+// quotaDialogLines are the screen's lines with a quota dialog at the bottom put back as the five lines it is at full width, however the
+// pane wrapped it, so what is above it can be read as it stands.
+func quotaDialogLines(text string) []string {
 	var lines []string
 	for _, line := range screen.Lines(text) {
 		if line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "❯")); line != "" {
 			lines = append(lines, line)
 		}
 	}
+	for start := len(lines) - 1; start >= 0 && start >= len(lines)-24; start-- {
+		if !strings.HasPrefix("What do you want to do?", lines[start]) && !strings.HasPrefix(lines[start], "What") {
+			continue
+		}
+		joined := strings.NewReplacer(" ", "", "❯", "").Replace(strings.Join(lines[start:], ""))
+		m := dialogTail.FindStringSubmatch(joined)
+		if m == nil {
+			continue
+		}
+		return append(slices.Clone(lines[:start]), "What do you want to do?", "1. Stop and wait for limit to reset", "2. Wait here, then continue automatically at "+m[1], "3. Switch to usage credits", "Enter to confirm · Esc to cancel")
+	}
+	return lines
+}
+
+func (a *Adapter) QuotaDialog(text string) bool {
+	lines := quotaDialogLines(text)
 	if len(lines) < 6 {
 		return false
 	}
@@ -39,15 +62,12 @@ func (a *Adapter) QuotaDialog(text string) bool {
 // silentQuotaDialog reports the quota dialog as Claude shows it the moment it starts on a used-up login: no turn ran, so no hit-limit line
 // sits above it, only the dialog's own top rule. The rule tells it from those lines quoted in scrollback or another dialog's options.
 func silentQuotaDialog(text string) bool {
-	lines := screen.Lines(text)
+	lines := quotaDialogLines(text)
 	if len(lines) < 6 {
 		return false
 	}
 	end := lines[len(lines)-5:]
-	for i := range end {
-		end[i] = strings.TrimSpace(strings.TrimPrefix(end[i], "❯"))
-	}
-	rule := strings.Trim(lines[len(lines)-6], "▔") == "" && lines[len(lines)-6] != ""
+	rule := strings.Trim(lines[len(lines)-6], "▔") == ""
 	return rule && end[0] == "What do you want to do?" && end[1] == "1. Stop and wait for limit to reset" && strings.HasPrefix(end[2], "2. Wait here, then continue automatically at ") && end[3] == "3. Switch to usage credits" && end[4] == "Enter to confirm · Esc to cancel"
 }
 

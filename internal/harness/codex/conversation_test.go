@@ -35,6 +35,18 @@ func TestConversationTellsAGoneThreadFromOneItCannotRead(t *testing.T) {
 		{name: "row names a rollout gone everywhere", setup: func(t *testing.T, home string) {
 			state(t, home, filepath.Join(home, "sessions", "gone.jsonl"))
 		}},
+		{name: "state home unreadable", fails: true, setup: func(t *testing.T, home string) {
+			if err := os.Mkdir(home+"-state", 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(home+"-state", 0700) })
+		}},
+		{name: "home unreadable", fails: true, setup: func(t *testing.T, home string) {
+			if err := os.Chmod(home, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(home, 0700) })
+		}},
 		{name: "rollout unreadable", fails: true, setup: func(t *testing.T, home string) {
 			p := filepath.Join(home, "sessions", "rollout-2026-01-01T00-00-00-"+id+".jsonl")
 			put(t, p, meta)
@@ -50,7 +62,11 @@ func TestConversationTellsAGoneThreadFromOneItCannotRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.setup(t, home)
-			a := &Adapter{Home: home, StateHome: home}
+			stateHome := home
+			if _, err := os.Stat(home + "-state"); err == nil {
+				stateHome = home + "-state"
+			}
+			a := &Adapter{Home: home, StateHome: stateHome}
 			path, err := a.Conversation(id)
 			if (err != nil) != c.fails || (path != "") != c.found {
 				t.Fatalf("path=%q err=%v, want found=%v fails=%v", path, err, c.found, c.fails)

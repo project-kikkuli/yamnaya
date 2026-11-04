@@ -807,21 +807,31 @@ func launchedCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 
 // revive resumes an exited launched session in its worktree, recreating the worktree when it is gone.
 func (l launcher) revive(rec launch.Record) (string, error) {
+	gone := false
 	if l.operation != rec.Session || rec.Session == "" {
 		path, err := conversation(rec)
 		if err != nil {
 			return "", fmt.Errorf("cannot read the conversation of %s, so ym leaves it untouched: %w", rec.Key, err)
 		}
 		if path == "" {
+			if rec.Session != "" && l.isPort(rec.Session) {
+				return "", fmt.Errorf("the conversation ported to %s is not visible on %s; ym will not start it over in its place", core.Short(rec.Session), rec.Harness)
+			}
+			gone = rec.Session != ""
 			if rec, err = l.freshLogin(rec); err != nil {
 				return "", err
 			}
 		}
 	}
-	if moved, msg, err := l.offWall(rec, l.resumeNote); moved || err != nil {
-		return msg, err
+	if !gone {
+		if moved, msg, err := l.offWall(rec, l.resumeNote); moved || err != nil {
+			return msg, err
+		}
 	}
 	_, lost, err := l.restart(rec, func(rec *launch.Record) ([]string, error) {
+		if gone {
+			return startOverArgv(rec, "")
+		}
 		if rec.Session != "" {
 			return resumeArgv(*rec, l.resumeNote)
 		}
@@ -830,10 +840,33 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if gone && lost != "" {
+		return fmt.Sprintf("started %s %s over (%s) in %s, since its conversation is gone; open: ym open %s", rec.Harness, rec.Key, lost, rec.Worktree.Path, rec.Key), nil
+	}
+	if gone {
+		return fmt.Sprintf("started %s %s over in %s, since its conversation is gone; open: ym open %s", rec.Harness, rec.Key, rec.Worktree.Path, rec.Key), nil
+	}
 	if lost != "" {
 		return fmt.Sprintf("revived %s %s (%s) in %s; open: ym open %s", rec.Harness, rec.Key, lost, rec.Worktree.Path, rec.Key), nil
 	}
 	return fmt.Sprintf("revived %s %s in %s; open: ym open %s", rec.Harness, rec.Key, rec.Worktree.Path, rec.Key), nil
+}
+
+// startOverArgv starts rec's session over on start, or on its first prompt when start is empty, its conversation having gone.
+func startOverArgv(rec *launch.Record, start string) ([]string, error) {
+	if rec.Harness == claude.Name {
+		if err := recordClaude(*rec).Unstart(rec.Session); err != nil {
+			return nil, err
+		}
+	}
+	fresh := *rec
+	if start != "" {
+		fresh.Prompt = start
+	}
+	if rec.Harness == codex.Name {
+		rec.Session, rec.Started = "", time.Now()
+	}
+	return startArgv(fresh)
 }
 
 // Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript
@@ -866,19 +899,7 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 		if resumed {
 			return resumeArgv(*rec, prompt)
 		}
-		if rec.Harness == claude.Name {
-			if err := recordClaude(*rec).Unstart(rec.Session); err != nil {
-				return nil, err
-			}
-		}
-		fresh := *rec
-		if start != "" {
-			fresh.Prompt = start
-		}
-		if rec.Harness == codex.Name {
-			rec.Session, rec.Started = "", time.Now()
-		}
-		return startArgv(fresh)
+		return startOverArgv(rec, start)
 	})
 	if err != nil || resumed || rec.Harness != codex.Name {
 		return l.runsAs(rec.Key, session), resumed, err

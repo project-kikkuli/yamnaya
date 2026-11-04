@@ -22,7 +22,7 @@ func (c *Core) noticeExits(b Board, o Org) error {
 		if _, isManager := o.ManagerOf(l.Session); isManager {
 			continue
 		}
-		if l.Switching != nil {
+		if l.Switching != nil && l.Switching.Stopped {
 			continue
 		}
 		text := fmt.Sprintf("agent %s (%s) stopped: its process %s. Exited, cleaned up (recoverable: ym revive %s); ym removes %s and keeps any work no remote holds.",

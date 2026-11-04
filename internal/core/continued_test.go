@@ -377,7 +377,8 @@ func TestASwitchStoppingASessionDoesNotReadAsItsExit(t *testing.T) {
 		told      bool
 	}{
 		{"an ordinary exit is reported", nil, true},
-		{"a switch under way is not", &Switching{To: "claude-work"}, false},
+		{"a crash while a switch only waits is reported", &Switching{To: "claude-work"}, true},
+		{"the stop a switch made itself is not", &Switching{To: "claude-work", Stopped: true}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w, r := resumeWorld(t)
@@ -408,5 +409,27 @@ func TestASwitchStoppingASessionDoesNotReadAsItsExit(t *testing.T) {
 				t.Fatalf("told=%v, want %v: %+v", told, c.told, events)
 			}
 		})
+	}
+}
+
+func TestSessionsThatKeepFailingNeverStarveOneThatWouldComeBack(t *testing.T) {
+	w, r := resumeWorld(t)
+	_, m := w.goal(t, "ship the importer", "/repo/august")
+	w.supervise(t)
+	r.state(m.Session, "running")
+	for i := range 40 {
+		id := fmt.Sprintf("failing-%d", i)
+		r.launched = append(r.launched, Launched{Key: "wt-" + id, Session: id, State: "gone", Parent: m.Session})
+		r.fail[id] = errors.New("native login required")
+	}
+	r.launched = append(r.launched, Launched{Key: "wt-ok", Session: "healthy", State: "gone", Parent: m.Session})
+	for range 200 {
+		w.clock = w.clock.Add(ResumePace)
+		if err := w.core.ReviveWork(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(r.resumed) != 1 || r.resumed[0].session != "healthy" {
+		t.Fatalf("resumed %+v", r.resumed)
 	}
 }

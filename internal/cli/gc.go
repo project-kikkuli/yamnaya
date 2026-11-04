@@ -198,7 +198,7 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 	}
 	pruned := 0
 	for _, rec := range recs {
-		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep && transcript(rec) == "" {
+		if rec.IsLanded() && now.Sub(rec.Landed) >= landedKeep && conversationGone(rec) {
 			pruned++
 			if !dry && l.records.Delete(rec.Key) == nil {
 				l.logRemoval("dropped record "+rec.Key, filepath.Dir(rec.Worktree.GitDir), rec.Worktree.Path, rec.Worktree.Branch, rec.Head,
@@ -317,4 +317,10 @@ func (l launcher) GC() (string, error) {
 	all, pruned := l.gc(repos, false, true)
 	printSwept(&b, all, pruned, false)
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// conversationGone reports a conversation verifiably absent; one that cannot be read is not gone.
+func conversationGone(rec launch.Record) bool {
+	path, err := conversation(rec)
+	return err == nil && path == ""
 }

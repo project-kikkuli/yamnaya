@@ -92,6 +92,9 @@ func (a *Adapter) Conversation(id string) (string, error) {
 	if _, err := os.Stat(a.Home); err != nil {
 		return "", fmt.Errorf("codex home: %w", err)
 	}
+	if _, err := os.ReadDir(a.sqliteHome()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("codex state home: %w", err)
+	}
 	if db, ok := a.db(); ok {
 		var path string
 		err := db.QueryRow(`SELECT rollout_path FROM threads WHERE id=?`, id).Scan(&path)

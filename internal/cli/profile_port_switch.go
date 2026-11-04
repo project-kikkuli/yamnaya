@@ -194,7 +194,7 @@ func (l launcher) recoverPort(m migration, b core.Board) error {
 	if l.core.Off(rec.Session) {
 		return l.holdPending(m, heldOff)
 	}
-	if b.ThrottleHolds(rec.Session) {
+	if b.ThrottleHolds(rec.Session) || b.ThrottleHolds(m.Source.Session) {
 		return l.holdPending(m, heldThrottled)
 	}
 	if out := l.loginOut(m.Destination); !out.IsZero() {

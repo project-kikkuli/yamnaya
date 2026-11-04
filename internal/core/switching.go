@@ -6,6 +6,8 @@ type Switching struct {
 	Blocked string `json:"blocked,omitempty"`
 	// AtStop marks no switch at all but why a session held at its quota dialog cannot move: it shows only while the session waits there.
 	AtStop bool `json:"at_stop,omitempty"`
+	// Stopped marks a switch that has itself stopped the session, so its exit is the switch's and no crash.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // LoginName names a session's login whenever its harness has more than one to tell apart, the native login included.

@@ -37,6 +37,37 @@ func (c *Core) InspectHandoff(s Session) (time.Time, error) {
 	return at, nil
 }
 
+// AtQuotaDialog reports whether s is showing its harness's quota dialog right now.
+func (c *Core) AtQuotaDialog(s Live) bool {
+	if s.Status != Waiting || s.Prompt != nil || s.Remote != "" {
+		return false
+	}
+	h := c.harness(s.Harness)
+	i, ok := h.(HandoffInspector)
+	if !ok {
+		return false
+	}
+	handle, host, why := c.locate(s.TTY)
+	if host == nil || why != "" {
+		return false
+	}
+	screen, err := host.Screen(handle)
+	if err != nil {
+		return false
+	}
+	if _, prompt := h.ParsePrompt(screen); prompt {
+		return false
+	}
+	if i.QuotaDialog(screen) {
+		return true
+	}
+	if silent, ok := h.(SilentQuotaStopper); ok {
+		_, stopped, _ := silent.SilentQuotaStop(s.Session, screen)
+		return stopped
+	}
+	return false
+}
+
 // SilentQuotaStopper is a harness that can show a session held at its quota dialog with no quota error behind it.
 type SilentQuotaStopper interface {
 	SilentQuotaStop(s Session, screen string) (time.Time, bool, error)

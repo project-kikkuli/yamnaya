@@ -18,15 +18,22 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
-type quotaNotice struct {
-	Harness string `json:"harness"`
-	Profile string `json:"profile,omitempty"`
-	Account string `json:"account"`
-	// Reset is the latest window this item covers; Resets every one seen, so windows alternating never file again.
-	Reset  time.Time   `json:"reset"`
-	Resets []time.Time `json:"resets,omitempty"`
-	Item   string      `json:"item"`
+// quotaWindow is one limit window of a login and the owner item for it.
+type quotaWindow struct {
+	Reset time.Time `json:"reset"`
+	Item  string    `json:"item"`
+	Filed time.Time `json:"filed"`
 }
+
+type quotaNotice struct {
+	Harness string        `json:"harness"`
+	Profile string        `json:"profile,omitempty"`
+	Account string        `json:"account"`
+	Windows []quotaWindow `json:"windows"`
+}
+
+// quotaItemKeep bounds an item whose reset never became known: no window outlasts a week.
+const quotaItemKeep = 7 * 24 * time.Hour
 
 // quotaNoticePaths are where one login's notice lives: under its profile and, once known, its account, so a login whose account turns
 // up later, or two names for one account, keep one item.
@@ -55,42 +62,32 @@ func quotaReset(reset time.Time) string {
 	return reset.UTC().Format(time.RFC3339)
 }
 
-// fileQuotaItem tells the owner once per login and reset window that the login ran out, with how its work can continue.
-func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaustion, reset time.Time, limits []core.Limit, now time.Time) error {
-	if l.core == nil {
-		return nil
-	}
-	paths := quotaNoticePaths(dir, e.Harness, e.Profile, e.Account)
-	var filed quotaNotice
+// loadQuotaNotice is the login's notice, under whichever name it was filed.
+func loadQuotaNotice(paths []string) (quotaNotice, error) {
+	var n quotaNotice
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			return err
+			return n, err
 		}
-		if err = json.Unmarshal(raw, &filed); err != nil {
-			return err
-		}
-		break
+		return n, json.Unmarshal(raw, &n)
 	}
-	if filed.Item != "" && (reset.IsZero() || slices.ContainsFunc(filed.Resets, func(t time.Time) bool { return sameQuotaWindow(t, reset) })) {
+	return n, nil
+}
+
+func saveQuotaNotice(paths []string, n quotaNotice) error {
+	if len(n.Windows) == 0 {
+		for _, path := range paths {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 		return nil
 	}
-	if filed.Item == "" || !filed.Reset.IsZero() {
-		added, err := l.core.AddOwnerItem(quotaItem(ps, e, reset, limits, now))
-		if err != nil {
-			return err
-		}
-		filed.Item = added.Key()
-	}
-	filed.Harness, filed.Profile, filed.Account = e.Harness, e.Profile, cmp.Or(e.Account, filed.Account)
-	filed.Resets = append(filed.Resets, reset)
-	if reset.After(filed.Reset) {
-		filed.Reset = reset
-	}
-	b, err := json.Marshal(filed)
+	b, err := json.Marshal(n)
 	if err != nil {
 		return err
 	}
@@ -102,7 +99,64 @@ func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaust
 	return nil
 }
 
-// closeQuotaItems retires an owner item once its question has answered itself: its window passed, or no session is left on the login.
+// fileQuotaItem tells the owner once per login and reset window that the login ran out, with how its work can continue. A stop whose reset
+// is not known yet joins whichever window is open, and that window takes the reset once a row shows it.
+func (l launcher) fileQuotaItem(dir string, ps []profile.Profile, e core.Exhaustion, reset time.Time, limits []core.Limit, now time.Time) error {
+	if l.core == nil {
+		return nil
+	}
+	paths := quotaNoticePaths(dir, e.Harness, e.Profile, e.Account)
+	n, err := loadQuotaNotice(paths)
+	if err != nil {
+		return err
+	}
+	if len(n.Windows) > 0 && reset.IsZero() {
+		return nil
+	}
+	if slices.ContainsFunc(n.Windows, func(w quotaWindow) bool { return sameQuotaWindow(w.Reset, reset) }) {
+		return nil
+	}
+	learned := slices.IndexFunc(n.Windows, func(w quotaWindow) bool { return w.Reset.IsZero() })
+	if learned >= 0 {
+		n.Windows[learned].Reset = reset
+	} else {
+		added, err := l.core.AddOwnerItem(quotaItem(l.signedIn(ps, e, limits, now), e, reset, limits, now))
+		if err != nil {
+			return err
+		}
+		n.Windows = append(n.Windows, quotaWindow{Reset: reset, Item: added.Key(), Filed: now})
+	}
+	n.Harness, n.Profile, n.Account = e.Harness, e.Profile, cmp.Or(e.Account, n.Account)
+	return saveQuotaNotice(paths, n)
+}
+
+// signedIn drops the logins an item would otherwise offer that their own native status says are signed out, so its options are true.
+func (l launcher) signedIn(ps []profile.Profile, e core.Exhaustion, limits []core.Limit, now time.Time) []profile.Profile {
+	for _, harness := range []string{e.Harness, core.Other(e.Harness)} {
+		for {
+			target, err := failoverTarget(ps, core.Exhaustion{Harness: harness, Account: e.Account}, limits, nil, now)
+			if err != nil || switchAuthentication(target, "") == nil {
+				break
+			}
+			ps = slices.DeleteFunc(slices.Clone(ps), func(p profile.Profile) bool { return p.Harness == target.Harness && p.ID == target.ID })
+		}
+	}
+	return ps
+}
+
+// loginInUse reports whether any session, live or that ym would bring back, is on the login.
+func (l launcher) loginInUse(harness, id, account string, b core.Board, all []launch.Record) bool {
+	on := func(h, p, a string) bool {
+		return h == harness && (account != "" && a == account || profile.ID(p) == profile.ID(id))
+	}
+	return slices.ContainsFunc(b.Sessions, func(s core.Live) bool { return s.Remote == "" && on(s.Harness, s.Profile, s.Account) }) ||
+		slices.ContainsFunc(all, func(r launch.Record) bool {
+			return !r.IsLanded() && r.Killed.IsZero() && on(r.Harness, r.Profile, r.Account)
+		})
+}
+
+// closeQuotaItems retires each owner item once its question has answered itself: its window passed, rows newer than it show the login has
+// usage, it has waited as long as any window lasts, or no session is left on the login.
 func (l launcher) closeQuotaItems(dir string, b core.Board) error {
 	if l.core == nil {
 		return nil
@@ -118,36 +172,47 @@ func (l launcher) closeQuotaItems(dir string, b core.Board) error {
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return err
 		}
 		var n quotaNotice
 		if err = json.Unmarshal(raw, &n); err != nil {
 			return err
 		}
-		passed := !n.Reset.IsZero() && b.At.After(n.Reset)
-		on := func(harness, id, account string) bool {
-			return harness == n.Harness && (n.Account != "" && account == n.Account || profile.ID(id) == profile.ID(n.Profile))
-		}
-		needed := slices.ContainsFunc(b.Sessions, func(s core.Live) bool { return s.Remote == "" && on(s.Harness, s.Profile, s.Account) }) ||
-			slices.ContainsFunc(all, func(r launch.Record) bool {
-				return !r.IsLanded() && r.Killed.IsZero() && on(r.Harness, r.Profile, r.Account)
-			})
-		if !passed && needed {
-			continue
-		}
-		it, err := l.core.Store.Item(n.Item)
-		if err == nil && it.State == core.ItemOpen {
-			reason := "no session is left on this login"
-			if passed {
+		needed := l.loginInUse(n.Harness, n.Profile, n.Account, b, all)
+		login := profile.Profile{Harness: n.Harness, ID: profile.ID(n.Profile), Account: n.Account}
+		var kept []quotaWindow
+		for _, w := range n.Windows {
+			reason := ""
+			switch {
+			case !w.Reset.IsZero() && b.At.After(w.Reset):
 				reason = "the limit has reset"
+			case showsUsage(b.Fleet.Limits, login, w.Filed, b.At):
+				reason = "this login has usage again"
+			case b.At.Sub(w.Filed) > quotaItemKeep:
+				reason = "this login's limit has had time to pass"
 			}
-			if err = l.core.Store.RetireItem(n.Item, reason); err != nil {
-				return err
+			lapsed := reason != ""
+			if !lapsed && !needed {
+				reason = "no session is left on this login"
 			}
-		} else if !passed {
-			continue
+			if reason == "" {
+				kept = append(kept, w)
+				continue
+			}
+			it, err := l.core.Store.Item(w.Item)
+			open := err == nil && it.State == core.ItemOpen
+			if open {
+				if err = l.core.Store.RetireItem(w.Item, reason); err != nil {
+					return err
+				}
+			} else if !lapsed {
+				kept = append(kept, w)
+			}
 		}
-		if err = os.Remove(path); err != nil && !os.IsNotExist(err) {
+		if err = saveQuotaNotice(quotaNoticePaths(dir, n.Harness, n.Profile, n.Account), quotaNotice{Harness: n.Harness, Profile: n.Profile, Account: n.Account, Windows: kept}); err != nil {
 			return err
 		}
 	}
@@ -227,7 +292,7 @@ func (l launcher) wall(rec launch.Record) (reset time.Time, target profile.Profi
 	if err != nil {
 		return
 	}
-	target, _ = failoverDestination(a.untried(ps, now), core.Exhaustion{Harness: rec.Harness, Account: account}, limits, a.Pools, now, rec.Worktree.Path)
+	target, _ = failoverDestination(a.candidates(ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: account}, limits, nil, now, rec.Worktree.Path)
 	return
 }
 
@@ -329,7 +394,8 @@ func (l launcher) freshLogin(rec launch.Record) (launch.Record, error) {
 	if err != nil {
 		return rec, err
 	}
-	target, err := failoverTarget(a.untried(ps, time.Now()), core.Exhaustion{Harness: rec.Harness, Account: account}, l.limits(), a.Pools, time.Now(), rec.Worktree.Path)
+	now, limits := time.Now(), l.limits()
+	target, err := failoverTarget(a.candidates(ps, limits, now), core.Exhaustion{Harness: rec.Harness, Account: account}, limits, nil, now, rec.Worktree.Path)
 	if err != nil {
 		return rec, errors.Join(&core.QuotaWait{Harness: rec.Harness, Login: profile.ID(rec.Profile), Key: rec.Key, Until: reset}, notice)
 	}

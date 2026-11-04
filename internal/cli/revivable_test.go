@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
@@ -37,6 +38,18 @@ func testLauncher(t *testing.T, base string) launcher {
 		t.Fatal(err)
 	}
 	return launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
+}
+
+// putConversationFor leaves session a conversation on the default login, for what resumes one.
+func putConversationFor(t *testing.T, session string) {
+	t.Helper()
+	path := filepath.Join(claude.New().Dir, "projects", "-fixture", session+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"type":"user","sessionId":"`+session+`"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // resumed waits for the fake agent's line and returns it.
@@ -77,6 +90,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 			git(t, wt, "commit", "-q", "--allow-empty", "-m", "work")
 			git(t, wt, "push", "-q", "origin", "feature")
 			l := testLauncher(t, base)
+			putConversationFor(t, "s1")
 			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(),
 				Head: launch.Head(wt), Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
 			if err := l.records.Save(rec); err != nil {
@@ -142,6 +156,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 			dir := filepath.Join(base, "notes")
 			os.MkdirAll(dir, 0o755)
 			l := testLauncher(t, base)
+			putConversationFor(t, "s2")
 			s := core.Live{Session: core.Session{Harness: "claude", ID: "s2", Cwd: dir, PID: 4242, Title: "jot notes"}}
 			l.Saw([]core.Live{s, {Session: core.Session{Harness: "claude", ID: "bg", Cwd: dir, Background: true}}})
 			if all, _ := l.records.All(); len(all) != 1 {

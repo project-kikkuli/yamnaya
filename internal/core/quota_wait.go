@@ -33,8 +33,8 @@ func resumeFailedKey(session string, err error) string {
 	return "resume-failed\x00" + session + "\x00" + err.Error()
 }
 
-// retryResume asks again after a resume that failed, as whatever stopped it may clear: a login being fixed, a limit resetting. A refusal
-// for an exhausted login costs neither the resume pace nor the session's one try.
+// retryResume asks again after a resume that failed, as whatever stopped it may clear: a login being fixed, a limit resetting. A failure
+// started nothing, so it does not cost the resume pace, and sessions that keep failing never starve one that would come back.
 func (c *Core) retryResume(session string, err error) {
 	if err == nil {
 		return
@@ -47,8 +47,8 @@ func (c *Core) retryResume(session string, err error) {
 	if r.recheck == nil {
 		r.recheck = map[string]time.Time{}
 	}
+	r.last = r.before
 	if quota {
-		r.last = r.before
 		r.recheck[session] = c.now().Add(QuotaRecheck)
 		return
 	}

@@ -303,6 +303,16 @@ func TestConversationTellsAGoneTranscriptFromOneItCannotRead(t *testing.T) {
 			}
 			t.Cleanup(func() { os.Chmod(p, 0600) })
 		}},
+		{name: "an empty stub in an earlier project dir", found: true, setup: func(t *testing.T, root string) {
+			stub := filepath.Join(root, "projects", "-a-earlier", "quota-session.jsonl")
+			if err := os.MkdirAll(filepath.Dir(stub), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(stub, []byte(`{"type":"system"}`+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			putConversation(t, root, quotaUser+"\n")
+		}},
 		{name: "config root missing", fails: true, setup: func(t *testing.T, root string) {
 			if err := os.RemoveAll(root); err != nil {
 				t.Fatal(err)
@@ -320,13 +330,15 @@ func TestConversationTellsAGoneTranscriptFromOneItCannotRead(t *testing.T) {
 			if (err != nil) != c.fails || (path != "") != c.found {
 				t.Fatalf("path=%q err=%v, want found=%v fails=%v", path, err, c.found, c.fails)
 			}
-			if c.fails || c.found {
-				matches, _ := filepath.Glob(filepath.Join(root, "projects", "*", "*"))
-				before := len(matches)
-				a.Unstart(id)
-				matches, _ = filepath.Glob(filepath.Join(root, "projects", "*", "*.noturn"))
-				if len(matches) != 0 || before > 1 {
-					t.Fatalf("Unstart renamed a conversation it could not prove empty: %v", matches)
+			a.Unstart(id)
+			if c.found {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("Unstart moved a conversation that holds a turn: %v", err)
+				}
+			}
+			if c.fails {
+				if matches, _ := filepath.Glob(filepath.Join(root, "projects", "*", "*.noturn")); len(matches) != 0 {
+					t.Fatalf("Unstart renamed a conversation it could not read: %v", matches)
 				}
 			}
 		})
@@ -361,6 +373,9 @@ func TestSilentQuotaStopReadsOnlyTheDialogOverAnEndedTurn(t *testing.T) {
 		{name: "the captured screen over a turn the limit stopped", screen: real, main: strings.ReplaceAll(quotaLine, "2026-11-02T16:20:58.760Z", "2026-11-04T01:03:52Z"), stopped: true},
 		{name: "the captured screen over an open turn", screen: real, main: quotaTool, stopped: true, fails: true},
 		{name: "the captured screen after a later prompt", screen: real, main: ended + "\n" + strings.ReplaceAll(quotaUser, "2026-11-02T16:20:58.372Z", "2026-11-04T01:00:00Z"), stopped: true, fails: true},
+		{name: "the captured screen wrapped by a narrow pane", screen: rewrap(real, 30), main: ended, stopped: true},
+		{name: "another dialog wrapped by a narrow pane", screen: rewrap(strings.ReplaceAll(real, "1. Stop and wait for limit to reset", "1. Yes"), 30), main: ended},
+		{name: "wrapped options quoted, composer below", screen: rewrap(real, 30) + "\n❯ continue working\n", main: ended},
 		{name: "a stop the transcript records is the strict path's", screen: quotaDialog, main: quotaLine},
 		{name: "the options quoted, composer below", screen: real + "\n❯ continue working\n", main: ended},
 		{name: "another dialog under a rule", screen: strings.ReplaceAll(real, "1. Stop and wait for limit to reset", "1. Yes"), main: ended},
@@ -385,4 +400,18 @@ func TestSilentQuotaStopReadsOnlyTheDialogOverAnEndedTurn(t *testing.T) {
 			}
 		})
 	}
+}
+
+// rewrap hard-wraps each line of text at width, as a narrow pane shows it.
+func rewrap(text string, width int) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		r := []rune(line)
+		for len(r) > width {
+			out = append(out, string(r[:width]))
+			r = r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return strings.Join(out, "\n")
 }

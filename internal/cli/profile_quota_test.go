@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/pressure"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
@@ -415,9 +416,13 @@ func TestFailoverRecordsWhetherTheSwitchWasQueuedOrAppliedUntilTheSessionMoves(t
 			} else if _, err := os.Stat(w.ran); !os.IsNotExist(err) {
 				t.Fatal("the session resumed though the switch never applied")
 			}
+			want := 1
+			if c.ended != nil {
+				want = 0
+			}
 			items, err := w.l.core.Store.Items(core.ItemFilter{})
-			if err != nil || len(items) != 1 {
-				t.Fatalf("owner items %d, %v, want 1", len(items), err)
+			if err != nil || len(items) != want {
+				t.Fatalf("owner items %d, %v, want %d: nobody on the login needs one", len(items), err, want)
 			}
 		})
 	}
@@ -2638,12 +2643,8 @@ func TestARowSaysWhyASessionAtTheQuotaDialogCannotMove(t *testing.T) {
 			quotaLimits(t, w.state, limit(w.def, 100, now.Add(time.Hour)), limit(w.work, 5, now.Add(time.Hour)))
 			tickFailover(t, w, now)
 		}, "no row"}},
-		{name: "silent stop, window passes", silent: true, rows: true, then: stage{"window passed", func(t *testing.T, w queueWorld, now time.Time) {
-			a, _ := loadFailover(w.state, "claude", profileConversation)
-			a.State.Reset = now.Add(-time.Second)
-			if err := saveFailover(w.state, "claude", a); err != nil {
-				t.Fatal(err)
-			}
+		{name: "the prompt it waits on is no quota dialog", silent: true, rows: true, then: stage{"prompt", func(t *testing.T, w queueWorld, now time.Time) {
+			w.session.Prompt = &core.Prompt{Tool: "Bash"}
 		}, "default"}},
 		{name: "ledger event, back at work", rows: true, then: stage{"working", func(t *testing.T, w queueWorld, now time.Time) {
 			w.session.Status = core.Busy
@@ -2724,5 +2725,482 @@ func TestSessionsNamesTheLoginTheSameWayTheRowsDo(t *testing.T) {
 				t.Fatalf("sessions printed %q, want it to start %q", out.String(), c.want)
 			}
 		})
+	}
+}
+
+// followLogin puts the live session on whichever login its record now names, held at the dialog again, as Claude does on a used-up login.
+func followLogin(t *testing.T, w queueWorld) {
+	t.Helper()
+	rec, _ := w.l.records.Find(w.rec.Key)
+	w.session.Profile, w.session.ConfigRoot, w.session.Account, w.session.Status = profile.ID(rec.Profile), rec.ConfigRoot, rec.Account, core.Waiting
+	*w.alive = true
+}
+
+func dialogWorld(t *testing.T) (queueWorld, *time.Time) {
+	t.Helper()
+	w := newQueueWorld(t, "claude", "")
+	base := w.l.core.Harnesses[0].(turnHarness)
+	w.l.core.Harnesses = []core.Harness{silentHarness{base, nil}}
+	clock := time.Now()
+	w.l.core.Now = func() time.Time { return clock }
+	w.session.Status = core.Waiting
+	signal := w.l.core.Signal
+	w.l.core.Signal = func(pid int, sig syscall.Signal) error {
+		w.l.srv.Kill(tmux.SessionName(w.rec.Key))
+		return signal(pid, sig)
+	}
+	return w, &clock
+}
+
+func TestEachLoginIsTriedOnceThenTheSessionStaysAndSaysWhy(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		rows func(queueWorld, time.Time) []core.Limit
+	}{
+		{name: "no limit rows at all", rows: func(queueWorld, time.Time) []core.Limit { return nil }},
+		{name: "rows that read low but predate the stop", rows: func(w queueWorld, at time.Time) []core.Limit {
+			old := []core.Limit{limit(w.def, 20, at.Add(time.Hour)), limit(w.work, 20, at.Add(time.Hour)), limit(personal(t, w), 20, at.Add(time.Hour))}
+			for i := range old {
+				old[i].Seen = at.Add(-time.Hour)
+			}
+			return old
+		}},
+		{name: "every row at 99", rows: func(w queueWorld, at time.Time) []core.Limit {
+			me := personal(t, w)
+			return []core.Limit{limit(w.def, 99, at.Add(time.Hour)), limit(w.work, 99, at.Add(time.Hour)), limit(me, 99, at.Add(time.Hour))}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, clock := dialogWorld(t)
+			quotaLimits(t, w.state, c.rows(w, *clock)...)
+			var path []string
+			for range 8 {
+				*clock = clock.Add(ResumePaceForTest)
+				tickFailover(t, w, *clock)
+				rec, _ := w.l.records.Find(w.rec.Key)
+				if len(path) == 0 || path[len(path)-1] != rec.Profile {
+					path = append(path, rec.Profile)
+				}
+				followLogin(t, w)
+			}
+			if got := strings.Join(path, " "); got != "claude-work personal" && got != "personal claude-work" {
+				t.Fatalf("the session went %q: it must try each login once", got)
+			}
+			if got := w.row(t); !strings.Contains(got, "at quota dialog, no usable login") {
+				t.Fatalf("row %q, want why it stays", got)
+			}
+		})
+	}
+}
+
+const ResumePaceForTest = core.ResumePace + time.Second
+
+func TestASilentDialogOnTheLoginItLandedOnIsANewStop(t *testing.T) {
+	w, clock := dialogWorld(t)
+	reset := clock.Add(31 * time.Hour)
+	quotaLimits(t, w.state, limit(w.def, 100, reset), limit(w.work, 5, clock.Add(-time.Hour)), limit(personal(t, w), 5, clock.Add(-time.Hour)))
+	var path []string
+	for range 4 {
+		*clock = clock.Add(ResumePaceForTest)
+		tickFailover(t, w, *clock)
+		rec, _ := w.l.records.Find(w.rec.Key)
+		path = append(path, rec.Profile)
+		followLogin(t, w)
+	}
+	if path[0] != "claude-work" || path[1] != "personal" {
+		t.Fatalf("the session went %q", path)
+	}
+	if a, _ := loadFailover(w.state, "claude", profileConversation); a.Pools[w.work.Account].After(*clock) {
+		t.Fatalf("the login it landed on got the source's reset: %v", a.Pools)
+	}
+}
+
+func TestAPassedLimitContinuesTheSessionWhereItIs(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// silent has no ledger event, only the dialog.
+		silent bool
+		// row reads 20% after the stop rather than the window having passed.
+		row   bool
+		fails bool
+		want  string
+	}{
+		{name: "ledger stop, window passed"},
+		{name: "silent stop, window passed", silent: true},
+		{name: "stale dialog with a later row at 20", row: true},
+		{name: "what cannot continue says so", fails: true, want: "could not continue"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, clock := dialogWorld(t)
+			if !c.silent {
+				base := w.l.core.Harnesses[0].(silentHarness).turnHarness
+				w.l.core.Harnesses = []core.Harness{base}
+			}
+			start := *clock
+			reset := start.Add(time.Hour)
+			me := personal(t, w)
+			quotaLimits(t, w.state, limit(w.def, 100, reset), limit(w.work, 100, reset.Add(time.Hour)), limit(me, 100, reset.Add(time.Hour)))
+			var events []core.Exhaustion
+			if !c.silent {
+				events = append(events, quotaEvent(w, start))
+			}
+			tickFailover(t, w, start, events...)
+			if got := w.row(t); !strings.Contains(got, "no usable login") {
+				t.Fatalf("row %q", got)
+			}
+			after := reset.Add(time.Minute)
+			if c.row {
+				after = start.Add(time.Minute)
+				row := limit(w.def, 20, reset)
+				row.Seen = time.Now().Add(time.Minute)
+				quotaLimits(t, w.state, row, limit(w.work, 100, reset.Add(time.Hour)), limit(me, 100, reset.Add(time.Hour)))
+			} else {
+				quotaLimits(t, w.state, limit(w.work, 100, reset.Add(time.Hour)), limit(me, 100, reset.Add(time.Hour)))
+			}
+			if c.fails {
+				w.l.core.Signal = func(int, syscall.Signal) error { return errors.New("cannot stop it") }
+			}
+			*clock = after.Add(ResumePaceForTest)
+			tickFailover(t, w, *clock, events...)
+			if c.fails {
+				if got := w.row(t); !strings.Contains(got, c.want) {
+					t.Fatalf("row %q, want %q", got, c.want)
+				}
+				return
+			}
+			got := strings.Split(resumed(t, w.ran), "\n")
+			if got[0] != "default" || !strings.Contains(got[1], "has passed") {
+				t.Fatalf("resumed as %q", got)
+			}
+			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
+				t.Fatalf("moved to %s", rec.Profile)
+			}
+			items, _ := w.l.core.Store.Items(core.ItemFilter{})
+			if len(items) != 1 {
+				t.Fatalf("items %d: nothing may claim a limit its rows disprove", len(items))
+			}
+		})
+	}
+}
+
+func TestAStaleDialogOnALoginWithUsageFilesNothingAndDoesNotMove(t *testing.T) {
+	w, clock := dialogWorld(t)
+	row := limit(w.def, 20, clock.Add(time.Hour))
+	row.Seen = time.Now().Add(time.Minute)
+	quotaLimits(t, w.state, row, limit(w.work, 5, clock.Add(time.Hour)))
+	tickFailover(t, w, *clock)
+	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
+		t.Fatalf("moved to %s", rec.Profile)
+	}
+	if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
+		t.Fatalf("items %d, %v", len(items), err)
+	}
+}
+
+func TestADialogThatComesBackAfterContinuingIsARealStop(t *testing.T) {
+	w, clock := dialogWorld(t)
+	row := limit(w.def, 20, clock.Add(time.Hour))
+	row.Seen = time.Now().Add(time.Hour)
+	quotaLimits(t, w.state, row, limit(w.work, 5, clock.Add(time.Hour)))
+	tickFailover(t, w, *clock)
+	if a, _ := loadFailover(w.state, "claude", profileConversation); a.State.Status != "continued" {
+		t.Fatalf("%+v", a.State)
+	}
+	followLogin(t, w)
+	*clock = clock.Add(ResumePaceForTest)
+	tickFailover(t, w, *clock)
+	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
+		t.Fatalf("a dialog after continuing kept it on %s", rec.Profile)
+	}
+}
+
+func TestOwnerItemsTrackEachWindowOfALogin(t *testing.T) {
+	open := func(t *testing.T, w queueWorld) int {
+		t.Helper()
+		items, err := w.l.core.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(items)
+	}
+	tickAt := func(t *testing.T, w queueWorld, at time.Time) {
+		t.Helper()
+		b, err := w.l.core.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.At, b.Fleet = at, core.Fleet{At: at}
+		if err = w.l.Failover(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("two windows close themselves in turn", func(t *testing.T) {
+		w := newQueueWorld(t, "claude", "")
+		now := time.Now()
+		fiveHour, week := now.Add(5*time.Hour), now.Add(7*24*time.Hour)
+		ps, _ := profile.Load(w.state)
+		e := quotaEvent(w, now)
+		for _, reset := range []time.Time{fiveHour, week} {
+			if err := w.l.fileQuotaItem(w.state, ps, e, reset, nil, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := open(t, w); got != 2 {
+			t.Fatalf("%d open", got)
+		}
+		tickAt(t, w, fiveHour.Add(time.Minute))
+		if got := open(t, w); got != 1 {
+			t.Fatalf("%d open after the first window passed, want 1", got)
+		}
+		tickAt(t, w, week.Add(time.Minute))
+		if got := open(t, w); got != 0 {
+			t.Fatalf("%d open after every window passed", got)
+		}
+	})
+	for _, reset := range []time.Duration{31 * time.Hour, 0} {
+		t.Run(fmt.Sprintf("a session returning after the login emptied, reset %v", reset), func(t *testing.T) {
+			w := newQueueWorld(t, "claude", "")
+			now := time.Now()
+			at := time.Time{}
+			if reset != 0 {
+				at = now.Add(reset)
+			}
+			ps, _ := profile.Load(w.state)
+			e := quotaEvent(w, now)
+			if err := w.l.fileQuotaItem(w.state, ps, e, at, nil, now); err != nil {
+				t.Fatal(err)
+			}
+			rec, _ := w.l.records.Find(w.rec.Key)
+			moved := rec
+			setRecordProfile(&moved, w.work)
+			*w.alive = false
+			if err := w.l.records.Save(moved); err != nil {
+				t.Fatal(err)
+			}
+			tickAt(t, w, now.Add(time.Minute))
+			if got := open(t, w); got != 0 {
+				t.Fatalf("%d open with nobody on the login", got)
+			}
+			if files, _ := filepath.Glob(filepath.Join(w.state, "quota-items", "*.json")); len(files) != 0 {
+				t.Fatalf("a notice outlived its item: %v", files)
+			}
+			if err := w.l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.l.fileQuotaItem(w.state, ps, e, now.Add(7*24*time.Hour), nil, now.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if got := open(t, w); got != 1 {
+				t.Fatalf("%d open once a session came back", got)
+			}
+		})
+	}
+	t.Run("an item with no reset does not stay open for good", func(t *testing.T) {
+		w := newQueueWorld(t, "claude", "")
+		now := time.Now()
+		ps, _ := profile.Load(w.state)
+		if err := w.l.fileQuotaItem(w.state, ps, quotaEvent(w, now), time.Time{}, nil, now); err != nil {
+			t.Fatal(err)
+		}
+		tickAt(t, w, now.Add(100*time.Hour))
+		if got := open(t, w); got != 1 {
+			t.Fatalf("%d open before a week", got)
+		}
+		tickAt(t, w, now.Add(quotaItemKeep+time.Hour))
+		if got := open(t, w); got != 0 {
+			t.Fatalf("%d open after a week", got)
+		}
+	})
+	t.Run("rows that disprove it close it", func(t *testing.T) {
+		w := newQueueWorld(t, "claude", "")
+		now := time.Now().Add(-time.Minute)
+		ps, _ := profile.Load(w.state)
+		if err := w.l.fileQuotaItem(w.state, ps, quotaEvent(w, now), now.Add(31*time.Hour), nil, now); err != nil {
+			t.Fatal(err)
+		}
+		b, err := w.l.core.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.At, b.Fleet = time.Now(), core.Fleet{At: time.Now(), Limits: []core.Limit{limit(w.def, 20, now.Add(40*time.Hour))}}
+		if err = w.l.Failover(b); err != nil {
+			t.Fatal(err)
+		}
+		if got := open(t, w); got != 0 {
+			t.Fatalf("%d open", got)
+		}
+	})
+	t.Run("an item never offers a signed-out login", func(t *testing.T) {
+		w := newQueueWorld(t, "claude", "")
+		now := time.Now()
+		reset := now.Add(31 * time.Hour)
+		dir := strings.SplitN(os.Getenv("PATH"), ":", 2)[0]
+		if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		ps, _ := profile.Load(w.state)
+		limits := []core.Limit{limit(w.def, 100, reset), limit(w.work, 5, reset)}
+		if err := w.l.fileQuotaItem(w.state, ps, quotaEvent(w, now), reset, limits, now); err != nil {
+			t.Fatal(err)
+		}
+		items, err := w.l.core.Store.Items(core.ItemFilter{})
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%d, %v", len(items), err)
+		}
+		if strings.Contains(items[0].Rec, "switch to") {
+			t.Fatalf("recommended a signed-out login: %q", items[0].Rec)
+		}
+	})
+}
+
+func TestReviveStartsOverAConversationVerifiablyGone(t *testing.T) {
+	w := newQueueWorld(t, "claude", "")
+	*w.alive = false
+	if err := os.Remove(filepath.Join(w.def.Root, w.rel)); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := w.l.records.Find(w.rec.Key)
+	rec.Prompt = "its first prompt"
+	if err := w.l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := w.l.Revive(w.rec.Key)
+	if err != nil || !strings.Contains(msg, "started") {
+		t.Fatalf("%q, %v", msg, err)
+	}
+	got := resumed(t, w.ran)
+	if strings.Contains(got, "--resume") || !strings.Contains(got, "its first prompt") {
+		t.Fatalf("ran %q", got)
+	}
+}
+
+// noDialogHarness says the screen shows no quota dialog.
+type noDialogHarness struct{ turnHarness }
+
+func (noDialogHarness) QuotaDialog(string) bool { return false }
+
+func TestRowsSayWhyAStoppedSessionCannotMoveAndOnlyAtTheDialog(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		make func(*testing.T, queueWorld, time.Time) []core.Exhaustion
+		want string
+	}{
+		{name: "the only target is signed out", want: "at quota dialog: ", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
+			dir := strings.SplitN(os.Getenv("PATH"), ":", 2)[0]
+			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			quotaLimits(t, w.state, limit(w.def, 100, now.Add(time.Hour)), limit(w.work, 5, now.Add(time.Hour)), limit(personal(t, w), 100, now.Add(time.Hour)))
+			return []core.Exhaustion{quotaEvent(w, now)}
+		}},
+		{name: "a dialog it cannot prove over", want: "at quota dialog: a child is busy", make: func(t *testing.T, w queueWorld, now time.Time) []core.Exhaustion {
+			base := w.l.core.Harnesses[0].(turnHarness)
+			w.l.core.Harnesses = []core.Harness{silentHarness{base, errors.New("a child is busy")}}
+			quotaLimits(t, w.state, limit(w.work, 5, now.Add(time.Hour)))
+			return nil
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newQueueWorld(t, "claude", "")
+			w.session.Status = core.Waiting
+			now := time.Now()
+			events := c.make(t, w, now)
+			tickFailover(t, w, now, events...)
+			if got := w.row(t); !strings.Contains(got, c.want) {
+				t.Fatalf("row %q, want %q", got, c.want)
+			}
+			if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 1 {
+				t.Fatalf("items %d, %v", len(items), err)
+			}
+			w.session.Prompt = &core.Prompt{Tool: "Bash"}
+			if got := w.row(t); got != "default" {
+				t.Fatalf("waiting on a prompt: row %q", got)
+			}
+			w.session.Prompt = nil
+			if base, ok := w.l.core.Harnesses[0].(turnHarness); ok {
+				w.l.core.Harnesses = []core.Harness{noDialogHarness{base}}
+				if got := w.row(t); got != "default" {
+					t.Fatalf("no dialog on screen: row %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestAFailingPortKeepsBeingTriedOnAQuietHost(t *testing.T) {
+	w, tick, _ := portWorld(t, false)
+	w.session.Status = core.Idle
+	writes := 0
+	prepare := w.l.core.PreparePort
+	w.l.core.PreparePort = func(s core.Session, to, id string) (core.PortPlan, error) {
+		plan, err := prepare(s, to, id)
+		plan.Write = func() (string, error) { writes++; return "", errors.New("cs failed") }
+		return plan, err
+	}
+	e := quotaEvent(w, time.Now().Add(-time.Hour))
+	tick(e)
+	*w.alive = false
+	tick(e)
+	tick(e)
+	settled := writes
+	tick(e)
+	if writes != settled {
+		t.Fatalf("retried every tick: %d then %d writes", settled, writes)
+	}
+	m, _ := loadMigration(w.state, "claude", profileConversation)
+	m.BlockedAt = time.Now().Add(-core.ResumeRetry - time.Second)
+	if err := saveMigration(w.state, m); err != nil {
+		t.Fatal(err)
+	}
+	tick(e)
+	if writes == settled {
+		t.Fatalf("a failing port stopped being tried: still %d writes", writes)
+	}
+}
+
+func TestARecoveredPortHeldByAThrottleOnItsOldIDWaits(t *testing.T) {
+	const ported = "01a1b2c3-0000-7000-8000-000000000042"
+	w, _, cx := portWorld(t, false)
+	*w.alive = false
+	dir := t.TempDir()
+	if err := (pressure.Throttle{Paused: []pressure.Paused{{PID: 1, Session: profileConversation}}}).Save(dir); err != nil {
+		t.Fatal(err)
+	}
+	w.l.core.ThrottleDir = func() (string, error) { return dir, nil }
+	ps, _ := profile.Load(w.state)
+	dest, err := profile.Find(ps, "codex", cx.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, _ := w.l.records.Find(w.rec.Key)
+	if err = saveMigration(w.state, migration{Version: 1, ResumeNote: "n", Source: source, Destination: dest, Head: ported, State: "prepared", Since: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	tickFailover(t, w, time.Now())
+	time.Sleep(200 * time.Millisecond)
+	if _, err := os.Stat(w.ran); !os.IsNotExist(err) {
+		t.Fatal("resumed while the throttle held its old id")
+	}
+}
+
+func TestAnUnreadableConversationIsNotGoneToGC(t *testing.T) {
+	w := newQueueWorld(t, "claude", "")
+	rec, _ := w.l.records.Find(w.rec.Key)
+	path := filepath.Join(w.def.Root, w.rel)
+	if conversationGone(rec) {
+		t.Fatal("a conversation on disk reads as gone")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(path, 0600) })
+	if conversationGone(rec) {
+		t.Fatal("an unreadable conversation reads as gone")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if !conversationGone(rec) {
+		t.Fatal("a removed conversation does not read as gone")
 	}
 }
