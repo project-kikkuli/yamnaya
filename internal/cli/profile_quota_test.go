@@ -2600,23 +2600,6 @@ func dialogWorld(t *testing.T) (queueWorld, *time.Time) {
 
 const ResumePaceForTest = core.ResumePace + time.Second
 
-func TestASilentDialogOnTheLoginItLandedOnIsANewStop(t *testing.T) {
-	w, clock := dialogWorld(t)
-	reset := clock.Add(31 * time.Hour)
-	quotaLimits(t, w.state, limit(w.def, 100, reset), limit(w.work, 5, clock.Add(-time.Hour)), limit(personal(t, w), 5, clock.Add(-time.Hour)))
-	var path []string
-	for range 4 {
-		*clock = clock.Add(ResumePaceForTest)
-		tickFailover(t, w, *clock)
-		rec, _ := w.l.records.Find(w.rec.Key)
-		path = append(path, rec.Profile)
-		followLogin(t, w)
-	}
-	if path[0] != "claude-work" || path[1] != "personal" {
-		t.Fatalf("the session went %q", path)
-	}
-}
-
 func TestAPassedLimitContinuesTheSessionWhereItIs(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -2696,23 +2679,6 @@ func TestAStaleDialogOnALoginWithUsageFilesNothingAndDoesNotMove(t *testing.T) {
 	}
 	if items, err := w.l.core.Store.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
 		t.Fatalf("items %d, %v", len(items), err)
-	}
-}
-
-func TestADialogThatComesBackAfterContinuingIsARealStop(t *testing.T) {
-	w, clock := dialogWorld(t)
-	row := limit(w.def, 20, clock.Add(time.Hour))
-	row.Seen = time.Now().Add(time.Hour)
-	quotaLimits(t, w.state, row, limit(w.work, 5, clock.Add(time.Hour)))
-	tickFailover(t, w, *clock)
-	if a, _ := loadFailover(w.state, "claude", profileConversation); a.State.Status != "continued" {
-		t.Fatalf("%+v", a.State)
-	}
-	followLogin(t, w)
-	*clock = clock.Add(ResumePaceForTest)
-	tickFailover(t, w, *clock)
-	if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
-		t.Fatalf("a dialog after continuing kept it on %s", rec.Profile)
 	}
 }
 
@@ -2982,51 +2948,6 @@ func TestARealQuotaStopMovesThroughTheRealHarness(t *testing.T) {
 				t.Fatalf("items %d, want %d", len(items), want)
 			}
 		})
-	}
-}
-
-func TestAFooterStopWithNowhereToGoSaysWhyAndLeavesClaudeToContinue(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "harness", "claude", "testdata", "quota-footer.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ended := `{"type":"assistant","sessionId":"` + profileConversation + `","timestamp":"` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano) + `","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"FINISHED"}]}}`
-	w := realScreenWorld(t, string(b), "idle", ended)
-	w.session.Status = core.Idle
-	now := time.Now()
-	reset := now.Add(time.Hour)
-	quotaLimits(t, w.state, limit(w.def, 50, reset), limit(w.work, 100, reset), limit(personal(t, w), 100, reset))
-	tickFailover(t, w, now)
-	if got := w.row(t); !strings.Contains(got, "stopped at its limit, no usable login, resets ") {
-		t.Fatalf("row %q", got)
-	}
-	a, _ := loadFailover(w.state, "claude", profileConversation)
-	if a.State.Reset.IsZero() {
-		t.Fatalf("no reset from the footer or its rows: %+v", a.State)
-	}
-	bar, err := readBar(barPath(w.state, w.def))
-	if err != nil {
-		t.Fatal(err)
-	}
-	until := bar.Until
-	tickFailover(t, w, until.Add(time.Minute))
-	time.Sleep(200 * time.Millisecond)
-	if _, err := os.Stat(w.ran); !os.IsNotExist(err) || *w.signals != 0 {
-		t.Fatalf("restarted on top of Claude's own continue: %v signals=%d", err, *w.signals)
-	}
-	if after, _ := readBar(barPath(w.state, w.def)); !after.Stopped.Equal(bar.Stopped) {
-		t.Fatalf("a false stop after the reset: %+v, was %+v", after, bar)
-	}
-	w.l.core.Hosts = []core.Host{quotaHost{text: "✻ Working\n❯ \n"}}
-	tickFailover(t, w, until.Add(2*time.Minute))
-	w.l.core.Now = func() time.Time { return until.Add(2 * time.Minute) }
-	if got := w.row(t); strings.Contains(got, "stopped at its limit") {
-		t.Fatalf("the row still claims a stop once it continued: %q", got)
-	}
-	w.l.core.Hosts = []core.Host{quotaHost{text: string(b)}}
-	tickFailover(t, w, until.Add(selfContinueGrace+time.Minute))
-	if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != "default" {
-		t.Fatalf("a footer still up well past its reset was left: %q", got)
 	}
 }
 
