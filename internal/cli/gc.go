@@ -37,16 +37,27 @@ func (l launcher) sweepSoon() {
 	}
 }
 
+// listProcs reads the process table for gc.
+var listProcs = proc.List
+
 // cwds are the working directories of every process.
 func cwds() []string {
-	procs, _ := proc.List()
+	out, _ := cwdsNow()
+	return out
+}
+
+func cwdsNow() ([]string, error) {
+	procs, err := listProcs()
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, p := range procs {
 		if d := proc.Cwd(p.PID); d != "" {
 			out = append(out, d)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // gc sweeps the repositories of launch records and, when l.everywhere, every repository in repos and with linked worktrees
@@ -93,7 +104,12 @@ func (l launcher) gcWith(repos []string, dry, sizes bool, p launch.Policy) ([]la
 			repos = append(repos, filepath.Dir(rec.Worktree.GitDir))
 		}
 	}
-	dirs, now := cwds(), time.Now()
+	// without the process table nothing can be shown unused, so nothing goes
+	dirs, err := cwdsNow()
+	if err != nil {
+		return []launch.Swept{{Errors: []string{"cannot read the process table: " + err.Error()}}}, 0
+	}
+	now := time.Now()
 	for _, rec := range recs {
 		if rec.PreviousWorktree.Path != "" {
 			dirs = append(dirs, rec.PreviousWorktree.Path)
@@ -211,8 +227,8 @@ func printSwept(w io.Writer, all []launch.Swept, pruned int, dry bool) {
 	if pruned > 0 {
 		fmt.Fprintf(w, "%s %d landed launch records older than %d days whose conversations are gone\n", del, pruned, int(landedKeep.Hours()/24))
 	}
-	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d with ignored files, %d active, %d in use, %d locked or missing, %d unreadable\n",
-		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepIgnored], kept[launch.KeepActive],
+	fmt.Fprintf(w, "%s %d worktrees (%s) and %d merged branches across %d repositories; kept %d dirty, %d with local-only commits, %d with ignored files, %d with nested repositories, %d active, %d in use, %d locked or missing, %d unreadable\n",
+		verb, removed, gb(freed), branches, len(all), kept[launch.KeepDirty], kept[launch.KeepLocal], kept[launch.KeepIgnored], kept[launch.KeepNested], kept[launch.KeepActive],
 		kept[launch.KeepInUse], kept[launch.KeepLocked], kept[launch.KeepFailing])
 }
 

@@ -3,6 +3,7 @@ package launch
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -13,7 +14,8 @@ import (
 	"time"
 )
 
-// regenerableDirs and regenerableFiles name the git-ignored entries a build or install recreates.
+// regenerableDirs and regenerableFiles name the git-ignored entries a build or install recreates. A directory counts only
+// when git itself reports the whole directory as ignored, so a stray file under a like-named tracked directory never does.
 var regenerableDirs = map[string]bool{
 	"node_modules": true, ".venv": true, "target": true, "__pycache__": true, ".pytest_cache": true, ".mypy_cache": true,
 	".ruff_cache": true, ".next": true, ".turbo": true, ".parcel-cache": true, ".gradle": true, ".tox": true, ".nox": true,
@@ -22,71 +24,108 @@ var regenerableDirs = map[string]bool{
 
 var regenerableFiles = []string{"*.pyc", "*.pyo", "*.tsbuildinfo", ".DS_Store", ".eslintcache"}
 
-// Regenerable reports whether a path git lists as ignored, with a trailing slash when a directory, is on the allowlist.
-func Regenerable(entry string) bool { return regenerableName(entry) != "" }
+// targetMarkers are the build files that make a sibling target directory a build's output rather than someone's folder.
+var targetMarkers = []string{"Cargo.toml", "pom.xml"}
 
-// regenerableName is the allowlisted directory the entry lies in or is, else the allowlisted file it is, else "".
-func regenerableName(entry string) string {
-	parts := strings.Split(strings.TrimSuffix(entry, "/"), "/")
-	for _, part := range parts {
-		if regenerableDirs[part] {
-			return part
+// holdsGit reports whether anything at any depth under path is a .git, so it holds another repository or worktree.
+func holdsGit(path string) bool {
+	found := false
+	filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			found = true
+			return filepath.SkipAll
 		}
-	}
-	base := parts[len(parts)-1]
-	if strings.HasSuffix(entry, "/") {
-		return ""
-	}
-	if i := slices.IndexFunc(regenerableFiles, func(p string) bool {
-		ok, _ := filepath.Match(p, base)
-		return ok
-	}); i >= 0 {
-		return regenerableFiles[i]
-	}
-	return ""
+		if d.Name() == ".git" {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
-// ignored lists the git-ignored entries of the worktree at path, without descending into an allowlisted one. Git folds a directory
-// holding only ignored files into one entry, hiding a __pycache__ inside it, so such a directory is listed by what it holds.
-func ignored(path string) ([]string, error) {
+// ignoredEntries lists the git-ignored entries of the worktree at path as git reports them, folding a virtualenv that
+// ignores itself, as uv's do, back into one directory.
+func ignoredEntries(path string) ([]string, error) {
 	out, err := look(path, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
 	if err != nil {
 		return nil, err
 	}
 	var all []string
+	venvs := map[string]bool{}
 	for _, e := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
-		if strings.HasSuffix(e, "/") && !Regenerable(e) {
-			all = unfold(path, e, all)
-		} else {
-			all = append(all, e)
+		if venv, ok := selfIgnoringVenv(path, e); ok {
+			if !venvs[venv] {
+				all = append(all, venv)
+			}
+			venvs[venv] = true
+			continue
 		}
+		all = append(all, e)
 	}
 	return all, nil
 }
 
-func unfold(root, dir string, all []string) []string {
-	entries, err := os.ReadDir(filepath.Join(root, dir))
-	if err != nil {
-		return append(all, dir)
+func selfIgnoringVenv(root, entry string) (string, bool) {
+	dir, _, ok := strings.Cut("/"+entry, "/.venv/")
+	if !ok || strings.TrimSuffix(entry, "/") == strings.TrimPrefix(dir+"/.venv", "/") {
+		return "", false
 	}
-	for _, c := range entries {
-		e := dir + c.Name()
-		if c.IsDir() {
-			e += "/"
-		}
-		if c.IsDir() && !Regenerable(e) {
-			all = unfold(root, e, all)
-		} else {
-			all = append(all, e)
-		}
+	venv := strings.TrimPrefix(dir+"/.venv/", "/")
+	if _, err := os.Stat(filepath.Join(root, venv, "pyvenv.cfg")); err != nil {
+		return "", false
 	}
-	return all
+	if rule, err := os.ReadFile(filepath.Join(root, venv, ".gitignore")); err != nil || strings.TrimSpace(string(rule)) != "*" {
+		return "", false
+	}
+	if tracked, err := look(root, "ls-files", "--", venv); err != nil || tracked != "" {
+		return "", false
+	}
+	return venv, true
 }
 
-// unregenerable lists the git-ignored entries of the worktree at path a build could not recreate.
-func unregenerable(path string) ([]string, error) {
-	all, err := ignored(path)
-	return slices.DeleteFunc(all, Regenerable), err
+// regenerable reports whether an ignored entry of the worktree at root is safe to delete: an allowlisted whole directory
+// holding no other repository or worktree, or an allowlisted file.
+func regenerable(root, entry string) bool {
+	base := filepath.Base(strings.TrimSuffix(entry, "/"))
+	if !strings.HasSuffix(entry, "/") {
+		return slices.ContainsFunc(regenerableFiles, func(p string) bool {
+			ok, _ := filepath.Match(p, base)
+			return ok
+		})
+	}
+	if !regenerableDirs[base] {
+		return false
+	}
+	if base == "target" && !slices.ContainsFunc(targetMarkers, func(m string) bool {
+		_, err := os.Stat(filepath.Join(root, filepath.Dir(strings.TrimSuffix(entry, "/")), m))
+		return err == nil
+	}) {
+		return false
+	}
+	return !holdsGit(filepath.Join(root, entry))
+}
+
+// keepContents says why what lies ignored in the worktree at path must stay: a repository nested at any depth always, and with
+// strict anything off the allowlist. Removing a worktree takes its ignored files with it.
+func keepContents(path string, strict bool) (string, string) {
+	all, err := ignoredEntries(path)
+	if err != nil {
+		return KeepFailing, err.Error()
+	}
+	for _, e := range all {
+		if strings.HasSuffix(e, "/") && holdsGit(filepath.Join(path, e)) {
+			return KeepNested, "holds a repository under " + e
+		}
+	}
+	if strict {
+		for _, e := range all {
+			if !regenerable(path, e) {
+				return KeepIgnored, "holds git-ignored " + e
+			}
+		}
+	}
+	return "", ""
 }
 
 // Stripped is what a strip took out of one worktree: how many entries of each name, and their bytes when measured.
@@ -126,29 +165,38 @@ func Strippable(w Sweep) bool {
 // the worktree's own mtime as it was so the strip does not count as a touch. With dry it only measures.
 func StripIgnored(w Sweep, dry bool) Stripped {
 	out := Stripped{Sweep: w, Entries: map[string]int{}}
-	all, err := ignored(w.Path)
+	all, err := ignoredEntries(w.Path)
 	if err != nil {
 		out.Err = err
 		return out
 	}
-	all = slices.DeleteFunc(all, func(e string) bool { return !Regenerable(e) })
+	all = slices.DeleteFunc(all, func(e string) bool { return !regenerable(w.Path, e) })
 	if len(all) == 0 {
 		return out
 	}
-	confirmed, err := gitEnv(w.Path, nil, []byte(strings.Join(all, "\x00")+"\x00"), "-c", "core.fsmonitor=false", "check-ignore", "--stdin", "-z")
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return out
+	var asked []string
+	for _, e := range all {
+		if !strings.HasSuffix(e, "/.venv/") && e != ".venv/" {
+			asked = append(asked, e)
+		}
 	}
-	if err != nil {
-		out.Err = err
-		return out
+	confirmed := all[:0:0]
+	if len(asked) > 0 {
+		said, err := gitEnv(w.Path, nil, []byte(strings.Join(asked, "\x00")+"\x00"), "-c", "core.fsmonitor=false", "check-ignore", "--stdin", "-z")
+		var exit *exec.ExitError
+		if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+			out.Err = err
+			return out
+		}
+		confirmed = strings.FieldsFunc(said, func(r rune) bool { return r == 0 })
+	}
+	for _, e := range all {
+		if !slices.Contains(asked, e) {
+			confirmed = append(confirmed, e)
+		}
 	}
 	before, statErr := os.Stat(w.Path)
-	for _, e := range strings.Split(confirmed, "\x00") {
-		if e == "" {
-			continue
-		}
+	for _, e := range confirmed {
 		p := filepath.Join(w.Path, e)
 		if dry {
 			out.Size += Size(p)
@@ -156,7 +204,7 @@ func StripIgnored(w Sweep, dry bool) Stripped {
 			out.Err = err
 			continue
 		}
-		out.Entries[regenerableName(e)]++
+		out.Entries[filepath.Base(strings.TrimSuffix(e, "/"))]++
 	}
 	if !dry && statErr == nil {
 		os.Chtimes(w.Path, before.ModTime(), before.ModTime())

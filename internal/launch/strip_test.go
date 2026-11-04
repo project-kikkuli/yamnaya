@@ -15,8 +15,11 @@ func reapRepo(t *testing.T) (repo, wt string) {
 	run(t, base, "git", "init", "-q", "--bare", "-b", "main", "origin.git")
 	repo = filepath.Join(base, "repo")
 	run(t, base, "git", "init", "-q", "-b", "main", "repo")
-	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules\n__pycache__\n.env\n*.tsbuildinfo\n.venv\ndist\n"), 0o644)
-	run(t, repo, "git", "add", ".gitignore")
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules\n__pycache__\n.env\n*.tsbuildinfo\n.venv\ndist\ntarget\nprod.env\nscratch\n.claude\n"), 0o644)
+	for _, f := range []string{"pkg/mod.py", "web/app.js"} {
+		put(t, repo, f)
+	}
+	run(t, repo, "git", "add", ".")
 	run(t, repo, "git", "commit", "-q", "-m", "root")
 	run(t, repo, "git", "remote", "add", "origin", filepath.Join(base, "origin.git"))
 	run(t, repo, "git", "push", "-q", "origin", "main")
@@ -172,7 +175,7 @@ func TestTheOrdinaryGCStillRemovesAWorktreeHoldingIgnoredFilesAndAShortIdleOnlyA
 
 func TestAReapStopsRemovingOnceTheDiskHasEnough(t *testing.T) {
 	repo, wt := reapRepo(t)
-	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true, Enough: func() bool { return true }})
+	s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true, Enough: func(string) bool { return true }})
 	if err != nil || s.Trees[0].Keep != KeepEnough {
 		t.Fatalf("%+v %v", s.Trees, err)
 	}
@@ -186,7 +189,7 @@ func TestStrippingTakesOnlyAllowlistedIgnoredEntriesAndLeavesWorkAlone(t *testin
 	run(t, wt, "git", "commit", "-q", "--allow-empty", "-m", "unpushed")
 	head := Head(wt)
 	gone := []string{"node_modules/a/b.js", "web/node_modules/c.js", "pkg/__pycache__/x.pyc", "app.tsbuildinfo", ".venv/lib/y.py"}
-	kept := []string{".env", "dist/bundle.js", "notes.txt", ".gitignore"}
+	kept := []string{".env", "dist/bundle.js", "notes.txt", ".gitignore", "pkg/mod.py", "web/app.js"}
 	for _, f := range append(gone, ".env", "dist/bundle.js", "notes.txt") {
 		put(t, wt, f)
 	}
@@ -248,10 +251,10 @@ func TestAVirtualenvIgnoringItselfCountsAsRegenerable(t *testing.T) {
 	run(t, repo, "git", "commit", "-q", "--allow-empty", "-m", "root")
 	put(t, repo, ".venv/.gitignore")
 	os.WriteFile(filepath.Join(repo, ".venv", ".gitignore"), []byte("*\n"), 0o644)
+	put(t, repo, ".venv/pyvenv.cfg")
 	put(t, repo, ".venv/lib/x.py")
-	held, err := unregenerable(repo)
-	if err != nil || len(held) != 0 {
-		t.Fatalf("held %v, %v", held, err)
+	if keep, why := keepContents(repo, true); keep != "" {
+		t.Fatalf("kept: %s %s", keep, why)
 	}
 	StripIgnored(Sweep{Path: repo}, false)
 	if exists(repo, ".venv/lib/x.py") {
@@ -276,5 +279,112 @@ func TestStrippableOnlyWhenKeptIdleAndUnused(t *testing.T) {
 		if got := Strippable(c.w); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testing.T) {
+	nested := func(t *testing.T, wt, dir string) {
+		t.Helper()
+		put(t, wt, filepath.Join(dir, "src.txt"))
+		run(t, filepath.Join(wt, dir), "git", "init", "-q")
+		run(t, filepath.Join(wt, dir), "git", "add", ".")
+		run(t, filepath.Join(wt, dir), "git", "commit", "-q", "-m", "local only")
+		put(t, wt, filepath.Join(dir, "uncommitted.txt"))
+	}
+	for _, c := range []struct {
+		name  string
+		setup func(t *testing.T, repo, wt string)
+		keep  string
+		safe  []string
+		gone  []string
+	}{
+		{"editable install with a repo inside a virtualenv", func(t *testing.T, repo, wt string) {
+			put(t, wt, ".venv/pyvenv.cfg")
+			nested(t, wt, ".venv/src/pkg")
+		}, KeepNested, []string{".venv/src/pkg/src.txt", ".venv/src/pkg/uncommitted.txt"}, nil},
+		{"clone in an ignored dir with a target inside", func(t *testing.T, repo, wt string) {
+			nested(t, wt, "scratch/clone")
+			put(t, wt, "scratch/clone/src/target/mod.rs")
+		}, KeepNested, []string{"scratch/clone/src/target/mod.rs", "scratch/clone/uncommitted.txt"}, nil},
+		{"linked worktree nested in an ignored dir", func(t *testing.T, repo, wt string) {
+			inner := filepath.Join(wt, ".claude", "worktrees", "inner")
+			run(t, repo, "git", "worktree", "add", "-q", "-b", "inner", inner)
+			put(t, inner, "deploy/target/untracked.txt")
+		}, KeepNested, []string{".claude/worktrees/inner/deploy/target/untracked.txt"}, nil},
+		{"secret in an ignored file beside a tracked file under target", func(t *testing.T, repo, wt string) {
+			put(t, wt, "deploy/target/keep.txt")
+			run(t, wt, "git", "add", "-f", "deploy/target/keep.txt")
+			run(t, wt, "git", "commit", "-q", "-m", "tracked under target")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "deploy/target/prod.env")
+		}, KeepIgnored, []string{"deploy/target/prod.env"}, nil},
+		{"notes in a target with no build file beside it", func(t *testing.T, repo, wt string) {
+			put(t, wt, "target/notes.md")
+		}, KeepIgnored, []string{"target/notes.md"}, nil},
+		{"pycache in a directory git folds whole", func(t *testing.T, repo, wt string) {
+			put(t, wt, "scratch/__pycache__/x.pyc")
+			put(t, wt, "scratch/data.bin")
+		}, KeepIgnored, []string{"scratch/__pycache__/x.pyc", "scratch/data.bin"}, nil},
+		{"a real build's target", func(t *testing.T, repo, wt string) {
+			put(t, wt, "Cargo.toml")
+			run(t, wt, "git", "add", "Cargo.toml")
+			run(t, wt, "git", "commit", "-q", "-m", "crate")
+			run(t, wt, "git", "push", "-q", "origin", "HEAD")
+			put(t, wt, "target/debug/app")
+		}, "", nil, []string{"target/debug/app"}},
+		{"a repo inside node_modules", func(t *testing.T, repo, wt string) {
+			nested(t, wt, "node_modules/gitdep")
+		}, KeepNested, []string{"node_modules/gitdep/uncommitted.txt"}, nil},
+	} {
+		t.Run(c.name+"/reap", func(t *testing.T) {
+			repo, wt := reapRepo(t)
+			c.setup(t, repo, wt)
+			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(s.Trees, func(w Sweep) bool { return w.Path == wt })
+			if i < 0 || s.Trees[i].Keep != c.keep {
+				t.Fatalf("decided %+v, want keep %q", s.Trees, c.keep)
+			}
+			for _, f := range c.safe {
+				if !exists(wt, f) {
+					t.Errorf("%s lost", f)
+				}
+			}
+		})
+		t.Run(c.name+"/ordinary gc keeps repositories", func(t *testing.T) {
+			if c.keep != KeepNested {
+				t.Skip("not a nested repository")
+			}
+			repo, wt := reapRepo(t)
+			c.setup(t, repo, wt)
+			s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(s.Trees, func(w Sweep) bool { return w.Path == wt })
+			if i < 0 || s.Trees[i].Keep != KeepNested {
+				t.Fatalf("decided %+v", s.Trees)
+			}
+		})
+		t.Run(c.name+"/strip", func(t *testing.T) {
+			repo, wt := reapRepo(t)
+			c.setup(t, repo, wt)
+			got := StripIgnored(Sweep{Path: wt}, false)
+			if got.Err != nil {
+				t.Fatal(got.Err)
+			}
+			for _, f := range c.safe {
+				if !exists(wt, f) {
+					t.Errorf("%s stripped", f)
+				}
+			}
+			for _, f := range c.gone {
+				if exists(wt, f) {
+					t.Errorf("%s survived", f)
+				}
+			}
+		})
 	}
 }

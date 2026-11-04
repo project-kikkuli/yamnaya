@@ -170,7 +170,7 @@ func (l launcher) worktreeSteps(repos []string, e disk.Env) []disk.Step {
 	var all []launch.Swept
 	return []disk.Step{
 		{Name: "worktree gc", Tier: 2, Run: func(context.Context) disk.Report {
-			swept, pruned := l.gcWith(repos, e.Dry, e.Dry, launch.Policy{Idle: reapIdle, Ignored: true, Enough: e.Enough})
+			swept, pruned := l.gcWith(repos, e.Dry, e.Dry, launch.Policy{Idle: reapIdle, Ignored: true, Enough: func(p string) bool { return !e.Needed(p) }})
 			all = swept
 			var b strings.Builder
 			printSwept(&b, swept, pruned, e.Dry)
@@ -182,7 +182,7 @@ func (l launcher) worktreeSteps(repos []string, e disk.Env) []disk.Step {
 			var errs []error
 			for _, s := range all {
 				for _, t := range s.Trees {
-					if !launch.Strippable(t) || ctx.Err() != nil || (!e.Dry && e.Enough()) {
+					if !launch.Strippable(t) || ctx.Err() != nil || !e.Needed(t.Path) {
 						continue
 					}
 					got := launch.StripIgnored(t, e.Dry)

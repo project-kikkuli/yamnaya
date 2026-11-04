@@ -99,8 +99,8 @@ func (e Env) Enough() bool {
 	return !ok || low.Free() >= TargetFree
 }
 
-// needed reports whether freeing path helps: a forced pass always, else its filesystem is short of TargetFree.
-func (e Env) needed(path string) bool {
+// Needed reports whether freeing path helps: a forced pass always, else its filesystem is short of TargetFree.
+func (e Env) Needed(path string) bool {
 	if e.Force {
 		return true
 	}

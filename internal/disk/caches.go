@@ -87,7 +87,7 @@ func goTrim(ctx context.Context, e Env, floor int64, minAge time.Duration) Repor
 		return Report{Skipped: "go not installed or its cache is off"}
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
 	}
 	var files []goFile
@@ -156,7 +156,7 @@ func staleBuildDirs(ctx context.Context, e Env) Report {
 	var freed int64
 	cutoff := e.Now().Add(-staleAge)
 	for _, root := range roots {
-		if root == "" || seen[root] || !e.may(root) || !e.needed(root) {
+		if root == "" || seen[root] || !e.may(root) || !e.Needed(root) {
 			continue
 		}
 		seen[root] = true
@@ -266,7 +266,7 @@ func uvCache(ctx context.Context, e Env, verb string) Report {
 	switch {
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
 	case e.Dry:
 		return Report{Did: "would run uv cache " + verb + " on " + dir}
@@ -301,7 +301,7 @@ func pnpmPrune(ctx context.Context, e Env) Report {
 		switch {
 		case !e.may(store):
 			return Report{Skipped: "not this ym's store: " + store}
-		case !e.needed(store):
+		case !e.Needed(store):
 			return Report{Skipped: store + " has enough free"}
 		case e.Dry:
 			return Report{Did: "would run pnpm store prune on " + store}
@@ -324,7 +324,7 @@ func brewCleanup(ctx context.Context, e Env) Report {
 	switch {
 	case !e.may(cache):
 		return Report{Skipped: "not this ym's cache: " + cache}
-	case !e.needed(cache):
+	case !e.Needed(cache):
 		return Report{Skipped: cache + " has enough free"}
 	case e.Dry:
 		return Report{Did: "would run brew cleanup --prune=all on " + cache}
@@ -358,7 +358,7 @@ func derivedData(ctx context.Context, e Env) Report {
 		return Report{Skipped: "no DerivedData"}
 	case !e.may(dir):
 		return Report{Skipped: "not this ym's cache: " + dir}
-	case !e.needed(dir):
+	case !e.Needed(dir):
 		return Report{Skipped: dir + " has enough free"}
 	}
 	type project struct {

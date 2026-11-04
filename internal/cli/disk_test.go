@@ -272,3 +272,112 @@ func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
 		})
 	}
 }
+
+func TestAReapLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	git(t, repo, "fetch", "-q", "origin")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	old := time.Now().Add(-2 * launch.StripIdle)
+	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+	os.Remove(filepath.Join(admin, "logs", "HEAD"))
+	for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
+		os.Chtimes(p, old, old)
+	}
+	state := t.TempDir()
+	for _, c := range []struct {
+		name string
+		free float64
+		kept bool
+	}{{"healthy filesystem", 0.9, true}, {"low filesystem", 0.05, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
+			low := 0.05
+			e := disk.Env{Paths: []string{"/small"}, Now: time.Now, Stat: func(p string) (disk.Usage, error) {
+				if p == wt {
+					return usageAt(&c.free)(p)
+				}
+				return usageAt(&low)(p)
+			}}
+			l.worktreeSteps([]string{repo}, e)[0].Run(context.Background())
+			if _, err := os.Stat(wt); (err == nil) != c.kept {
+				t.Fatalf("on disk %v, want %v", err == nil, c.kept)
+			}
+		})
+	}
+}
+
+func TestStrippingLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "-b", "main", "repo")
+	repo := filepath.Join(base, "repo")
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("node_modules\n"), 0o644)
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "root")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	git(t, wt, "commit", "-q", "--allow-empty", "-m", "local only")
+	dep := filepath.Join(wt, "node_modules", "a.js")
+	os.MkdirAll(filepath.Dir(dep), 0o755)
+	os.WriteFile(dep, []byte("x"), 0o644)
+	old := time.Now().Add(-2 * launch.StripIdle)
+	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+	os.Remove(filepath.Join(admin, "logs", "HEAD"))
+	for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
+		os.Chtimes(p, old, old)
+	}
+	state := t.TempDir()
+	for _, c := range []struct {
+		name string
+		free float64
+		kept bool
+	}{{"healthy filesystem", 0.9, true}, {"low filesystem", 0.05, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
+			low := 0.05
+			e := disk.Env{Paths: []string{"/small"}, Now: time.Now, Stat: func(p string) (disk.Usage, error) {
+				if p == wt {
+					return usageAt(&c.free)(p)
+				}
+				return usageAt(&low)(p)
+			}}
+			steps := l.worktreeSteps([]string{repo}, e)
+			steps[0].Run(context.Background())
+			if r := steps[1].Run(context.Background()); r.Err != nil {
+				t.Fatal(r.Err)
+			}
+			if _, err := os.Stat(dep); (err == nil) != c.kept {
+				t.Fatalf("on disk %v, want %v", err == nil, c.kept)
+			}
+		})
+	}
+}
+
+func TestGCRemovesNothingWithoutTheProcessTable(t *testing.T) {
+	old := listProcs
+	listProcs = func() ([]proc.Proc, error) { return nil, os.ErrPermission }
+	defer func() { listProcs = old }()
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	git(t, repo, "fetch", "-q", "origin")
+	wt := launch.WorktreePath(repo, "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+	state := t.TempDir()
+	l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")}, everywhere: true}
+	all, _ := l.gcWith([]string{repo}, false, false, launch.Policy{Idle: time.Nanosecond, Ignored: true})
+	if len(all) != 1 || len(all[0].Errors) != 1 || len(all[0].Trees) != 0 {
+		t.Fatalf("swept %+v", all)
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatal("removed a worktree with no way to know it is unused")
+	}
+}
