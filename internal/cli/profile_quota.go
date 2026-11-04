@@ -111,7 +111,7 @@ func (l launcher) wall(rec launch.Record) (until time.Time, target profile.Profi
 	if target, _ = failoverTarget(usable, e, rec.Worktree.Path); target.ID != "" || !stopEvidence(dir, a, source, limits, now) {
 		return
 	}
-	target, _ = failoverDestination(usable, e, rec.Worktree.Path)
+	target, _ = failoverDestination(usable, e, rec.Worktree.Path, a.holdsPort(ps, e, now))
 	return
 }
 
@@ -198,7 +198,7 @@ func (l launcher) offWall(rec launch.Record, note string) (moved bool, msg strin
 			return true, "", err
 		}
 		failure = err
-		a.failed(target.Account, l.now().Add(core.QuotaRecheck))
+		a.failed(target.Account, l.now().Add(core.QuotaRecheck), err)
 		a.State.Reason = err.Error()
 		if err = saveFailover(dir, rec.Harness, a); err != nil {
 			return true, "", err

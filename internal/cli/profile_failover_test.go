@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,7 +67,7 @@ func TestAutomaticFailoverNeverUsesAnAliasUnknownOrFailedLogin(t *testing.T) {
 	if err != nil || target.ID != "c" {
 		t.Fatalf("target=%#v %v", target, err)
 	}
-	restarted.failed(target.Account, now.Add(time.Hour))
+	restarted.failed(target.Account, now.Add(time.Hour), errors.New("the switch failed"))
 	if _, err = failoverTarget(usableLogins(dir, restarted, ps, nil, now), e); err == nil {
 		t.Fatal("a login that failed was chosen again")
 	}

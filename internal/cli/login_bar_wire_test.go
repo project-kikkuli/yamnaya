@@ -16,6 +16,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 	"github.com/project-kikkuli/yamnaya/internal/usage"
 )
@@ -35,7 +36,7 @@ type wireWorld struct {
 const wireIdle = "✻ Done\n────────────────\n❯ \n────────────────\n"
 
 const wireClaude = `#!/bin/bash
-case " $* " in *" auth status "*|*" login status "*) [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false}'; exit 0; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
+case " $* " in *" auth status "*|*" login status "*) [ -f "$CLAUDE_CONFIG_DIR/hang" ] && sleep 30; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false}'; exit 0; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
 root="$CLAUDE_CONFIG_DIR"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
@@ -113,7 +114,10 @@ func newWireWorld(t *testing.T) *wireWorld {
 	now := time.Now()
 	w.clock = &now
 	c.Now = func() time.Time { return *w.clock }
-	w.c, w.l = c, c.Launches.(launcher)
+	w.l = c.Launches.(launcher)
+	w.l.statuses = &statusChecks{}
+	c.Launches = w.l
+	w.c = c
 	for _, p := range []profile.Profile{w.def, w.work, w.other} {
 		w.screen(t, p, wireIdle, "idle")
 	}
@@ -1436,94 +1440,148 @@ func (w *wireWorld) addCodex(t *testing.T) {
 	subscriptionIdentity(t, &cx)
 }
 
-// A check that does not answer says nothing about a login: it never costs it its place, and the port, which has no way back, waits for an answer.
-func TestWireAnUnansweredCheckNeverPortsASession(t *testing.T) {
-	// counted makes ports countable, with no fake cs to write them.
-	counted := func(w *wireWorld) *int {
-		ports := 0
-		w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) {
-			ports++
-			return core.PortPlan{}, errors.New("counted, not written")
-		}
-		return &ports
+// land is one of the routes a session takes off a login whose check is being asked.
+type portRoute struct {
+	name string
+	// ready leaves the session on the wall, ready for attempts.
+	ready func(*testing.T, *wireWorld)
+	// attempt is one try to move it: a pass, or a revive.
+	attempt func(*testing.T, *wireWorld) error
+}
+
+func portRoutes() []portRoute {
+	pass := func(t *testing.T, w *wireWorld) error {
+		w.pass(t, 20*time.Second)
+		return nil
 	}
-	checkFile := func(t *testing.T, w *wireWorld, file string) {
-		t.Helper()
-		if file != "" {
-			putProfileFile(t, filepath.Join(w.work.Root, file), "")
-		}
-	}
-	for _, c := range []struct {
-		name, check string
-		passes      int
-		landsOnWork bool
-		ports       bool
-		row         string
-	}{
-		{name: "times out once then answers usable", check: "slow", passes: 2, landsOnWork: true},
-		{name: "never answers", check: "hang", passes: 2, row: "has not answered"},
-		{name: "answers unusable", check: "out", passes: 3, ports: true},
-	} {
-		t.Run("a stop on screen/"+c.name, func(t *testing.T) {
-			w := newWireWorld(t)
-			w.addCodex(t)
+	return []portRoute{
+		{name: "a stop on screen", attempt: pass, ready: func(t *testing.T, w *wireWorld) {
 			w.exhaust(t, w.other)
-			ports := counted(w)
 			w.screen(t, w.def, wireDialog(t), "waiting")
 			w.land(t)
-			checkFile(t, w, c.check)
-			for i := range c.passes {
-				if i > 0 && c.check == "slow" {
-					time.Sleep(2 * time.Second)
-				}
-				w.pass(t, 20*time.Second)
-			}
-			rec, _ := w.l.records.Find(w.rec.Key)
-			if c.landsOnWork != (rec.Profile == "claude-work") {
-				t.Fatalf("on %q, starts %q, row %q", rec.Profile, w.starts(t), w.rowText(t))
-			}
-			if c.ports != (*ports > 0) {
-				t.Fatalf("%d ports, want any %v; row %q", *ports, c.ports, w.rowText(t))
-			}
-			if c.row != "" && !strings.Contains(w.rowText(t), c.row) {
-				t.Fatalf("row %q", w.rowText(t))
-			}
-			if a, _ := loadFailover(w.state, "claude", profileConversation); a.Failed[w.work.Account].After(*w.clock) && c.check != "out" {
-				t.Fatalf("an unanswered check held claude-work back: %+v", a.Failed)
-			}
-		})
-		if c.check == "slow" {
-			continue
-		}
-		t.Run("revive of an exited session/"+c.name, func(t *testing.T) {
-			w := newWireWorld(t)
-			w.addCodex(t)
+		}},
+		{name: "revive of an exited session", ready: func(t *testing.T, w *wireWorld) {
 			w.exhaust(t, w.def, w.other)
-			ports := counted(w)
-			checkFile(t, w, c.check)
+		}, attempt: func(t *testing.T, w *wireWorld) error {
+			*w.clock = w.clock.Add(20 * time.Second)
 			rec, _ := w.l.records.Find(w.rec.Key)
+			if rec.Profile != "default" {
+				return nil
+			}
 			_, err := w.l.revive(rec)
-			if *ports > 0 != c.ports {
-				t.Fatalf("%d ports, err %v", *ports, err)
-			}
-			if !c.ports && !errors.Is(err, errStatusUnanswered) {
-				t.Fatalf("revive: %v", err)
-			}
-		})
-		t.Run("a queued switch whose login ran out/"+c.name, func(t *testing.T) {
-			w := newWireWorld(t)
-			w.addCodex(t)
+			return err
+		}},
+		{name: "a queued switch whose login ran out", attempt: pass, ready: func(t *testing.T, w *wireWorld) {
 			w.land(t)
-			ports := counted(w)
 			rec, _ := w.l.records.Find(w.rec.Key)
 			if err := saveMigration(w.state, migration{Version: 1, Source: rec, Destination: w.other, State: "queued", Since: *w.clock}); err != nil {
 				t.Fatal(err)
 			}
+			if err := saveFailover(w.state, "claude", failoverAttempt{Event: "e", State: core.FailoverState{Session: profileConversation, Profile: "default", Account: w.def.Account, Status: "queued", Target: w.other.ID}}); err != nil {
+				t.Fatal(err)
+			}
 			w.exhaust(t, w.def, w.other)
-			checkFile(t, w, c.check)
-			w.pass(t, time.Minute)
-			if m, _ := loadMigration(w.state, "claude", profileConversation); m.Destination.Harness == "codex" && !c.ports || *ports > 0 && !c.ports {
-				t.Fatalf("ports %d, migration %+v", *ports, m.Destination)
+		}},
+	}
+}
+
+// countPorts makes ports countable, with no fake cs to write them.
+func countPorts(w *wireWorld) *int {
+	ports := 0
+	w.c.PreparePort = func(core.Session, string, string) (core.PortPlan, error) {
+		ports++
+		return core.PortPlan{}, errors.New("counted, not written")
+	}
+	return &ports
+}
+
+// A check that does not answer says nothing about a login: it never costs it its place, and the port, which has no way back, waits for an answer.
+func TestWireAnUnansweredCheckNeverPortsASession(t *testing.T) {
+	for _, c := range []struct {
+		name, check string
+		timeout     time.Duration
+		lands       bool
+		ports       bool
+	}{
+		{name: "times out once then answers usable", check: "slow", lands: true},
+		{name: "always takes 5s", check: "five", lands: true},
+		{name: "never answers", check: "hang"},
+		{name: "slower than the timeout", check: "hang", timeout: 2 * time.Second},
+		{name: "answers unusable", check: "out", ports: true},
+	} {
+		for _, route := range portRoutes() {
+			t.Run(route.name+"/"+c.name, func(t *testing.T) {
+				w := newWireWorld(t)
+				w.addCodex(t)
+				w.l.statuses.timeout = c.timeout
+				ports := countPorts(w)
+				route.ready(t, w)
+				putProfileFile(t, filepath.Join(w.work.Root, c.check), "")
+				var last error
+				landed := func() bool {
+					rec, _ := w.l.records.Find(w.rec.Key)
+					return rec.Profile == "claude-work"
+				}
+				for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline) && !landed() && (*ports == 0); time.Sleep(time.Second) {
+					last = route.attempt(t, w)
+				}
+				if landed() != c.lands {
+					t.Fatalf("on claude-work %v, want %v; starts %q, last %v, row %q", landed(), c.lands, w.starts(t), last, w.rowText(t))
+				}
+				if (*ports > 0) != c.ports {
+					t.Fatalf("%d ports, want any %v; last %v, row %q", *ports, c.ports, last, w.rowText(t))
+				}
+				if a, _ := loadFailover(w.state, "claude", profileConversation); !c.ports && a.Failed[w.work.Account].After(*w.clock) {
+					t.Fatalf("an unanswered check held claude-work back: %+v", a.Failed)
+				}
+				if !c.lands && !c.ports && route.name == "a stop on screen" && !strings.Contains(w.rowText(t), "has not answered") {
+					t.Fatalf("row %q", w.rowText(t))
+				}
+			})
+		}
+	}
+}
+
+// A switch that fails is no answer from the login. It is tried again, and never ports while it can be.
+func TestWireAFailedSwitchNeverPortsWhileItsLoginCanBeTriedAgain(t *testing.T) {
+	for _, route := range portRoutes() {
+		t.Run(route.name, func(t *testing.T) {
+			w := newWireWorld(t)
+			w.addCodex(t)
+			ports := countPorts(w)
+			route.ready(t, w)
+			if route.name == "revive of an exited session" {
+				fails, list := 1, w.c.Procs
+				w.c.Procs = func() ([]proc.Proc, error) {
+					if fails > 0 {
+						fails--
+						return nil, errors.New("the process table could not be read")
+					}
+					return list()
+				}
+			} else {
+				fails := 1
+				w.c.Signal = func(pid int, sig syscall.Signal) error {
+					if fails > 0 {
+						fails--
+						return errors.New("the signal did not go")
+					}
+					return syscall.Kill(pid, sig)
+				}
+			}
+			var seen []string
+			for i := 0; i < 6; i++ {
+				err := route.attempt(t, w)
+				seen = append(seen, fmt.Sprint(err))
+				if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile == "claude-work" {
+					break
+				}
+			}
+			if *ports != 0 {
+				t.Fatalf("%d ports: %q", *ports, seen)
+			}
+			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "claude-work" {
+				t.Fatalf("on %q, row %q: %q", rec.Profile, w.rowText(t), seen)
 			}
 		})
 	}
@@ -1577,7 +1635,7 @@ func TestABarredOtherHarnessCannotBePortedOnto(t *testing.T) {
 	}
 	dest := func() (profile.Profile, error) {
 		ps, _ := profile.Load(w.state)
-		return failoverDestination(usableLogins(w.state, failoverAttempt{}, ps, nil, now), core.Exhaustion{Harness: "claude", Account: w.def.Account}, w.cwd)
+		return failoverDestination(usableLogins(w.state, failoverAttempt{}, ps, nil, now), core.Exhaustion{Harness: "claude", Account: w.def.Account}, w.cwd, nil)
 	}
 	if got, err := dest(); err != nil || got.Harness != "codex" {
 		t.Fatalf("every claude login barred: %+v, %v", got, err)

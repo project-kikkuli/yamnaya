@@ -379,7 +379,7 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 		return err
 	}
 	now, limits := l.now(), l.limits()
-	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path)
+	target, err := failoverDestination(usableLogins(dir, a, ps, limits, now), core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, m.Source.Worktree.Path, a.holdsPort(ps, core.Exhaustion{Harness: m.Source.Harness, Account: m.Source.Account}, now))
 	if err != nil {
 		return block()
 	}
@@ -390,6 +390,12 @@ func (l launcher) reroute(m migration, rec launch.Record) error {
 		ref = m.Source.Session
 	}
 	_, err = next.QueueProfileSwitch(ref, target.ID, m.Reason)
+	if answeredUnusable(err) {
+		a.failed(target.Account, now.Add(core.QuotaRecheck), err)
+		if err := saveFailover(dir, m.Source.Harness, a); err != nil {
+			return err
+		}
+	}
 	if err != nil && !errors.Is(err, profile.ErrOperationBusy) {
 		return block()
 	}

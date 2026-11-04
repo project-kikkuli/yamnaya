@@ -29,16 +29,33 @@ type failoverAttempt struct {
 	On       string `json:"on,omitempty"`
 	// Continues is when Claude's footer said it carries on by itself.
 	Continues time.Time `json:"continues,omitzero"`
-	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile.
-	Failed map[string]time.Time `json:"failed,omitempty"`
+	// Failed holds back, until then, a login a switch failed to land on, so the next usable one is tried meanwhile. Answered marks those that
+	// said themselves they cannot be used; any other failure was the attempt's, and FailedWhy says what it was.
+	Failed    map[string]time.Time `json:"failed,omitempty"`
+	Answered  map[string]bool      `json:"answered,omitempty"`
+	FailedWhy string               `json:"failed_why,omitempty"`
 }
 
-// failed holds back the login a switch could not land on.
-func (a *failoverAttempt) failed(account string, until time.Time) {
+// failed holds back the login a switch could not land on, because of err.
+func (a *failoverAttempt) failed(account string, until time.Time, err error) {
 	if a.Failed == nil {
-		a.Failed = map[string]time.Time{}
+		a.Failed, a.Answered = map[string]time.Time{}, map[string]bool{}
 	}
-	a.Failed[account] = until
+	if a.Answered == nil {
+		a.Answered = map[string]bool{}
+	}
+	a.Failed[account], a.Answered[account], a.FailedWhy = until, answeredUnusable(err), err.Error()
+}
+
+// holdsPort is why this conversation cannot go to the last resort yet: a login of its harness whose switch failed for a reason that says nothing
+// about the login gets tried again first.
+func (a failoverAttempt) holdsPort(ps []profile.Profile, e core.Exhaustion, now time.Time) error {
+	for _, p := range ps {
+		if p.Harness == e.Harness && p.Account != e.Account && p.Account != "" && a.Failed[p.Account].After(now) && !a.Answered[p.Account] {
+			return fmt.Errorf("the switch to login %s failed and ym tries it again shortly: %s", p.ID, a.FailedWhy)
+		}
+	}
+	return nil
 }
 
 // noteStop tells the login's record of a stop of this conversation once.
@@ -254,7 +271,7 @@ func (l launcher) continueHere(dir string, rec launch.Record, s core.Live, a fai
 	}
 	if err != nil {
 		a.State.Status, a.State.Reason = "blocked", "could not continue after the limit passed: "+err.Error()
-		a.failed(e.Account, now.Add(core.QuotaRecheck))
+		a.failed(e.Account, now.Add(core.QuotaRecheck), err)
 		if released := releaseClaim(dir, selected); released != nil {
 			return released
 		}
@@ -307,10 +324,13 @@ func failoverTarget(ps []profile.Profile, e core.Exhaustion, cwds ...string) (pr
 }
 
 // failoverDestination is a usable login of e's harness, which keeps the conversation's id, else of the other harness as the last resort.
-func failoverDestination(ps []profile.Profile, e core.Exhaustion, cwd string) (profile.Profile, error) {
+func failoverDestination(ps []profile.Profile, e core.Exhaustion, cwd string, wait error) (profile.Profile, error) {
 	target, err := failoverTarget(ps, e, cwd)
 	if err == nil {
 		return target, nil
+	}
+	if wait != nil {
+		return profile.Profile{}, wait
 	}
 	other, otherErr := failoverTarget(ps, core.Exhaustion{Harness: core.Other(e.Harness), Account: e.Account}, cwd)
 	if otherErr != nil {
@@ -441,7 +461,8 @@ func (l launcher) Failover(b core.Board) error {
 			}
 			continue
 		}
-		_, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path)
+		wait := a.holdsPort(ps, e, b.At)
+		_, chooseErr := failoverDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, wait)
 		if a.Event == e.Event && (a.State.Status == "switched" || a.State.Status == "closed" || a.State.Status == "blocked" && chooseErr != nil) {
 			continue
 		}
@@ -458,13 +479,14 @@ func (l launcher) Failover(b core.Board) error {
 		if l.core != nil && !l.core.CanResume() {
 			continue
 		}
-		target, unanswered, checkErr := l.checkedDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, hung)
-		if unanswered != "" || checkErr != nil {
+		target, unanswered, checkErr := l.checkedDestination(usableLogins(dir, a, ps, b.Fleet.Limits, b.At), e, rec.Worktree.Path, hung, wait)
+		if unanswered.ID != "" || checkErr != nil {
 			a.State.Status = "blocked"
 			a.State.Target = ""
-			a.State.Reason = fmt.Sprintf("the status check of login %s has not answered, so ym tries it again shortly", unanswered)
 			if checkErr != nil {
 				a.State.Reason = checkErr.Error()
+			} else {
+				a.State.Reason = l.unansweredReason(unanswered)
 			}
 			if err = saveFailover(dir, e.Harness, a); err != nil {
 				return err
@@ -494,7 +516,7 @@ func (l launcher) Failover(b core.Board) error {
 		case switchErr != nil:
 			a.State.Status = "blocked"
 			a.State.Reason = switchErr.Error()
-			a.failed(target.Account, b.At.Add(core.QuotaRecheck))
+			a.failed(target.Account, b.At.Add(core.QuotaRecheck), switchErr)
 		case out.Queued:
 			a.State.Status = "queued"
 			a.State.Reason = out.Message

@@ -213,7 +213,7 @@ func (l launcher) switchProfile(ref, id, reason string) (core.SwitchOutcome, err
 			return none, fmt.Errorf("session already uses profile %s", dest.ID)
 		}
 	}
-	if err = switchAuthentication(dest, rec.Worktree.Path); err != nil {
+	if err = l.authentication(dest, rec.Worktree.Path); err != nil {
 		return none, err
 	}
 

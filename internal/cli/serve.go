@@ -63,6 +63,10 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		meter := usage.New(dir)
 		defer meter.Close()
 		e.core.Meter = meter
+		if l, ok := e.core.Launches.(launcher); ok {
+			l.statuses = &statusChecks{}
+			e.core.Launches = l
+		}
 		self, _ := os.Executable()
 		started, _ := os.Stat(self)
 		lockPath := filepath.Join(dir, "work-service.lock")
