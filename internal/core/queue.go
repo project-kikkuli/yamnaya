@@ -99,9 +99,12 @@ func (s *Store) queueMarks() (map[string]QueueMark, error) {
 	})
 }
 
-// SnoozeUntil is when "1h", "tonight" (t) or "tomorrow" (m) ends, counted from now on the local clock; any other Go duration also works.
-func SnoozeUntil(now time.Time, when string) (time.Time, error) {
-	local := now.Local()
+// SnoozeUntil is when "1h", "tonight" (t) or "tomorrow" (m) ends, counted from now on loc's clock, the host's when nil; any other Go duration also works.
+func SnoozeUntil(now time.Time, when string, loc *time.Location) (time.Time, error) {
+	if loc == nil {
+		loc = time.Local
+	}
+	local := now.In(loc)
 	at := func(day, hour int) time.Time {
 		return time.Date(local.Year(), local.Month(), local.Day()+day, hour, 0, 0, 0, local.Location())
 	}
@@ -259,12 +262,15 @@ func (s *Store) RankRow(key, dir string, owner bool) (bool, error) {
 }
 
 // SnoozeNeed sends the row to later until the time when names; an item on another host counts when there.
-func (c *Core) SnoozeNeed(n Need, when string) error {
+func (c *Core) SnoozeNeed(n Need, when string) error { return c.SnoozeNeedIn(n, when, nil) }
+
+// SnoozeNeedIn is SnoozeNeed reading tonight and tomorrow on loc's clock; another host is told how long, since it knows only its own.
+func (c *Core) SnoozeNeedIn(n Need, when string, loc *time.Location) error {
 	if n.Item != nil {
-		_, err := c.SnoozeFor(n.Item.Key(), when)
+		_, err := c.snoozeItemIn(n.Item.Key(), when, loc)
 		return err
 	}
-	until, err := SnoozeUntil(c.now(), when)
+	until, err := SnoozeUntil(c.now(), when, loc)
 	if err != nil {
 		return err
 	}
@@ -276,11 +282,23 @@ func (c *Core) SnoozeFor(id, when string) (Item, error) {
 	if when == "" {
 		return c.Snooze(id)
 	}
-	if it, _, ok, err := c.remoteItem(id, "snooze", "--for", when); ok {
+	return c.snoozeItemIn(id, when, nil)
+}
+
+func (c *Core) snoozeItemIn(id, when string, loc *time.Location) (Item, error) {
+	send := when
+	if loc != nil {
+		until, err := SnoozeUntil(c.now(), when, loc)
+		if err != nil {
+			return Item{}, err
+		}
+		send = until.Sub(c.now()).Round(time.Second).String()
+	}
+	if it, _, ok, err := c.remoteItem(id, "snooze", "--for", send); ok {
 		it.State = ItemSnoozed
 		return it, err
 	}
-	until, err := SnoozeUntil(c.now(), when)
+	until, err := SnoozeUntil(c.now(), when, loc)
 	if err != nil {
 		return Item{}, err
 	}
@@ -300,6 +318,25 @@ func (c *Core) Rank(id, dir string, owner bool) (Item, bool, error) {
 }
 
 // RankNeed is the owner's reorder of one row.
+// Reranked is b with n's rank read again and its rows in their new order, so a rank shows before the next scan.
+func (c *Core) Reranked(b Board, n Need) (Board, error) {
+	b.Needs, b.Later = slices.Clone(b.Needs), slices.Clone(b.Later)
+	if n.Item != nil && n.Item.Host == "" {
+		it, err := c.Store.Item(n.Item.Key())
+		if err != nil {
+			return b, err
+		}
+		for _, ns := range [][]Need{b.Needs, b.Later} {
+			for i := range ns {
+				if ns[i].Item != nil && ns[i].Item.Host == "" && ns[i].Item.Seq == it.Seq {
+					ns[i].Item = &it
+				}
+			}
+		}
+	}
+	return b, c.foldLater(&b)
+}
+
 func (c *Core) RankNeed(n Need, dir string) error {
 	if n.Item != nil {
 		_, _, err := c.Rank(n.Item.Key(), dir, true)

@@ -759,3 +759,123 @@ func TestARowsFormsMatchWhatItCanDo(t *testing.T) {
 		})
 	}
 }
+
+func TestThePagesLaterReadsTheBrowsersClockAndKeepsTheHostsWithoutOne(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	for _, tc := range []struct {
+		name, tz string
+		loc      *time.Location
+	}{
+		{"a browser's zone", "America/New_York", ny},
+		{"no zone", "", nil},
+		{"a bad zone", "Mars/Olympus", nil},
+		{"a path", "../../etc/passwd", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newDoWorld(t)
+			it, err := w.c.Store.AddItem(core.Item{Kind: core.KindChore, Scope: w.item.Scope, Question: "q", DoLine: "Wake the laptop", Session: "another-session"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.observe(t)
+			row := w.rowOf(t, "Wake the laptop")
+			if !strings.Contains(row, `name="tz"`) {
+				t.Fatalf("no zone field: %s", row)
+			}
+			id := regexp.MustCompile(`action="/later/([0-9a-f]+)"`).FindStringSubmatch(row)
+			tok := regexp.MustCompile(`name="token" value="([0-9a-f]+)"`).FindStringSubmatch(row)
+			before := time.Now()
+			form := url.Values{"token": {tok[1]}, "when": {"tomorrow"}}
+			if tc.tz != "" {
+				form.Set("tz", tc.tz)
+			}
+			if got := w.postTo(t, "/later/", id[1], form, w.srv.URL); got != http.StatusSeeOther {
+				t.Fatalf("POST answered %d", got)
+			}
+			got, err := w.c.Store.Item(it.Key())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := core.SnoozeUntil(before, "tomorrow", tc.loc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.SnoozeUntil.Equal(want) {
+				t.Fatalf("back %v, want %v", got.SnoozeUntil, want)
+			}
+		})
+	}
+}
+
+func TestThePagesMoveRanksAsTheOwnerUnderTheSameGuards(t *testing.T) {
+	const first, second = "repo#1", "Wake the laptop"
+	for _, tc := range []struct {
+		name, row, dir, origin string
+		badToken               bool
+		stale                  bool
+		want                   int
+		leads                  string
+	}{
+		{name: "top on an item", row: second, dir: "top", want: http.StatusSeeOther, leads: second},
+		{name: "top on a pull request", row: first, dir: "top", want: http.StatusSeeOther, leads: first},
+		{name: "a bad direction", row: second, dir: "sideways", want: http.StatusBadRequest},
+		{name: "another port", row: second, dir: "top", origin: "http://127.0.0.1:9999", want: http.StatusForbidden},
+		{name: "a wrong token", row: second, dir: "top", badToken: true, want: http.StatusForbidden},
+		{name: "a row changed since the page", row: second, dir: "top", stale: true, want: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newDoWorld(t)
+			it, err := w.c.Store.AddItem(core.Item{Kind: core.KindChore, Scope: w.item.Scope, Question: "q", DoLine: second, Session: "another-session"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.observe(t)
+			row := w.rowOf(t, tc.row)
+			id := regexp.MustCompile(`action="/rank/([0-9a-f]+)"`).FindStringSubmatch(row)
+			tok := regexp.MustCompile(`name="token" value="([0-9a-f]+)"`).FindStringSubmatch(row)
+			if id == nil || tok == nil {
+				t.Fatalf("no rank form: %s", row)
+			}
+			form := url.Values{"token": {tok[1]}, "dir": {tc.dir}}
+			if tc.badToken {
+				form.Set("token", "nope")
+			}
+			if tc.stale {
+				if _, err := w.c.Prepare(w.observe(t), it.Key(), core.Prepared{Do: "Wake it now"}); err != nil {
+					t.Fatal(err)
+				}
+				w.observe(t)
+			}
+			origin := tc.origin
+			if origin == "" {
+				origin = w.srv.URL
+			}
+			if got := w.postTo(t, "/rank/", id[1], form, origin); got != tc.want {
+				t.Fatalf("POST answered %d, want %d", got, tc.want)
+			}
+			if tc.want != http.StatusSeeOther {
+				got, err := w.c.Store.Item(it.Key())
+				if err != nil || got.Pin != 0 {
+					t.Fatalf("pin %d, %v; a refused rank changed it", got.Pin, err)
+				}
+				return
+			}
+			rows := strings.Split(w.page(t), "<details")[1:]
+			if !strings.Contains(rows[0], tc.leads) {
+				t.Fatalf("the first row, before any scan, is not %q: %s", tc.leads, rows[0])
+			}
+			if tc.row == second {
+				got, err := w.c.Store.Item(it.Key())
+				if err != nil || got.Pin == 0 || !got.PinOwner {
+					t.Fatalf("pin %d owner %v, %v; want the owner's", got.Pin, got.PinOwner, err)
+				}
+			}
+			if len(w.merger.merged) != 0 {
+				t.Fatalf("a rank merged %v", w.merger.merged)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -367,13 +368,13 @@ func TestSnoozeUntilReadsTheLocalClock(t *testing.T) {
 		{"m", time.Date(2026, 11, 3, 1, 0, 0, 0, loc), time.Date(2026, 11, 4, 9, 0, 0, 0, loc)},
 	} {
 		t.Run(tc.when, func(t *testing.T) {
-			got, err := SnoozeUntil(tc.at, tc.when)
+			got, err := SnoozeUntil(tc.at, tc.when, nil)
 			if err != nil || !got.Equal(tc.want) {
 				t.Fatalf("%s from %s = %s, %v; want %s", tc.when, tc.at, got, err, tc.want)
 			}
 		})
 	}
-	if _, err := SnoozeUntil(queueNow, "someday"); err == nil {
+	if _, err := SnoozeUntil(queueNow, "someday", nil); err == nil {
 		t.Fatal("someday is not a time")
 	}
 }
@@ -503,5 +504,95 @@ func TestTheCheckMarkAnswersThroughTheItemPaths(t *testing.T) {
 				t.Fatalf("item %+v, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestSnoozeUntilReadsTheClockItIsGiven(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Skip(err)
+	}
+	at := time.Date(2026, 11, 4, 14, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, when string
+		loc        *time.Location
+		want       time.Time
+	}{
+		{"tonight in New York", "tonight", ny, time.Date(2026, 11, 4, 20, 0, 0, 0, ny)},
+		{"tomorrow in New York", "tomorrow", ny, time.Date(2026, 11, 5, 9, 0, 0, 0, ny)},
+		{"past 8pm in Tokyo, tonight is the next", "tonight", tokyo, time.Date(2026, 11, 5, 20, 0, 0, 0, tokyo)},
+		{"tomorrow in Tokyo", "tomorrow", tokyo, time.Date(2026, 11, 5, 9, 0, 0, 0, tokyo)},
+		{"an hour is an hour anywhere", "1h", tokyo, at.Add(time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SnoozeUntil(at, tc.when, tc.loc)
+			if err != nil || !got.Equal(tc.want) {
+				t.Fatalf("got %v, %v; want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnotherHostIsToldHowLongASnoozeOnTheBrowsersClockLasts(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	f := newFleet(t)
+	f.a.spawn("asker", "")
+	it, err := f.a.core.AddOwnerItem(Item{Kind: KindGo, Question: "ship it?", Rec: "yes", Session: "asker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sync(t)
+	f.sync(t)
+	it.Host = "a"
+	f.b.clock = time.Date(2026, 11, 4, 14, 0, 0, 0, time.UTC)
+	if err := f.b.core.SnoozeNeedIn(Need{Item: &it}, "tonight", ny); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := f.b.core.Store.PendingRelays()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2026, 11, 4, 20, 0, 0, 0, ny).Sub(f.b.clock).String()
+	if len(pending) != 1 || !strings.Contains(pending[0].Body, want) || strings.Contains(pending[0].Body, "tonight") {
+		t.Fatalf("relayed %+v, want the duration %s", pending, want)
+	}
+}
+
+func TestReRankingShowsAtOnceWithoutAScan(t *testing.T) {
+	w := newOrgWorld(t)
+	w.spawn("a", "")
+	w.spawn("b", "")
+	high, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "first", Rec: "x", Blocks: 3, Session: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	low, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "second", Rec: "x", Session: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := w.board(t)
+	if b.Needs[0].Item.Seq != high.Seq {
+		t.Fatalf("order before: %d first", b.Needs[0].Item.Seq)
+	}
+	i := slices.IndexFunc(b.Needs, func(n Need) bool { return n.Item != nil && n.Item.Seq == low.Seq })
+	if err := w.core.RankNeed(b.Needs[i], "top"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.core.Reranked(b, b.Needs[i])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Needs[0].Item.Seq != low.Seq || !got.Needs[0].mark().Owner {
+		t.Fatalf("after: %+v", got.Needs[0].Item)
+	}
+	if b.Needs[0].Item.Seq != high.Seq {
+		t.Fatal("the board given was changed")
 	}
 }

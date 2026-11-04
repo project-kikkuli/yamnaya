@@ -162,7 +162,7 @@ type queueView struct {
 type queueRowView struct {
 	Line, Mark, Side, Command, Link, LinkText string
 	ID, Token, Act, CheckLabel                string
-	Check, Later, Reply, Done                 bool
+	Check, Later, Reply, Done, Rank           bool
 	Detail                                    []string
 }
 
@@ -183,7 +183,7 @@ func queueRow(n core.Need, label, token string, now time.Time) queueRowView {
 	if n.Check() == core.CheckAccept {
 		v.CheckLabel = n.DoLine()
 	}
-	v.Later, v.Reply, v.Done = canLater(n, now), canReply(n), canDone(n)
+	v.Later, v.Reply, v.Done, v.Rank = canLater(n, now), canReply(n), canDone(n), !n.Unrouted
 	switch {
 	case n.Item != nil:
 		v.Link, v.LinkText = fmt.Sprintf("/i/%d", n.Item.Seq), "full item"
@@ -316,7 +316,7 @@ var errBadForm = errors.New("bad form")
 
 // serveRow does act to the row named id, which binds the row's words and head, so a page older than the queue acts on the same row as it
 // read or on nothing.
-func (s *briefSite) serveRow(w http.ResponseWriter, r *http.Request, id string, can func(core.Need) bool, act func(core.Board, core.Need) error) {
+func (s *briefSite) serveRow(w http.ResponseWriter, r *http.Request, id string, hide bool, can func(core.Need) bool, act func(core.Board, core.Need) error) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "post only", http.StatusMethodNotAllowed)
@@ -356,43 +356,81 @@ func (s *briefSite) serveRow(w http.ResponseWriter, r *http.Request, id string, 
 		http.Error(w, err.Error(), status)
 		return
 	}
-	s.mu.Lock()
-	if s.acted == nil {
-		s.acted = map[string]time.Time{}
+	if hide {
+		s.mu.Lock()
+		if s.acted == nil {
+			s.acted = map[string]time.Time{}
+		}
+		s.acted[id] = time.Now()
+		s.mu.Unlock()
 	}
-	s.acted[id] = time.Now()
-	s.mu.Unlock()
 	http.Redirect(w, r, s.prefix()+"/", http.StatusSeeOther)
+}
+
+func browserZone(name string) *time.Location {
+	if name == "" {
+		return nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil
+	}
+	return loc
+}
+
+func (s *briefSite) showRank(n core.Need) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.board == nil {
+		return
+	}
+	if b, err := s.core.Reranked(*s.board, n); err == nil {
+		s.board = &b
+	}
 }
 
 // serveRowAction answers the forms of a queue row; each takes the path the board's key for the same act takes.
 func (s *briefSite) serveRowAction(w http.ResponseWriter, r *http.Request, path string) bool {
 	if id, ok := strings.CutPrefix(path, "/do/"); ok {
-		s.serveRow(w, r, id, func(n core.Need) bool { return n.Check() != core.CheckNone }, func(b core.Board, n core.Need) error {
+		s.serveRow(w, r, id, true, func(n core.Need) bool { return n.Check() != core.CheckNone }, func(b core.Board, n core.Need) error {
 			_, err := s.core.DoCheck(b, n)
 			return err
 		})
 		return true
 	}
 	if id, ok := strings.CutPrefix(path, "/accept/"); ok {
-		s.serveRow(w, r, id, func(n core.Need) bool { return n.Accept() != core.CheckNone }, func(b core.Board, n core.Need) error {
+		s.serveRow(w, r, id, true, func(n core.Need) bool { return n.Accept() != core.CheckNone }, func(b core.Board, n core.Need) error {
 			_, err := s.core.DoAccept(b, n)
 			return err
 		})
 		return true
 	}
 	if id, ok := strings.CutPrefix(path, "/later/"); ok {
-		s.serveRow(w, r, id, func(n core.Need) bool { return canLater(n, time.Now()) }, func(_ core.Board, n core.Need) error {
+		s.serveRow(w, r, id, true, func(n core.Need) bool { return canLater(n, time.Now()) }, func(_ core.Board, n core.Need) error {
 			when := r.PostFormValue("when")
 			if when != "1h" && when != "tonight" && when != "tomorrow" {
 				return fmt.Errorf("%w: later takes 1h, tonight or tomorrow", errBadForm)
 			}
-			return s.core.SnoozeNeed(n, when)
+			return s.core.SnoozeNeedIn(n, when, browserZone(r.PostFormValue("tz")))
+		})
+		return true
+	}
+	if id, ok := strings.CutPrefix(path, "/rank/"); ok {
+		s.serveRow(w, r, id, false, func(n core.Need) bool { return !n.Unrouted }, func(b core.Board, n core.Need) error {
+			dir := r.PostFormValue("dir")
+			if dir != "top" && dir != "up" && dir != "down" {
+				return fmt.Errorf("%w: rank takes top, up or down", errBadForm)
+			}
+			if err := s.core.RankNeed(n, dir); err != nil {
+				return err
+			}
+			s.showRank(n)
+			return nil
 		})
 		return true
 	}
 	if id, ok := strings.CutPrefix(path, "/reply/"); ok {
-		s.serveRow(w, r, id, canReply, func(b core.Board, n core.Need) error {
+		s.serveRow(w, r, id, true, canReply, func(b core.Board, n core.Need) error {
 			text := strings.TrimSpace(r.PostFormValue("text"))
 			if text == "" {
 				return fmt.Errorf("%w: a reply needs words", errBadForm)
@@ -403,7 +441,7 @@ func (s *briefSite) serveRowAction(w http.ResponseWriter, r *http.Request, path 
 		return true
 	}
 	if id, ok := strings.CutPrefix(path, "/done/"); ok {
-		s.serveRow(w, r, id, canDone, func(b core.Board, n core.Need) error {
+		s.serveRow(w, r, id, true, canDone, func(b core.Board, n core.Need) error {
 			_, _, err := s.core.Answer(b, n.Item.Key(), "done")
 			return err
 		})
@@ -696,14 +734,15 @@ a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacin
 .copy:hover{color:var(--fg)}
 .q{font:min(14px,calc((100vw - 32px)/24.6))/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px;overflow-wrap:normal}.q .line{white-space:pre}.q summary{list-style:none;cursor:pointer;white-space:pre;overflow:hidden}.q summary::-webkit-details-marker{display:none}
 .q .side{display:none;color:var(--dim)}@media (min-width:800px){.q .side{display:inline}}.q .open{border-left:3px solid var(--line);padding-left:8px;margin:2px 0 8px;color:var(--dim);white-space:normal}.q .open div{margin:2px 0}
-.q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;min-height:44px;min-width:44px;padding:0 12px;cursor:pointer}.q .alt{color:var(--fg);border-color:var(--line)}.q .open form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}.q .say{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;min-height:44px;min-width:0;flex:1 1 60%;padding:0 8px;box-sizing:border-box}
+.q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;min-height:44px;min-width:44px;padding:0 12px;cursor:pointer}.q .alt{color:var(--fg);border-color:var(--line)}.q .open form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0}.q .say{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;min-height:44px;min-width:0;flex:1 1 60%;padding:0 8px;box-sizing:border-box}@media (pointer:coarse){.q{font-size:min(14px,calc((100vw - 60px)/23.6))}.q summary{display:flex;align-items:center;min-height:44px;margin-right:-16px}.q summary .line{flex:none}.q summary .check,.q summary .line+.line{flex:none;display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;margin:0;padding:0;box-sizing:border-box}.q .side{flex:1 1 0;min-width:0;overflow:hidden}}
 ul{padding-left:18px}li{margin:6px 0}
 </style>
-<script src="{{at "/site.js"}}"></script>`
+<script src="{{at "/site.js"}}" defer></script>`
 
 // siteScript carries the copy buttons, and reloads the page every 30 seconds only while no text is selected and no queue row is
 // open, so a reload never drops what the owner is reading or copying. It is a file of its own, which a proxy's same-origin script policy lets run.
-const siteScript = `document.addEventListener("click", e => {
+const siteScript = `document.querySelectorAll('input[name="tz"]').forEach(i => { try { i.value = Intl.DateTimeFormat().resolvedOptions().timeZone } catch {} });
+document.addEventListener("click", e => {
 	const b = e.target.closest("[data-copy]");
 	if (!b) return;
 	const t = b.dataset.copy, done = () => { b.textContent = "copied"; setTimeout(() => b.textContent = "copy", 1500) };
@@ -730,7 +769,7 @@ const tags = `{{define "copy"}}<button class="copy" type="button" data-copy="{{.
 
 var indexPage = template.Must(template.New("index").Funcs(siteFuncs).Parse(tags + `<!doctype html><html><head><title>ym briefs</title>` + siteStyle + `</head><body>
 <h1>Needs you</h1>
-{{define "queuerow"}}<details name="queue"><summary><span class="line">{{.Line}}</span>{{if .Check}}<button class="check" type="submit" form="do-{{.ID}}" aria-label="{{.CheckLabel}}">{{.Mark}}</button>{{else}}<span class="line">{{.Mark}}</span>{{end}}<span class="side">{{.Side}}</span></summary><div class="open">{{range .Detail}}<div>{{.}}</div>{{end}}{{if .Check}}<form id="do-{{.ID}}" method="post" action="{{at "/do/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"></form>{{end}}{{if .Act}}<form method="post" action="{{at "/accept/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">{{.Act}}</button></form>{{end}}{{if .Done}}<form method="post" action="{{at "/done/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">done</button></form>{{end}}{{if .Later}}<form method="post" action="{{at "/later/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><span>later</span><button class="act alt" type="submit" name="when" value="1h">1h</button><button class="act alt" type="submit" name="when" value="tonight">tonight</button><button class="act alt" type="submit" name="when" value="tomorrow">tomorrow</button></form>{{end}}{{if .Reply}}<form method="post" action="{{at "/reply/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><input class="say" type="text" name="text" required aria-label="reply" placeholder="reply"><button class="act alt" type="submit">reply</button></form>{{end}}{{if .Command}}<div><code>{{.Command}}</code>{{template "copy" (copy "command" .Command)}}</div>{{end}}{{if .Link}}<div><a href="{{if eq (slice .Link 0 1) "/"}}{{at .Link}}{{else}}{{.Link}}{{end}}">{{.LinkText}}</a></div>{{end}}</div></details>{{end}}
+{{define "queuerow"}}<details name="queue"><summary><span class="line">{{.Line}}</span>{{if .Check}}<button class="check" type="submit" form="do-{{.ID}}" aria-label="{{.CheckLabel}}">{{.Mark}}</button>{{else}}<span class="line">{{.Mark}}</span>{{end}}<span class="side">{{.Side}}</span></summary><div class="open">{{range .Detail}}<div>{{.}}</div>{{end}}{{if .Check}}<form id="do-{{.ID}}" method="post" action="{{at "/do/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"></form>{{end}}{{if .Act}}<form method="post" action="{{at "/accept/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">{{.Act}}</button></form>{{end}}{{if .Done}}<form method="post" action="{{at "/done/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><button class="act" type="submit">done</button></form>{{end}}{{if .Later}}<form method="post" action="{{at "/later/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><input type="hidden" name="tz"><span>later</span><button class="act alt" type="submit" name="when" value="1h">1h</button><button class="act alt" type="submit" name="when" value="tonight">tonight</button><button class="act alt" type="submit" name="when" value="tomorrow">tomorrow</button></form>{{end}}{{if .Rank}}<form method="post" action="{{at "/rank/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><span>move</span><button class="act alt" type="submit" name="dir" value="top">top</button><button class="act alt" type="submit" name="dir" value="up">up</button><button class="act alt" type="submit" name="dir" value="down">down</button></form>{{end}}{{if .Reply}}<form method="post" action="{{at "/reply/"}}{{.ID}}"><input type="hidden" name="token" value="{{.Token}}"><input class="say" type="text" name="text" required aria-label="reply" placeholder="reply"><button class="act alt" type="submit">reply</button></form>{{end}}{{if .Command}}<div><code>{{.Command}}</code>{{template "copy" (copy "command" .Command)}}</div>{{end}}{{if .Link}}<div><a href="{{if eq (slice .Link 0 1) "/"}}{{at .Link}}{{else}}{{.Link}}{{end}}">{{.LinkText}}</a></div>{{end}}</div></details>{{end}}
 <div class="q"><div class="line">{{.Queue.Header}}</div>{{range .Queue.Rows}}{{template "queuerow" .}}{{end}}
 {{if .Queue.Later}}<details><summary>later {{len .Queue.Later}} ▾</summary>{{range .Queue.Later}}{{template "queuerow" .}}{{end}}</details>{{end}}</div>
 <h1>Briefs</h1><p class="meta">Every goal and chief ym runs. Refreshes every 30 seconds while no text is selected and no row is open.</p>
