@@ -48,7 +48,7 @@ const (
 	EventRelayFailed = "relay-failed"
 	// EventRefreshed is ym retiring a manager's or chief's large session and starting a fresh one from its brief.
 	EventRefreshed = "refreshed"
-	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, a repeat or a still-waiting note.
+	// EventIdleAgain is an agent's idle reply that adds nothing to its last: no commit, no ask, no new failure or request to decide, a repeat or a still-waiting note. Its payload says why it was counted.
 	EventIdleAgain = "idle-again"
 	// EventGoalClosed is a chief or the owner closing a goal: its disposition, reason, actor and still open pull requests.
 	EventGoalClosed = "goal-closed"

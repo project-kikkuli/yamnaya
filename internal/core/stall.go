@@ -53,11 +53,11 @@ func (c *Core) noticeHung(b Board, o Org) error {
 			continue
 		}
 		at := s.lastActive()
-		text := fmt.Sprintf("agent %s looks hung: busy with no tool call, reply or subagent activity since %s.", Short(key), at.Local().Format(time.Kitchen))
+		ref := Short(s.ID)
+		text := fmt.Sprintf("agent %s looks hung: no tool call, reply or subagent activity since %s. ym open %s shows it; ym kill %s --yes ends it, then ym revive or a fresh agent.", Short(key), at.Local().Format(time.Kitchen), ref, ref)
 		if s.Doing.Tool != "" {
 			text += " Last doing " + s.Doing.String() + "."
 		}
-		text += fmt.Sprintf(" Look at it with ym open %s; end it with ym kill %s --yes and resume it with ym revive, or start a fresh agent.", key, key)
 		if err := c.noticeAgent(b, o, key, EventAgentHung, text, "hung\x00"+key+"\x00"+at.UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}

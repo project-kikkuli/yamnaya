@@ -155,11 +155,11 @@ func prEvents(url, title, who string, st PRStatus, fetched bool, now time.Time) 
 	}
 	if st.Threads > 0 {
 		out = append(out, GoalEvent{Kind: EventReview, Key: "threads:" + url + "#" + strconv.Itoa(st.Threads),
-			Payload: fmt.Sprintf("%s has %d review threads, %d unresolved", title, st.Threads, st.Unresolved)})
+			Payload: fmt.Sprintf("%d review threads, %d unresolved on %s", st.Threads, st.Unresolved, title)})
 	}
 	if st.Review == "APPROVED" || st.Review == "CHANGES_REQUESTED" {
 		out = append(out, GoalEvent{Kind: EventReview, Key: "review:" + url + "@" + head + ":" + st.Review,
-			Payload: fmt.Sprintf("%s review: %s", title, strings.ToLower(strings.ReplaceAll(st.Review, "_", " ")))})
+			Payload: fmt.Sprintf("%s on %s", strings.ToLower(strings.ReplaceAll(st.Review, "_", " ")), title)})
 	}
 	switch st.State {
 	case "MERGED":

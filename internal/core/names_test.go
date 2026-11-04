@@ -417,9 +417,42 @@ func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
 func TestAnAsksWakeLineKeepsItsKeyHoweverLongTheQuestion(t *testing.T) {
 	it := Item{Seq: 12, Scope: "/repo/august/.git", ID: "D1", Question: strings.Repeat("word ", 200)}
 	it.Dossier.GoalName = "rotate-the-keys"
-	line := askLine(Org{}, it, "agent abc to the owner", askEventRoom)
-	if n := len([]rune(line)); n > askEventRoom || !strings.HasPrefix(line, "rotate-the-keys ask from ") || !strings.HasSuffix(line, "  #12") {
-		t.Fatalf("%d runes, room %d: %q", n, askEventRoom, line)
+	line := askLine(Org{}, it, "agent abc", "the owner", lineMax)
+	if n := len([]rune(line)); n > lineMax || !strings.HasPrefix(line, "rotate-the-keys ask from ") || !strings.HasSuffix(line, "  #12") {
+		t.Fatalf("%d runes, room %d: %q", n, lineMax, line)
+	}
+}
+
+func TestAnAsksWakeLineGivesTheQuestionTheRoomItHas(t *testing.T) {
+	const name = "productionize-arbiter-kpis"
+	question := "R3 synthetic Postgres TCP credentials are denied: Pg sim's first run got password authentication failed for user postgres on shared g15-pr-shepherd-k3-pg at localhost:32768. Use a dedicated R3 container or provide the shared synthetic DSN?"
+	it := Item{Seq: 244, Scope: "/repo/august/.git", ID: "D1", Question: question}
+	it.Dossier.GoalName = name
+	long := strings.Repeat("a-long-goal-name-", 6)
+	for _, tc := range []struct {
+		name, from, to, wantRoute string
+		label                     func(GoalEvent) string
+	}{
+		{"to the manager the goal is named for", "agent c3861f18540b", name, "ask from agent c3861f18540b: ", nil},
+		{"to the owner", "agent c3861f18540b", "the owner", "ask from agent c3861f18540b to the owner: ", nil},
+		{"from the goal's own manager", "manager " + name, "the owner", "ask from manager to the owner: ", nil},
+		{"to another chief", "agent c3861f18540b", "platform", "ask from agent c3861f18540b to platform: ", nil},
+		{"under a chief's long label", "agent c3861f18540b", name, "ask from agent c3861f18540b: ", func(GoalEvent) string { return long }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := GoalEvent{Seq: 6091304, Kind: EventAsked, Payload: askLine(Org{}, it, tc.from, tc.to, lineMax)}
+			line := inboxText("x", []GoalEvent{e}, "", tc.label)
+			line = line[strings.Index(line, "\n- ")+3:]
+			if n := len([]rune(line)); n != lineMax-2 {
+				t.Fatalf("%d runes, want the question to fill the line: %q", n, line)
+			}
+			if !strings.Contains(line, name+" "+tc.wantRoute) || strings.Count(line, name) != 1 {
+				t.Fatalf("want %q and the goal's name once: %q", tc.wantRoute, line)
+			}
+			if !strings.HasSuffix(line, " #244") {
+				t.Fatalf("lost its key: %q", line)
+			}
+		})
 	}
 }
 

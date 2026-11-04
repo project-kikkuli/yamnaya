@@ -140,7 +140,7 @@ func replayNew(g Goal, events []GoalEvent, items map[string]Item, end time.Time)
 			for _, it := range items {
 				asked = asked || strings.HasPrefix(it.Session, who[1]) && it.CreatedAt.After(r.at) && !it.CreatedAt.After(e.Created)
 			}
-			fresh := !seen || commit || asked || saysNew(strings.TrimSpace(said), r.said)
+			fresh := !seen || commit || asked || addsNothing(strings.TrimSpace(said), r.said) == ""
 			r.at = e.Created
 			if fresh {
 				r.said = strings.TrimSpace(said)
