@@ -1374,6 +1374,44 @@ func TestAnIdleSessionIsCapturedOnceAMinuteAndAtOnceWhenItGoesIdleAgain(t *testi
 	}
 }
 
+// Esc cancels Claude's wait, not failover: with a real stop in its transcript and a row at its limit the pane moves if a login can take it.
+func TestWireEscOnAStopDoesNotOptOutOfFailover(t *testing.T) {
+	for _, file := range []string{"walled-b-esc-footer.txt", "walled-d-esc-dialog.txt"} {
+		for _, c := range []struct {
+			name      string
+			used      float64
+			elsewhere bool
+			on        string
+			stopped   bool
+		}{
+			{name: "row 100, a login usable", used: 100, elsewhere: true, on: "claude-work", stopped: true},
+			{name: "row 100, nowhere to go", used: 100, on: "default", stopped: true},
+			{name: "row 50, a login usable", used: 50, elsewhere: true, on: "default"},
+			{name: "row 50, nowhere to go", used: 50, on: "default"},
+		} {
+			t.Run(file+"/"+c.name, func(t *testing.T) {
+				w := newWireWorld(t)
+				putProfileFile(t, w.transcript(t, w.def), wireWall(w.clock.Add(-time.Minute)))
+				text, reset := w.walled(t, file)
+				w.row(t, w.def, -1, c.used, reset)
+				if !c.elsewhere {
+					w.exhaust(t, w.work, w.other)
+				}
+				w.screen(t, w.def, text, "idle")
+				w.land(t)
+				w.scan(t)
+				for range 3 {
+					w.pass(t, time.Minute)
+				}
+				rec, _ := w.l.records.Find(w.rec.Key)
+				if rec.Profile != c.on || w.bar(t, w.def).Stopped.IsZero() == c.stopped {
+					t.Fatalf("on %q, bar %+v, landings %q", rec.Profile, w.bar(t, w.def), w.starts(t))
+				}
+			})
+		}
+	}
+}
+
 func TestLoginRecordKeepsEveryConcurrentWrite(t *testing.T) {
 	dir := t.TempDir()
 	p := profile.Profile{Harness: "claude", ID: "default", Account: "claude/u/a"}
