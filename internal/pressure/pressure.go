@@ -136,11 +136,27 @@ func (s State) Save(dir string) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "overload.json")
-	if err = os.WriteFile(path+".new", raw, 0o600); err != nil {
+	return replaceFile(filepath.Join(dir, "overload.json"), raw)
+}
+
+// replaceFile swaps raw in at path through a temp file of this write's own, so no reader ever sees part of a file, however
+// many processes write path at once.
+func replaceFile(path string, raw []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(path+".new", path)
+	_, err = tmp.Write(raw)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), path)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
 }
 
 // HoldsSlots reports whether new slots wait: only for memory, which the scheduler cannot share out. The slot cap and
