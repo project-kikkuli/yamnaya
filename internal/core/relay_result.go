@@ -238,7 +238,7 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 		}
 		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle, %s stops it", cmd, r.Dest, oneLine(why), drop), false)
 	}
-	it := Item{Kind: KindChore, Session: y.Requester, CreatedAt: c.now(), Evidence: []string{"ym " + strings.Join(y.Args, " ")},
+	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{"ym " + strings.Join(y.Args, " ")},
 		Question: fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why),
 		Rec:      fmt.Sprintf("rerun %s once %s can take it", cmd, r.Dest)}
 	if len(y.Args) > 1 && y.Args[0] == "goal" && strings.HasPrefix(y.Args[1], "--") {

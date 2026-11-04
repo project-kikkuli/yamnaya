@@ -297,6 +297,7 @@ func fromJSON(host string, qualify func(string) string, it itemJSON) core.Item {
 
 	return core.Item{Dossier: dossier, Path: it.Path, Preparer: it.Preparer, Seq: it.Seq, Scope: qualify(it.Scope), ID: it.ID, Alias: it.Alias, Kind: it.Kind, Action: it.Action,
 		Question: it.Question, Rec: it.Rec, Options: it.Options, Assumption: it.Assumption, Evidence: it.Evidence, Tried: it.Tried,
+		DoLine: it.Do, Impact: it.Impact, Minutes: it.Minutes, Pin: it.Pin,
 		Blocks: it.Blocks, Session: it.Session, Harness: it.Harness, CreatedAt: parseTS(it.CreatedAt), State: it.State, Answer: it.Answer,
 		Reason: it.Reason, AnsweredAt: parseTS(it.AnsweredAt), Recipient: it.Recipient, Host: host, History: it.History}
 }

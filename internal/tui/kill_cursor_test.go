@@ -26,7 +26,7 @@ func TestAfterAKillTheCursorLandsOnTheNextRowAndKWorksAtOnce(t *testing.T) {
 				signals(c, false)
 				for _, s := range []string{"ghost", names[victim]} {
 					for q := range asks {
-						if _, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: fmt.Sprintf("%s ask %d?", s, q), Rec: "yes", Session: s}); err != nil {
+						if _, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, DoLine: "Do it", Question: fmt.Sprintf("%s ask %d?", s, q), Rec: "yes", Session: s}); err != nil {
 							t.Fatal(err)
 						}
 					}

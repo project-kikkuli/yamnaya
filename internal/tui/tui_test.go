@@ -109,7 +109,7 @@ func setup(t *testing.T) (Model, *core.Core, *host) {
 	c := &core.Core{Store: st, Harnesses: []core.Harness{harness{sessions}}, Hosts: []core.Host{h},
 		Procs: func() ([]proc.Proc, error) { return procs, nil }, StateDir: t.TempDir()}
 	for _, it := range []struct{ q, session string }{{"Ship it?", "lead"}, {"Rename the flag?", "twin"}} {
-		if _, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: it.q, Rec: "yes", Session: it.session}); err != nil {
+		if _, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, DoLine: "Do it", Question: it.q, Rec: "yes", Session: it.session}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -288,7 +288,7 @@ func TestEnterExpandsAnItemWhoseKeysActOnIt(t *testing.T) {
 func TestCursorStaysOnItsRowAcrossRefreshes(t *testing.T) {
 	m, c, _ := setup(t)
 	m = press(t, m, "down")
-	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindChore, Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
+	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindChore, DoLine: "Do it", Question: "Urgent", Session: "lead", Blocks: 5}); err != nil {
 		t.Fatal(err)
 	}
 	m = refresh(t, m)
@@ -534,7 +534,7 @@ func TestKillOnAnExitedMissionRowEndsEveryLaunchInIt(t *testing.T) {
 func TestItemsFromEndedSessionsRemainActionableInNeedsYou(t *testing.T) {
 	m, c, _ := setup(t)
 	for _, q := range []string{"Old question?", "Older question?"} {
-		if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: q, Session: "ended", Blocks: 9}); err != nil {
+		if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, DoLine: "Do it", Question: q, Session: "ended", Blocks: 9}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -632,7 +632,7 @@ func TestALongCrewKeepsTheHeaderAndSessionTitleOnScreen(t *testing.T) {
 
 func TestMissionItemsFromTwoProjectsShowTheirProject(t *testing.T) {
 	m, c, _ := setup(t)
-	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
+	if _, err := c.AddItem(core.Item{Rec: "r", Options: picks, Kind: core.KindDecision, DoLine: "Do it", Question: "Other repo?", Session: "lead", Scope: "/src/other/.git"}); err != nil {
 		t.Fatal(err)
 	}
 	m = press(t, refresh(t, m), "home", "down", "down", "enter", "enter")
@@ -836,7 +836,7 @@ var picks = []core.Option{{Label: "a", Effect: "does a"}, {Label: "b", Effect: "
 
 func TestAnAsksEvidenceShowsOnItsRowAndInFullWhenExpanded(t *testing.T) {
 	m, c, _ := setup(t)
-	if _, err := c.AddItem(core.Item{Kind: core.KindChore, Question: "Rotate the HSM key?", Rec: "tonight", Session: "lead", Blocks: 9,
+	if _, err := c.AddItem(core.Item{Kind: core.KindChore, DoLine: "Do it", Question: "Rotate the HSM key?", Rec: "tonight", Session: "lead", Blocks: 9,
 		Tried: "the API, which needs a human token", Evidence: []string{"https://ci.example/run/42"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -870,7 +870,7 @@ func TestAnUnpreparedAskIsMarkedOnItsRowAndWhenExpanded(t *testing.T) {
 	}
 	m = refresh(t, m)
 	m = to(t, m, func(r row) bool { return r.item != nil && r.item.Question == "Use v2 key ids?" })
-	want := "unprepared: missing a recommendation and two options with their effects"
+	want := "unprepared: missing a recommendation and a do-line and two options with their effects"
 	if v := m.View().Content; !strings.Contains(v, "Use v2 key ids?") || !strings.Contains(v, want) {
 		t.Fatalf("row does not mark the ask unprepared:\n%s", v)
 	}

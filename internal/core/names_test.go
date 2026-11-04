@@ -364,7 +364,7 @@ func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
 	}{
 		{"a manager's ask leads with its goal", func(t *testing.T, w *orgWorld) Item {
 			_, m := w.goal(t, "rotate the keys", "/repo/august")
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: m.Session, Recipient: Owner})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Question: "which?", Rec: "a", Options: picks, Session: m.Session, Recipient: Owner})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -373,7 +373,7 @@ func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
 		{"an agent's ask leads with the goal it works for", func(t *testing.T, w *orgWorld) Item {
 			_, m := w.goal(t, "rotate the keys", "/repo/august")
 			w.spawn("agent-1", m.Session)
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: "agent-1"})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Question: "which?", Rec: "a", Options: picks, Session: "agent-1"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -381,14 +381,14 @@ func TestAnItemLeadsWithItsGoalsNameAndItsKeyStillResolves(t *testing.T) {
 		}, "rotate-the-keys"},
 		{"a chief's ask leads with the chief, not its workspace", func(t *testing.T, w *orgWorld) Item {
 			c := w.chief(t, "arbitrator")
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: c.Session, Scope: "/state/chiefs/" + c.ID})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Question: "which?", Rec: "a", Options: picks, Session: c.Session, Scope: "/state/chiefs/" + c.ID})
 			if err != nil {
 				t.Fatal(err)
 			}
 			return it
 		}, "arbitrator"},
 		{"an ask with no goal leads with its project", func(t *testing.T, w *orgWorld) Item {
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: "loose", Scope: "/repo/august/.git"})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Question: "which?", Rec: "a", Options: picks, Session: "loose", Scope: "/repo/august/.git"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -468,7 +468,7 @@ func TestARenameReachesEveryItemFromThatGoalOrChiefWhoeverItWaitsOn(t *testing.T
 				asker = "agent-1"
 				w.spawn(asker, boss.Session)
 			}
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Question: "which?", Rec: "a", Options: picks, Session: asker, Recipient: Owner})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Question: "which?", Rec: "a", Options: picks, Session: asker, Recipient: Owner})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -808,7 +808,7 @@ func TestABoardsQueueRowsFollowARename(t *testing.T) {
 	w.core.Namer = func(string) string { return "before-name" }
 	g, m := w.goal(t, "anything", "/repo/august")
 	w.spawn("a1", m.Session)
-	if _, err := w.core.AddItem(Item{Kind: KindChore, Question: "rotate the key", Session: m.Session, Recipient: Owner, Rec: "r", Dossier: Dossier{Goal: g.ID}}); err != nil {
+	if _, err := w.core.AddItem(Item{Kind: KindChore, DoLine: "Do it", Question: "rotate the key", Session: m.Session, Recipient: Owner, Rec: "r", Dossier: Dossier{Goal: g.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	find := func() Need {

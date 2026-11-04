@@ -23,7 +23,7 @@ func TestOpeningAStoreRetiresTheWorkLayerAndTheHandoffClassifierOnce(t *testing.
 	fixtures := []fixture{{true, ItemOpen}, {true, ItemOpen}, {true, ItemAnswered}, {true, ItemDismissed}, {true, ItemSnoozed}, {false, ItemOpen}, {false, ItemAnswered}, {false, ItemSnoozed}}
 	var items []Item
 	for _, f := range fixtures {
-		it, err := s.AddItem(Item{Scope: "repo", Session: "lead", Kind: KindDecision, Question: "Ship it?"})
+		it, err := s.AddItem(Item{Scope: "repo", Session: "lead", Kind: KindDecision, DoLine: "Do it", Question: "Ship it?"})
 		if err != nil {
 			t.Fatal(err)
 		}

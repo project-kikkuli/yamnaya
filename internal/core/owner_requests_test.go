@@ -84,7 +84,7 @@ func TestEscalationRequiresAnOpenPreparedRequest(t *testing.T) {
 			w := newOrgWorld(t)
 			_, m := w.goal(t, "land", "/repo/platform")
 			w.spawn("writer", m.Session)
-			it, err := w.core.AddItem(Item{Kind: KindDecision, Session: "writer", Question: "approve?"})
+			it, err := w.core.AddItem(Item{Kind: KindDecision, DoLine: "Do it", Session: "writer", Question: "approve?"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +142,7 @@ func TestAnExplicitOwnerDestinationBypassesTheChief(t *testing.T) {
 	w := newOrgWorld(t)
 	_, m := w.goal(t, "land", "/repo/platform")
 	w.chief(t, "platform", m.ID)
-	it, err := w.core.AddOwnerItem(Item{Kind: KindDecision, Session: m.Session, Question: "choose direction", Rec: "a", Options: picks})
+	it, err := w.core.AddOwnerItem(Item{Kind: KindDecision, DoLine: "Do it", Session: m.Session, Question: "choose direction", Rec: "a", Options: picks})
 	if err != nil || it.Recipient != Owner || len(ownerItems(w.board(t))) != 1 {
 		t.Fatalf("explicit owner request was delegated: %+v, %v", it, err)
 	}

@@ -479,3 +479,56 @@ func TestAPageOffersNoActionOnATeammatesPullRequestAndGetDoesNothing(t *testing.
 		t.Fatalf("POST without a token answered %d", got)
 	}
 }
+
+func TestTheFormsOriginMustBeThisSitesHostAndPort(t *testing.T) {
+	for _, tc := range []struct {
+		name, public, host, origin string
+		want                       bool
+	}{
+		{"the address it reached", "http://127.0.0.1:7477/", "127.0.0.1:7477", "http://127.0.0.1:7477", true},
+		{"a tunnel's port, as the phone's browser reached it", "http://127.0.0.1:7477/", "localhost:9000", "http://localhost:9000", true},
+		{"a proxy keeping the host", "https://ym.example/ym/", "ym.example", "https://ym.example", true},
+		{"a proxy rewriting the host to the listener", "https://ym.example/ym/", "127.0.0.1:7477", "https://ym.example", true},
+		{"a proxy naming its port", "https://ym.example:8443/ym/", "127.0.0.1:7477", "https://ym.example:8443", true},
+		{"a host header with the default port", "https://ym.example/", "ym.example:443", "https://ym.example", true},
+		{"another port on this address", "http://127.0.0.1:7477/", "127.0.0.1:7477", "http://127.0.0.1:9999", false},
+		{"another port on the public host", "https://ym.example/", "127.0.0.1:7477", "https://ym.example:9999", false},
+		{"another scheme's default port on the public host", "https://ym.example/", "127.0.0.1:7477", "http://ym.example", false},
+		{"another site", "https://ym.example/", "ym.example", "https://evil.example", false},
+		{"no origin", "https://ym.example/", "ym.example", "", false},
+		{"an opaque origin", "https://ym.example/", "ym.example", "null", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/do/x", nil)
+			r.Host = tc.host
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			if got := (&briefSite{public: tc.public}).sameOrigin(r); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestARowActedOnReturnsToThePageWhenReopened(t *testing.T) {
+	w := newDoWorld(t)
+	id, token := w.action(t, "build the queue")
+	if got := w.post(t, id, token, w.srv.URL); got != http.StatusSeeOther {
+		t.Fatalf("POST answered %d", got)
+	}
+	if strings.Contains(w.page(t), "do/"+id) {
+		t.Fatal("the row acted on is still offered")
+	}
+	w.observe(t)
+	if strings.Contains(w.page(t), "do/"+id) {
+		t.Fatal("an answered row came back")
+	}
+	if _, err := w.c.Reopen(w.item.Key()); err != nil {
+		t.Fatal(err)
+	}
+	w.observe(t)
+	if !strings.Contains(w.page(t), "do/"+id) {
+		t.Fatal("a reopened row stays hidden")
+	}
+}

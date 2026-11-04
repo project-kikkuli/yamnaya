@@ -17,9 +17,9 @@ func TestAnAskBoundForTheOwnerMustBeReadyToDecide(t *testing.T) {
 		{name: "manager decision without rec", from: "manager", it: Item{Kind: KindDecision, Question: "q", Options: picks}, wantErr: true},
 		{name: "manager decision with one option", from: "manager", it: Item{Kind: KindDecision, Question: "q", Rec: "a", Options: picks[:1]}, wantErr: true},
 		{name: "manager decision option without effect", from: "manager", it: Item{Kind: KindDecision, Question: "q", Rec: "a", Options: []Option{{Label: "a"}, {Label: "b"}}}, wantErr: true},
-		{name: "manager decision ready", from: "manager", it: Item{Kind: KindDecision, Question: "q", Rec: "a", Options: picks}},
+		{name: "manager decision ready", from: "manager", it: Item{Kind: KindDecision, DoLine: "Do it", Question: "q", Rec: "a", Options: picks}},
 		{name: "manager default without rec", from: "manager", it: Item{Kind: KindDefault, Question: "q"}, wantErr: true},
-		{name: "manager chore needs no rec", from: "manager", it: Item{Kind: KindChore, Question: "review and merge #12"}},
+		{name: "manager chore needs no rec", from: "manager", it: Item{Kind: KindChore, DoLine: "Do it", Question: "review and merge #12"}},
 		{name: "manager go needs no rec", from: "manager", it: Item{Kind: KindGo, Question: "build?"}},
 		{name: "owner's own session decision without rec", from: "mine", it: Item{Kind: KindDecision, Question: "q", Options: picks}, wantErr: true},
 		{name: "agent's thin ask goes to its manager", from: "agent", it: Item{Kind: KindDecision, Question: "q"}},
@@ -62,7 +62,7 @@ func TestAnEscalationArrivesWithItsGoalPullRequestsAndActivity(t *testing.T) {
 	if err := w.core.Notice(w.board(t)); err != nil {
 		t.Fatal(err)
 	}
-	it, err := w.core.AddItem(Item{Session: m.Session, Harness: "claude", Kind: KindDecision, Question: "rotate in prod tonight?", Rec: "yes",
+	it, err := w.core.AddItem(Item{Session: m.Session, Harness: "claude", Kind: KindDecision, DoLine: "Do it", Question: "rotate in prod tonight?", Rec: "yes",
 		Options: picks, Tried: "staging rotation", Evidence: []string{"https://ci.example/run/42"}})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 		}
 	}
 	status(first, PRStatus{State: "OPEN", Title: "signer", Failed: 1})
-	one, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, Question: "rotate the HSM key by hand", Rec: "do it before noon"})
+	one, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, DoLine: "Do it", Question: "rotate the HSM key by hand", Rec: "do it before noon"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 	w.set("agent", func(s *Session) { s.PRs = []PR{{URL: first}, {URL: second}} })
 	status(first, PRStatus{State: "MERGED", Title: "signer", Passed: 2})
 	status(second, PRStatus{State: "OPEN", Title: "verifier", Failed: 1})
-	two, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, Question: "approve the prod window", Rec: "approve"})
+	two, err := w.core.AddItem(Item{Session: m.Session, Kind: KindChore, DoLine: "Do it", Question: "approve the prod window", Rec: "approve"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,11 +155,11 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 		wantMissing []string
 		dropped     bool
 	}{
-		{name: "thin decision", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}},
-		{name: "thin decision of a dropped goal", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "two options with their effects"}, dropped: true},
+		{name: "thin decision", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "a do-line", "two options with their effects"}},
+		{name: "thin decision of a dropped goal", it: Item{Kind: KindDecision, Question: "v2 key ids?"}, wantMissing: []string{"a recommendation", "a do-line", "two options with their effects"}, dropped: true},
 		{name: "default without rec", it: Item{Kind: KindDefault, Question: "v2 key ids by default?"}, wantMissing: []string{"a recommendation"}},
-		{name: "chore needs no rec", it: Item{Kind: KindChore, Question: "approve CHG-77"}},
-		{name: "ready decision", it: Item{Kind: KindDecision, Question: "v2 key ids?", Rec: "v2", Options: picks}},
+		{name: "chore needs no rec", it: Item{Kind: KindChore, DoLine: "Do it", Question: "approve CHG-77"}},
+		{name: "ready decision", it: Item{Kind: KindDecision, DoLine: "Do it", Question: "v2 key ids?", Rec: "v2", Options: picks}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -201,10 +201,10 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 			if !wantTold {
 				return
 			}
-			if _, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Rec: "v2"}); tc.it.Kind == KindDecision && !errors.Is(err, ErrNotReady) {
+			if _, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Do: "Use v2", Rec: "v2"}); tc.it.Kind == KindDecision && !errors.Is(err, ErrNotReady) {
 				t.Fatalf("a decision prepared without options: err %v, want it refused", err)
 			}
-			prepared, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Rec: "v2", Options: picks, Evidence: []string{"https://ci.example/run/7"}})
+			prepared, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Do: "Use v2", Rec: "v2", Options: picks, Evidence: []string{"https://ci.example/run/7"}})
 			if err != nil || len(Missing(prepared)) != 0 || prepared.Preparer != "" || !slices.Contains(prepared.Evidence, "https://ci.example/run/7") {
 				t.Fatalf("prepared = %+v, %v; want it ready with its evidence and no preparer left", prepared, err)
 			}

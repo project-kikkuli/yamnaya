@@ -258,7 +258,7 @@ func (c *Core) standing(b Board, n Node) string {
 // queue adds the owner's other duties to the needs list: stuck goals, pull requests ready to merge that no manager may merge,
 // whether a session on the board opened them or the owner's GitHub account wrote them anywhere,
 // review requests GitHub addresses to the owner personally, and document asks no goal claims.
-func (c *Core) queue(b *Board, o Org) error {
+func (c *Core) queue(b *Board, o Org, asks map[string][]Item) error {
 	dismissed, err := c.Store.queueDismissed()
 	if err != nil {
 		return err
@@ -409,6 +409,7 @@ func (c *Core) queue(b *Board, o Org) error {
 			}
 		}
 	}
+	extra, b.Later = attachMergeAsks(extra, b.Later, asks, statuses, dismissed)
 	b.Needs = append(extra, b.Needs...)
 	return nil
 }

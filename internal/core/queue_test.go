@@ -25,6 +25,12 @@ func ownedPR(n int) Need {
 	return Need{PR: &PR{URL: fmt.Sprintf("https://github.com/acme/repo/pull/%d", n), Repo: "acme/repo", Number: n, Status: &st}}
 }
 
+func oldPR(n int) Need {
+	need := ownedPR(n)
+	need.PR.Status.Merge.Opened = queueNow.Add(-48 * time.Hour)
+	return need
+}
+
 func teammatePR(n int) Need {
 	need := ownedPR(n)
 	need.PR.Status.Merge.Author = "teammate"
@@ -53,6 +59,8 @@ func TestRankOrdersEveryKindOfRowByOneScore(t *testing.T) {
 			queueItem("three", func(it *Item) { it.Blocks = 3 }),
 		}, "three,prod"},
 		{"a merge-ready pull request beats a plain decision", []Need{queueItem("plain", nil), ownedPR(1)}, "repo#1,plain"},
+		{"prod beats a plain merge row at its highest", []Need{oldPR(1), queueItem("prod", func(it *Item) { it.Impact = ImpactProd })}, "prod,repo#1"},
+		{"clinical beats a plain merge row at its highest", []Need{oldPR(1), queueItem("clinical", func(it *Item) { it.Impact = ImpactClinical })}, "clinical,repo#1"},
 		{"age counts by the hour", []Need{
 			queueItem("new", nil),
 			queueItem("old", func(it *Item) { it.CreatedAt = queueNow.Add(-5 * time.Hour) }),
@@ -182,6 +190,9 @@ func TestARowIsOneLineAndGainsDimFactsOnlyWhenWide(t *testing.T) {
 				if ansi.StringWidth(line) != QueueWidth || strings.Contains(line, "\n") || side != "" {
 					t.Fatalf("at 40 columns %q side %q", line, side)
 				}
+				if do := tc.need.DoLine(); len(do) <= MaxDoLine && !strings.Contains(line, do) {
+					t.Fatalf("a do-line that fits was cut: %q", line)
+				}
 				wide, side := RowLine(tc.need, rankLabel, 120, queueNow)
 				if wide != line || side == "" || ansi.StringWidth(wide+side) > 120 {
 					t.Fatalf("at 120 columns %q side %q", wide, side)
@@ -216,6 +227,16 @@ func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testi
 			}
 			return it.Qualified()
 		}, 25 * time.Hour},
+		{"an item whose session has no live project", func(t *testing.T, w *orgWorld) string {
+			it, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "gone", Rec: "x", Session: "gone-session"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.core.SnoozeFor(it.Key(), "1h"); err != nil {
+				t.Fatal(err)
+			}
+			return it.Qualified()
+		}, time.Hour + time.Minute},
 		{"an item until reopened stays", func(t *testing.T, w *orgWorld) string {
 			it := ownerAsk(t, w, "until reopened")
 			if _, err := w.core.Snooze(it.Key()); err != nil {

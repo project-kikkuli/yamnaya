@@ -239,7 +239,7 @@ func TestAMachineItemFiledOnAHostWithARemoteChiefWaitsOnTheOwnerEverywhere(t *te
 	if err := f.b.core.Attach(mgr.ID, RemoteKey("a", chief.ID)); err != nil {
 		t.Fatal(err)
 	}
-	it, err := f.b.core.AddOwnerItem(Item{Kind: KindChore, Session: "ym", Question: "disk low", Rec: "remove something"})
+	it, err := f.b.core.AddOwnerItem(Item{Kind: KindChore, DoLine: "Do it", Session: "ym", Question: "disk low", Rec: "remove something"})
 	if err != nil {
 		t.Fatal(err)
 	}

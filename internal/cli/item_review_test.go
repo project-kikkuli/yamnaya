@@ -19,7 +19,7 @@ func TestExplicitOwnerAndReviewCommandsKeepTheirRequests(t *testing.T) {
 		fail bool
 	}{
 		{"review", []string{"review", "https://claude.ai/artifact/plan", "--question", "review direction", "--rec", "approve"}, core.KindReview, false},
-		{"owner decision", []string{"add", "--to", "owner", "--kind", "decision", "--question", "choose direction", "--rec", "a", "--option", "a=adopt", "--option", "b=revise"}, core.KindDecision, false},
+		{"owner decision", []string{"add", "--to", "owner", "--do", "Do it", "--kind", "decision", "--question", "choose direction", "--rec", "a", "--option", "a=adopt", "--option", "b=revise"}, core.KindDecision, false},
 		{"unsupported destination", []string{"add", "--to", "nobody", "--kind", "go", "--question", "ship?"}, "", true},
 		{"review lacks document", []string{"review", " ", "--question", "review", "--rec", "approve"}, "", true},
 		{"review lacks recommendation", []string{"review", "https://claude.ai/artifact/plan", "--question", "review"}, "", true},

@@ -21,7 +21,7 @@ func TestChiefsCoordinateOutsideTheirReportsRepositories(t *testing.T) {
 			if chief.Directory != expected || launch.Directory != expected || launch.Repo != reference {
 				t.Fatalf("chief launch: %+v, %+v", chief, launch)
 			}
-			item, err := w.core.AddOwnerItem(Item{Kind: KindChore, Session: chief.Session, Question: "review cross-repo plan"})
+			item, err := w.core.AddOwnerItem(Item{Kind: KindChore, DoLine: "Do it", Session: chief.Session, Question: "review cross-repo plan"})
 			if err != nil || ScopeName(item.Scope) != chief.ID {
 				t.Fatalf("chief acquired a repo identity: %+v, %v", item, err)
 			}

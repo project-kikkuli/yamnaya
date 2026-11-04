@@ -223,6 +223,9 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 	if _, err = c.RefreshPRs(b); err != nil {
 		failures = append(failures, err)
 	}
+	if err = c.CloseMergedAsks(b); err != nil {
+		failures = append(failures, err)
+	}
 	if err = c.RouteDocs(b); err != nil {
 		failures = append(failures, err)
 	}

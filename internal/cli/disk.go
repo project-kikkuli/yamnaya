@@ -364,7 +364,7 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	if len(blocked) > 0 {
 		outcome = "ym could not run every step"
 	}
-	return core.Item{Kind: core.KindChore, Session: diskItemSession,
+	return core.Item{Kind: core.KindChore, DoLine: "Free disk on this host", Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
 		Rec:      fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work; new ym slot admissions wait below %.0f%% free.", largest, disk.Tier3Free*100),
 		Evidence: []string{log},

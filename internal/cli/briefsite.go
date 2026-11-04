@@ -29,9 +29,9 @@ type briefSite struct {
 	standing map[string]string
 	// board is the latest board; the queue reads it, so a page load does no scan of its own.
 	board *core.Board
-	// secret is the token this serve puts in its forms; acted holds the rows acted on, which stay off the page until a new board drops them.
+	// secret is the token this serve puts in its forms; acted holds when each row was acted on, which keeps it off the page until a later read shows how it stands.
 	secret string
-	acted  map[string]bool
+	acted  map[string]time.Time
 	// public is the URL a proxy publishes the site at, as core.BriefsURL gives it; its path prefixes every link, and its host is
 	// answered along with addresses.
 	public string
@@ -49,9 +49,13 @@ func (s *briefSite) observe(b core.Board) {
 	for _, n := range b.Tree {
 		walk(n)
 	}
+	shown, err := s.core.WithHostRows(b)
+	if err != nil {
+		shown = b
+	}
 	s.mu.Lock()
 	s.standing = st
-	s.board = &b
+	s.board = &shown
 	s.mu.Unlock()
 }
 
@@ -201,7 +205,11 @@ func (s *briefSite) latest() (core.Board, error) {
 	if b != nil {
 		return *b, nil
 	}
-	return s.core.Board()
+	board, err := s.core.Board()
+	if err != nil {
+		return board, err
+	}
+	return s.core.WithHostRows(board)
 }
 
 // token is this serve's form token, made on first use.
@@ -218,11 +226,26 @@ func (s *briefSite) token() (string, error) {
 	return s.secret, nil
 }
 
-// unacted drops the rows an action already took; the board shows it a cycle later.
-func (s *briefSite) unacted(ns []core.Need) []core.Need {
+// unacted drops the rows an action took until a read made since shows how they stand, so a row reopened later comes back.
+func (s *briefSite) unacted(ns []core.Need, at time.Time) []core.Need {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.DeleteFunc(slices.Clone(ns), func(n core.Need) bool { return s.acted[n.RowID()] })
+	return slices.DeleteFunc(slices.Clone(ns), func(n core.Need) bool {
+		id := n.RowID()
+		when, ok := s.acted[id]
+		if !ok {
+			return false
+		}
+		read := at
+		if !n.Read.IsZero() {
+			read = n.Read
+		}
+		if read.After(when) {
+			delete(s.acted, id)
+			return false
+		}
+		return true
+	})
 }
 
 func (s *briefSite) queue() (queueView, error) {
@@ -234,7 +257,7 @@ func (s *briefSite) queue() (queueView, error) {
 	if err != nil {
 		return queueView{}, err
 	}
-	now, needs, later := time.Now(), s.unacted(b.Needs), s.unacted(b.Later)
+	now, needs, later := time.Now(), s.unacted(b.Needs, b.At), s.unacted(b.Later, b.At)
 	v := queueView{Header: core.QueueHeader(needs, len(later))}
 	for i, label := range core.RankLabels(len(needs)) {
 		v.Rows = append(v.Rows, queueRow(needs[i], label, token, now))
@@ -245,13 +268,31 @@ func (s *briefSite) queue() (queueView, error) {
 	return v, nil
 }
 
-// sameOrigin reports whether the browser says the form came from this site.
+// sameOrigin reports whether the browser says the form came from this site: the address the request reached, or the public URL a
+// proxy publishes it at, port included.
 func (s *briefSite) sameOrigin(r *http.Request) bool {
 	u, err := url.Parse(r.Header.Get("Origin"))
 	if err != nil || u.Host == "" {
 		return false
 	}
-	return strings.EqualFold(u.Host, r.Host) || s.publicHost(u.Host)
+	origin := hostPort(u.Scheme, u.Host)
+	if origin == hostPort(u.Scheme, r.Host) {
+		return true
+	}
+	public, err := url.Parse(s.public)
+	return err == nil && public.Host != "" && origin == hostPort(public.Scheme, public.Host)
+}
+
+// hostPort is host with the port its scheme implies when it names none.
+func hostPort(scheme, host string) string {
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return strings.ToLower(host)
+	}
+	port := "80"
+	if scheme == "https" {
+		port = "443"
+	}
+	return strings.ToLower(net.JoinHostPort(strings.Trim(host, "[]"), port))
 }
 
 // serveDo carries out what the row named id says, through the path the board's check mark takes. id binds the row's words and head,
@@ -277,7 +318,7 @@ func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var need *core.Need
-	for _, ns := range [][]core.Need{s.unacted(b.Needs), s.unacted(b.Later)} {
+	for _, ns := range [][]core.Need{s.unacted(b.Needs, b.At), s.unacted(b.Later, b.At)} {
 		for i := range ns {
 			if ns[i].RowID() == id && ns[i].Accept() != core.CheckNone {
 				need = &ns[i]
@@ -294,9 +335,9 @@ func (s *briefSite) serveDo(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	s.mu.Lock()
 	if s.acted == nil {
-		s.acted = map[string]bool{}
+		s.acted = map[string]time.Time{}
 	}
-	s.acted[id] = true
+	s.acted[id] = time.Now()
 	s.mu.Unlock()
 	http.Redirect(w, r, s.prefix()+"/", http.StatusSeeOther)
 }
@@ -576,7 +617,7 @@ const siteStyle = `<meta charset="utf-8"><meta name="viewport" content="width=de
 <style>
 :root{--bg:#fbfaf7;--fg:#1f2328;--dim:#6a737d;--line:#e3e1db;--warn:#9a6700;--bad:#cf222e;--ok:#1a7f37;--card:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e6e6e6;--dim:#8b949e;--line:#2d3139;--warn:#d29922;--bad:#f85149;--ok:#3fb950;--card:#1b1e23}}
-body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0 auto;max-width:880px;padding:24px 16px}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0 auto;max-width:880px;padding:24px 16px;overflow-wrap:anywhere}
 a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacing:.04em;color:var(--dim);margin:20px 0 4px}
 .meta{color:var(--dim);font-size:13px}.tag{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;margin-right:4px}
 .stale,.unadopted,.quiet{color:var(--warn);border-color:var(--warn)}.stuck,.down{color:var(--bad);border-color:var(--bad)}.done,.fresh{color:var(--ok);border-color:var(--ok)}
@@ -584,7 +625,7 @@ a{color:inherit}h1{font-size:22px;margin:0 0 4px}h2{font-size:13px;letter-spacin
 .sec{white-space:pre-wrap;margin:0}.plan{white-space:pre-wrap;border-left:3px solid var(--line);padding-left:12px}
 .copy{user-select:none;-webkit-user-select:none;font-size:12px;font-weight:normal;letter-spacing:0;color:var(--dim);background:none;border:1px solid var(--line);border-radius:6px;padding:0 8px;margin-left:8px;cursor:pointer;vertical-align:middle}
 .copy:hover{color:var(--fg)}
-.q{font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px}.q .line{white-space:pre}.q summary{list-style:none;cursor:pointer;white-space:pre;overflow:hidden}.q summary::-webkit-details-marker{display:none}
+.q{font:min(14px,calc((100vw - 32px)/24.6))/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:4px 0 16px;overflow-wrap:normal}.q .line{white-space:pre}.q summary{list-style:none;cursor:pointer;white-space:pre;overflow:hidden}.q summary::-webkit-details-marker{display:none}
 .q .side{display:none;color:var(--dim)}@media (min-width:800px){.q .side{display:inline}}.q .open{border-left:3px solid var(--line);padding-left:8px;margin:2px 0 8px;color:var(--dim);white-space:normal}.q .open div{margin:2px 0}
 .q .check{font:inherit;line-height:inherit;background:none;border:0;color:var(--ok);padding:0 8px;margin:0 -8px 0 0;cursor:pointer}.q .act{font:inherit;color:var(--ok);background:none;border:1px solid var(--ok);border-radius:6px;padding:2px 10px;margin:4px 0;cursor:pointer}
 ul{padding-left:18px}li{margin:6px 0}

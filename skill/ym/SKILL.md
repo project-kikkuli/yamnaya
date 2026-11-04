@@ -48,8 +48,9 @@ ym item add --kind decision|default|chore|go --question "<one line>" \
 - `chore`: an action only a human can take (login, approval, payment).
 - `go`: you wait on the owner's go-ahead to build; see above.
 - `--blocks`: how many pieces of your work wait on the answer.
-- `--do`: the words of the owner's queue row, stating the rec as an action ("fix QA-51 in qa-hub"). The check mark on a decision does what these words say, by answering with `--rec`, so a decision without `--do` shows the question cut to fit and no check mark. `ym item prepare` takes `--do`, `--impact` and `--minutes` too.
-- `--impact`: `prod` or `clinical` puts the row at the head of the queue; set it when that is true. `--minutes`: what the owner's part takes, when the kind's default (go 1, decision 3) is wrong.
+- `--do`: the words of the owner's queue row, stating the rec as an action ("fix QA-51 in qa-hub"). The check mark on a decision does what these words say, by answering with `--rec`, and a decision or chore bound for the owner without `--do` is refused, the same way a decision without `--rec` is. `ym item prepare` takes `--do`, `--impact` and `--minutes` too.
+- A chore whose question opens with "Merge" or "Review and merge" and whose `--evidence` links one pull request is that pull request's row, never a second one: it shows `mrg` with a check mark when the owner can merge it, waits in `later` with the reason when not, and closes itself when it merges.
+- `--impact`: `prod` or `clinical` adds 50 to the row's score and marks it `!`, which beats any plain merge row (at most 49), though a row blocking enough pieces can still outrank it and a pin overrides the score. Set it only when true. `--minutes`: what the owner's part takes, when the kind's default (go 1, decision 3) is wrong.
 - A manager or chief can pin a row with `ym item rank '<#key>' top|up|down`; the owner's own rank or snooze stands over it.
 
 Decision and default items always get `--rec`, options with their effects, and `--assumption`; go items take `--question`, `--rec` and `--blocks` only. Cite what the call rests on with one `--evidence` per pull request, CI run, commit or file, and say what you already tried with `--tried`.

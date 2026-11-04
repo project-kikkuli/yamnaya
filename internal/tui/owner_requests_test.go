@@ -74,7 +74,7 @@ func TestAnOlderOwnerRequestOpensItsManagersCurrentConversation(t *testing.T) {
 			if err := c.Store.SaveManager(manager); err != nil {
 				t.Fatal(err)
 			}
-			it, err := c.AddOwnerItem(core.Item{Kind: core.KindChore, Session: manager.Session, Harness: "claude", Question: "approve publication"})
+			it, err := c.AddOwnerItem(core.Item{Kind: core.KindChore, DoLine: "Do it", Session: manager.Session, Harness: "claude", Question: "approve publication"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +93,7 @@ func TestAnOlderOwnerRequestOpensItsManagersCurrentConversation(t *testing.T) {
 
 func TestManagedRequestsNameTheirSourceRepositoryAndGoalEvenWhenAlone(t *testing.T) {
 	m, c, _ := setup(t)
-	it, err := c.AddOwnerItem(core.Item{Kind: core.KindChore, Session: "writer", Scope: "/src/vibe-apps/.git", Question: "approve workplane launch"})
+	it, err := c.AddOwnerItem(core.Item{Kind: core.KindChore, DoLine: "Do it", Session: "writer", Scope: "/src/vibe-apps/.git", Question: "approve workplane launch"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,14 +114,14 @@ func TestConsolidatingACopyFromTheTUIKeepsTheOriginalRequest(t *testing.T) {
 	for _, detail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "list", true: "detail"}[detail], func(t *testing.T) {
 			m, c, _ := setup(t)
-			source, err := c.AddOwnerItem(core.Item{Scope: "/src/vibe-apps/.git", Session: "original-writer", Kind: core.KindChore, Question: "review workplanes"})
+			source, err := c.AddOwnerItem(core.Item{Scope: "/src/vibe-apps/.git", Session: "original-writer", Kind: core.KindChore, DoLine: "Do it", Question: "review workplanes"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := c.Store.Transition(source.Key(), core.ItemAnswered, "refiled by chief"); err != nil {
 				t.Fatal(err)
 			}
-			copyItem, err := c.AddOwnerItem(core.Item{Scope: "/src/augur-capture/.git", Session: "chief", Kind: core.KindChore, Question: "refiled workplanes"})
+			copyItem, err := c.AddOwnerItem(core.Item{Scope: "/src/augur-capture/.git", Session: "chief", Kind: core.KindChore, DoLine: "Do it", Question: "refiled workplanes"})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -955,7 +955,7 @@ func TestAQueueRowWithoutADoLineLeadsWithTheGoalsNameAndAKeyNeverLeads(t *testin
 	} {
 		t.Run(strconv.Itoa(tc.width)+tc.do, func(t *testing.T) {
 			m, c, ms := goalSetup(t, "rotate the signing keys")
-			it, err := c.AddItem(core.Item{Options: picks, Kind: core.KindDecision, Question: "which rotation?\n\n" + strings.Repeat("long detail ", 40), Rec: "a", DoLine: tc.do, Session: ms[0].Session, Recipient: core.Owner})
+			it, err := c.Store.AddItem(core.Item{Dossier: core.Dossier{Goal: ms[0].GoalID}, Options: picks, Kind: core.KindDecision, Question: "which rotation?\n\n" + strings.Repeat("long detail ", 40), Rec: "a", DoLine: tc.do, Session: ms[0].Session, Recipient: core.Owner})
 			if err != nil {
 				t.Fatal(err)
 			}

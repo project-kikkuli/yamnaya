@@ -31,7 +31,7 @@ func TestItemActionUpgradeRetainsOwnerAnswersAndPersistsChatRequests(t *testing.
 	if err != nil || old.Answer != it.Answer || old.State != ItemAnswered || old.Action != "" {
 		t.Fatalf("legacy owner record changed: %+v %v", old, err)
 	}
-	chat, err := s.AddItem(Item{Scope: "repo", Session: "lead", Harness: "codex", Kind: KindChore, Action: "chat", Question: "Enter the native login code"})
+	chat, err := s.AddItem(Item{Scope: "repo", Session: "lead", Harness: "codex", Kind: KindChore, DoLine: "Do it", Action: "chat", Question: "Enter the native login code"})
 	if err != nil {
 		t.Fatal(err)
 	}

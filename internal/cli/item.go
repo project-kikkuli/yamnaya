@@ -144,6 +144,9 @@ func itemQueueCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
+			if b, err = e.core.WithHostRows(b); err != nil {
+				return err
+			}
 			w := cmd.OutOrStdout()
 			fmt.Fprintln(w, core.QueueHeader(b.Needs, len(b.Later)))
 			for i, label := range core.RankLabels(len(b.Needs)) {

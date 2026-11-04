@@ -71,7 +71,7 @@ func TestIdleSessionWhoseLastReplyAsksIsListedUnlessSomethingElseCoversIt(t *tes
 			tc.s.ID = "s1"
 			w.claude.sessions[10] = tc.s
 			if tc.item {
-				if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "Ship it now?", Session: "s1"}); err != nil {
+				if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, DoLine: "Do it", Question: "Ship it now?", Session: "s1"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -102,7 +102,7 @@ func TestWaitingSessionsStayOffTheQueueLongestWaitingFirst(t *testing.T) {
 	w.claude.sessions[30] = Session{ID: "early", Status: Idle, Since: at, Facts: Facts{Result: asking}}
 	w.run(40, 1, "/dev/t4", "claude", "filer", 0)
 	w.claude.sessions[40] = Session{ID: "filer", Status: Busy}
-	if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, Question: "Pick a name?", Session: "filer"}); err != nil {
+	if _, err := w.core.AddItem(Item{Rec: "r", Options: picks, Kind: KindDecision, DoLine: "Do it", Question: "Pick a name?", Session: "filer"}); err != nil {
 		t.Fatal(err)
 	}
 	b := w.board(t)

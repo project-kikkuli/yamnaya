@@ -223,6 +223,14 @@ type Need struct {
 	Mark QueueMark
 	// Name is the goal or chief the row comes from, by the name the org has now.
 	Name string
+	// MergeAsks are the items asking the owner to merge PR; merging closes them, and they rank its row.
+	MergeAsks []Item
+	// HeldPR is the pull request an item row asks to merge, Held why the owner cannot merge it now.
+	HeldPR *PR
+	Held   string
+	// Read is when another host's snapshot showed this row, zero for a row of this host; NoAct is a row whose host this one cannot reach.
+	Read  time.Time
+	NoAct bool
 }
 
 // Repo is every mission whose root session works in one repository, across all its worktrees.
@@ -634,12 +642,18 @@ func (c *Core) Board() (Board, error) {
 	}
 	b.Repos = repos(b.Projects)
 	b.Needs, b.Later = needs(b)
+	statuses, err := c.Store.PRStatuses()
+	if err != nil {
+		return b, err
+	}
+	var asks map[string][]Item
+	b.Needs, b.Later, asks = foldMergeAsks(b.Needs, b.Later, statuses, &b)
 	if b.Waiting, err = c.waiting(b, b.Needs); err != nil {
 		return b, err
 	}
 	b.Waiting = append(b.Waiting, b.remoteWaiting()...)
 	b.Needs = collapse(b.Needs, b.Org, b)
-	if err := c.queue(&b, b.Org); err != nil {
+	if err := c.queue(&b, b.Org, asks); err != nil {
 		return b, err
 	}
 	if err := c.foldLater(&b); err != nil {
@@ -1018,7 +1032,7 @@ func group(sessions []Live, items []Item, parents map[string]string, lin Lineage
 	}
 	for _, it := range items {
 		key := projectOn(it.Host, it.Session, parents, lin)
-		if it.State == ItemOpen || byKey[sessionOn(it.Host, key)] != nil {
+		if it.State == ItemOpen || it.State == ItemSnoozed || byKey[sessionOn(it.Host, key)] != nil {
 			p := get(it.Host, key)
 			p.Items = append(p.Items, it)
 		}

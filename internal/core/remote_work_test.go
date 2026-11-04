@@ -59,7 +59,7 @@ func TestSandboxedItemRoutingUsesPersistedRemoteOwnership(t *testing.T) {
 				}
 			}
 			f.b.core.Procs = func() ([]proc.Proc, error) { return nil, errors.New("exec: ps: operation not permitted") }
-			it, err := f.b.core.AddItem(Item{Scope: "/repo/app/.git", Session: session, Kind: KindDecision, Question: "choose work", Rec: "a", Options: picks})
+			it, err := f.b.core.AddItem(Item{Scope: "/repo/app/.git", Session: session, Kind: KindDecision, DoLine: "Do it", Question: "choose work", Rec: "a", Options: picks})
 			if err != nil {
 				t.Fatal(err)
 			}

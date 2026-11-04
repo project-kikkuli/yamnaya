@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -327,6 +329,7 @@ const (
 // is answered; a pull request merges only when the owner's account wrote it.
 func (n Need) Check() Check {
 	switch {
+	case n.NoAct:
 	case n.PR != nil:
 		if n.mergeable() {
 			return CheckMerge
@@ -351,6 +354,9 @@ func (n Need) mergeable() bool {
 // Accept is what the row's accept key does once the row is open and shows the rec: the check mark, or answering with a rec the
 // closed row did not state.
 func (n Need) Accept() Check {
+	if n.NoAct {
+		return CheckNone
+	}
 	if c := n.Check(); c != CheckNone {
 		return c
 	}
@@ -377,7 +383,14 @@ func (c *Core) DoCheck(b Board, n Need) (string, error) {
 		if err := m.Merge(n.PR.URL, n.PR.Status.Merge.OID); err != nil {
 			return "", err
 		}
-		return "merged " + n.PR.URL, c.Store.DismissQueue(n.Key())
+		st := *n.PR.Status
+		st.State, st.Fetched = "MERGED", c.now()
+		errs := []error{c.Store.DismissQueue(n.Key()), c.Store.SavePRStatus(n.PR.URL, st)}
+		for _, a := range n.MergeAsks {
+			_, _, err := c.Dismiss(b, a.Key(), "merged from the owner's queue")
+			errs = append(errs, err)
+		}
+		return "merged " + n.PR.URL, errors.Join(errs...)
 	}
 	return "", fmt.Errorf("%s has nothing to accept; open it", n.ID())
 }
@@ -411,6 +424,14 @@ func (n Need) mark() QueueMark {
 	if n.Item != nil {
 		return QueueMark{Pin: n.Item.Pin, Owner: n.Item.PinOwner, Until: n.Item.SnoozeUntil}
 	}
+	if n.Mark.Pin == 0 {
+		for _, a := range n.MergeAsks {
+			if a.Pin != 0 {
+				n.Mark.Pin, n.Mark.Owner = a.Pin, a.PinOwner
+				break
+			}
+		}
+	}
 	return n.Mark
 }
 
@@ -432,7 +453,8 @@ func (n Need) tier() int {
 
 // Urgent reports whether the row touches production or clinical work.
 func (n Need) Urgent() bool {
-	return n.Item != nil && (n.Item.Impact == ImpactProd || n.Item.Impact == ImpactClinical)
+	urgent := func(it Item) bool { return it.Impact == ImpactProd || it.Impact == ImpactClinical }
+	return n.Item != nil && urgent(*n.Item) || slices.ContainsFunc(n.MergeAsks, urgent)
 }
 
 func (n Need) blocked() int {
@@ -446,6 +468,12 @@ func (n Need) blocked() int {
 			return total
 		}
 		return n.Item.Blocks
+	case n.PR != nil:
+		total := 0
+		for _, a := range n.MergeAsks {
+			total += a.Blocks
+		}
+		return total
 	case n.Goal != nil, n.Steer != nil, n.Relay != nil, n.Session != nil:
 		return 1
 	}
@@ -489,6 +517,10 @@ func reviewMinutes(additions, deletions int) int {
 // Minutes is the row's time to do, zero when nothing honest can be said.
 func (n Need) Minutes() int {
 	switch {
+	case n.HeldPR != nil && n.HeldPR.Status != nil && n.HeldPR.Status.Foreign():
+		return reviewMinutes(n.HeldPR.Status.Merge.Additions, n.HeldPR.Status.Merge.Deletions)
+	case n.HeldPR != nil && n.Item.Minutes == 0:
+		return 1
 	case n.Item != nil:
 		if len(n.Asks) > 1 {
 			total := 0
@@ -529,7 +561,7 @@ func (n Need) Minutes() int {
 func (n Need) Score(now time.Time) int {
 	impact := 20 * n.blocked()
 	if n.Urgent() {
-		impact += 40
+		impact += 50
 	}
 	if n.mergeable() {
 		impact += 15
@@ -629,6 +661,11 @@ func (n Need) nameIn(o Org) string {
 // Verb is the row's three-letter action.
 func (n Need) Verb() string {
 	switch {
+	case n.HeldPR != nil:
+		if n.HeldPR.Status != nil && n.HeldPR.Status.Foreign() {
+			return "rev"
+		}
+		return "mrg"
 	case n.Item != nil:
 		switch {
 		case n.Item.Action == "chat":
@@ -669,6 +706,10 @@ func prLabel(pr PR, title string) string {
 // DoLine is the row's words: what its filer wrote, else the goal's name and the question, cut to fit when there is no name.
 func (n Need) DoLine() string {
 	switch {
+	case n.HeldPR != nil && n.Held != "":
+		return fmt.Sprintf("%s#%d %s", prRepoName(*n.HeldPR), n.HeldPR.Number, n.Held)
+	case n.HeldPR != nil && n.HeldPR.Status != nil:
+		return prLabel(*n.HeldPR, n.HeldPR.Status.Title)
 	case n.Item != nil:
 		if n.Item.DoLine != "" {
 			return n.Item.DoLine
@@ -709,6 +750,9 @@ func (n Need) Why() []string {
 	switch {
 	case n.Item != nil:
 		out := []string{oneLine(n.Item.Question)}
+		if n.HeldPR != nil {
+			out = append(out, n.HeldPR.URL)
+		}
 		if more := len(n.Asks) - 1; more > 0 {
 			out = append(out, fmt.Sprintf("+%d more asks of this session", more))
 		}
@@ -725,7 +769,11 @@ func (n Need) Why() []string {
 		if st.Merge.Additions+st.Merge.Deletions > 0 {
 			line += fmt.Sprintf(" · +%d/-%d", st.Merge.Additions, st.Merge.Deletions)
 		}
-		return []string{line, n.PR.URL}
+		out := []string{line, n.PR.URL}
+		for _, a := range n.MergeAsks {
+			out = append(out, "merging closes "+a.Ref()+": "+oneLine(a.Question))
+		}
+		return out
 	case n.Review != nil:
 		var bits []string
 		if n.Review.Title != "" {
@@ -847,11 +895,12 @@ func RowLine(n Need, rank string, width int, now time.Time) (line, side string) 
 	if n.Check() != CheckNone {
 		mark = "✓"
 	}
-	head := fmt.Sprintf("%s %-3s %-3s ", rank, n.Verb(), QueueMinutes(n.Minutes()))
-	do := n.DoLine()
+	flag := " "
 	if n.Urgent() {
-		do = "!" + do
+		flag = "!"
 	}
+	head := fmt.Sprintf("%s %-3s %-3s%s", rank, n.Verb(), QueueMinutes(n.Minutes()), flag)
+	do := n.DoLine()
 	room := max(1, main-ansi.StringWidth(head)-1)
 	do = ansi.Truncate(do, room, "…")
 	line = head + do + strings.Repeat(" ", max(0, room-ansi.StringWidth(do))) + mark

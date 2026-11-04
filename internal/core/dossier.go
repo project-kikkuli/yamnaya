@@ -86,11 +86,14 @@ const (
 // ErrNotReady rejects an ask that would reach the owner without what the owner needs to decide it.
 var ErrNotReady = errors.New("not ready for the owner")
 
-// Missing names what an owner request lacks: its recommendation, decision options, or review document.
+// Missing names what an owner request lacks: its do-line, recommendation, decision options, or review document.
 func Missing(it Item) []string {
 	var out []string
 	if (it.Kind == KindDecision || it.Kind == KindDefault || it.Kind == KindReview) && strings.TrimSpace(it.Rec) == "" {
 		out = append(out, "a recommendation")
+	}
+	if (it.Kind == KindDecision || it.Kind == KindChore) && strings.TrimSpace(it.DoLine) == "" {
+		out = append(out, "a do-line")
 	}
 	if it.Kind == KindReview && (len(it.Evidence) == 0 || strings.TrimSpace(it.Evidence[0]) == "") {
 		out = append(out, "a document link or path")
@@ -119,6 +122,7 @@ func Unprepared(it Item) []string {
 }
 
 var missingFlag = map[string]string{
+	"a do-line":                      "--do \"<imperative, at most 28 characters>\"",
 	"a recommendation":               "--rec \"<what you recommend and why>\"",
 	"two options with their effects": "at least two --option \"<label>=<what happens if picked>\"",
 	"a document link or path":        "--evidence \"<document link or path>\"",
