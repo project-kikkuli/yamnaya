@@ -272,3 +272,41 @@ func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
 		})
 	}
 }
+
+func TestACacheAPassCouldNotFreeShowsInTheStateAndTheOwnerItem(t *testing.T) {
+	dir := t.TempDir()
+	c := diskCore(t, dir)
+	free := 0.08
+	blocked := true
+	env := disk.Env{Paths: []string{"/x"}, Stat: usageAt(&free), Now: time.Now}
+	step := disk.Step{Name: "uv clean", Tier: 1, Run: func(context.Context) disk.Report {
+		if !blocked {
+			return disk.Report{Did: "cleaned"}
+		}
+		return disk.Report{Skipped: "another uv held the cache lock throughout", Blocked: true}
+	}}
+	r := reclaimer{core: c, dir: dir, env: env, steps: []disk.Step{step}, log: func(string, string) error { return nil },
+		measure: func(disk.Usage) ([]disk.Consumer, bool) { return nil, true }}
+	if err := r.run(context.Background(), 0, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	st := readDiskState(dir)
+	if len(st.Blocked) != 1 || !strings.Contains(st.Blocked[0], "uv clean") {
+		t.Fatalf("state %+v", st)
+	}
+	items := ownerItems(t, c)
+	if len(items) != 1 {
+		t.Fatalf("items %+v", items)
+	}
+	it, err := c.Store.Item(items[0].Key())
+	if err != nil || !strings.Contains(it.Rec, "uv clean") {
+		t.Fatalf("item %+v %v", it, err)
+	}
+	blocked = false
+	if err := r.run(context.Background(), 0, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	if st := readDiskState(dir); len(st.Blocked) != 0 {
+		t.Fatalf("a pass that got through left %+v", st.Blocked)
+	}
+}

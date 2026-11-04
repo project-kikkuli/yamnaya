@@ -25,8 +25,9 @@ const (
 	goFloor = 1 << 30
 	// staleAge is how long a temp build dir or DerivedData entry goes unchanged before it counts as abandoned.
 	staleAge = 6 * time.Hour
-	// uvWait bounds how long uv waits for its cache lock, which every running uv process holds shared for its whole life.
-	uvWait = 2 * time.Minute
+	// uvWait bounds how long uv waits for its cache lock, which every running uv holds shared for its whole life. New holders
+	// overtake a waiter, so it needs an instant with none. It stays under uv's own five-minute lock timeout.
+	uvWait = 290 * time.Second
 	// toolLimit bounds any other tool's run.
 	toolLimit = 10 * time.Minute
 	// enoughEvery is how many bytes a trim frees between reading free space.
@@ -40,7 +41,6 @@ func CacheSteps(e Env) []Step {
 	}
 	return []Step{
 		step("go temp dirs", staleBuildDirs),
-		step("uv prune", func(ctx context.Context, e Env) Report { return uvCache(ctx, e, "prune") }),
 		step("pnpm prune", pnpmPrune),
 		step("brew cleanup", brewCleanup),
 		step("docker builder prune", dockerPrune),
@@ -49,11 +49,13 @@ func CacheSteps(e Env) []Step {
 	}
 }
 
-// HardSteps are the caches tier 2 empties after its worktree steps.
+// HardSteps come after tier 2's worktree steps. uv goes last because waiting for its lock holds up whatever follows, and
+// clean, which takes everything prune would, replaces prune at tier 2.
 func HardSteps(e Env) []Step {
 	return []Step{
-		{Name: "uv clean", Tier: 2, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean") }},
 		{Name: "go cache floor", Tier: 2, Run: func(ctx context.Context) Report { return goTrim(ctx, e, goFloor, goFloorMinAge) }},
+		{Name: "uv prune", Tier: 1, Until: 1, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "prune") }},
+		{Name: "uv clean", Tier: 2, Run: func(ctx context.Context) Report { return uvCache(ctx, e, "clean") }},
 	}
 }
 
@@ -273,7 +275,7 @@ func uvCache(ctx context.Context, e Env, verb string) Report {
 	}
 	out, err := e.Exec(ctx, "", uvWait, uv, "cache", verb)
 	if errors.Is(err, context.DeadlineExceeded) {
-		return Report{Skipped: "another uv holds the cache lock"}
+		return Report{Skipped: "another uv held the cache lock throughout", Blocked: true}
 	}
 	return Report{Did: lastLine(out), Err: err, Quiet: strings.HasPrefix(lastLine(out), "No ")}
 }

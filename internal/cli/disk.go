@@ -41,6 +41,8 @@ type diskState struct {
 	LastTier int       `json:"last_tier,omitempty"`
 	Filed    string    `json:"filed,omitempty"`
 	FiledAt  time.Time `json:"filed_at,omitzero"`
+	// Blocked names what the last pass could not free because something running stopped it.
+	Blocked []string `json:"blocked,omitempty"`
 }
 
 func diskStatePath(dir string) string { return filepath.Join(dir, "disk.json") }
@@ -236,6 +238,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	}
 	fmt.Fprintf(w, "tier %d pass: %s has %.1f%% free\n", tier, low.Path, low.Free()*100)
 	var errs []error
+	var blocked []string
 	complete := disk.Run(ctx, r.steps, tier, r.env.Enough, func(rep disk.Report) {
 		switch {
 		case rep.Err != nil:
@@ -243,6 +246,9 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 			errs = append(errs, fmt.Errorf("%s: %w", rep.Step, rep.Err))
 		case rep.Skipped != "":
 			fmt.Fprintf(w, "%s: skipped, %s\n", rep.Step, rep.Skipped)
+			if rep.Blocked {
+				blocked = append(blocked, rep.Step+": "+rep.Skipped)
+			}
 		default:
 			line := rep.Did
 			if rep.Freed > 0 {
@@ -259,6 +265,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 		return nil
 	}
 	st := readDiskState(r.dir)
+	st.Blocked = blocked
 	if !forced {
 		st.LastPass, st.LastTier = r.env.Now(), tier
 	}
@@ -269,7 +276,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 			st.Filed, st.FiledAt = "", time.Time{}
 		}
 		if complete && tier >= 2 && after.Free() < disk.Tier2Free && st.Filed == "" {
-			added, err := r.fileOwnerItem(ctx, after)
+			added, err := r.fileOwnerItem(ctx, after, blocked)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("owner item: %w", err))
 			} else {
@@ -281,13 +288,13 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	return errors.Join(append(errs, st.save(r.dir))...)
 }
 
-func (r reclaimer) fileOwnerItem(ctx context.Context, low disk.Usage) (core.Item, error) {
+func (r reclaimer) fileOwnerItem(ctx context.Context, low disk.Usage, blocked []string) (core.Item, error) {
 	consumers, complete := r.measure(low)
-	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, filepath.Join(r.dir, "gc.log")))
+	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, blocked, filepath.Join(r.dir, "gc.log")))
 }
 
 // diskItem is the one owner item of a low-disk episode: what is low, and what still fills it.
-func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, log string) core.Item {
+func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, blocked []string, log string) core.Item {
 	names := make([]string, len(consumers))
 	for i, c := range consumers {
 		names[i] = c.String()
@@ -298,6 +305,9 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	}
 	if len(consumers) == 0 {
 		largest = "Nothing measured"
+	}
+	if len(blocked) > 0 {
+		largest += ". Not freed, ym retries each pass: " + strings.Join(blocked, "; ")
 	}
 	return core.Item{Kind: core.KindChore, Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a full reclaim; ym cannot free more by itself", host, low.Free()*100, low.Path),
@@ -316,6 +326,9 @@ func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		st := readDiskState(e.core.StateDir)
 		if !st.LastPass.IsZero() {
 			fmt.Fprintf(w, "last automatic pass: tier %d, %s\n", st.LastTier, st.LastPass.Format(time.RFC3339))
+		}
+		for _, b := range st.Blocked {
+			fmt.Fprintln(w, "last pass could not free", b)
 		}
 		if st.Filed != "" {
 			fmt.Fprintf(w, "this episode's owner item: %s, filed %s\n", st.Filed, st.FiledAt.Format(time.RFC3339))

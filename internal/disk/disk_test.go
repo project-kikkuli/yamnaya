@@ -263,7 +263,7 @@ func TestUvGivesUpForThisPassWhenAnotherUvHoldsItsCache(t *testing.T) {
 		return "", fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
 	}}
 	r := uvCache(context.Background(), e, "clean")
-	if r.Err != nil || !strings.Contains(r.Skipped, "lock") {
+	if r.Err != nil || !r.Blocked || !strings.Contains(r.Skipped, "lock") {
 		t.Fatalf("report %+v", r)
 	}
 	if !slices.Contains(ran, "uv cache clean") {
@@ -375,6 +375,24 @@ func TestPnpmPruneWaitsOutARunningPnpm(t *testing.T) {
 			}}
 		if pnpmPrune(context.Background(), e); pruned == running {
 			t.Errorf("running %v: pruned %v", running, pruned)
+		}
+	}
+}
+
+func TestWaitingOnUvHoldsUpNoOtherStepAndCleanReplacesPrune(t *testing.T) {
+	e := Env{Force: true, Stat: fixed(nil), Find: func(string) string { return "" }, Now: time.Now, Home: t.TempDir(), May: func(string) bool { return false }}
+	steps := append(CacheSteps(e), HardSteps(e)...)
+	for _, c := range []struct {
+		tier int
+		want string
+	}{{1, "uv prune"}, {2, "uv clean"}, {3, "uv clean"}} {
+		var ran []string
+		Run(context.Background(), steps, c.tier, func() bool { return false }, func(r Report) { ran = append(ran, r.Step) })
+		if last := ran[len(ran)-1]; last != c.want {
+			t.Errorf("tier %d ends with %q, want %q: %v", c.tier, last, c.want, ran)
+		}
+		if n := len(slices.DeleteFunc(slices.Clone(ran), func(s string) bool { return !strings.HasPrefix(s, "uv ") })); n != 1 {
+			t.Errorf("tier %d runs %d uv steps: %v", c.tier, n, ran)
 		}
 	}
 }
