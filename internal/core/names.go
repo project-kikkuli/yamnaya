@@ -60,8 +60,8 @@ func askSlug(ask string) string {
 	return "goal"
 }
 
-// boilerplate opens an ask with what any brief says: the standing preamble, whom the agent is, rules and how the ask got here.
-var boilerplate = regexp.MustCompile(`(?i)^\s*(fix forward\.|diagnose before acting\.|no reverts\b[^.\n]*\.|never block on a wait\b[^.\n]*\.|you are\s[^.\n]*(\.|\n|$)|hard rule\b[^\n]*(\n|$)|(design|investigation) only\.|no implementation\b[^.\n]*\.|(owner approved|owner ask|owner report|urgent)\b(\s*\([^)\n]*\))?[^:\n]*:)`)
+// boilerplate opens an ask with what any brief says: the standing preambles, whom the agent is, rules and how the ask got here.
+var boilerplate = regexp.MustCompile(`(?i)^\s*(yamnaya is a personal repo\b[^\n]*(\n|$)|fix forward\.|diagnose before acting\.|no reverts\b[^.\n]*\.|never block on a wait\b[^.\n]*\.|you are\s[^.\n]*(\.|\n|$)|hard rule\b[^\n]*(\n|$)|(design|investigation) only\.|no implementation\b[^.\n]*\.|(owner approved|owner ask|owner report|urgent)\b(\s*\([^)\n]*\))?[^:\n]*:)`)
 
 // substance is the ask from where it starts saying what this goal is about; the whole ask when nothing else is there.
 func substance(ask string) string {
@@ -132,12 +132,20 @@ func (c *Core) goalName(given, ask string) (string, error) {
 func (c *Core) suggest(ask string) string {
 	ask = substance(ask)
 	if c.Namer != nil {
-		s := strings.TrimSpace(c.Namer(ask))
-		if words := strings.Count(s, "-") + 1; CheckName(s) == nil && words >= 2 && words <= 4 {
+		if s := firstWords(strings.TrimSpace(c.Namer(ask)), 4); strings.Contains(s, "-") && CheckName(s) == nil {
 			return s
 		}
 	}
 	return askSlug(ask)
+}
+
+// firstWords is a kebab-case slug cut to its first n words; anything else comes back as it is.
+func firstWords(slug string, n int) string {
+	if !validName.MatchString(slug) {
+		return slug
+	}
+	words := strings.Split(slug, "-")
+	return strings.Join(words[:min(n, len(words))], "-")
 }
 
 // HaikuName asks a small Claude model for a 2 to 4 word name for ask; "" when it cannot. It runs from the root directory, so the
@@ -336,8 +344,11 @@ func sortedGoalIDs(o Org) []string {
 	return ids
 }
 
-// ShownOf is how the manager or chief with this id shows.
+// ShownOf is how the goal, manager or chief with this id shows.
 func (o Org) ShownOf(id string) string {
+	if g, ok := o.Goals[id]; ok {
+		return g.Shown()
+	}
 	if m, ok := o.Managers[id]; ok {
 		return m.Shown()
 	}

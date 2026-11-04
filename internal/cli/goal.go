@@ -85,6 +85,15 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 	return cmd
 }
 
+// shown is how the goal, manager or chief with this id shows.
+func (e *env) shown(id string) string {
+	o, err := e.core.LoadOrg()
+	if err != nil {
+		return id
+	}
+	return o.ShownOf(id)
+}
+
 // goalArgs takes the ask as one quoted argument, so a subcommand this ym does not have is refused rather than started as a goal.
 func goalArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 {
@@ -210,9 +219,11 @@ func treeRows(b core.Board, under string) []goalRow {
 		}
 	}
 	if under != "" {
-		if n, ok := b.Node(strings.ToLower(under)); ok {
-			for _, c := range n.Children {
-				walk(c, 0)
+		if m, err := b.Org.Lookup(under); err == nil {
+			if n, ok := b.Node(m.ID); ok {
+				for _, c := range n.Children {
+					walk(c, 0)
+				}
 			}
 		}
 		return out
@@ -538,7 +549,7 @@ func goalVerdictCmd(with func(runFunc) func(*cobra.Command, []string) error) *co
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s attempt %d: %s recorded; ym ends this session now\n", v.Goal, v.Attempt, verdict)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s attempt %d: %s recorded; ym ends this session now\n", e.shown(v.Goal), v.Attempt, verdict)
 			return nil
 		}),
 	}
@@ -806,7 +817,7 @@ func goalUpdateCmd(with func(runFunc) func(*cobra.Command, []string) error) *cob
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s updated\n", ev.Goal)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s updated\n", e.shown(ev.Goal))
 			return nil
 		}),
 	}
@@ -830,7 +841,7 @@ func goalWakeCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "ym wakes %s at %s\n", t.Manager, t.Due.Local().Format(time.DateTime))
+			fmt.Fprintf(cmd.OutOrStdout(), "ym wakes %s at %s\n", e.shown(t.Manager), t.Due.Local().Format(time.DateTime))
 			return nil
 		}),
 	}
@@ -908,7 +919,7 @@ func goalEventCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "#%d %s %s %s\n%s\n", ev.Seq, ev.Goal, ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
+				fmt.Fprintf(cmd.OutOrStdout(), "#%d %s %s %s\n%s\n", ev.Seq, e.shown(ev.Goal), ev.Created.Local().Format(time.DateTime), ev.Kind, ev.Payload)
 			}
 			return nil
 		}),
@@ -942,10 +953,10 @@ func goalPRCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 				return err
 			}
 			if !tied {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s did not have %s; ym never ties it to the goal now\n", ev.Goal, args[1])
+				fmt.Fprintf(cmd.OutOrStdout(), "%s did not have %s; ym never ties it to the goal now\n", e.shown(ev.Goal), args[1])
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "dropped %s from %s; run ym goal done again to re-verify\n", args[1], ev.Goal)
+			fmt.Fprintf(cmd.OutOrStdout(), "dropped %s from %s; run ym goal done again to re-verify\n", args[1], e.shown(ev.Goal))
 			return nil
 		}),
 	}

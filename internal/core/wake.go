@@ -265,11 +265,12 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	return c.Store.saveDigest(m.ID, r)
 }
 
-// holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake of its goal is still pending,
+// holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake is still pending in its session,
+// whose only goal it can be about whatever name the goal had then,
 // it cannot take a message now, or one already reached the turn it is taking.
 func (c *Core) holdWake(b Board, m Manager, g Goal) (bool, error) {
 	var pending int
-	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ?`, m.Session, MsgPending, "ym: goal "+g.Shown()+" %").Scan(&pending); err != nil || pending > 0 {
+	if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND state = ? AND text LIKE 'ym: goal %'`, m.Session, MsgPending).Scan(&pending); err != nil || pending > 0 {
 		return pending > 0, err
 	}
 	s, ok := b.Session(m.Session)

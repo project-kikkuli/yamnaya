@@ -944,3 +944,29 @@ func TestAnItemsEvidenceLineNamesItsGoal(t *testing.T) {
 		t.Fatalf("evidence line %q, want the goal's name and not its id", line)
 	}
 }
+
+func TestANeedsYouRowShowsAWholeNameWhenTheWidthHasRoomForIt(t *testing.T) {
+	const long = "this-is-a-forty-character-goal-name-here"
+	for _, tc := range []struct {
+		width int
+		whole bool
+	}{{200, true}, {100, true}, {80, true}, {50, false}} {
+		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
+			m, c, ms := goalSetup(t, "short ask")
+			if _, err := c.Rename(ms[0].ID, long); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(t, m)
+			m.width = tc.width
+			need := core.Need{Item: &core.Item{Seq: 1, ID: "D1", Kind: core.KindDecision, Question: "which way?", Dossier: core.Dossier{Goal: ms[0].GoalID}}}
+			m.board.Needs = []core.Need{need}
+			line, _, _ := strings.Cut(ansi.Strip(m.needLines(-1, need)), "\n")
+			if got := strings.Contains(line, long); got != tc.whole {
+				t.Fatalf("whole name shown %v, want %v, at %d columns:\n%s", got, tc.whole, tc.width, line)
+			}
+			if !strings.Contains(line, "D1") {
+				t.Fatalf("row lost its key:\n%s", line)
+			}
+		})
+	}
+}

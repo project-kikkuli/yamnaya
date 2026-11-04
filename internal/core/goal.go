@@ -209,12 +209,22 @@ func (c *Core) Attach(child, chief string) error {
 	if host, rest, ok := c.remoteHost(child); ok {
 		args := []string{"chief", "detach", rest}
 		if chief != "" {
-			to := RemoteKey(c.SelfName(), chief)
+			var to string
 			if h, r, remote := SplitRemote(chief); remote {
 				to = chief
 				if h == host {
 					to = r
 				}
+			} else {
+				o, err := c.LoadOrg()
+				if err != nil {
+					return err
+				}
+				boss, err := o.lookup(chief)
+				if err != nil {
+					return err
+				}
+				to = RemoteKey(c.SelfName(), boss.ID)
 			}
 			args = []string{"chief", "attach", rest, to}
 		}
@@ -268,11 +278,8 @@ func (c *Core) checkRemoteChief(child Manager, chief string) (string, error) {
 		return "", err
 	}
 	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
-	boss, ok := o.Managers[chief]
-	if g, isGoal := o.Goals[chief]; !ok && isGoal {
-		boss, ok = o.Managers[g.ManagerID]
-	}
-	if !ok {
+	boss, err := o.lookup(chief)
+	if err != nil {
 		return chief, nil
 	}
 	if boss.Role != RoleChief {

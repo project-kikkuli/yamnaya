@@ -279,11 +279,15 @@ func (s *Store) Find(scope, ref string) (Item, error) {
 	if seq, ok := strings.CutPrefix(ref, "#"); ok {
 		tries = append(tries, func() ([]Item, error) { return one(`seq = ?`, seq) })
 	} else if name, id, ok := strings.Cut(ref, ":"); ok {
+		var chief string
+		if err := s.db.QueryRow(`SELECT 'mgr' || num FROM ym_managers WHERE name = ? AND role = ?`, strings.ToLower(name), RoleChief).Scan(&chief); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return Item{}, err
+		}
 		tries = append(tries, func() ([]Item, error) {
 			all, err := one(`id = ?`, strings.ToUpper(id))
 			var out []Item
 			for _, it := range all {
-				if strings.EqualFold(ScopeName(it.Scope), name) || it.Scope == name {
+				if n := ScopeName(it.Scope); strings.EqualFold(n, name) || it.Scope == name || n == chief {
 					out = append(out, it)
 				}
 			}

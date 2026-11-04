@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,10 @@ func TestAGoalIsNamedByItsNamerElseByItsAsksFirstWords(t *testing.T) {
 		{name: "a namer reply that talks", ask: "make the export endpoint stream", namer: "Sure! Here is the name: fix-export-streaming", want: "make-the-export-endpoint"},
 		{name: "a namer reply of several words", ask: "make the export endpoint stream", namer: "Stream-Export Endpoint", want: "make-the-export-endpoint"},
 		{name: "a namer reply of one word", ask: "make the export endpoint stream", namer: "export", want: "make-the-export-endpoint"},
-		{name: "a namer reply of five words", ask: "make the export endpoint stream", namer: "a-b-c-d-e", want: "make-the-export-endpoint"},
+		{name: "a namer reply too long keeps its first words", ask: "make the export endpoint stream", namer: "board-relay-sync-drops-items-on-second-host-restart", want: "board-relay-sync-drops"},
+		{name: "a namer reply too long and not a slug", ask: "make the export endpoint stream", namer: "Board Relay-Sync-Drops-Items-On-Second", want: "make-the-export-endpoint"},
+		{name: "the personal-repo preamble", ask: "yamnaya is a personal repo: no PR; wt worktree, push to main.\n\nTeach the board to scroll", want: "teach-the-board-to"},
+		{name: "another opener stays", ask: "we were looking into the board", want: "we-were-looking-into"},
 		{name: "no namer reply", ask: "Make the export endpoint stream instead of buffering", want: "make-the-export-endpoint"},
 		{name: "the standing preamble", ask: "Fix forward. Diagnose before acting. No reverts, guards, retries, or safety steps without evidence they're needed. Never block on a wait without first checking why it's slow.\n\nTeach the board to scroll", want: "teach-the-board-to"},
 		{name: "a you-are opening", ask: "You are the implementer of this goal.\nTeach the board to scroll", want: "teach-the-board-to"},
@@ -601,5 +605,81 @@ func TestWhatAManagerIsToldNamesItWithoutItsId(t *testing.T) {
 				t.Errorf("%s show id %q:\n%s", what, id, text)
 			}
 		}
+	}
+}
+
+func TestARenameDoesNotSplitAPendingWake(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		held       bool
+	}{
+		{"a wake pending under the old name", "", true},
+		{"another message pending", "ym: you have not adopted revision 1", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			w.core.Namer = func(string) string { return "before-name" }
+			g, m := w.goal(t, "anything", "/repo/august")
+			text := tc.text
+			if text == "" {
+				text = wakeText(g, nil)
+			}
+			if _, err := w.core.Store.AddMessage(m.Session, text, MsgPending); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.core.Rename(g.ID, "after-name"); err != nil {
+				t.Fatal(err)
+			}
+			o, _ := w.core.LoadOrg()
+			w.set(m.Session, func(s *Session) { s.Status = Idle })
+			if hold, err := w.core.holdWake(w.board(t), o.Managers[m.ID], o.Goals[g.ID]); err != nil || hold != tc.held {
+				t.Fatalf("holdWake = %v, %v; want %v", hold, err, tc.held)
+			}
+		})
+	}
+}
+
+func TestAChiefOnAnotherHostIsAttachedToByItsNameOrId(t *testing.T) {
+	for _, ref := range []string{"box/core-lead", "box/mgr9"} {
+		t.Run(ref, func(t *testing.T) {
+			w := newOrgWorld(t)
+			_, m := w.goal(t, "anything", "/repo/august")
+			w.core.Remotes = &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleChief, Name: "core-lead"}}}}}
+			if err := w.core.Attach(m.ID, ref); err != nil {
+				t.Fatal(err)
+			}
+			got, err := w.core.Store.Manager(m.ID)
+			if err != nil || got.ParentID != "box/mgr9" {
+				t.Fatalf("parent %q, %v; want box/mgr9", got.ParentID, err)
+			}
+		})
+	}
+}
+
+func TestAnItemOfAChiefIsFoundByTheChiefsNameOrId(t *testing.T) {
+	w := newOrgWorld(t)
+	boss := w.chief(t, "platform")
+	it, err := w.core.Store.AddItem(Item{Kind: KindDecision, Question: "which?", Session: boss.Session, Scope: "/state/chiefs/" + boss.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"platform:" + it.ID, boss.ID + ":" + it.ID, "#" + strconv.FormatInt(it.Seq, 10)} {
+		t.Run(ref, func(t *testing.T) {
+			got, err := w.core.FindItem("", ref)
+			if err != nil || got.Seq != it.Seq {
+				t.Fatalf("FindItem(%q) = #%d, %v; want #%d", ref, got.Seq, err, it.Seq)
+			}
+		})
+	}
+	box := &fakeRemotes{boards: []RemoteBoard{{Host: "box", Managers: []Manager{{ID: "mgr9", Role: RoleChief, Name: "core-lead"}},
+		Items: []Item{{Seq: 7, ID: "D5", Kind: KindDecision, Question: "where?", Scope: "box//chiefs/mgr9", State: ItemOpen}}}}}
+	w.core.Remotes, w.core.ShowRemotes = box, true
+	for _, ref := range []string{"box/core-lead:D5", "box/mgr9:D5"} {
+		t.Run(ref, func(t *testing.T) {
+			got, err := w.core.FindItem("", ref)
+			if err != nil || got.Seq != 7 {
+				t.Fatalf("FindItem(%q) = #%d, %v; want #7", ref, got.Seq, err)
+			}
+		})
 	}
 }

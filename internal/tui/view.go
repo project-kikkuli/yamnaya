@@ -737,14 +737,30 @@ func (m Model) memberSpend(s core.Live, c core.Member) string {
 	return core.Spend{}.Dollars()
 }
 
-func (m Model) needLines(i int, n core.Need) string {
+// needLead is what a Needs You row opens with: the goal or chief its item comes from by name, else its project.
+func (m Model) needLead(n core.Need) string {
 	where := m.projectName(n.Project)
 	if n.Item != nil {
 		if lead := m.board.Org.ItemName(*n.Item); lead != "" {
 			where = lead
 		}
 	}
-	name := pad(m.tagged(m.needHost(n), where), min(32, max(16, m.width/4)))
+	return m.tagged(m.needHost(n), where)
+}
+
+// leadColumn is the width of a row's first column: its longest lead, as far as other leaves room on the row.
+func (m Model) leadColumn(longest, other int) int {
+	return max(minLead, min(longest, m.width-other))
+}
+
+func (m Model) needLines(i int, n core.Need) string {
+	longest := 0
+	for _, ns := range [][]core.Need{m.board.Needs, m.board.Stale} {
+		for _, other := range ns {
+			longest = max(longest, ansi.StringWidth(m.needLead(other)))
+		}
+	}
+	name := pad(m.needLead(n), m.leadColumn(longest, needRest))
 	sel := i == m.cursor
 	var b strings.Builder
 	if n.Item == nil {
@@ -802,6 +818,14 @@ func (m Model) needLines(i int, n core.Need) string {
 	}
 	return b.String()
 }
+
+const (
+	minLead = 16
+	// needRest and itemRest are what a Needs You row and an item row keep beside their lead: the mark, the key and the start of the
+	// question, and an item row's state and recipient too.
+	needRest = 39
+	itemRest = 60
+)
 
 // itemID names an item, with its project where the needs list mixes projects.
 func (m Model) itemID(it core.Item) string {
@@ -1040,7 +1064,11 @@ func itemIDs(items []core.Item) map[string]string {
 }
 
 func (m Model) itemLines(i int, it core.Item, ids map[string]string) string {
-	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), min(32, max(16, m.width/4))) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
+	longest := 0
+	for _, other := range m.items {
+		longest = max(longest, ansi.StringWidth(m.tagged(other.Host, m.board.Org.ItemLead(other))))
+	}
+	head := m.mark(i) + pad(m.tagged(it.Host, m.board.Org.ItemLead(it)), m.leadColumn(longest, itemRest)) + " " + pad(it.State, 10) + " to " + m.recipientName(it) + "  "
 	ref := strings.TrimSpace(ids[it.Key()])
 	room := max(10, m.width-ansi.StringWidth(head)-ansi.StringWidth(ref)-3)
 	line := head + ansi.Truncate(oneLine(it.Question), room, "…") + "  " + pal.dim.Render(ref)

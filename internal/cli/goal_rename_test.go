@@ -117,3 +117,53 @@ func TestGoalRenameOfAnotherHostsGoalRunsOnThatHost(t *testing.T) {
 		})
 	}
 }
+
+func TestEveryCommandTakingAGoalOrChiefTakesItsNameOrId(t *testing.T) {
+	for _, form := range []string{"name", "id"} {
+		for _, tc := range []struct {
+			name string
+			args func(goal, chief string) []string
+			want string
+		}{
+			{"goal list --under", func(_, chief string) []string { return []string{"goal", "list", "--under", chief} }, "ship-the-thing"},
+			{"goal show a goal", func(goal, _ string) []string { return []string{"goal", "show", goal} }, "ship-the-thing"},
+			{"goal show a chief", func(_, chief string) []string { return []string{"goal", "show", chief} }, "ops-lead"},
+			{"goal context", func(goal, _ string) []string { return []string{"goal", "context", goal} }, "ship the thing"},
+			{"goal feed", func(goal, _ string) []string { return []string{"goal", "feed", goal} }, "ship-the-thing"},
+		} {
+			t.Run(tc.name+" by "+form, func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("YAMNAYA_STATE_DIR", dir)
+				st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer st.Close()
+				c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+				g, m, err := c.NewGoalNamed("ship-the-thing", "ship the thing", dir, "", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				boss, err := c.NewChief("ops-lead", "", dir, "", []string{m.ID})
+				if err != nil {
+					t.Fatal(err)
+				}
+				goal, chief := g.Name, boss.Name
+				if form == "id" {
+					goal, chief = g.ID, boss.ID
+				}
+				root := NewRoot()
+				var out bytes.Buffer
+				root.SetOut(&out)
+				root.SetErr(&out)
+				root.SetArgs(tc.args(goal, chief))
+				if err := root.Execute(); err != nil {
+					t.Fatalf("%v: %v\n%s", tc.args(goal, chief), err, out.String())
+				}
+				if !strings.Contains(out.String(), tc.want) {
+					t.Fatalf("%v printed %q, want %q", tc.args(goal, chief), out.String(), tc.want)
+				}
+			})
+		}
+	}
+}

@@ -56,6 +56,7 @@ func (c *Core) FindItem(scope, ref string) (Item, error) {
 	}
 	r := c.ParseItemRef(ref)
 	if r.Host != "" {
+		r.Project = c.chiefScope(r.Host, r.Project)
 		found := c.mirrored(r)
 		if len(found) == 0 {
 			return Item{}, Final(fmt.Errorf("item %s: not found on %s: %w", ref, r.Host, ErrNotFound))
@@ -104,6 +105,20 @@ func (it Item) Ref() string {
 	return it.Qualified()
 }
 
+// chiefScope is project, in an item ref on host, as the scope it names there: a chief's id for a chief named by its name.
+func (c *Core) chiefScope(host, project string) string {
+	if project == "" || c.Remotes == nil {
+		return project
+	}
+	o := Org{Goals: map[string]Goal{}, Managers: map[string]Manager{}, Sessions: map[string]string{}}
+	c.mergeRemoteOrg(&o, c.Remotes.Boards(), nil)
+	if m, err := o.lookup(RemoteKey(host, project)); err == nil && m.Role == RoleChief {
+		_, id, _ := SplitRemote(m.ID)
+		return id
+	}
+	return project
+}
+
 func (c *Core) numberedHere(project string) bool {
 	if project == "" {
 		return false
@@ -112,8 +127,8 @@ func (c *Core) numberedHere(project string) bool {
 	if err != nil {
 		return false
 	}
-	_, ok := o.Managers[strings.ToLower(project)]
-	return ok
+	m, err := o.lookup(project)
+	return err == nil && m.Role == RoleChief
 }
 
 func (c *Core) mirrored(r ItemRef) []Item {
