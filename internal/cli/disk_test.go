@@ -126,12 +126,24 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 		t.Fatalf("the same episode filed again: %+v", got)
 	}
 	free = 0.15
-	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, start: func() error { return nil }}
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, start: func() error { return nil }, dismiss: diskDismiss(c.Store)}
 	if err := w.tick(); err != nil {
 		t.Fatal(err)
 	}
 	if readDiskState(dir).Filed == "" {
 		t.Fatal("15% free ended the episode; only above 20% does")
+	}
+	open := func() int {
+		n := 0
+		for _, it := range ownerItems(t, c) {
+			if it.State == core.ItemOpen {
+				n++
+			}
+		}
+		return n
+	}
+	if open() != 1 {
+		t.Fatalf("%d open during the episode", open())
 	}
 	free = 0.21
 	if err := w.tick(); err != nil {
@@ -139,6 +151,9 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 	}
 	if readDiskState(dir).Filed != "" {
 		t.Fatal("21% free did not end the episode")
+	}
+	if open() != 0 {
+		t.Fatal("the item outlived the episode")
 	}
 	free = 0.08
 	pass(diskCore(t, dir), 0)
@@ -228,7 +243,7 @@ func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
 		want   string
 	}{
 		{"a live pane with its cwd elsewhere", true, false, launch.KeepInUse},
-		{"no pane", false, false, ""},
+		{"no pane yet, as right after a restart", false, false, launch.KeepRecord},
 		{"landed record with a pane of the same name", true, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -379,5 +394,68 @@ func TestGCRemovesNothingWithoutTheProcessTable(t *testing.T) {
 	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Fatal("removed a worktree with no way to know it is unused")
+	}
+}
+
+func TestACacheAPassCouldNotFreeShowsInTheStateAndTheOwnerItem(t *testing.T) {
+	dir := t.TempDir()
+	c := diskCore(t, dir)
+	free := 0.08
+	blocked := true
+	env := disk.Env{Paths: []string{"/x"}, Stat: usageAt(&free), Now: time.Now}
+	step := disk.Step{Name: "uv clean", Tier: 1, Run: func(context.Context) disk.Report {
+		if !blocked {
+			return disk.Report{Did: "cleaned"}
+		}
+		return disk.Report{Skipped: "another uv held the cache lock throughout", Blocked: true}
+	}}
+	r := reclaimer{core: c, dir: dir, env: env, steps: []disk.Step{step}, log: func(string, string) error { return nil },
+		measure: func(disk.Usage) ([]disk.Consumer, bool) { return nil, true }}
+	if err := r.run(context.Background(), 0, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	st := readDiskState(dir)
+	if len(st.Blocked) != 1 || !strings.Contains(st.Blocked[0], "uv clean") {
+		t.Fatalf("state %+v", st)
+	}
+	items := ownerItems(t, c)
+	if len(items) != 1 {
+		t.Fatalf("items %+v", items)
+	}
+	it, err := c.Store.Item(items[0].Key())
+	if err != nil || !strings.Contains(it.Rec, "uv clean") {
+		t.Fatalf("item %+v %v", it, err)
+	}
+	blocked = false
+	if err := r.run(context.Background(), 0, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	if st := readDiskState(dir); len(st.Blocked) != 0 {
+		t.Fatalf("a pass that got through left %+v", st.Blocked)
+	}
+}
+
+func TestTheWatcherRemembersItsLastStartWhenTheStateCannotBeSaved(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(diskStatePath(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	free := 0.15
+	started := 0
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: func() time.Time { return now }, log: &strings.Builder{},
+		start: func() error { started++; return nil }}
+	for range 3 {
+		if err := w.tick(); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Minute)
+	}
+	if started != 1 {
+		t.Fatalf("started %d passes in 3 minutes", started)
+	}
+	now = now.Add(diskRetryAfter)
+	if err := w.tick(); err != nil || started != 2 {
+		t.Fatalf("started %d, %v", started, err)
 	}
 }

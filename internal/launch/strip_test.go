@@ -274,6 +274,7 @@ func TestStrippableOnlyWhenKeptIdleAndUnused(t *testing.T) {
 		{"touched lately", Sweep{Keep: KeepDirty, Idle: StripIdle - time.Minute}, false},
 		{"a process works inside", Sweep{Keep: KeepDirty, Idle: StripIdle, User: "/x"}, false},
 		{"locked", Sweep{Keep: KeepLocked, Idle: StripIdle}, false},
+		{"session not landed, no pane", Sweep{Keep: KeepRecord, Idle: StripIdle}, true},
 		{"removed", Sweep{Idle: StripIdle}, false},
 	} {
 		if got := Strippable(c.w); got != c.want {
@@ -386,5 +387,86 @@ func TestNeitherReapNorStripTouchesWhatIsNotARegenerableWholeDirectory(t *testin
 				}
 			}
 		})
+	}
+}
+
+func TestASweepHeldUpByGhOrGitEndsAndKeepsTheWork(t *testing.T) {
+	sleeper := func(t *testing.T, name string) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	t.Run("gh", func(t *testing.T) {
+		repo, wt, _ := squashRepo(t)
+		sleeper(t, "gh")
+		old := ghLimit
+		ghLimit = 200 * time.Millisecond
+		defer func() { ghLimit = old }()
+		q := &Squash{Hub: GH{}, Cache: filepath.Join(t.TempDir(), "squash.json"), Now: time.Now}
+		start := time.Now()
+		s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, q, nil, false, false, Policy{Idle: time.Hour, Ignored: true})
+		if err != nil || time.Since(start) > 30*time.Second {
+			t.Fatalf("%v after %v", err, time.Since(start))
+		}
+		if len(s.Trees) != 1 || s.Trees[0].Keep != KeepLocal || len(s.Errors) == 0 {
+			t.Fatalf("decided %+v, errors %v", s.Trees, s.Errors)
+		}
+		if _, err := os.Stat(wt); err != nil {
+			t.Fatal("removed the worktree")
+		}
+	})
+	t.Run("git", func(t *testing.T) {
+		repo, _ := reapRepo(t)
+		sleeper(t, "git")
+		GitLimit = 200 * time.Millisecond
+		defer func() { GitLimit = 0 }()
+		start := time.Now()
+		if _, err := GCWith(repo, time.Now(), nil, nil, nil, true, false, Policy{Idle: time.Hour}); err == nil {
+			t.Fatal("a hung git reported no error")
+		}
+		if time.Since(start) > 30*time.Second {
+			t.Fatalf("took %v", time.Since(start))
+		}
+	})
+}
+
+func TestAReadOfWhatIsInUseJustBeforeRemovalDecides(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		fresh func(wt string) ([]string, error)
+		keep  string
+	}{
+		{"nothing there", func(string) ([]string, error) { return nil, nil }, ""},
+		{"a process moved in", func(wt string) ([]string, error) { return []string{wt}, nil }, KeepInUse},
+		{"the process table cannot be read", func(string) ([]string, error) { return nil, os.ErrPermission }, KeepFailing},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo, wt := reapRepo(t)
+			s, err := GCWith(repo, time.Now().Add(2*time.Hour), nil, nil, nil, false, false,
+				Policy{Idle: time.Hour, Fresh: func() ([]string, error) { return c.fresh(wt) }})
+			if err != nil || s.Trees[0].Keep != c.keep {
+				t.Fatalf("decided %+v, %v, want %q", s.Trees, err, c.keep)
+			}
+			if _, err := os.Stat(wt); (err == nil) != (c.keep != "") {
+				t.Fatalf("on disk %v", err == nil)
+			}
+		})
+	}
+}
+
+func TestAWorktreeWithSubmodulesIsKeptNotFailedAfterADryRunSaidOtherwise(t *testing.T) {
+	repo, wt := reapRepo(t)
+	sub := t.TempDir()
+	run(t, sub, "git", "init", "-q", "-b", "main")
+	run(t, sub, "git", "commit", "-q", "--allow-empty", "-m", "sub")
+	run(t, wt, "git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "dep")
+	run(t, wt, "git", "commit", "-q", "-m", "add submodule")
+	run(t, wt, "git", "push", "-q", "origin", "HEAD")
+	s, err := GC(repo, time.Now().Add(Idle+time.Hour), nil, nil, nil, true, false)
+	if err != nil || s.Trees[0].Keep != KeepModules {
+		t.Fatalf("dry run decided %+v, %v", s.Trees, err)
 	}
 }

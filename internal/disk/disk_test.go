@@ -168,7 +168,7 @@ func TestGoTrimRemovesOldestFirstAndSparesWhatARunningBuildMayHold(t *testing.T)
 			})
 			e := goEnvFor(dir, map[string]float64{dir: 0.01})
 			e.Dry = c.dry
-			r := goTrim(context.Background(), e, c.floor, goMinAge)
+			r := goTrim(context.Background(), e, c.floor)
 			if r.Err != nil || r.Skipped != "" {
 				t.Fatalf("report %+v", r)
 			}
@@ -200,7 +200,7 @@ func TestGoTrimStopsWhenTheDiskHasEnoughFree(t *testing.T) {
 		}
 		return Usage{Path: dir, Dev: 1, Total: 1000, Avail: avail}, nil
 	}
-	goTrim(context.Background(), e, 0, goMinAge)
+	goTrim(context.Background(), e, 0)
 	left := 0
 	for _, f := range files {
 		if _, err := os.Stat(f); err == nil {
@@ -224,7 +224,7 @@ func TestCacheStepsLeaveAloneWhatTheyMayNotTouchOrWhatIsNotInstalled(t *testing.
 		name string
 		run  func(context.Context, Env) Report
 	}{
-		{"go", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0, goMinAge) }},
+		{"go", func(ctx context.Context, e Env) Report { return goTrim(ctx, e, 0) }},
 		{"uv", func(ctx context.Context, e Env) Report { return uvCache(ctx, e, "prune") }},
 		{"pnpm", pnpmPrune},
 		{"brew", brewCleanup},
@@ -260,10 +260,10 @@ func TestUvGivesUpForThisPassWhenAnotherUvHoldsItsCache(t *testing.T) {
 		if argv[2] == "dir" {
 			return "/c", nil
 		}
-		return "", fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
+		return "error: Timeout (300s) when waiting for lock on `/c` at `/c/.lock`, is another uv process running?", errors.New("exit status 2")
 	}}
 	r := uvCache(context.Background(), e, "clean")
-	if r.Err != nil || !strings.Contains(r.Skipped, "lock") {
+	if r.Err != nil || !r.Blocked || !strings.Contains(r.Skipped, "lock") {
 		t.Fatalf("report %+v", r)
 	}
 	if !slices.Contains(ran, "uv cache clean") {
@@ -376,5 +376,61 @@ func TestPnpmPruneWaitsOutARunningPnpm(t *testing.T) {
 		if pnpmPrune(context.Background(), e); pruned == running {
 			t.Errorf("running %v: pruned %v", running, pruned)
 		}
+	}
+}
+
+func TestWaitingOnUvHoldsUpNoOtherStepAndCleanReplacesPrune(t *testing.T) {
+	e := Env{Force: true, Stat: fixed(nil), Find: func(string) string { return "" }, Now: time.Now, Home: t.TempDir(), May: func(string) bool { return false }}
+	steps := append(CacheSteps(e), HardSteps(e)...)
+	for _, c := range []struct {
+		tier int
+		want string
+	}{{1, "uv prune"}, {2, "uv clean"}, {3, "uv clean"}} {
+		var ran []string
+		Run(context.Background(), steps, c.tier, func() bool { return false }, func(r Report) { ran = append(ran, r.Step) })
+		if last := ran[len(ran)-1]; last != c.want {
+			t.Errorf("tier %d ends with %q, want %q: %v", c.tier, last, c.want, ran)
+		}
+		if n := len(slices.DeleteFunc(slices.Clone(ran), func(s string) bool { return !strings.HasPrefix(s, "uv ") })); n != 1 {
+			t.Errorf("tier %d runs %d uv steps: %v", c.tier, n, ran)
+		}
+	}
+}
+
+func TestAUvKilledWhileRemovingIsAFailureNotALockWait(t *testing.T) {
+	e := Env{Force: true, Find: func(n string) string { return n }, Stat: fixed(nil), Exec: func(_ context.Context, _ string, _ time.Duration, argv ...string) (string, error) {
+		if argv[2] == "dir" {
+			return "/c", nil
+		}
+		return "Clearing cache at: /c", context.DeadlineExceeded
+	}}
+	if r := uvCache(context.Background(), e, "clean"); r.Err == nil || r.Blocked {
+		t.Fatalf("report %+v", r)
+	}
+}
+
+func TestTheFloorSaysWhenAgeHeldItBack(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		age     time.Duration
+		blocked bool
+	}{{"all old", 3 * time.Hour, false}, {"under an hour and a bit, in reach of a running build", 90 * time.Minute, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			dir, files := goCache(t, 3, 1<<10, func(int) time.Duration { return c.age })
+			e := goEnvFor(dir, map[string]float64{dir: 0.01})
+			r := goTrim(context.Background(), e, 1<<10)
+			if r.Blocked != c.blocked {
+				t.Fatalf("report %+v", r)
+			}
+			left := 0
+			for _, f := range files {
+				if _, err := os.Stat(f); err == nil {
+					left++
+				}
+			}
+			if want := map[bool]int{false: 1, true: 3}[c.blocked]; left != want {
+				t.Fatalf("%d left, want %d", left, want)
+			}
+		})
 	}
 }

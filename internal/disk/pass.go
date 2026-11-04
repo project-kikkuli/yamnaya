@@ -18,20 +18,23 @@ type Report struct {
 	Err     error
 	// Quiet leaves it out of gc.log: nothing went, or the step logged each removal itself.
 	Quiet bool
+	// Blocked says the step wanted to free space and something running stopped it, so its cache is still there.
+	Blocked bool
 }
 
-// Step is one thing a pass tries, run by every pass at Tier or lower.
+// Step is one thing a pass tries, run by every pass at Tier or higher, and at no higher than Until when that is set.
 type Step struct {
-	Name string
-	Tier int
-	Run  func(context.Context) Report
+	Name  string
+	Tier  int
+	Until int
+	Run   func(context.Context) Report
 }
 
 // Run runs the steps of tier and below in order until enough reports true, reporting each. complete says every step ran, so
 // the disk holds what a pass could not free.
 func Run(ctx context.Context, steps []Step, tier int, enough func() bool, report func(Report)) (complete bool) {
 	for _, s := range steps {
-		if s.Tier > tier {
+		if s.Tier > tier || s.Until > 0 && tier > s.Until {
 			continue
 		}
 		if ctx.Err() != nil || enough() {

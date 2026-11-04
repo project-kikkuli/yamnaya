@@ -25,6 +25,10 @@ const (
 	diskCheckEvery = time.Minute
 	// diskRetryAfter is how long serve waits before another pass at the same tier: a pass that fell short walks whole caches.
 	diskRetryAfter = 15 * time.Minute
+	// sweepAfterStart is how long serve waits before its first hourly gc.
+	sweepAfterStart = 10 * time.Minute
+	// passLimit ends a pass whatever hangs in it, so disk.lock cannot be held for good.
+	passLimit = 90 * time.Minute
 	// reapIdle replaces gc's idle time at tier 2.
 	reapIdle = time.Hour
 	// measureBudget and measureLimit bound the one measurement of what still fills a disk.
@@ -41,6 +45,26 @@ type diskState struct {
 	LastTier int       `json:"last_tier,omitempty"`
 	Filed    string    `json:"filed,omitempty"`
 	FiledAt  time.Time `json:"filed_at,omitzero"`
+	// Blocked names what the last pass could not free because something running stopped it.
+	Blocked []string `json:"blocked,omitempty"`
+}
+
+// endEpisode closes the episode's owner item if it is still open, so a relapse starts from none, and forgets it.
+func (st *diskState) endEpisode(dir string, dismiss func(string) error) error {
+	err := dismiss(st.Filed)
+	st.Filed, st.FiledAt = "", time.Time{}
+	return errors.Join(err, st.save(dir))
+}
+
+func diskDismiss(s *core.Store) func(string) error {
+	return func(key string) error {
+		it, err := s.Item(key)
+		if err != nil || it.State != core.ItemOpen {
+			return err
+		}
+		_, err = s.Transition(key, core.ItemDismissed, "free space recovered")
+		return err
+	}
 }
 
 func diskStatePath(dir string) string { return filepath.Join(dir, "disk.json") }
@@ -99,7 +123,12 @@ type diskWatcher struct {
 	now   func() time.Time
 	start func() error
 	log   io.Writer
-	tier  int
+	// dismiss closes the ended episode's owner item.
+	dismiss func(key string) error
+	tier    int
+	// started and startedTier repeat the persisted last pass in memory, for when a full disk stops it being saved.
+	started     time.Time
+	startedTier int
 }
 
 // tick reads free space and starts a pass when the disk is low and none ran lately at this tier or worse. It ends the
@@ -120,27 +149,32 @@ func (w *diskWatcher) tick() error {
 	}
 	st := readDiskState(w.dir)
 	if st.Filed != "" && low.Free() > disk.ClearFree {
-		st.Filed, st.FiledAt = "", time.Time{}
-		err = st.save(w.dir)
+		err = st.endEpisode(w.dir, w.dismiss)
 	}
 	unlock()
 	if err != nil {
 		return err
 	}
-	if tier == 0 || (tier <= st.LastTier && w.now().Sub(st.LastPass) < diskRetryAfter) {
+	recent := func(at time.Time, was int) bool { return tier <= was && w.now().Sub(at) < diskRetryAfter }
+	if tier == 0 || recent(st.LastPass, st.LastTier) || recent(w.started, w.startedTier) {
 		return nil
 	}
+	w.started, w.startedTier = w.now(), tier
 	return w.start()
 }
 
 // watchDisk reads free space every minute and starts the ordinary hourly gc, so neither depends on a launch happening.
 func watchDisk(ctx context.Context, l launcher, dir string, log io.Writer) {
-	w := &diskWatcher{dir: dir, paths: diskPaths(ctx), stat: disk.Stat, now: time.Now, log: log,
+	w := &diskWatcher{dir: dir, paths: diskPaths(ctx), stat: disk.Stat, now: time.Now, log: log, dismiss: diskDismiss(l.core.Store),
 		start: func() error { return detach("disk", "reclaim", "--quiet") }}
 	tick := time.NewTicker(diskCheckEvery)
 	defer tick.Stop()
+	began := time.Now()
 	for {
-		l.sweepSoon()
+		// a restart's resumes come first: an ordinary gc would land a session whose pane is not back yet
+		if time.Since(began) >= sweepAfterStart {
+			l.sweepSoon()
+		}
 		if err := w.tick(); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(log, "disk:", err)
 		}
@@ -184,6 +218,16 @@ func (l launcher) worktreeSteps(repos []string, e disk.Env) []disk.Step {
 				for _, t := range s.Trees {
 					if !launch.Strippable(t) || ctx.Err() != nil || !e.Needed(t.Path) {
 						continue
+					}
+					if !e.Dry {
+						now, err := cwdsNow()
+						if err != nil {
+							errs = append(errs, err)
+							continue
+						}
+						if launch.Inside(t.Path, now) != "" {
+							continue
+						}
 					}
 					got := launch.StripIgnored(t, e.Dry)
 					errs = append(errs, got.Err)
@@ -232,33 +276,45 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	}
 	if tier == 0 {
 		fmt.Fprintf(w, "%s has %.1f%% free, nothing to do\n", low.Path, low.Free()*100)
+		if st := readDiskState(r.dir); st.Filed != "" && low.Free() > disk.ClearFree {
+			return st.endEpisode(r.dir, diskDismiss(r.core.Store))
+		}
 		return nil
 	}
 	fmt.Fprintf(w, "tier %d pass: %s has %.1f%% free\n", tier, low.Path, low.Free()*100)
 	var errs []error
+	var blocked []string
 	complete := disk.Run(ctx, r.steps, tier, r.env.Enough, func(rep disk.Report) {
 		switch {
 		case rep.Err != nil:
 			fmt.Fprintf(w, "%s: %v\n", rep.Step, rep.Err)
+			blocked = append(blocked, rep.Step+": it failed")
 			errs = append(errs, fmt.Errorf("%s: %w", rep.Step, rep.Err))
 		case rep.Skipped != "":
 			fmt.Fprintf(w, "%s: skipped, %s\n", rep.Step, rep.Skipped)
+			if rep.Blocked {
+				blocked = append(blocked, rep.Step+": "+rep.Skipped)
+			}
 		default:
 			line := rep.Did
 			if rep.Freed > 0 {
 				line += " (" + disk.Bytes(rep.Freed) + ")"
 			}
 			fmt.Fprintf(w, "%s: %s\n", rep.Step, line)
+			if rep.Blocked {
+				blocked = append(blocked, rep.Step+": "+rep.Did)
+			}
 			if !r.env.Dry && !rep.Quiet && rep.Did != "" {
 				errs = append(errs, r.log("reclaimed "+rep.Step, line))
 			}
 		}
 	})
 	if r.env.Dry {
-		fmt.Fprintln(w, "dry run: nothing changed")
+		fmt.Fprintln(w, "dry run: nothing changed; a real pass stops as soon as free reaches 25%")
 		return nil
 	}
 	st := readDiskState(r.dir)
+	st.Blocked = blocked
 	if !forced {
 		st.LastPass, st.LastTier = r.env.Now(), tier
 	}
@@ -266,14 +322,14 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	if ok {
 		fmt.Fprintf(w, "%s has %.1f%% free after the pass\n", after.Path, after.Free()*100)
 		if st.Filed != "" && after.Free() > disk.ClearFree {
-			st.Filed, st.FiledAt = "", time.Time{}
+			errs = append(errs, st.endEpisode(r.dir, diskDismiss(r.core.Store)))
 		}
 		if complete && tier >= 2 && after.Free() < disk.Tier2Free && st.Filed == "" {
-			added, err := r.fileOwnerItem(ctx, after)
+			added, err := r.fileOwnerItem(ctx, after, blocked)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("owner item: %w", err))
 			} else {
-				st.Filed, st.FiledAt = added.ID, r.env.Now()
+				st.Filed, st.FiledAt = added.Key(), r.env.Now()
 				fmt.Fprintln(w, "filed", added.ID)
 			}
 		}
@@ -281,13 +337,13 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	return errors.Join(append(errs, st.save(r.dir))...)
 }
 
-func (r reclaimer) fileOwnerItem(ctx context.Context, low disk.Usage) (core.Item, error) {
+func (r reclaimer) fileOwnerItem(ctx context.Context, low disk.Usage, blocked []string) (core.Item, error) {
 	consumers, complete := r.measure(low)
-	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, filepath.Join(r.dir, "gc.log")))
+	return r.core.AddOwnerItem(diskItem(r.core.SelfName(), low, consumers, complete, blocked, filepath.Join(r.dir, "gc.log")))
 }
 
 // diskItem is the one owner item of a low-disk episode: what is low, and what still fills it.
-func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, log string) core.Item {
+func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete bool, blocked []string, log string) core.Item {
 	names := make([]string, len(consumers))
 	for i, c := range consumers {
 		names[i] = c.String()
@@ -299,8 +355,15 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	if len(consumers) == 0 {
 		largest = "Nothing measured"
 	}
+	if len(blocked) > 0 {
+		largest += ". Not freed, ym retries each pass: " + strings.Join(blocked, "; ")
+	}
+	outcome := "ym cannot free more by itself"
+	if len(blocked) > 0 {
+		outcome = "ym could not run every step"
+	}
 	return core.Item{Kind: core.KindChore, Session: diskItemSession,
-		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a full reclaim; ym cannot free more by itself", host, low.Free()*100, low.Path),
+		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
 		Rec:      fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work; new ym slot admissions wait below %.0f%% free.", largest, disk.Tier3Free*100),
 		Evidence: []string{log},
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
@@ -316,6 +379,9 @@ func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		st := readDiskState(e.core.StateDir)
 		if !st.LastPass.IsZero() {
 			fmt.Fprintf(w, "last automatic pass: tier %d, %s\n", st.LastTier, st.LastPass.Format(time.RFC3339))
+		}
+		for _, b := range st.Blocked {
+			fmt.Fprintln(w, "last pass could not free", b)
 		}
 		if st.Filed != "" {
 			fmt.Fprintf(w, "this episode's owner item: %s, filed %s\n", st.Filed, st.FiledAt.Format(time.RFC3339))
@@ -338,6 +404,8 @@ func diskCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			return fmt.Errorf("--tier must be 1, 2 or 3")
 		}
 		disk.Lower()
+		launch.GitLimit = 5 * time.Minute
+		time.AfterFunc(passLimit, func() { os.Exit(1) })
 		w := cmd.OutOrStdout()
 		if *quiet {
 			w = io.Discard

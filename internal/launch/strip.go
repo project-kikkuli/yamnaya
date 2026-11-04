@@ -125,6 +125,11 @@ func keepContents(path string, strict bool) (string, string) {
 			}
 		}
 	}
+	if stage, err := look(path, "ls-files", "--stage"); err != nil {
+		return KeepFailing, err.Error()
+	} else if strings.HasPrefix(stage, "160000 ") || strings.Contains(stage, "\n160000 ") {
+		return KeepModules, "git cannot remove a worktree with submodules"
+	}
 	return "", ""
 }
 
