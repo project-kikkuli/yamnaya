@@ -502,18 +502,6 @@ func briefOf(n core.Node) string {
 	return n.Manager.BriefPath
 }
 
-// managerName names a manager by its goal and ask, or a chief by its name, falling back to the id ym knows it by.
-func (m Model) managerName(id string) string {
-	n, ok := m.board.Node(id)
-	switch {
-	case !ok:
-		return id
-	case n.Goal != nil:
-		return m.goalName(*n.Goal) + " (" + ansi.Truncate(oneLine(n.Goal.Ask), 40, "…") + ")"
-	}
-	return n.Manager.Label()
-}
-
 // queueNeeds are the ranked rows on screen, without the later fold.
 func (m Model) queueNeeds(rows []row) []core.Need {
 	var out []core.Need
