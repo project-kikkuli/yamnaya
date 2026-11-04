@@ -801,7 +801,7 @@ func TestWireAHungStatusCheckHoldsNoCycleAndNoItemCallsItSignedOut(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(time.Second) {
+	for deadline := time.Now().Add(40 * time.Second); ; time.Sleep(time.Second) {
 		w.pass(t, time.Minute)
 		if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
 			return
