@@ -125,17 +125,27 @@ const (
 	WorkElsewhere
 )
 
-// Standing compares the checkout at w's path with this bundle of w taken at head. It is w while it shares w's repository and is on
-// w's branch, or with no branch while head is behind it, so a HEAD that moved on stays w. Only comparing the content can prove the
-// bundle holds nothing more, because a worktree added again by hand on the same branch is w by every other measure.
-func (r Recovery) Standing(w Worktree, head, key string) int {
+// Standing compares the checkout at w's path with this bundle of w, going only by what the bundle itself holds. It is w while it
+// shares w's repository and is on w's branch, or with no branch while the bundle's commits are behind it, so a HEAD that moved on
+// stays w. Only its commits being in that HEAD and its tree matching prove the bundle holds nothing more, because a worktree added
+// again by hand, amended, rebased or reset on the same branch is w by every other measure.
+func (r Recovery) Standing(w Worktree, key string) int {
 	common, err := git(w.Path, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil || !samePath(common, w.GitDir) {
 		return WorkElsewhere
 	}
-	behind := head != "" && local("--git-dir="+w.GitDir, "merge-base", "--is-ancestor", head, Head(w.Path)) == nil
 	branch, _ := git(w.Path, "symbolic-ref", "--short", "-q", "HEAD")
-	if branch != w.Branch || branch == "" && !behind {
+	if branch != w.Branch {
+		return WorkElsewhere
+	}
+	base := recoveryRef(key)
+	if r.Work != "" {
+		base += "^"
+	}
+	fetched := r.Fetch(w.GitDir, key) == nil
+	head := Head(w.Path)
+	behind := fetched && local("--git-dir="+w.GitDir, "merge-base", "--is-ancestor", base, head) == nil
+	if branch == "" && !behind {
 		return WorkElsewhere
 	}
 	if !behind {
@@ -143,9 +153,6 @@ func (r Recovery) Standing(w Worktree, head, key string) int {
 	}
 	if r.Work == "" {
 		return WorkHere
-	}
-	if r.Fetch(w.GitDir, key) != nil {
-		return WorkChanged
 	}
 	want, err := git(w.Path, "rev-parse", recoveryRef(key)+"^{tree}")
 	if err != nil {
@@ -155,7 +162,7 @@ func (r Recovery) Standing(w Worktree, head, key string) int {
 		return WorkHere
 	}
 	status, err := look(w.Path, "status", "--porcelain", "--untracked-files=normal")
-	if err == nil && status == "" && Head(w.Path) == head {
+	if at, atErr := git(w.Path, "rev-parse", base); err == nil && status == "" && atErr == nil && at == head {
 		return WorkMissing
 	}
 	return WorkChanged
@@ -216,12 +223,12 @@ func originOr(origin string) string {
 // Apply puts the uncommitted changes back into worktree path, then drops the bundle and its ref.
 func (r Recovery) Apply(path, key string) error {
 	if r.Work != "" {
-		diff, err := gitEnv(path, nil, nil, "diff", "--binary", "HEAD", r.Work)
+		diff, err := gitRaw(path, nil, nil, "diff", "--binary", "HEAD", r.Work)
 		if err != nil {
 			return err
 		}
 		if diff != "" {
-			if _, err := gitEnv(path, nil, []byte(diff+"\n"), "apply", "--whitespace=nowarn"); err != nil {
+			if _, err := gitEnv(path, nil, []byte(diff), "apply", "--whitespace=nowarn"); err != nil {
 				return err
 			}
 		}
@@ -241,6 +248,12 @@ func (r Recovery) Drop(path, key string) error {
 }
 
 func gitEnv(dir string, env []string, stdin []byte, args ...string) (string, error) {
+	out, err := gitRaw(dir, env, stdin, args...)
+	return strings.TrimRight(out, "\n"), err
+}
+
+// gitRaw is gitEnv keeping every byte git wrote: a binary patch ends in a blank line it cannot do without.
+func gitRaw(dir string, env []string, stdin []byte, args ...string) (string, error) {
 	cmd := gitCommand(append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(cmd.Env, env...)
 	if stdin != nil {
@@ -251,5 +264,5 @@ func gitEnv(dir string, env []string, stdin []byte, args ...string) (string, err
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errOut.String()))
 	}
-	return strings.TrimRight(out.String(), "\n"), nil
+	return out.String(), nil
 }

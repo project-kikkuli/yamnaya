@@ -296,7 +296,8 @@ func (l launcher) find(ref string) (launch.Record, error) {
 	if err != nil {
 		return rec, fmt.Errorf("no unique session launched by ym matches %q; see ym launched: %w", ref, err)
 	}
-	if head := launch.Head(rec.Worktree.Path); head != "" && head != rec.Head {
+	// A record holding a bundle keeps the head it was bundled at, whatever now sits at its path.
+	if head := launch.Head(rec.Worktree.Path); head != "" && head != rec.Head && rec.Recovery == (launch.Recovery{}) {
 		rec.Head = head
 		if err := l.records.Save(rec); err != nil {
 			return rec, err
@@ -983,7 +984,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	clones := l.clones(rec)
 	kept := ""
 	if rec.Recovery != (launch.Recovery{}) && launch.Head(rec.Worktree.Path) != "" {
-		switch rec.Recovery.Standing(rec.Worktree, rec.Head, rec.Key) {
+		switch rec.Recovery.Standing(rec.Worktree, rec.Key) {
 		case launch.WorkHere:
 			if err := rec.Recovery.Drop(rec.Worktree.Path, rec.Key); err != nil {
 				return nil, "", err
@@ -991,6 +992,9 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 			rec.Recovery = launch.Recovery{}
 		case launch.WorkChanged:
 			kept = fmt.Sprintf("its worktree changed since it ended, so the work ym saved stays in %s, not applied", rec.Recovery.Bundle)
+			if _, err := os.Stat(rec.Recovery.Bundle); err != nil {
+				kept = fmt.Sprintf("its worktree differs from the work ym saved, and the bundle that held it, %s, is gone", rec.Recovery.Bundle)
+			}
 		case launch.WorkElsewhere:
 			return nil, "", fmt.Errorf("%s holds another checkout than %s's, so ym did not resume there and keeps its saved work in %s; move that checkout aside and revive again",
 				rec.Worktree.Path, rec.Key, rec.Recovery.Bundle)

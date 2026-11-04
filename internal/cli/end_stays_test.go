@@ -368,10 +368,239 @@ func TestReviveDropsTheBundleOnlyWhenTheWorktreeProvablyHoldsItsWork(t *testing.
 					t.Errorf("%s missing after revive: %v", f, err)
 				}
 			}
-			if after, _ := l.records.Find(rec.Key); after.IsLanded() != c.refused || (after.Recovery != (launch.Recovery{})) != c.bundle {
+			after, _ := l.records.Find(rec.Key)
+			if after.IsLanded() != c.refused || (after.Recovery != (launch.Recovery{})) != c.bundle {
 				t.Errorf("record landed %v, recovery %+v", after.IsLanded(), after.Recovery)
 			}
+			if c.refused && after.Head != ended.Head {
+				t.Errorf("a refused revive recorded the other checkout's head %s over %s", after.Head, ended.Head)
+			}
 		})
+	}
+}
+
+func TestReviveKeepsABundleWhoseCommitsTheWorktreeNoLongerHolds(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	for _, c := range []struct {
+		name   string
+		change func(t *testing.T, repo, wt string)
+		bundle bool
+		note   string
+	}{
+		{"left alone", func(*testing.T, string, string) {}, false, ""},
+		{"moved on with another commit", func(t *testing.T, repo, wt string) {
+			git(t, wt, "commit", "-q", "--allow-empty", "-m", "more")
+		}, false, ""},
+		{"amended", func(t *testing.T, repo, wt string) {
+			git(t, wt, "commit", "-q", "--amend", "--allow-empty", "-m", "rewritten")
+		}, true, "stays in"},
+		{"rebased", func(t *testing.T, repo, wt string) {
+			git(t, repo, "commit", "-q", "--allow-empty", "-m", "main moved")
+			git(t, wt, "rebase", "-q", "main")
+		}, true, "stays in"},
+		{"reset to main", func(t *testing.T, repo, wt string) {
+			git(t, wt, "reset", "-q", "--hard", "origin/main")
+		}, true, "stays in"},
+		{"reset to main and the commit collected", func(t *testing.T, repo, wt string) {
+			git(t, wt, "reset", "-q", "--hard", "origin/main")
+			gitDir := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+			os.Remove(filepath.Join(gitDir, "ORIG_HEAD"))
+			git(t, repo, "reflog", "expire", "--expire=now", "--all")
+			git(t, repo, "gc", "-q", "--prune=now")
+		}, true, "stays in"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fakeAgent(t)
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo := filepath.Join(base, "repo")
+			plant(t, repo, ".gitignore", ".env\n")
+			git(t, repo, "add", ".")
+			git(t, repo, "commit", "-q", "-m", "root")
+			git(t, repo, "push", "-q", "origin", "main")
+			wt := launch.WorktreePath(repo, "task")
+			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+			plant(t, wt, ".env", "SECRET=1")
+			git(t, wt, "commit", "-q", "--allow-empty", "-m", "only here")
+			only := launch.Head(wt)
+			l := testLauncher(t, base)
+			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: only,
+				Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			if err := l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			ended, _ := l.records.Find(rec.Key)
+			if ended.Recovery.Commits != 1 || ended.Recovery.Work != "" {
+				t.Fatalf("want a bundle of commits alone, got %+v", ended.Recovery)
+			}
+			c.change(t, repo, wt)
+
+			msg, err := l.Revive(rec.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(msg, c.note) {
+				t.Errorf("revive said %q, want %q", msg, c.note)
+			}
+			if _, err := os.Stat(ended.Recovery.Bundle); (err == nil) != c.bundle {
+				t.Errorf("bundle on disk %v, want %v", err == nil, c.bundle)
+			}
+			after, _ := l.records.Find(rec.Key)
+			if (after.Recovery != (launch.Recovery{})) != c.bundle {
+				t.Errorf("recovery %+v, want one kept %v", after.Recovery, c.bundle)
+			}
+			if c.bundle {
+				heads, err := exec.Command("git", "-C", repo, "bundle", "list-heads", ended.Recovery.Bundle).Output()
+				if err != nil || !strings.Contains(string(heads), only) {
+					t.Errorf("the bundle lists %q, %v; want %s", heads, err, only)
+				}
+				git(t, repo, "cat-file", "-e", only)
+			}
+		})
+	}
+}
+
+func TestReviveSaysSoWhenTheBundleItWouldKeepIsGone(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	plant(t, repo, ".gitignore", ".env\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	wt := launch.WorktreePath(repo, "task")
+	git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+	plant(t, wt, ".env", "SECRET=1")
+	plant(t, wt, "notes.txt", "half done")
+	l := testLauncher(t, base)
+	rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: launch.Head(wt),
+		Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.End(rec.Key, ""); err != nil {
+		t.Fatal(err)
+	}
+	ended, _ := l.records.Find(rec.Key)
+	os.Remove(ended.Recovery.Bundle)
+	msg, err := l.Revive(rec.Key)
+	if err != nil || !strings.Contains(msg, "is gone") || strings.Contains(msg, "stays in") {
+		t.Fatalf("revive said %q, %v; want it to say the bundle is gone", msg, err)
+	}
+}
+
+func TestReviveRestoresBinaryWorkHoweverItSorts(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	binary := "\x00\x01binary\x00\xff\n\n"
+	for _, c := range []struct {
+		name    string
+		tracked bool
+		after   bool
+	}{
+		{"an untracked binary sorting last", false, false},
+		{"an untracked binary with text after it", false, true},
+		{"a changed tracked binary sorting last", true, false},
+		{"a changed tracked binary with text after it", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fakeAgent(t)
+			base, _ := filepath.EvalSymlinks(t.TempDir())
+			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo := filepath.Join(base, "repo")
+			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+			git(t, repo, "push", "-q", "origin", "main")
+			wt := launch.WorktreePath(repo, "task")
+			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+			if c.tracked {
+				plant(t, wt, "data.dat", "\x00before\x00")
+				git(t, wt, "add", "data.dat")
+				git(t, wt, "commit", "-q", "-m", "binary")
+				git(t, wt, "push", "-q", "origin", "task")
+			}
+			plant(t, wt, "data.dat", binary)
+			if c.after {
+				plant(t, wt, "z.txt", "after\n")
+			}
+			l := testLauncher(t, base)
+			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: launch.Head(wt),
+				Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+			if err := l.records.Save(rec); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.End(rec.Key, ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(wt); err == nil {
+				t.Fatal("the worktree stayed")
+			}
+			if _, err := l.Revive(rec.Key); err != nil {
+				t.Fatalf("revive: %v", err)
+			}
+			if got, err := os.ReadFile(filepath.Join(wt, "data.dat")); err != nil || string(got) != binary {
+				t.Fatalf("data.dat is %q, %v", got, err)
+			}
+			if c.after {
+				if got, err := os.ReadFile(filepath.Join(wt, "z.txt")); err != nil || string(got) != "after\n" {
+					t.Fatalf("z.txt is %q, %v", got, err)
+				}
+			}
+		})
+	}
+}
+
+func TestARealLFSFileKeepsItsWorktreeAtItsEnd(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	if _, err := exec.LookPath("git-lfs"); err != nil {
+		t.Skip("git-lfs not installed")
+	}
+	fakeAgent(t)
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+	repo := filepath.Join(base, "repo")
+	git(t, repo, "lfs", "install", "--local")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+	git(t, repo, "push", "-q", "origin", "main")
+	wt := launch.WorktreePath(repo, "task")
+	git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+	git(t, wt, "push", "-q", "origin", "task")
+	lfsAttributes(t, wt)
+	plant(t, wt, "a.png", "real image")
+	l := testLauncher(t, base)
+	rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(), Head: launch.Head(wt),
+		Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+	if err := l.records.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := l.End(rec.Key, "")
+	if err != nil || !strings.Contains(msg, "a.png") {
+		t.Fatalf("the end said %q, %v", msg, err)
+	}
+	ended, _ := l.records.Find(rec.Key)
+	if _, err := l.Revive(rec.Key); err != nil {
+		t.Fatalf("revive: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(wt, "a.png")); err != nil || string(got) != "real image" {
+		t.Fatalf("a.png is %q, %v", got, err)
+	}
+	if _, err := os.Stat(ended.Recovery.Bundle); err == nil {
+		t.Error("left a bundle revive proved it no longer needs")
 	}
 }
 
