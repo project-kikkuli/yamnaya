@@ -22,11 +22,17 @@ func TestAGoalIsNamedByItsNamerElseByItsAsksFirstWords(t *testing.T) {
 		{name: "a namer reply of one word", ask: "make the export endpoint stream", namer: "export", want: "make-the-export-endpoint"},
 		{name: "a namer reply too long keeps its first words", ask: "make the export endpoint stream", namer: "board-relay-sync-drops-items-on-second-host-restart", want: "board-relay-sync-drops"},
 		{name: "a namer reply too long and not a slug", ask: "make the export endpoint stream", namer: "Board Relay-Sync-Drops-Items-On-Second", want: "make-the-export-endpoint"},
-		{name: "the personal-repo preamble", ask: "yamnaya is a personal repo: no PR; wt worktree, push to main.\n\nTeach the board to scroll", want: "teach-the-board-to"},
-		{name: "another opener stays", ask: "we were looking into the board", want: "we-were-looking-into"},
+		{name: "the personal-repo preamble", ask: "yamnaya is a personal repo: no PR; wt worktree, push to main.\n\nTeach the board to scroll", want: "teach-the-board"},
+		{name: "an opener says nothing", ask: "we were looking into the board", want: "looking-into-the-board"},
+		{name: "I'd like", ask: "I'd like yamnaya Needs You closer to a queue", want: "yamnaya-needs-you-closer"},
+		{name: "an id in the ask", ask: "Owner-reported via mgr51: the relay drops goal7 rows", want: "relay-drops-rows"},
+		{name: "first words stopping on a loose word", ask: "check the code and tell me", want: "check-the-code"},
+		{name: "an id in the namer's reply", ask: "make the export endpoint stream", namer: "fix-mgr51-export", want: "fix-export"},
+		{name: "a namer reply that is filler and an id", ask: "make the export endpoint stream", namer: "owner-reported-via-mgr51", want: "make-the-export-endpoint"},
+		{name: "a namer reply opening with filler", ask: "make the export endpoint stream", namer: "i-d-like-streaming-export", want: "streaming-export"},
 		{name: "no namer reply", ask: "Make the export endpoint stream instead of buffering", want: "make-the-export-endpoint"},
-		{name: "the standing preamble", ask: "Fix forward. Diagnose before acting. No reverts, guards, retries, or safety steps without evidence they're needed. Never block on a wait without first checking why it's slow.\n\nTeach the board to scroll", want: "teach-the-board-to"},
-		{name: "a you-are opening", ask: "You are the implementer of this goal.\nTeach the board to scroll", want: "teach-the-board-to"},
+		{name: "the standing preamble", ask: "Fix forward. Diagnose before acting. No reverts, guards, retries, or safety steps without evidence they're needed. Never block on a wait without first checking why it's slow.\n\nTeach the board to scroll", want: "teach-the-board"},
+		{name: "a you-are opening", ask: "You are the implementer of this goal.\nTeach the board to scroll", want: "teach-the-board"},
 		{name: "a preamble, a hard rule and how it came", ask: "Fix forward. Diagnose before acting.\n\nHARD RULE from the owner: no agent writes on any PR not authored by them.\n\nOwner approved (item mgr10:G10, PLEASE GO IMPLEMENT THIS): readable names for goals", want: "readable-names-for-goals"},
 		{name: "a design-only opening", ask: "Fix forward.\n\nDESIGN ONLY. No implementation, no commits, until the owner says go.\n\nOwner ask: closer action queue", want: "closer-action-queue"},
 		{name: "an urgent opening", ask: "URGENT, owner-reported, fix first: rows went missing", want: "rows-went-missing"},
@@ -170,13 +176,16 @@ func TestARenameRetitlesTheBriefPageAtOnce(t *testing.T) {
 func TestHaikuNameRunsFromADirectoryThatSaysNothing(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "claude")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s' \"$PWD\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s:%s' \"$PWD\" \"$CLAUDE_CONFIG_DIR\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Chdir(t.TempDir())
-	if got := HaikuName("anything"); got != "/" {
-		t.Fatalf("claude ran in %q, want /", got)
+	t.Setenv("CLAUDE_CONFIG_DIR", "/inherited")
+	for _, tc := range []struct{ root, want string }{{"", "/:"}, {"/roots/work", "/:/roots/work"}} {
+		if got := HaikuName("anything", tc.root); got != tc.want {
+			t.Fatalf("root %q: claude ran as %q, want dir:config %q", tc.root, got, tc.want)
+		}
 	}
 }
 
@@ -294,13 +303,13 @@ func TestNamingUnnamedGoalsAndChiefsLeavesNamedOnesAlone(t *testing.T) {
 		t.Fatalf("named %d, %v; want 2", n, err)
 	}
 	o, _ := w.core.LoadOrg()
-	for _, tc := range []struct{ id, want string }{{kept.ManagerID, "kept-name"}, {oldM.ID, "fix-flaky-ci-on"}, {boss.ID, "yamnaya-manager"}} {
+	for _, tc := range []struct{ id, want string }{{kept.ManagerID, "kept-name"}, {oldM.ID, "fix-flaky-ci"}, {boss.ID, "yamnaya-manager"}} {
 		if got := o.Managers[tc.id].Shown(); got != tc.want {
 			t.Errorf("%s shows %q, want %q", tc.id, got, tc.want)
 		}
 	}
-	if got := o.Goals[old.ID].Name; got != "fix-flaky-ci-on" {
-		t.Errorf("goal %s named %q, want fix-flaky-ci-on", old.ID, got)
+	if got := o.Goals[old.ID].Name; got != "fix-flaky-ci" {
+		t.Errorf("goal %s named %q, want fix-flaky-ci", old.ID, got)
 	}
 }
 
@@ -842,7 +851,7 @@ func TestACloseShowsItsChiefsNameAndIsJudgedByItsId(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
-			w.core.Namer = func(string) string { return "the-goal" }
+			w.core.Namer = func(string) string { return "closing-goal" }
 			g, m := w.goal(t, "anything", "/repo/august")
 			boss := w.chief(t, "boss-chief", m.ID)
 			other := w.chief(t, "other-chief", boss.ID)
@@ -896,4 +905,119 @@ func legacyClose(w *orgWorld, g Goal, _ Manager, author string) GoalEvent {
 		panic(err)
 	}
 	return e
+}
+
+func TestAGoalNamedWhenTheNamerFailedGetsTheNamersNameOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name, ask, was string
+		source         string
+		want           string
+	}{
+		{name: "the first words, before sources were recorded", ask: "I'd like yamnaya Needs You closer", was: "i-d-like-yamnaya", want: "good-name"},
+		{name: "with a numeric suffix", ask: "I'd like yamnaya Needs You closer", was: "i-d-like-yamnaya-3", want: "good-name"},
+		{name: "an id in them", ask: "Owner-reported via mgr51: the relay drops rows", was: "owner-reported-via-mgr51", want: "good-name"},
+		{name: "recorded as the fallback", ask: "anything at all", was: "something-else", source: NamedByFallback, want: "good-name"},
+		{name: "a person's, before sources were recorded", ask: "I'd like yamnaya Needs You closer", was: "needs-you-queue", want: "needs-you-queue"},
+		{name: "a person's, recorded", ask: "I'd like yamnaya Needs You closer", was: "i-d-like-yamnaya", source: NamedByHand, want: "i-d-like-yamnaya"},
+		{name: "the namer's already", ask: "I'd like yamnaya Needs You closer", was: "i-d-like-yamnaya", source: NamedByNamer, want: "i-d-like-yamnaya"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g, m := w.goal(t, tc.ask, "/repo/august")
+			boss := w.chief(t, "Keeps Its Name")
+			if _, err := w.core.Store.db.Exec(`UPDATE ym_goals SET name=?, name_source=? WHERE 'goal'||num=?`, tc.was, tc.source, g.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.core.Store.db.Exec(`UPDATE ym_managers SET name=? WHERE 'mgr'||num=?`, tc.was, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			w.core.Store.invalidate()
+			calls := 0
+			w.core.Namer = func(string) string { calls++; return "good-name" }
+			if _, err := w.core.BetterNames(); err != nil {
+				t.Fatal(err)
+			}
+			o, _ := w.core.LoadOrg()
+			if o.Goals[g.ID].Name != tc.want || o.Managers[m.ID].Name != tc.want {
+				t.Fatalf("goal %q, manager %q, want both %q", o.Goals[g.ID].Name, o.Managers[m.ID].Name, tc.want)
+			}
+			if got := o.Managers[boss.ID].Name; got != "keeps-its-name" {
+				t.Fatalf("chief is now %q", got)
+			}
+			if tc.want == "good-name" {
+				raw, err := os.ReadFile(m.BriefPath)
+				if err != nil || !strings.HasPrefix(string(raw), "# good-name: ") {
+					t.Fatalf("brief page %q, %v", raw, err)
+				}
+			}
+			calls = 0
+			if _, err := w.core.BetterNames(); err != nil || calls != 0 {
+				t.Fatalf("a second pass asked the namer %d times, %v", calls, err)
+			}
+		})
+	}
+}
+
+func TestANameAPersonGaveStaysThroughBetterNames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func(*orgWorld) Goal
+		want string
+	}{
+		{"ym goal --name", func(w *orgWorld) Goal {
+			g, _, err := w.core.NewGoalNamed("chosen-name", "anything", "/repo/august", "", "")
+			if err != nil {
+				panic(err)
+			}
+			return g
+		}, "chosen-name"},
+		{"ym goal rename to the very first words", func(w *orgWorld) Goal {
+			g, _, err := w.core.NewGoalNamed("", "make the export stream", "/repo/august", "", "")
+			if err != nil {
+				panic(err)
+			}
+			if _, err := w.core.Rename(g.ID, "make-the-export-stream"); err != nil {
+				panic(err)
+			}
+			return g
+		}, "make-the-export-stream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newOrgWorld(t)
+			g := tc.make(w)
+			w.core.Namer = func(string) string { return "good-name" }
+			if _, err := w.core.BetterNames(); err != nil {
+				t.Fatal(err)
+			}
+			o, _ := w.core.LoadOrg()
+			if got := o.Goals[g.ID].Name; got != tc.want {
+				t.Fatalf("name %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestANamerThatStaysOutEndsThePassAndALaterOneFinishesIt(t *testing.T) {
+	w := newOrgWorld(t)
+	var ids []string
+	for _, ask := range []string{"first ask here", "second ask here", "third ask here", "fourth ask here", "fifth ask here"} {
+		g, _ := w.goal(t, ask, "/repo/august")
+		ids = append(ids, g.ID)
+		if g.NameSource != NamedByFallback {
+			t.Fatalf("%s came by its name as %q", g.Name, g.NameSource)
+		}
+	}
+	calls := 0
+	w.core.Namer = func(string) string { calls++; return "" }
+	if n, err := w.core.BetterNames(); err != nil || n != 0 || calls != giveUpAfter {
+		t.Fatalf("named %d with %d calls, %v; want 0 with %d", n, calls, err, giveUpAfter)
+	}
+	w.core.Namer = func(string) string { return "good-name" }
+	if n, err := w.core.BetterNames(); err != nil || n != len(ids) {
+		t.Fatalf("named %d, %v; want %d", n, err, len(ids))
+	}
+	o, _ := w.core.LoadOrg()
+	if got := o.Goals[ids[4]].Name; got != "good-name-5" {
+		t.Fatalf("last goal named %q", got)
+	}
 }

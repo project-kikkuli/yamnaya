@@ -261,6 +261,19 @@ func (l launcher) selectProfile(harness, id string) (profile.Profile, error) {
 	return profile.Profile{}, fmt.Errorf("no verified usable %s login; inspect ym limits and choose --profile explicitly", harness)
 }
 
+// haikuName names ask on a Claude login that has room, as a launch would pick one; "" when none has.
+func (l launcher) haikuName(ask string) string {
+	p, err := l.selectProfile(claude.Name, "")
+	if err != nil {
+		return ""
+	}
+	root := ""
+	if p.ID != "default" {
+		root = p.Root
+	}
+	return core.HaikuName(ask, root)
+}
+
 func profileLimits(dir string) []core.Limit { return usage.KnownLimits(dir, time.Now()) }
 
 func profileDisplay(h, id string) string {

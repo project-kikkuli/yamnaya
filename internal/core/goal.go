@@ -41,10 +41,11 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 		out, err := c.RunOrRelay(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
 		return Goal{Name: name, Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
 	}
-	if name, err = c.goalName(name, ask); err != nil {
+	name, source, err := c.goalName(name, ask)
+	if err != nil {
 		return Goal{}, Manager{}, err
 	}
-	g, err := c.Store.AddGoal(Goal{Name: name, Ask: ask, Repo: repo, CreatedAt: c.now()})
+	g, err := c.Store.AddGoal(Goal{Name: name, NameSource: source, Ask: ask, Repo: repo, CreatedAt: c.now()})
 	if err != nil {
 		return g, Manager{}, err
 	}

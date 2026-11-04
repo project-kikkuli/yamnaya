@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/harness/claude"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/project-kikkuli/yamnaya/internal/proc"
+	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
 func TestGoalRenameRenamesAGoalOrChiefAndItsBriefPageAnswersToEveryRef(t *testing.T) {
@@ -242,3 +246,71 @@ func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
 		})
 	}
 }
+
+func TestTheNamerRunsOnALoginWithRoom(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		name   string
+		full   []string
+		wantOn string
+		called bool
+	}{
+		{name: "the default has room", wantOn: "", called: true},
+		{name: "the default is out of its limit", full: []string{"default"}, wantOn: "work", called: true},
+		{name: "every login is out", full: []string{"default", "work"}, called: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			os.Unsetenv("CLAUDE_CONFIG_DIR")
+			work := filepath.Join(dir, "work-root")
+			if err := os.MkdirAll(work, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(work, ".claude.json"), []byte(`{"oauthAccount":{"accountUuid":"u","organizationUuid":"o"}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := profile.Add(dir, profile.Profile{Harness: claude.Name, ID: "work", Label: "work", Root: work}); err != nil {
+				t.Fatal(err)
+			}
+			ps, err := profile.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var limits []core.Limit
+			for _, p := range ps {
+				if p.Harness == claude.Name && slices.Contains(tc.full, p.ID) {
+					limits = append(limits, core.Limit{Harness: claude.Name, Profile: p.ID, Account: p.Account, Used: 100, ResetsAt: future})
+				}
+			}
+			bin := t.TempDir()
+			log := filepath.Join(bin, "ran")
+			stub := "#!/bin/sh\nprintf '%s' \"$CLAUDE_CONFIG_DIR\" > " + log + "\necho good-name\n"
+			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(stub), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			l := launcher{records: launch.Records{Dir: filepath.Join(dir, "launches")}, core: &core.Core{Meter: fixedLimits(limits)}}
+			got := l.haikuName("anything")
+			ran, err := os.ReadFile(log)
+			if tc.called != (err == nil) {
+				t.Fatalf("claude ran %v, want %v; reply %q", err == nil, tc.called, got)
+			}
+			if !tc.called {
+				return
+			}
+			want := ""
+			if tc.wantOn == "work" {
+				want = work
+			}
+			if string(ran) != want || got != "good-name" {
+				t.Fatalf("ran on %q replying %q, want on %q", ran, got, want)
+			}
+		})
+	}
+}
+
+type fixedLimits []core.Limit
+
+func (f fixedLimits) Fleet(time.Time) core.Fleet { return core.Fleet{Limits: f} }

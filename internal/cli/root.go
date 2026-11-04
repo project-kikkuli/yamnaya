@@ -73,11 +73,11 @@ func Wire(path string) (*core.Core, error) {
 		CPU:         slot.CPU,
 		Mem:         slot.Mem,
 	}
-	if !c.Scoped {
-		c.Namer = core.HaikuName
-	}
 	if l, err := newLauncher(filepath.Dir(path)); err == nil {
 		l.core, l.srv = c, srv
+		if !c.Scoped {
+			c.Namer = l.haikuName
+		}
 		c.Launches = l
 		c.Worktrees = l.worktrees
 		c.PreparePort = l.prepareProfilePort
