@@ -743,3 +743,34 @@ func TestTheWatcherOffItemIsReadyForTheOwner(t *testing.T) {
 		t.Fatal("printed no item id")
 	}
 }
+
+func TestNoBackgroundGCStartsSoonAfterThisYmStarts(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		up    time.Duration
+		stale bool
+		want  bool
+	}{
+		{"just started, last gc long ago", time.Minute, true, false},
+		{"up a while, last gc long ago", sweepAfterStart + time.Minute, true, true},
+		{"up a while, gc just ran", sweepAfterStart + time.Minute, false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			oldStart, oldDetach := processStart, detach
+			defer func() { processStart, detach = oldStart, oldDetach }()
+			processStart = time.Now().Add(-c.up)
+			started := false
+			detach = func(...string) error { started = true; return nil }
+			stamp := filepath.Join(t.TempDir(), "gc.stamp")
+			os.WriteFile(stamp, nil, 0o644)
+			if c.stale {
+				old := time.Now().Add(-2 * sweepEvery)
+				os.Chtimes(stamp, old, old)
+			}
+			launcher{stamp: stamp}.sweepSoon()
+			if started != c.want {
+				t.Fatalf("started %v, want %v", started, c.want)
+			}
+		})
+	}
+}

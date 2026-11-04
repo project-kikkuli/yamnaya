@@ -24,9 +24,16 @@ const sweepEvery = time.Hour
 // landedKeep is how long ym gc keeps a landed session's record for ym revive once its conversation's transcript is gone too.
 const landedKeep = 14 * 24 * time.Hour
 
-// sweepSoon starts ym gc in the background when the last one began over sweepEvery ago.
+// processStart is when this ym began, which a first gc waits on.
+var processStart = time.Now()
+
+// sweepAfterStart is how long a ym waits before its first background gc: after a restart ym resumes sessions first, and an
+// ordinary gc would land a session whose pane is not back yet.
+const sweepAfterStart = 10 * time.Minute
+
+// sweepSoon starts ym gc in the background when the last one began over sweepEvery ago and this ym has been up long enough.
 func (l launcher) sweepSoon() {
-	if l.stamp == "" {
+	if l.stamp == "" || time.Since(processStart) < sweepAfterStart {
 		return
 	}
 	if fi, err := os.Stat(l.stamp); err == nil && time.Since(fi.ModTime()) < sweepEvery {

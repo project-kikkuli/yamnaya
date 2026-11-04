@@ -25,8 +25,6 @@ const (
 	diskCheckEvery = time.Minute
 	// diskRetryAfter is how long serve waits before another pass at the same tier: a pass that fell short walks whole caches.
 	diskRetryAfter = 15 * time.Minute
-	// sweepAfterStart is how long serve waits before its first hourly gc.
-	sweepAfterStart = 10 * time.Minute
 	// passLimit ends a pass whatever hangs in it, so disk.lock cannot be held for good.
 	passLimit = 90 * time.Minute
 	// reapIdle replaces gc's idle time at tier 2.
@@ -197,12 +195,8 @@ func watchDisk(ctx context.Context, l launcher, dir string, log io.Writer) {
 		start: func() error { return detach("disk", "reclaim", "--quiet") }}
 	tick := time.NewTicker(diskCheckEvery)
 	defer tick.Stop()
-	began := time.Now()
 	for {
-		// a restart's resumes come first: an ordinary gc would land a session whose pane is not back yet
-		if time.Since(began) >= sweepAfterStart {
-			l.sweepSoon()
-		}
+		l.sweepSoon()
 		if err := w.tick(); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(log, "disk:", err)
 		}
