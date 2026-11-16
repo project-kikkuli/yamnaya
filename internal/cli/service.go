@@ -60,6 +60,9 @@ func sameServiceBinary(a, b os.FileInfo) bool {
 	return os.SameFile(a, b) && a.Size() == b.Size() && a.ModTime().Equal(b.ModTime())
 }
 
+// ensureService is only called by an explicit service start request.
+var ensureService = ensureWorkService
+
 func serviceCmd() *cobra.Command {
 	root := &cobra.Command{Use: "service", Short: "Inspect or restart background reconciliation"}
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Show service heartbeat and its last error", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -69,7 +72,7 @@ func serviceCmd() *cobra.Command {
 		}
 		raw, err := os.ReadFile(filepath.Join(dir, "work-service.json"))
 		if os.IsNotExist(err) {
-			fmt.Fprintln(cmd.OutOrStdout(), "Background service has not started. Run ym or ym serve.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Background service has not started. Run ym service ensure or ym serve.")
 			return nil
 		}
 		if err != nil {
@@ -134,7 +137,7 @@ func serviceCmd() *cobra.Command {
 			}
 		}
 	}}, &cobra.Command{Use: "ensure", Short: "Start background reconciliation unless it already runs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		return ensureWorkService()
+		return ensureService()
 	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a launchd agent on macOS or a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if runtime.GOOS == "darwin" {
 			path, err := keepLaunchd()

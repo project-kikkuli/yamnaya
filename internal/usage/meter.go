@@ -50,6 +50,7 @@ type Meter struct {
 	closing     atomic.Bool
 	mu          sync.Mutex
 	ledger      *ledger
+	revision    int64
 	files       map[string]*file
 	byID        map[int64]*file
 	nextID      int64
@@ -137,7 +138,18 @@ func (m *Meter) Fleet(now time.Time) core.Fleet {
 
 func (m *Meter) open(now time.Time) error {
 	if m.ledger != nil {
-		return m.reload(now)
+		revision, err := m.ledger.revision()
+		if err != nil {
+			return err
+		}
+		if revision == m.revision {
+			return nil
+		}
+		if err := m.reload(now); err != nil {
+			return err
+		}
+		m.revision = revision
+		return nil
 	}
 	l, err := openLedger(filepath.Join(m.StateDir, "ym.db"))
 	if err != nil {
@@ -145,6 +157,12 @@ func (m *Meter) open(now time.Time) error {
 	}
 	m.ledger = l
 	if err := m.reload(now); err != nil {
+		l.close()
+		m.ledger = nil
+		return err
+	}
+	m.revision, err = l.revision()
+	if err != nil {
 		l.close()
 		m.ledger = nil
 		return err
@@ -363,6 +381,9 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 				m.edges[profile.SessionKey(codexName, p.ID, child)] = profile.SessionKey(codexName, p.ID, parent)
 			}
 		}
+	}
+	if m.revision, err = m.ledger.revision(); err != nil {
+		return st, err
 	}
 	f := m.build(now)
 	m.mu.Lock()

@@ -310,14 +310,11 @@ func settleAssignmentIn(tx *sql.Tx, id, worker, parent string) error {
 	if err != nil {
 		return err
 	}
-	if a.Session == worker {
+	if a.Session == worker || a.State != "outstanding" || a.Report != 0 {
 		return nil
 	}
 	if parent == "" {
 		_ = tx.QueryRow(`SELECT parent FROM ym_links WHERE child=?`, a.Session).Scan(&parent)
-	}
-	if a.State != "outstanding" || a.Report != 0 {
-		return errors.New("assignment already has a terminal report")
 	}
 	if _, err = tx.Exec(`UPDATE ym_assignments SET session=? WHERE id=?`, worker, id); err != nil {
 		return err

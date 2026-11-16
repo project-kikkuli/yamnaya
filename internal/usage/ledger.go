@@ -13,6 +13,8 @@ import (
 )
 
 const ledgerSchema = `
+CREATE TABLE IF NOT EXISTS ym_usage_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+INSERT OR IGNORE INTO ym_usage_revision(id,revision) VALUES(1,0);
 CREATE TABLE IF NOT EXISTS ym_usage_exhaustions(key TEXT PRIMARY KEY,body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ym_usage_files (
 	id INTEGER PRIMARY KEY,
@@ -160,6 +162,12 @@ func openLedger(path string) (*ledger, error) {
 }
 
 func (l *ledger) close() error { return l.db.Close() }
+
+func (l *ledger) revision() (int64, error) {
+	var revision int64
+	err := l.db.QueryRow(`SELECT revision FROM ym_usage_revision WHERE id=1`).Scan(&revision)
+	return revision, err
+}
 
 func b2i(b bool) int {
 	if b {
@@ -348,6 +356,9 @@ func (l *ledger) commit(b batch) error {
 			key, lim.Harness, string(body)); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(`UPDATE ym_usage_revision SET revision=revision+1 WHERE id=1`); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

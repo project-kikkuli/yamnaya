@@ -6,17 +6,18 @@ import (
 	"testing"
 )
 
-func TestAnyYmCommandBringsBackAServeThatDied(t *testing.T) {
+func TestOnlyAnExplicitServiceStartBringsBackAServe(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		served bool
 		args   []string
 		want   bool
 	}{
-		{"state dir that had a serve", true, []string{"goal", "authority"}, true},
+		{"state dir that had a serve", true, []string{"goal", "authority"}, false},
+		{"explicit service start", true, []string{"service", "ensure"}, true},
 		{"fresh state dir", false, []string{"goal", "authority"}, false},
 		{"ym throttle, which must not bring agents back", true, []string{"throttle"}, false},
-		{"ym unthrottle", true, []string{"unthrottle"}, true},
+		{"ym unthrottle", true, []string{"unthrottle"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
