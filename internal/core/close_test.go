@@ -102,12 +102,12 @@ func TestClosingAGoalEndsItsSessionsAndRecordsWhy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if after.State != ItemDismissed || !strings.Contains(after.Reason, "goal27 took it over") {
-				t.Fatalf("its open item is %s (%q), want dismissed with the reason", after.State, after.Reason)
+			if after.State != ItemOpen || after.Recipient != Owner {
+				t.Fatalf("its open item is %s (%q), want retained for the owner", after.State, after.Reason)
 			}
 			w.supervise(t)
-			if open := ownerItems(w.board(t)); slices.ContainsFunc(open, func(i Item) bool { return i.Seq == it.Seq }) {
-				t.Fatal("a closed goal's item climbed to the owner")
+			if open := ownerItems(w.board(t)); !slices.ContainsFunc(open, func(i Item) bool { return i.Seq == it.Seq }) {
+				t.Fatal("a closed goal's unresolved decision disappeared")
 			}
 			pending, err := w.core.Store.unnotified()
 			if err != nil {
@@ -800,7 +800,7 @@ func TestReopeningFromTheArchive(t *testing.T) {
 			if w.closure(t, g.ID) != nil {
 				t.Fatal("the closure still stands after a reopen")
 			}
-			if after, _ := w.core.Store.Item(it.Key()); tc.name == "closed" && after.State != ItemDismissed {
+			if after, _ := w.core.Store.Item(it.Key()); tc.name == "closed" && after.State != ItemOpen {
 				t.Fatalf("reopening restored the item: %s", after.State)
 			}
 			o, _ := w.core.LoadOrg()
@@ -1018,7 +1018,7 @@ func TestACloseRefusesWhatIsNotAGoalOrHasNoWords(t *testing.T) {
 	}
 }
 
-func TestAClosedGoalsItemsOnAnotherHostAreDismissedThere(t *testing.T) {
+func TestAClosedGoalsItemsOnAnotherHostRemainUnresolved(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		session string
@@ -1065,7 +1065,7 @@ func TestAClosedGoalsItemsOnAnotherHostAreDismissedThere(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(closed.String(), "open items on b dismissed once it hears") {
+			if !strings.Contains(closed.String(), "open items on b retained for the owner once it hears") {
 				t.Fatalf("close said %q", closed)
 			}
 			syncWork(t, f)
@@ -1083,7 +1083,11 @@ func TestAClosedGoalsItemsOnAnotherHostAreDismissedThere(t *testing.T) {
 				f.net.down["b"] = false
 				syncWork(t, f)
 			}
-			if now := state(asked); now.State != ItemDismissed || !strings.Contains(now.Reason, "owner moved on") {
+			expected := ItemOpen
+			if tc.snooze {
+				expected = ItemSnoozed
+			}
+			if now := state(asked); now.State != expected || now.Recipient != Owner {
 				t.Fatalf("the closed goal's item is %s (%q)", now.State, now.Reason)
 			}
 			if now := state(kept); now.State != ItemOpen {

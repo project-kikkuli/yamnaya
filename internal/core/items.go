@@ -409,20 +409,29 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		return it, Final(fmt.Errorf("item %s is %s; cannot move it to %s", it.ID, it.State, to))
 	}
 	var answer, reason string
-	var answeredAt any
+	var answeredAt *string
 	switch to {
 	case ItemAnswered:
-		answer, answeredAt = text, now()
+		answer = text
+		at := now()
+		answeredAt = &at
 	case ItemDismissed:
-		reason, answeredAt = text, now()
+		reason = text
+		at := now()
+		answeredAt = &at
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return it, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL, held_at = NULL, snooze_until = NULL WHERE seq = ? AND state = ?`,
-		to, answer, reason, answeredAt, it.Seq, it.State)
+	if source, err := consolidatedInto(tx, it.Seq); err != nil {
+		return it, err
+	} else if source != 0 {
+		return it, Final(fmt.Errorf("item %s was consolidated into #%d; change the original decision", it.Key(), source))
+	}
+	res, err := tx.Exec(`UPDATE ym_items SET state = ?, answer = ?, reason = ?, answered_at = ?, delivered_at = NULL, held_at = NULL, snooze_until = NULL WHERE seq = ? AND state = ? AND (SELECT count(*) FROM ym_item_events WHERE item = ?) = ?`,
+		to, answer, reason, answeredAt, it.Seq, it.State, it.Key(), len(it.History))
 	if err != nil {
 		return it, err
 	}
@@ -457,6 +466,9 @@ func (s *Store) Transition(ref, to, text string) (Item, error) {
 		}
 	}
 	if err := addEvent(tx, it.Key(), it.State, to, text); err != nil {
+		return it, err
+	}
+	if err := resolveConsolidatedItems(tx, it, to, answer, reason, answeredAt); err != nil {
 		return it, err
 	}
 	if err := tx.Commit(); err != nil {

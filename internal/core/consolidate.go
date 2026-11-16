@@ -35,6 +35,16 @@ func (c *Core) Consolidate(copyRef, sourceRef, why string) (Item, error) {
 	if copyItem.Seq == source.Seq || copyItem.Kind != source.Kind || copyItem.State != ItemOpen {
 		return Item{}, fmt.Errorf("choose a distinct open copy of the same item kind")
 	}
+	if parent, err := consolidatedInto(tx, source.Seq); err != nil {
+		return Item{}, err
+	} else if parent != 0 {
+		return Item{}, fmt.Errorf("source %s was consolidated into #%d; use that original item", source.Key(), parent)
+	}
+	if parent, err := consolidatedInto(tx, copyItem.Seq); err != nil {
+		return Item{}, err
+	} else if parent != 0 {
+		return Item{}, fmt.Errorf("copy %s was consolidated into #%d already", copyItem.Key(), parent)
+	}
 	if copyItem.Rec != "" {
 		source.Rec = copyItem.Rec
 	}
@@ -64,8 +74,17 @@ func (c *Core) Consolidate(copyRef, sourceRef, why string) (Item, error) {
 	if _, err := tx.Exec(`UPDATE ym_items SET state='open', recipient='', preparer='', answer='', reason='', answered_at=NULL, delivered_at=NULL, held_at=NULL, rec=?, options=?, evidence=?, tried=?, blocks=? WHERE seq=?`, source.Rec, string(options), string(evidence), source.Tried, source.Blocks, source.Seq); err != nil {
 		return Item{}, err
 	}
+	if err := resolveConsolidatedItems(tx, source, ItemOpen, "", "", nil); err != nil {
+		return Item{}, err
+	}
 	reason := "consolidated into " + source.Qualified() + ": " + why
-	if _, err := tx.Exec(`UPDATE ym_items SET state='dismissed', reason=?, answered_at=?, delivered_at=NULL, held_at=NULL WHERE seq=?`, reason, stamp(c.now()), copyItem.Seq); err != nil {
+	if _, err := tx.Exec(`INSERT INTO ym_item_consolidations(copy, source, created_at) VALUES (?, ?, ?)`, copyItem.Seq, source.Seq, stamp(c.now())); err != nil {
+		return Item{}, err
+	}
+	if _, err := tx.Exec(`UPDATE ym_item_consolidations SET source = ? WHERE source = ?`, source.Seq, copyItem.Seq); err != nil {
+		return Item{}, err
+	}
+	if _, err := tx.Exec(`UPDATE ym_items SET state='dismissed', reason=?, answered_at=?, delivered_at=?, held_at=NULL WHERE seq=?`, reason, stamp(c.now()), stamp(c.now()), copyItem.Seq); err != nil {
 		return Item{}, err
 	}
 	if err := addEvent(tx, source.Key(), source.State, ItemOpen, "consolidated "+copyItem.Qualified()+": "+why); err != nil {

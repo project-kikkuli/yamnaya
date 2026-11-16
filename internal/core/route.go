@@ -357,20 +357,25 @@ func (c *Core) reroute(b Board, o Org) error {
 	if err != nil {
 		return err
 	}
+	available := c.answeringOrg(b, o)
 	for _, it := range items {
 		if it.Recipient == Owner {
 			continue
 		}
-		up := o.Above(it.Recipient)
+		up := available.Above(it.Recipient)
 		if up == it.Recipient {
 			continue
 		}
-		if err := c.Store.SetRecipient(it.Seq, up); err != nil {
+		changed, err := c.Store.rerouteItem(it, up, "supervisor unavailable")
+		if err != nil {
 			return err
+		}
+		if !changed {
+			continue
 		}
 		was := it.Recipient
 		it.Recipient = up
-		if missing := Missing(it); up == Owner && len(missing) > 0 && o.Active(o.Managers[was]) {
+		if missing := Missing(it); up == Owner && len(missing) > 0 && o.Active(o.Managers[was]) && b.Alive(o.Managers[was]) {
 			if err := c.Store.SetPreparer(it.Seq, was); err != nil {
 				return err
 			}

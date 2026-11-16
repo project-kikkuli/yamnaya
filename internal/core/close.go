@@ -52,7 +52,7 @@ func (c *Core) CloseAuthor(session, by string) (string, error) {
 }
 
 // CloseGoal ends the goal order.Ref names with a recorded reason: its manager, agents and verifier end as in a kill, with their
-// work kept for ym revive; its open items are dismissed; a live goal becomes dropped, and a done or killed one keeps its state and
+// work kept for ym revive; its unresolved items remain available to the owner; a live goal becomes dropped, and a done or killed one keeps its state and
 // is acked. A chief closes only goals below it, at any depth.
 func (c *Core) CloseGoal(b Board, order CloseOrder) (Closed, error) {
 	order.Why = oneLine(order.Why)
@@ -212,7 +212,7 @@ func (c *Core) openPRs(g Goal) ([]string, error) {
 	return out, nil
 }
 
-// dismissGoalItems dismisses what owner's sessions still ask here, which would otherwise climb to the owner once its manager ends.
+// dismissGoalItems preserves unresolved decisions when their source goal closes.
 func (c *Core) dismissGoalItems(owner, reason string) (int, error) {
 	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
 	if err != nil {
@@ -224,7 +224,7 @@ func (c *Core) dismissGoalItems(owner, reason string) (int, error) {
 		if it.GoalOwner != owner {
 			continue
 		}
-		if _, err := c.Store.Transition(it.Key(), ItemDismissed, reason); err != nil {
+		if _, err := c.Store.rerouteItem(it, Owner, reason+"; unresolved decision retained"); err != nil {
 			errs = append(errs, err)
 			continue
 		}
@@ -233,7 +233,7 @@ func (c *Core) dismissGoalItems(owner, reason string) (int, error) {
 	return n, errors.Join(errs...)
 }
 
-// dismissItemsElsewhere has each host g's agents ran on dismiss their asks, which live on the host that filed them.
+// dismissItemsElsewhere preserves asks on each host that ran the goal.
 func (c *Core) dismissItemsElsewhere(g Goal, reason string) ([]string, error) {
 	assignments, err := c.Store.Assignments(g.ID)
 	if err != nil {
