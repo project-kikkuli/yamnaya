@@ -25,7 +25,7 @@ jobs:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: go build -p 1 -o "$RUNNER_TEMP/ym" ./cmd/ym
-      - run: go test -p 1 ./internal/core ./internal/usage ./internal/intake ./internal/harness/claude ./internal/harness/codex
+      - run: go test -p 1 ./internal/core ./internal/usage ./internal/intake ./internal/harness/claude ./internal/harness/codex ./internal/tui
         if: startsWith(github.ref, 'refs/heads/ym-validate/')
       - run: go test -p 1 ./...
       - run: go vet -p 1 ./...
