@@ -432,7 +432,7 @@ func (c *Core) DispatchActions(b Board) error {
 			}
 		}
 		s, ok := c.reach(b, session)
-		if !ok || s.Status != Idle || s.Prompt != nil || s.Paused || len(s.Copies) > 1 || used[session] {
+		if !ok || s.Status != Idle || s.Prompt != nil || s.Paused || c.Off(s.Key()) || len(s.Copies) > 1 || used[session] {
 			continue
 		}
 		res, err := c.Store.db.Exec(`UPDATE ym_activations SET state='claimed',target_session=?,dispatched=? WHERE id=? AND state='pending'`, session, stamp(c.now()), a.ID)

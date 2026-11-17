@@ -174,6 +174,7 @@ func NewRoot() *cobra.Command {
 		docsCmd(with),
 		linearCmd(with),
 		actionCmd(with),
+		launchQueueCmd(with),
 		controlCmd(),
 		serviceCmd(),
 		slotCmd(),
