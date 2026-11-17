@@ -28,7 +28,7 @@ const peerProtocol = 1
 // ErrNoInbox means the session advertises no messaging socket in a protocol ym speaks.
 var ErrNoInbox = errors.New("no messaging socket ym can use")
 
-var ErrNoSupervisor = errors.New("Claude has no supported non-user supervisor continuation transport")
+var ErrNoSupervisor = errors.New("claude has no supported non-user supervisor continuation transport")
 
 // ErrHeld means the session would hold a message from ym for the owner's review instead of reading it.
 var ErrHeld = errors.New("the session holds messages from ym for review")

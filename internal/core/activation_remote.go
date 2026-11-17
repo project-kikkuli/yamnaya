@@ -86,18 +86,6 @@ func (c *Core) transferActivation(a Activation, session string) (bool, error) {
 	return true, tx.Commit()
 }
 
-func (c *Core) activationReceipt(a Activation, state, result string) error {
-	tx, err := c.Store.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = c.activationReceiptIn(tx, a, state, result); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 func (c *Core) activationReceiptIn(tx *sql.Tx, a Activation, state, result string) error {
 	var origin, target string
 	err := tx.QueryRow(`SELECT origin,target_session FROM ym_activation_origins WHERE id=?`, a.ID).Scan(&origin, &target)
@@ -115,18 +103,6 @@ func (c *Core) activationReceiptIn(tx *sql.Tx, a Activation, state, result strin
 		return err
 	}
 	return c.activationRelayIn(tx, origin, ActivationMessage{Operation: "receipt", Revision: revision, Origin: activationSelfIn(tx), Action: Activation{ID: a.ID}, Session: target, State: state, Result: result})
-}
-
-func (c *Core) cancelTransferredActivation(a Activation) error {
-	tx, err := c.Store.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = c.cancelTransferredActivationIn(tx, a); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 func (c *Core) cancelTransferredActivationIn(tx *sql.Tx, a Activation) error {

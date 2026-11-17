@@ -45,7 +45,7 @@ func (a *Adapter) channelMessage(s core.Session, text string) error {
 	}
 	actions := channelActions(text)
 	if len(actions) == 0 {
-		return errors.New("Claude supervisor delivery requires a durable action identity")
+		return errors.New("claude supervisor delivery requires a durable action identity")
 	}
 	conn, err := net.DialTimeout("unix", path, 3*time.Second)
 	if err != nil {
@@ -63,7 +63,7 @@ func (a *Adapter) channelMessage(s core.Session, text string) error {
 		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}
 	if reply.Status == "refused" {
-		return fmt.Errorf("Claude channel refused: %s", reply.Error)
+		return fmt.Errorf("claude channel refused: %s", reply.Error)
 	}
 	return fmt.Errorf("%w: Claude channel notification awaits the accepting session's acknowledgement", core.ErrSubmissionUncertain)
 }
