@@ -530,7 +530,19 @@ func (c *Core) Reopen(id string) (Item, error) {
 		it.State = ItemOpen
 		return it, err
 	}
-	return c.Store.Transition(id, ItemOpen, "")
+	it, err := c.Store.Transition(id, ItemOpen, "")
+	if err != nil || it.Recipient == Owner {
+		return it, err
+	}
+	o, err := c.LoadOrg()
+	if err != nil {
+		return it, err
+	}
+	b, err := c.Board()
+	if err != nil {
+		return it, err
+	}
+	return it, c.askManager(b, o, it)
 }
 
 // deliver hands the items' notices to session as one message, claiming each first so no other delivery repeats them.

@@ -237,8 +237,7 @@ func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 	}
 	was := g.State
 	g.State, g.AckedAt = GoalStuck, timeZero
-	g.Evidence = fmt.Sprintf("%snothing moved since %s; nudged %d times, last at %s", quietEvidence,
-		g.LastMovedAt.Local().Format(time.DateTime), m.Nudges, m.NudgedAt.Local().Format(time.DateTime))
+	g.Evidence = fmt.Sprintf("%snothing moved since %s", quietEvidence, g.LastMovedAt.Local().Format(time.DateTime))
 	if s, ok := b.Session(m.Session); ok && s.Doing.Tool != "" {
 		g.Evidence += "; last doing " + s.Doing.String()
 	}

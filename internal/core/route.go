@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"unicode/utf8"
@@ -297,7 +298,7 @@ func (c *Core) askManager(b Board, o Org, it Item) error {
 	if _, _, remote := SplitRemote(it.Recipient); remote {
 		return c.relayAsk(b, o, it)
 	}
-	return c.requestAction(b, o.Managers[it.Recipient].Session, "question", it.Key(), askText(b, o, it))
+	return c.requestAction(b, o.Managers[it.Recipient].Session, "question", fmt.Sprintf("%s@%d", it.Key(), len(it.History)), askText(b, o, it))
 }
 
 func askerOf(o Org, session string) string {

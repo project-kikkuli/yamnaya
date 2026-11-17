@@ -230,7 +230,7 @@ func (c *Core) Wake(b Board) error {
 		}
 		var err error
 		if g, ok := o.Goals[m.GoalID]; ok {
-			if err = c.nudgeIdle(b, o, m, g); err == nil && !held[m.ID] {
+			if !held[m.ID] {
 				err = c.wakeManager(b, m, g)
 			}
 		} else if m.Role == RoleChief && !held[m.ID] {
@@ -240,7 +240,7 @@ func (c *Core) Wake(b Board) error {
 			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
-	return errors.Join(append(errs, c.wakeRemoteChiefs(o), c.returnUnfed(o), c.DispatchActions(b))...)
+	return errors.Join(append(errs, c.wakeRemoteChiefs(b, o), c.returnUnfed(o), c.DispatchActions(b))...)
 }
 
 func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
@@ -485,9 +485,7 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 	return e, err
 }
 
-// nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI, no wake
-// set, no ask waiting on someone, and nothing that wakes it since its last wake; what waits for the digest rides along. It nudges once until something else happens on the
-// goal; a manager that stays idle after that is the quiet watch's to nudge and flag.
+// nudgeIdle preserves idle state without requesting another model turn.
 func (c *Core) nudgeIdle(_ Board, _ Org, _ Manager, _ Goal) error {
 	return nil
 }

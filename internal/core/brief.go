@@ -380,7 +380,7 @@ func (c *Core) freshness(o Org, remotes []RemoteBoard) (map[string]Freshness, er
 	return out, nil
 }
 
-// watchBriefs nudges a running manager or chief whose brief predates a meaningful event by more than BriefGrace, once per event.
+// watchBriefs leaves staleness in the read model without activating a manager.
 func (c *Core) watchBriefs(_ Board, _ Org) error {
 	return nil
 }

@@ -931,7 +931,7 @@ func (c *Core) notify(title, body string) error {
 
 // wakeRemoteChiefs hands each chief on another host the state changes of the goals below it here, once they are due: the goals of
 // every manager and chief whose chief runs there. A chief hears only what happened after this host first reported to it.
-func (c *Core) wakeRemoteChiefs(o Org) error {
+func (c *Core) wakeRemoteChiefs(b Board, o Org) error {
 	var errs []error
 	for _, m := range o.Ordered() {
 		chief := o.chiefOver(m)

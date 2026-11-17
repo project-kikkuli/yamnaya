@@ -221,8 +221,18 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 		return c.eventActionNeeded(b, o, e)
 	}
 	if a.Kind == "question" {
-		it, err := c.Store.Item(a.Subject)
-		return err == nil && it.State == ItemOpen && it.Recipient == a.Recipient, err
+		parts := strings.SplitN(a.Subject, "@", 2)
+		it, err := c.Store.Item(parts[0])
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if len(parts) == 2 && strconv.Itoa(len(it.History)) != parts[1] {
+			return false, nil
+		}
+		return it.State == ItemOpen && it.Recipient == a.Recipient, nil
 	}
 	if a.Kind == "merge" {
 		statuses, err := c.Store.PRStatuses()
