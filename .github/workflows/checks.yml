@@ -24,7 +24,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: go build -p 1 -o "$RUNNER_TEMP/ym" ./cmd/ym
+      - run: CGO_ENABLED=0 go build -p 1 -o "$RUNNER_TEMP/ym" ./cmd/ym
       - run: go vet -p 1 ./...
       - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
       - run: staticcheck ./...
@@ -36,6 +36,10 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/ym-validate/')
       - run: go test -p 1 ./...
       - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -p 1 -o "$RUNNER_TEMP/ym-darwin-arm64" ./cmd/ym
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ym-linux-amd64
+          path: ${{ runner.temp }}/ym
       - uses: actions/upload-artifact@v4
         with:
           name: ym-darwin-arm64
