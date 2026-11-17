@@ -93,7 +93,7 @@ func linearCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 	root := &cobra.Command{Use: "linear", Short: "Read Linear issues, link them to goals, and surface explicit actions"}
 	root.AddCommand(&cobra.Command{Use: "connect", Short: "Connect a Read API key through hidden input", Args: cobra.NoArgs, RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 		if _, err := e.caller(); err == nil {
-			return errors.New("Linear credential setup requires the owner in a terminal")
+			return errors.New("the Linear credential setup requires the owner in a terminal")
 		}
 		dir := e.core.StateDir
 		fmt.Fprint(cmd.ErrOrStderr(), "Linear Read API key: ")
@@ -115,7 +115,7 @@ func linearCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 		}
 		token := strings.TrimSpace(string(raw))
 		if len(token) > 8192 {
-			return errors.New("Linear API key is too long")
+			return errors.New("the Linear API key is too long")
 		}
 		client := intake.NewLinear(token)
 		who, err := client.Identity(cmd.Context())
@@ -177,7 +177,7 @@ func linearCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.C
 			return err
 		}
 		if s.OwnerID == "" {
-			return errors.New("Linear is not connected; run ym linear connect")
+			return errors.New("connection to Linear is not configured; run ym linear connect")
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Linear: %d issues cached\n", len(s.Issues))
 		return nil
@@ -259,7 +259,7 @@ func watchLinear(ctx context.Context, c *core.Core, ref string) error {
 		return err
 	}
 	if token == "" {
-		return errors.New("Linear is not connected")
+		return errors.New("connection to Linear is not configured")
 	}
 	api := intake.NewLinear(token)
 	before, err := c.Store.LinearSnapshot()

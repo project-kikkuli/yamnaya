@@ -87,7 +87,7 @@ func (s *Store) LinearSnapshot() (LinearSnapshot, error) {
 
 func (s *Store) SyncLinear(snapshot LinearSnapshot) error {
 	if snapshot.OwnerID == "" || snapshot.WorkspaceID == "" {
-		return errors.New("Linear snapshot has no authenticated owner or workspace")
+		return errors.New("the Linear snapshot has no authenticated owner or workspace")
 	}
 	defer s.invalidate()
 	tx, err := s.db.Begin()
@@ -101,11 +101,11 @@ func (s *Store) SyncLinear(snapshot LinearSnapshot) error {
 		return err
 	}
 	if owner != "" && (owner != snapshot.OwnerID || workspace != snapshot.WorkspaceID) {
-		return errors.New("Linear account changed; disconnect and explicitly clear the previous source before replacing it")
+		return errors.New("the Linear account changed; disconnect and explicitly clear the previous source before replacing it")
 	}
 	for _, i := range snapshot.Issues {
 		if i.ID == "" || i.Identifier == "" {
-			return errors.New("Linear snapshot includes an issue without identity")
+			return errors.New("the Linear snapshot includes an issue without identity")
 		}
 		i.Goal, i.Attention, i.AttentionVersion = "", "", 0
 		raw, err := json.Marshal(i)
@@ -143,7 +143,7 @@ func (s *Store) LinearIssue(ref string) (LinearIssue, error) {
 			return i, nil
 		}
 	}
-	return LinearIssue{}, fmt.Errorf("Linear issue %q is not cached; run ym linear sync or watch it first", ref)
+	return LinearIssue{}, fmt.Errorf("the Linear issue %q is not cached; run ym linear sync or watch it first", ref)
 }
 
 func (s *Store) LinkLinear(ref, goal string) error {

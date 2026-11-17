@@ -46,7 +46,7 @@ func keychainLinear(operation, account, token string) (string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return "", errors.New("Linear Keychain operation failed; unlock the login keychain or reconnect")
+		return "", errors.New("the Linear Keychain operation failed; unlock the login keychain or reconnect")
 	}
 	if operation == "read" {
 		return strings.TrimSpace(out.String()), nil
@@ -56,7 +56,7 @@ func keychainLinear(operation, account, token string) (string, error) {
 
 func saveLinearConfig(dir string, cfg linearConfig, token string) error {
 	if token == "" || strings.ContainsAny(token, "\r\n\x00") {
-		return errors.New("Linear API key is empty or malformed")
+		return errors.New("the Linear API key is empty or malformed")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -88,7 +88,7 @@ func loadLinearToken(dir string, cfg linearConfig) (string, error) {
 	}
 	if cfg.Storage == "keychain" {
 		if runtime.GOOS != "darwin" {
-			return "", errors.New("Linear Keychain credential belongs to another operating system; connect on this host")
+			return "", errors.New("the Linear Keychain credential belongs to another operating system; connect on this host")
 		}
 		return keychainLinear("read", cfg.OwnerID, "")
 	}
@@ -98,7 +98,7 @@ func loadLinearToken(dir string, cfg linearConfig) (string, error) {
 		return "", err
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		return "", fmt.Errorf("Linear credential file must be owner-only: chmod 600 %s", path)
+		return "", fmt.Errorf("the Linear credential file must be owner-only: chmod 600 %s", path)
 	}
 	raw, err := os.ReadFile(path)
 	return strings.TrimSpace(string(raw)), err
