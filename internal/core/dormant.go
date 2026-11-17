@@ -88,6 +88,8 @@ func (l Live) Unadoptable() string {
 
 // NewLaunch asks for a new agent on Prompt in a fresh worktree of the repository Repo lies in.
 type NewLaunch struct {
+	Host       string
+	Request    string
 	Assignment string
 	Source     string
 	Profile    string

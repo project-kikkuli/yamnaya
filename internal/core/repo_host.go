@@ -137,6 +137,7 @@ func (c *Core) handOff(o Org, m Manager, host string) Manager {
 		}
 		args = c.chiefArgs(m.Name, remit, m.Repo, m.Harness, "", children)
 	}
+	args = pinLaunchHost(host, args)
 	out, err := c.RunOrRelay(host, args...)
 	if err != nil {
 		m.LastError = fmt.Sprintf("%s is on %s; starting it there failed: %v", m.Repo, host, err)

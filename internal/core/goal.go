@@ -38,7 +38,7 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 		return Goal{}, Manager{}, err
 	}
 	if host, ok := c.RepoHost(repo); ok {
-		out, err := c.RunOrRelay(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))...)
+		out, err := c.RunOrRelay(host, pinLaunchHost(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent)))...)
 		return Goal{Name: name, Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, Manager{Host: host, Repo: repo}, err
 	}
 	name, source, err := c.goalName(name, ask)
@@ -96,7 +96,7 @@ func (c *Core) NewGoalOn(host, name, ask, repo, harness, under, requester string
 	if err != nil {
 		return Goal{}, err
 	}
-	out, err := c.runOrRelay(host, relayYM{Args: goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent)), Requester: requester})
+	out, err := c.runOrRelay(host, relayYM{Args: pinLaunchHost(host, goalArgs(name, ask, repo, harness, firstProfile(selected), c.parentOn(host, parent))), Requester: requester})
 	return Goal{Ask: ask, Repo: repo, Host: host, Evidence: strings.TrimSpace(out)}, err
 }
 
@@ -181,7 +181,7 @@ func (c *Core) NewChief(name, remit, repo, harness string, children []string, se
 		repo = MainCheckout(repo)
 	}
 	if host, ok := c.RepoHost(repo); ok {
-		_, err := c.RunOrRelay(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children)...)
+		_, err := c.RunOrRelay(host, pinLaunchHost(host, c.chiefArgs(name, remit, repo, harness, firstProfile(selected), children))...)
 		return Manager{Role: RoleChief, Name: name, Remit: remit, Repo: repo, Host: host}, err
 	}
 	if CheckName(name) != nil {
@@ -512,6 +512,11 @@ func (c *Core) start(b Board, o Org, m Manager, resume bool) Manager {
 func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager {
 	if host, ok := c.RepoHost(m.Repo); ok {
 		return c.handOff(o, m, host)
+	}
+	if err := c.CheckLaunch(NewLaunch{Repo: m.Repo, Directory: m.Directory}); err != nil {
+		m.LastError, m.LaunchedAt = err.Error(), timeZero
+		c.Store.SaveManager(m)
+		return m
 	}
 	if m.Role == RoleChief && m.Directory == "" {
 		m.Directory = filepath.Join(c.StateDir, "chiefs", m.ID, "workspace")

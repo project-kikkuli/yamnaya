@@ -27,6 +27,13 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 		Short: "Hand a goal to a new manager that owns it until it is done; its agents report to it, not to you",
 		Args:  goalArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			if host == "" {
+				var err error
+				host, err = e.core.Store.LaunchTarget()
+				if err != nil {
+					return err
+				}
+			}
 			under = e.core.Store.Unnicked(under)
 			underOn, _, underHost := core.SplitRemote(under)
 			readHosts := sync.OnceValue(func() error { return e.readRemotes(remoteWait, true) })
@@ -51,7 +58,7 @@ func goalCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *co
 					return err
 				}
 				if to != e.core.SelfName() {
-					g, err := e.core.NewGoalOn(to, name, args[0], repo, harnessFlag(useCodex), under, requester, selected)
+					g, err := e.core.NewGoalOn(to, name, args[0], e.core.RepoForHost(repo), harnessFlag(useCodex), under, requester, selected)
 					if err != nil {
 						return err
 					}
@@ -901,13 +908,36 @@ func readTokens(s string) (int64, error) {
 }
 
 func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
-	var repo, remit, over, selected string
+	var repo, remit, over, selected, host string
 	var useCodex bool
 	cmd := &cobra.Command{
 		Use:   "chief [--codex] [--repo R] [--remit TEXT] [--over ID,ID] <name>",
 		Short: "Start a chief that oversees managers and other chiefs, reads their briefs and steers them",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: hosts(func(e *env, cmd *cobra.Command, args []string) error {
+			if host == "" {
+				var err error
+				host, err = e.core.Store.LaunchTarget()
+				if err != nil {
+					return err
+				}
+			}
+			if host != "" && host != e.core.SelfName() {
+				to, err := e.core.Store.RouteHost(host)
+				if err != nil {
+					return err
+				}
+				var children []string
+				if over != "" {
+					children = strings.Split(over, ",")
+				}
+				out, err := e.core.NewChiefOn(to, strings.Join(args, " "), remit, repo, harnessFlag(useCodex), selected, children)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "chief on %s: %s\n", to, out)
+				return nil
+			}
 			dir := ""
 			if repo != "" {
 				var err error
@@ -939,6 +969,7 @@ func chiefCmd(with, hosts func(runFunc) func(*cobra.Command, []string) error) *c
 			return nil
 		}),
 	}
+	cmd.Flags().StringVar(&host, "host", "", "host to launch on (default: the board's selected host)")
 	cmd.Flags().StringVar(&repo, "repo", "", "optional repository the chief can access; its session runs in a coordination workspace")
 	cmd.Flags().StringVar(&remit, "remit", "", "what the chief oversees, in your words")
 	cmd.Flags().StringVar(&over, "over", "", "managers, goals or chiefs it starts over, comma separated")

@@ -250,11 +250,22 @@ func machineAlerts(mc core.Machine, width int) string {
 
 // machineLines are the slot summary, each holder, the waiters on one line, and when overloaded the top consumers.
 func machineLines(mc core.Machine, now time.Time, width int) string {
-	if mc.Slots.Capacity == 0 {
+	if mc.Slots.Capacity == 0 && len(mc.PendingLaunches) == 0 {
 		return ""
 	}
 	fit := func(s string) string { return ansi.Truncate(s, max(20, width-1), "…") }
-	h := "\n" + pal.dim.Render(fit(" "+mc.Summary()))
+	h := ""
+	if mc.Slots.Capacity > 0 {
+		h = "\n" + pal.dim.Render(fit(" "+mc.Summary()))
+	}
+	if len(mc.PendingLaunches) > 0 {
+		p := mc.PendingLaunches[0]
+		reason := p.Reason
+		if reason == "" {
+			reason = p.Result
+		}
+		h += "\n" + pal.yellow.Render(fit(fmt.Sprintf(" %d launches queued · %s", len(mc.PendingLaunches), reason)))
+	}
 	if line := mc.Slots.Pressure.Status(len(mc.Holders)); line != "" {
 		h += "\n" + pal.yellow.Render(fit(" "+line))
 	}

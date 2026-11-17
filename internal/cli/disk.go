@@ -62,7 +62,7 @@ func (st *diskState) endEpisode(dir string, dismiss func(string) error) error {
 func diskDismiss(s *core.Store) func(string) error {
 	return func(key string) error {
 		it, err := s.Item(key)
-		if err != nil || it.State != core.ItemOpen {
+		if err != nil || it.State != core.ItemOpen && it.State != core.ItemSnoozed {
 			return err
 		}
 		_, err = s.Transition(key, core.ItemDismissed, "free space recovered")
@@ -118,24 +118,21 @@ func diskPaths(ctx context.Context) []string {
 	return paths
 }
 
-// diskWatcher decides, once a minute, whether a pass should start.
+// diskWatcher records one owner request per low-space episode.
 type diskWatcher struct {
 	dir   string
 	paths []string
 	stat  func(string) (disk.Usage, error)
 	now   func() time.Time
-	start func() error
+	file  func(disk.Usage) (string, error)
 	log   io.Writer
 	// dismiss closes the ended episode's owner item.
 	dismiss func(key string) error
 	tier    int
-	// started and startedTier repeat the persisted last pass in memory, for when a full disk stops it being saved.
-	started     time.Time
-	startedTier int
+	filed   string
 }
 
-// tick reads free space and starts a pass when the disk is low and none ran lately at this tier or worse. It ends the
-// current episode once free is back above disk.ClearFree. A running pass holds the lock, which leaves all of this to it.
+// tick observes free space and retains an actionable request until recovery.
 func (w *diskWatcher) tick() error {
 	low, ok := disk.Lowest(w.stat, w.paths)
 	if !ok {
@@ -150,20 +147,45 @@ func (w *diskWatcher) tick() error {
 	if err != nil || !free {
 		return err
 	}
+	defer unlock()
 	st := readDiskState(w.dir)
-	if st.Filed != "" && low.Free() > disk.ClearFree {
-		err = st.endEpisode(w.dir, w.dismiss)
+	if st.Filed == "" {
+		st.Filed = w.filed
 	}
-	unlock()
+	if st.Filed != "" && low.Free() > disk.ClearFree {
+		if err := st.endEpisode(w.dir, w.dismiss); err != nil {
+			return err
+		}
+		w.filed = ""
+		return nil
+	}
+	if tier == 0 || st.Filed != "" || w.file == nil {
+		return nil
+	}
+	key, err := w.file(low)
 	if err != nil {
 		return err
 	}
-	recent := func(at time.Time, was int) bool { return tier <= was && w.now().Sub(at) < diskRetryAfter }
-	if tier == 0 || recent(st.LastPass, st.LastTier) || recent(w.started, w.startedTier) {
-		return nil
+	st.Filed, st.FiledAt, w.filed = key, w.now(), key
+	return st.save(w.dir)
+}
+
+func fileLowDisk(c *core.Core) func(disk.Usage) (string, error) {
+	return func(low disk.Usage) (string, error) {
+		question := fmt.Sprintf("Low disk on %s: review available space before launching more agents", c.SelfName())
+		items, err := c.Store.Items(core.ItemFilter{States: []string{core.ItemOpen, core.ItemSnoozed}})
+		if err != nil {
+			return "", err
+		}
+		for _, it := range items {
+			if it.Session == diskItemSession && it.Question == question {
+				return it.Key(), nil
+			}
+		}
+		it, err := c.Store.AddItem(core.Item{Scope: c.StateDir, Session: diskItemSession, Kind: core.KindChore, Question: question, DoLine: "Review disk usage before reclaiming", Impact: "agents",
+			Rec: fmt.Sprintf("%s has %.1f%% free. Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free.", low.Path, low.Free()*100), Evidence: []string{low.Path}})
+		return it.Key(), err
 	}
-	w.started, w.startedTier = w.now(), tier
-	return w.start()
 }
 
 // noteWatchOff tells the owner once that this host's real serve cannot watch the disk, and again only if the reason changes: nobody
@@ -189,15 +211,14 @@ func fileWatchOff(why string) error {
 		"--rec", "Fix what stops ym reading this user's home from the OS, then ym service restart; until then nothing reclaims disk here and ym disk says so.")
 }
 
-// watchDisk reads free space every minute and starts the ordinary hourly gc, so neither depends on a launch happening.
+// watchDisk observes disk space independently of agent reconciliation.
 func watchDisk(ctx context.Context, l launcher, dir string, log io.Writer) {
 	noteWatchOff(dir, "", log, fileWatchOff)
 	w := &diskWatcher{dir: dir, paths: diskPaths(ctx), stat: disk.Stat, now: time.Now, log: log, dismiss: diskDismiss(l.core.Store),
-		start: func() error { return detach("disk", "reclaim", "--quiet") }}
+		file: fileLowDisk(l.core)}
 	tick := time.NewTicker(diskCheckEvery)
 	defer tick.Stop()
 	for {
-		l.sweepSoon()
 		if err := w.tick(); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(log, "disk:", err)
 		}

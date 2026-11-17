@@ -281,7 +281,7 @@ func (c *Core) dispatchOwn(hosts []string, courier WorkCourier) error {
 		if w.Host != self && !slices.Contains(hosts, w.Host) {
 			continue
 		}
-		if err = c.AuthorizeWork(w.Assignment.ID, func(work RemoteAssignment) error { return courier.StartWork(self, work.Host, work) }); err != nil && !errors.Is(err, ErrWorkRevoked) && !errors.Is(err, ErrUnreachable) {
+		if err = c.AuthorizeWork(w.Assignment.ID, func(work RemoteAssignment) error { return courier.StartWork(self, work.Host, work) }); err != nil && !errors.Is(err, ErrWorkRevoked) && !errors.Is(err, ErrUnreachable) && !errors.Is(err, ErrLaunchDeferred) {
 			return err
 		}
 	}
@@ -300,7 +300,7 @@ func (c *Core) dispatchCarried(origin string, pending []RemoteAssignment, hosts 
 			}
 			return courier.StartWork(self, work.Host, work)
 		})
-		if err != nil && !errors.Is(err, ErrWorkRevoked) && !errors.Is(err, ErrUnreachable) {
+		if err != nil && !errors.Is(err, ErrWorkRevoked) && !errors.Is(err, ErrUnreachable) && !errors.Is(err, ErrLaunchDeferred) {
 			return err
 		}
 	}

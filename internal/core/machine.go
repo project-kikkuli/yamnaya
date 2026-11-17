@@ -14,8 +14,9 @@ import (
 
 // Machine is how this host's shared slots and processors stand.
 type Machine struct {
-	Slots slot.Status
-	Load  float64
+	PendingLaunches []PendingLaunch
+	Slots           slot.Status
+	Load            float64
 	// Holders and Waiters are the slot claims, each placed with the session and goal it runs for.
 	Holders, Waiters []SlotUse
 	// Hogs are the sessions, or programs outside any session, using the most processor time, read only while Overloaded.
@@ -119,7 +120,7 @@ func (c *Core) machine(b *Board, procs []proc.Proc) {
 	if err != nil {
 		return
 	}
-	m := Machine{Slots: st}
+	m := Machine{Slots: st, PendingLaunches: b.PendingLaunches}
 	m.Load, _ = slot.Load()
 	if c.Loads != nil {
 		m.Load = c.Loads()

@@ -263,10 +263,12 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 	if planned == "" {
 		planned = uuid.NewString()
 	}
+	n.Session = planned
 	source := n.Source
 	if source == "" {
 		source = "launch:" + planned
 	}
+	n.Source = source
 	assignment, created, err := c.Store.assign(c.Resolve(n.Parent), planned, source, n.Prompt, c.now())
 	if err != nil {
 		return "", err
@@ -296,7 +298,7 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 		suffix = fmt.Sprintf("\nassignment: %s (generation %d); terminal report: ym goal report %s --summary \"<result>\"", assignment.ID, assignment.Generation, assignment.ID)
 	}
 	if assignment.ID != "" && !created {
-		if host, remote := c.RepoHost(n.Repo); remote {
+		if host, remote := c.workerHost(n); remote {
 			n.Session = assignment.Session
 			if boundHost, worker, bound := SplitRemote(n.Session); bound && boundHost == host {
 				n.Session = worker
@@ -304,14 +306,22 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 			out, err := c.sendRemoteLaunch(host, n, assignment)
 			return out + suffix, err
 		}
+		var pending int
+		if err := c.Store.db.QueryRow(`SELECT count(*) FROM ym_pending_launches WHERE id=?`, assignment.ID).Scan(&pending); err != nil {
+			return "", err
+		}
+		if pending > 0 {
+			st, err := c.startPendingLaunch(assignment.ID)
+			return st.Message + suffix, err
+		}
 		return "assignment already registered; inspect ym goal assignments" + suffix, nil
 	}
-	if host, ok := c.RepoHost(n.Repo); ok {
+	if host, ok := c.workerHost(n); ok {
 		if assignment.ID != "" {
 			out, err := c.sendRemoteLaunch(host, n, assignment)
 			return out + suffix, err
 		}
-		args := []string{"new", "--repo", MainCheckout(n.Repo)}
+		args := []string{"new", "--host", host, "--repo", c.RepoForHost(n.Repo), "--source", n.Source}
 		if n.Harness == "codex" {
 			args = append(args, "--codex")
 		}
@@ -330,7 +340,7 @@ func (c *Core) StartNew(n NewLaunch) (string, error) {
 	if assignment.ID != "" {
 		n.Prompt += fmt.Sprintf("\n\nThis work is assignment %s generation %d. Before ending, submit a terminal report with ym goal report %s --summary \"<result with evidence or failure>\". Idle or exit does not complete the assignment; its manager must accept the report.", assignment.ID, assignment.Generation, assignment.ID)
 	}
-	st, err := c.Launches.Start(n)
+	st, err := c.queueLaunch(n)
 	if err != nil {
 		if assignment.ID != "" {
 			return st.Message + suffix, fmt.Errorf("launch failed; assignment %s remains outstanding: %w", assignment.ID, err)

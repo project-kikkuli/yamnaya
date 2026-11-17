@@ -83,7 +83,7 @@ func TestManagersStartOnTheHostHoldingTheirRepository(t *testing.T) {
 					}
 					return
 				}
-				want := [][]string{{"box", "goal", "--repo", boxRepo, "--", "explore the github org"}}
+				want := [][]string{{"box", "goal", "--host", "box", "--repo", boxRepo, "--", "explore the github org"}}
 				if !reflect.DeepEqual(r.ran, want) || len(w.launches.starts) != 0 {
 					t.Fatalf("ran %v, starts %+v; want only %v", r.ran, w.launches.starts, want)
 				}
@@ -111,7 +111,7 @@ func TestNewWorkInAnotherHostsRepositoryStartsThere(t *testing.T) {
 		"chief": {func(c *Core, repo string) error { _, err := c.NewChief("org", "watch it", repo, "", nil); return err },
 			[]string{"chief", "--repo", "", "--remit", "watch it", "--", "org"}},
 		"session": {func(c *Core, repo string) error {
-			_, err := c.StartNew(NewLaunch{Prompt: "look around", Harness: "claude", Repo: repo})
+			_, err := c.StartNew(NewLaunch{Prompt: "look around", Harness: "claude", Repo: repo, Source: "look-around"})
 			return err
 		}, []string{"new", "--repo", "", "--", "look around"}},
 	}
@@ -133,8 +133,11 @@ func TestNewWorkInAnotherHostsRepositoryStartsThere(t *testing.T) {
 					}
 					return
 				}
-				want := append([]string{"box"}, s.want...)
-				want[3] = boxRepo
+				want := append([]string{"box", s.want[0], "--host", "box"}, s.want[1:]...)
+				want[5] = boxRepo
+				if name == "session" {
+					want = append(want[:6], append([]string{"--source", "look-around"}, want[6:]...)...)
+				}
 				if !reflect.DeepEqual(r.ran, [][]string{want}) || len(w.launches.starts) != 0 || len(o.Goals) != 0 || len(o.Managers) != 0 {
 					t.Fatalf("ran %v, starts %d, goals %d, managers %d; want only %v", r.ran, len(w.launches.starts), len(o.Goals), len(o.Managers), want)
 				}

@@ -26,41 +26,36 @@ func usageAt(free *float64) func(string) (disk.Usage, error) {
 	}
 }
 
-func TestTheWatcherStartsAPassOnlyWhenLowAndNotJustTried(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	for _, c := range []struct {
-		name  string
-		free  float64
-		state diskState
-		start bool
-	}{
-		{"healthy", 0.30, diskState{}, false},
-		{"exactly the threshold", 0.20, diskState{}, false},
-		{"tier 1", 0.19, diskState{}, true},
-		{"same tier tried a moment ago", 0.19, diskState{LastPass: now.Add(-time.Minute), LastTier: 1}, false},
-		{"same tier tried long ago", 0.19, diskState{LastPass: now.Add(-diskRetryAfter), LastTier: 1}, true},
-		{"worse than the last try", 0.09, diskState{LastPass: now.Add(-time.Minute), LastTier: 1}, true},
-		{"better than the last try", 0.15, diskState{LastPass: now.Add(-time.Minute), LastTier: 2}, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
+func TestTheWatcherFilesOnePersistentRequestWithoutReclaiming(t *testing.T) {
+	previous := detach
+	t.Cleanup(func() { detach = previous })
+	detach = func(...string) error { t.Fatal("observer launched an autonomous command"); return nil }
+	for _, free := range []float64{0.30, 0.20, 0.19, 0.09, 0.01} {
+		t.Run(fmt.Sprint(free), func(t *testing.T) {
 			dir := t.TempDir()
-			if err := c.state.save(dir); err != nil {
-				t.Fatal(err)
+			c := diskCore(t, dir)
+			for range 3 {
+				w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, file: fileLowDisk(c), dismiss: diskDismiss(c.Store)}
+				if err := w.tick(); err != nil {
+					t.Fatal(err)
+				}
 			}
-			started := 0
-			w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&c.free), now: func() time.Time { return now }, log: &strings.Builder{},
-				start: func() error { started++; return nil }}
-			if err := w.tick(); err != nil {
-				t.Fatal(err)
+			items := ownerItems(t, c)
+			want := 0
+			if free < disk.ClearFree {
+				want = 1
 			}
-			if (started == 1) != c.start {
-				t.Fatalf("started %d, want %v", started, c.start)
+			if len(items) != want {
+				t.Fatalf("owner items %+v, want %d", items, want)
+			}
+			if want > 0 && (readDiskState(dir).Filed != items[0].Key() || !strings.Contains(items[0].Rec, "Automatic cleanup is off")) {
+				t.Fatalf("episode %+v, items %+v", readDiskState(dir), items)
 			}
 		})
 	}
 }
 
-func TestTheWatcherStartsNothingWhileAPassRuns(t *testing.T) {
+func TestTheWatcherFilesNothingWhileAnExplicitPassRuns(t *testing.T) {
 	dir := t.TempDir()
 	unlock, ok, err := lockDisk(dir)
 	if err != nil || !ok {
@@ -68,8 +63,7 @@ func TestTheWatcherStartsNothingWhileAPassRuns(t *testing.T) {
 	}
 	defer unlock()
 	free := 0.01
-	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{},
-		start: func() error { t.Error("started a second pass"); return nil }}
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, file: func(disk.Usage) (string, error) { t.Fatal("filed during explicit pass"); return "", nil }}
 	if err := w.tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +124,7 @@ func TestAnEpisodeFilesOneOwnerItemAcrossRestartsAndAFreshEpisodeFilesAnother(t 
 		t.Fatalf("the same episode filed again: %+v", got)
 	}
 	free = 0.15
-	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, start: func() error { return nil }, dismiss: diskDismiss(c.Store)}
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, dismiss: diskDismiss(c.Store)}
 	if err := w.tick(); err != nil {
 		t.Fatal(err)
 	}
@@ -443,28 +437,24 @@ func TestACacheAPassCouldNotFreeShowsInTheStateAndTheOwnerItem(t *testing.T) {
 	}
 }
 
-func TestTheWatcherRemembersItsLastStartWhenTheStateCannotBeSaved(t *testing.T) {
+func TestTheWatcherDoesNotRefilingWhenItsEpisodeStateCannotBeSaved(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(diskStatePath(dir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	free := 0.15
-	started := 0
-	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: func() time.Time { return now }, log: &strings.Builder{},
-		start: func() error { started++; return nil }}
+	filed := 0
+	w := &diskWatcher{dir: dir, paths: []string{"/x"}, stat: usageAt(&free), now: time.Now, log: &strings.Builder{}, file: func(disk.Usage) (string, error) { filed++; return "#1", nil }}
+	if err := w.tick(); err == nil {
+		t.Fatal("failed persistence was not reported")
+	}
 	for range 3 {
 		if err := w.tick(); err != nil {
 			t.Fatal(err)
 		}
-		now = now.Add(time.Minute)
 	}
-	if started != 1 {
-		t.Fatalf("started %d passes in 3 minutes", started)
-	}
-	now = now.Add(diskRetryAfter)
-	if err := w.tick(); err != nil || started != 2 {
-		t.Fatalf("started %d, %v", started, err)
+	if filed != 1 {
+		t.Fatalf("filed %d requests", filed)
 	}
 }
 

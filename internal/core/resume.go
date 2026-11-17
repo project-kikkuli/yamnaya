@@ -243,6 +243,9 @@ func (c *Core) ReviveWork(b Board) error {
 
 // take reports whether ym may try to bring session back now: it has not tried this serve, and the pace allows one now.
 func (c *Core) take(session string) bool {
+	if c.CheckLaunch(NewLaunch{}) != nil {
+		return false
+	}
 	c.recovery.mu.Lock()
 	tried := c.recovery.tried[session]
 	if at, waiting := c.recovery.recheck[session]; waiting && !c.now().Before(at) {
