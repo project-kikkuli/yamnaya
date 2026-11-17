@@ -1,8 +1,9 @@
 package cli
 
 import (
-	"github.com/project-kikkuli/yamnaya/internal/core"
 	"time"
+
+	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
 type inboxMessageJSON struct {
