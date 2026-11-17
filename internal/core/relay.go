@@ -379,9 +379,9 @@ func (s *Store) DropRelay(seq int64) (bool, error) {
 		return false, err
 	}
 	defer tx.Rollback()
-	var origin, kind string
+	var origin, kind, body, destination string
 	var original int64
-	err = tx.QueryRow(`SELECT origin,origin_seq,kind FROM ym_relay WHERE seq=? AND delivered IS NULL`, seq).Scan(&origin, &original, &kind)
+	err = tx.QueryRow(`SELECT origin,origin_seq,kind,body,dest FROM ym_relay WHERE seq=? AND delivered IS NULL`, seq).Scan(&origin, &original, &kind, &body, &destination)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -399,6 +399,42 @@ func (s *Store) DropRelay(seq int64) (bool, error) {
 		}
 		if _, err = tx.Exec(`INSERT INTO ym_relay(origin,origin_seq,dest,kind,body,created) VALUES('',0,?,?,?,?)`, origin, RelayResult, string(raw), time.Now().UnixNano()); err != nil {
 			return false, err
+		}
+	}
+	if kind == RelayAction {
+		var message ActivationMessage
+		if err = json.Unmarshal([]byte(body), &message); err != nil {
+			return false, err
+		}
+		courier := activationSelfIn(tx)
+		source, expected := courier, destination
+		switch message.Operation {
+		case "receipt":
+			source = destination
+			expected = origin
+			if expected == "" {
+				expected = courier
+			}
+		case "activate", "retry":
+			if origin != "" {
+				source = origin
+			}
+		default:
+			return true, tx.Commit()
+		}
+		notice := ActivationMessage{Operation: "dropped", Origin: courier, Destination: expected, Action: Activation{ID: message.Action.ID}, Session: message.Session, Result: "activation transport was dropped on " + courier + "; receiver acceptance is unknown"}
+		if source == courier {
+			if _, err = activationDropIn(tx, notice); err != nil {
+				return false, err
+			}
+		} else {
+			raw, err := json.Marshal(notice)
+			if err != nil {
+				return false, err
+			}
+			if _, err = tx.Exec(`INSERT INTO ym_relay(origin,origin_seq,dest,kind,body,created) VALUES('',0,?,?,?,?)`, source, RelayAction, string(raw), time.Now().UnixNano()); err != nil {
+				return false, err
+			}
 		}
 	}
 	return true, tx.Commit()
@@ -754,6 +790,14 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		var message ActivationMessage
 		if err := unmarshal(r.Body, &message); err != nil {
 			return err
+		}
+		if r.Origin != "" {
+			switch message.Operation {
+			case "activate", "retry", "cancel", "receipt":
+				message.Origin = r.Origin
+			case "dropped":
+				message.Origin = r.Origin
+			}
 		}
 		return c.ReceiveActivation(message)
 	case RelayWork:

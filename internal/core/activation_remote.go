@@ -18,14 +18,15 @@ const activationRemoteSchema = `CREATE TABLE IF NOT EXISTS ym_activation_origins
 CREATE TABLE IF NOT EXISTS ym_activation_retries(token TEXT PRIMARY KEY,activation TEXT NOT NULL);`
 
 type ActivationMessage struct {
-	Revision  int64      `json:"revision,omitempty"`
-	Operation string     `json:"operation"`
-	Origin    string     `json:"origin"`
-	Action    Activation `json:"action"`
-	Session   string     `json:"session,omitempty"`
-	State     string     `json:"state,omitempty"`
-	Result    string     `json:"result,omitempty"`
-	Attempt   string     `json:"attempt,omitempty"`
+	Destination string     `json:"destination,omitempty"`
+	Revision    int64      `json:"revision,omitempty"`
+	Operation   string     `json:"operation"`
+	Origin      string     `json:"origin"`
+	Action      Activation `json:"action"`
+	Session     string     `json:"session,omitempty"`
+	State       string     `json:"state,omitempty"`
+	Result      string     `json:"result,omitempty"`
+	Attempt     string     `json:"attempt,omitempty"`
 }
 
 func (c *Core) importedActivation(id string) (bool, error) {
@@ -158,6 +159,8 @@ func (c *Core) ReceiveActivation(m ActivationMessage) error {
 		return c.receiveActivation(m)
 	case "retry":
 		return c.receiveActivationRetry(m)
+	case "dropped":
+		return c.receiveActivationDrop(m)
 	case "cancel":
 		tx, err := c.Store.db.Begin()
 		if err != nil {
@@ -330,7 +333,8 @@ func (c *Core) retryTransferredActivation(id string) (bool, error) {
 	}
 	defer tx.Rollback()
 	var destination, state, target string
-	err = tx.QueryRow(`SELECT o.destination,a.state,o.target_session FROM ym_activation_origins o JOIN ym_activations a ON a.id=o.id WHERE o.id=?`, id).Scan(&destination, &state, &target)
+	action := Activation{ID: id}
+	err = tx.QueryRow(`SELECT o.destination,a.state,o.target_session,a.kind,a.subject,a.payload FROM ym_activation_origins o JOIN ym_activations a ON a.id=o.id WHERE o.id=?`, id).Scan(&destination, &state, &target, &action.Kind, &action.Subject, &action.Payload)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && destination == "" {
 		return false, nil
 	}
@@ -339,6 +343,10 @@ func (c *Core) retryTransferredActivation(id string) (bool, error) {
 	}
 	if state != "blocked" && state != "uncertain" && state != "claimed" {
 		return true, errors.New("remote action is not awaiting recovery")
+	}
+	origin := activationSelfIn(tx)
+	if err = c.activationRelayIn(tx, destination, ActivationMessage{Operation: "activate", Origin: origin, Action: action, Session: target}); err != nil {
+		return true, err
 	}
 	token := uuid.NewString()
 	if err = c.activationRelayIn(tx, destination, ActivationMessage{Operation: "retry", Origin: activationSelfIn(tx), Action: Activation{ID: id}, Session: target, Attempt: token}); err != nil {
@@ -369,6 +377,10 @@ func (c *Core) receiveActivationRetry(m ActivationMessage) error {
 	if target != m.Session {
 		return nil
 	}
+	var state, detail string
+	if err = tx.QueryRow(`SELECT state,CASE WHEN error<>'' THEN error ELSE result END FROM ym_activations WHERE id=?`, m.Action.ID).Scan(&state, &detail); err != nil {
+		return err
+	}
 	result, err := tx.Exec(`INSERT INTO ym_activation_retries(token,activation) VALUES(?,?) ON CONFLICT(token) DO NOTHING`, m.Attempt, m.Action.ID)
 	if err != nil {
 		return err
@@ -377,14 +389,11 @@ func (c *Core) receiveActivationRetry(m ActivationMessage) error {
 	if err != nil {
 		return err
 	}
-	if inserted > 0 {
+	if inserted > 0 && (state == "blocked" || state == "uncertain" || state == "claimed") {
 		if err = retryActivationIn(tx, m.Action.ID); err != nil {
 			return err
 		}
-	}
-	var state, detail string
-	if err = tx.QueryRow(`SELECT state,result FROM ym_activations WHERE id=?`, m.Action.ID).Scan(&state, &detail); err != nil {
-		return err
+		state, detail = "pending", ""
 	}
 	if err = c.activationReceiptIn(tx, m.Action, state, detail); err != nil {
 		return err
@@ -450,4 +459,44 @@ func (c *Core) returnActivationLocal(a Activation, session string) (bool, error)
 		return false, err
 	}
 	return false, tx.Commit()
+}
+
+func activationDropIn(tx *sql.Tx, m ActivationMessage) (bool, error) {
+	if m.Destination == "" || m.Session == "" {
+		return false, Final(errors.New("dropped activation needs its expected destination and target"))
+	}
+	result, err := tx.Exec(`UPDATE ym_activations SET state='uncertain',error=? WHERE id=? AND state='transferred' AND EXISTS (SELECT 1 FROM ym_activation_origins o WHERE o.id=ym_activations.id AND o.origin='' AND o.destination=? AND o.target_session=?)`, m.Result, m.Action.ID, m.Destination, m.Session)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
+func (c *Core) receiveActivationDrop(m ActivationMessage) error {
+	tx, err := c.Store.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	changed, err := activationDropIn(tx, m)
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	actions, err := c.Store.Activations()
+	if err != nil {
+		return err
+	}
+	for _, action := range actions {
+		if action.ID == m.Action.ID && action.State == "uncertain" {
+			return c.actionAttention(action, m.Result)
+		}
+	}
+	return nil
 }
