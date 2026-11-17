@@ -41,6 +41,12 @@ func (c *Core) dispatchNativeActions(b Board, o Org, s Live, first Activation, a
 			bytes += len(a.Payload)
 		}
 	}
+	if err := c.CheckLaunch(NewLaunch{Repo: s.Cwd, Harness: s.Harness, Profile: s.Profile}); err != nil {
+		if errors.Is(err, ErrLaunchDeferred) {
+			return c.deferNativeActions(batch, err.Error())
+		}
+		return err
+	}
 	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return err
@@ -55,7 +61,7 @@ func (c *Core) dispatchNativeActions(b Board, o Org, s Live, first Activation, a
 	}
 	var claimed []Activation
 	for _, a := range batch {
-		err = tx.QueryRow(`UPDATE ym_activations SET state='claimed',target_session=?,dispatched=?,attempt=attempt+1 WHERE id=? AND state='pending' RETURNING attempt`, s.Key(), stamp(c.now()), a.ID).Scan(&a.Attempt)
+		err = tx.QueryRow(`UPDATE ym_activations SET state='claimed',target_session=?,dispatched=?,attempt=attempt+1,error='' WHERE id=? AND state='pending' RETURNING attempt`, s.Key(), stamp(c.now()), a.ID).Scan(&a.Attempt)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -133,4 +139,28 @@ func (c *Core) dispatchNativeActions(b Board, o Org, s Live, first Activation, a
 		}
 	}
 	return nil
+}
+
+func (c *Core) deferNativeActions(batch []Activation, reason string) error {
+	tx, err := c.Store.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, action := range batch {
+		result, err := tx.Exec(`UPDATE ym_activations SET error=? WHERE id=? AND state='pending' AND error<>?`, reason, action.ID, reason)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed > 0 {
+			if err = c.activationReceiptIn(tx, action, "pending", reason); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
