@@ -64,8 +64,9 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 			if !slices.Contains(argv, flag) {
 				t.Fatalf("argv %q must bypass permission prompts with %s", argv, flag)
 			}
-			if c.rec.Harness == "codex" && c.writes && !slices.Contains(argv, "--no-daemon") {
-				t.Fatalf("argv %q must run a dedicated Codex conversation without the shared daemon", argv)
+			managed := c.rec.Harness == "codex" && c.writes
+			if managed && (!slices.Contains(argv, "control") || slices.Contains(argv, "--no-daemon")) {
+				t.Fatalf("argv %q must own a native control runtime", argv)
 			}
 			dirs := map[string]bool{}
 			for i, a := range argv {
@@ -85,10 +86,17 @@ func TestAgentCommandsBypassPermissionsAndPreserveContext(t *testing.T) {
 			if dirs[gitDir] || dirs[filepath.Join(gitDir, "hooks")] {
 				t.Fatalf("argv %q opens the git dir's hooks and config to the sandbox", argv)
 			}
-			if last := argv[len(argv)-1]; last != c.rec.Prompt && last != c.rec.Prompt+slotNote && last != c.rec.Session {
+			last := argv[len(argv)-1]
+			if managed {
+				last = c.rec.Session
+				if at := slices.Index(argv, "--action"); at >= 0 {
+					last = argv[at+1]
+				}
+			}
+			if last != c.rec.Prompt && last != c.rec.Prompt+slotNote && last != c.rec.Session {
 				t.Fatalf("argv %q must end with the prompt or session", argv)
 			}
-			if strings.HasSuffix(c.name, "start") && !strings.HasSuffix(argv[len(argv)-1], slotNote) {
+			if strings.HasSuffix(c.name, "start") && !strings.HasSuffix(last, slotNote) {
 				t.Fatalf("argv %q starts an agent without telling it to run heavy commands through ym slot", argv)
 			}
 		})

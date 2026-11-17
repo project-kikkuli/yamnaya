@@ -36,10 +36,11 @@ type Adapter struct {
 	StateHome string
 	Bin       string
 	// OpenFiles lists the files a process holds open.
-	OpenFiles func(pid int) []string
-	Cwd       func(pid int) string
-	Now       func() time.Time
-	Cache     core.ScanCache
+	OpenFiles     func(pid int) []string
+	Cwd           func(pid int) string
+	Now           func() time.Time
+	Cache         core.ScanCache
+	ControlSocket func(core.Session) string
 
 	mu    sync.Mutex
 	scans map[string]*scan

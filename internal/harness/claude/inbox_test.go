@@ -196,8 +196,12 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				return
 			}
 			if c.mode == "plan" || c.agent {
-				if !errors.Is(err, ErrHeld) {
-					t.Errorf("err = %v, want ErrHeld", err)
+				want := ErrHeld
+				if c.agent {
+					want = ErrNoSupervisor
+				}
+				if !errors.Is(err, want) {
+					t.Errorf("err = %v, want %v", err, want)
 				}
 				select {
 				case got := <-srv.lines:
@@ -401,6 +405,26 @@ func TestBodyEscapesWhatClaudeReadsAsTheEnvelopeClosing(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := wrap(c.in, "bypass"); got != "<cross-session-message from-name=\"ym\" from-mode=\"bypass\">\n"+c.want+"\n</cross-session-message>" {
 				t.Errorf("wrap = %q", got)
+			}
+		})
+	}
+}
+
+func TestAutomatedMessagesNeverInspectOrWriteTheUserPromptTransport(t *testing.T) {
+	for _, mode := range []string{"auto", "bypassPermissions", "default", "plan"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			srv := serveInbox(t, "close")
+			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
+			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"`+mode+`"}`, userLine)
+			a := &Adapter{Dir: dir}
+			if err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "Act on work", false); !errors.Is(err, ErrNoSupervisor) {
+				t.Fatalf("automation admitted: %v", err)
+			}
+			select {
+			case frame := <-srv.lines:
+				t.Fatalf("user frame sent: %q", frame)
+			default:
 			}
 		})
 	}

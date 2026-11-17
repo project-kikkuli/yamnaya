@@ -727,6 +727,12 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		return err
 	}
 	switch r.Kind {
+	case RelayAction:
+		var message ActivationMessage
+		if err := unmarshal(r.Body, &message); err != nil {
+			return err
+		}
+		return c.ReceiveActivation(message)
 	case RelayWork:
 		var message WorkMessage
 		if err := unmarshal(r.Body, &message); err != nil {

@@ -28,6 +28,8 @@ const peerProtocol = 1
 // ErrNoInbox means the session advertises no messaging socket in a protocol ym speaks.
 var ErrNoInbox = errors.New("no messaging socket ym can use")
 
+var ErrNoSupervisor = errors.New("Claude has no supported non-user supervisor continuation transport")
+
 // ErrHeld means the session would hold a message from ym for the owner's review instead of reading it.
 var ErrHeld = errors.New("the session holds messages from ym for review")
 
@@ -70,6 +72,9 @@ type body struct {
 // Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym.
 // It counts once the session read the frame, closed its side and sent no held, refused or dropped receipt in time.
 func (a *Adapter) Message(s core.Session, text string, owner bool) error {
+	if !owner {
+		return a.channelMessage(s, text)
+	}
 	st, ok := a.state(s.PID)
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
 		return ErrNoInbox

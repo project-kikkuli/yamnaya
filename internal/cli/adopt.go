@@ -111,6 +111,30 @@ func (l launcher) Send(s core.Live, text string) (string, error) { return l.send
 
 // sendFrom is Send for text that is the owner's own words only when owner is set.
 func (l launcher) sendFrom(s core.Live, text string, owner bool) (string, error) {
+	if !owner {
+		if s.Remote != "" {
+			return "", errors.New("supervisor control requires a supported machine control route")
+		}
+		if l.core.Off(s.ID) {
+			return "", errors.New("supervisor control is off for this session")
+		}
+		if len(s.Copies) > 1 {
+			return "", errors.New("supervisor control requires one live session copy")
+		}
+		for _, h := range l.core.Harnesses {
+			if h.Name() == s.Harness {
+				m, ok := h.(core.Messenger)
+				if !ok {
+					return "", errors.New("harness has no supervisor control transport")
+				}
+				if err := m.Message(s.Session, text, false); err != nil {
+					return "", err
+				}
+				return "supervisor action accepted", nil
+			}
+		}
+		return "", errors.New("supervisor harness unavailable")
+	}
 	if s.Remote != "" {
 		return l.core.RunOrRelay(s.Remote, "send", s.Key(), text)
 	}
@@ -269,6 +293,11 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 		Short: "Send a session a follow-up: typed in on ym's server even mid-turn, otherwise read from ym item inbox on its next turn",
 		Args:  cobra.MinimumNArgs(2),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
+			_, callErr := e.core.Calling(os.Getpid(), os.Getenv)
+			owner := errors.Is(callErr, core.ErrNotFound)
+			if callErr != nil && !owner {
+				return callErr
+			}
 			l, ok := e.core.Launches.(launcher)
 			if !ok {
 				return errors.New("ym's launcher is unavailable")
@@ -278,6 +307,24 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			rec, lookupErr := l.lookup(args[0])
 			if lookupErr != nil && !errors.Is(lookupErr, core.ErrNotFound) {
 				return lookupErr
+			}
+			if !owner {
+				target := rec.Session
+				if lookupErr != nil || target == "" {
+					live, err := e.core.Find(args[0])
+					if err == nil {
+						target = live.Key()
+					} else if errors.Is(err, core.ErrNotFound) && len(args[0]) >= 32 {
+						target = args[0]
+					} else {
+						return err
+					}
+				}
+				if err := e.core.RequestDirective(target, text); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "supervisor action queued for %s\n", core.Short(target))
+				return nil
 			}
 			if lookupErr == nil && rec.Session != "" {
 				pane, state := l.state(rec)
@@ -295,8 +342,6 @@ func sendCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Com
 			s, err := e.core.Find(args[0])
 			switch {
 			case err == nil:
-				_, callErr := e.core.Calling(os.Getpid(), os.Getenv)
-				owner := errors.Is(callErr, core.ErrNotFound)
 				if msg, err = l.sendFrom(s, text, owner); err == nil && owner && s.Result != "" {
 					err = e.core.Store.DismissWaiting(s.Key(), s.Result)
 				}

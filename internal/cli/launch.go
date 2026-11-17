@@ -116,13 +116,9 @@ func startArgv(rec launch.Record) ([]string, error) {
 		if rec.Access != "" {
 			argv = append(append(argv, accessArgs(rec)...), "--")
 		}
-		return scopedArgv(rec, append(argv, prompt)), nil
+		return managedClaudeArgv(rec, append(argv, prompt))
 	}
-	argv := []string{b, "--yolo"}
-	if model != "" {
-		argv = append(argv, "--model", model)
-	}
-	return scopedArgv(rec, append(append(argv, codexDirs(rec)...), prompt)), nil
+	return managedCodexArgv(rec, b, "", prompt, model)
 }
 
 // envModel is the model the environment pins every session of harnessName to; rehearsals set it so their sessions run on a cheap model.
@@ -160,7 +156,11 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	if rec.Harness == claude.Name {
 		argv = claude.Argv(b, "--resume", rec.Session)
 	} else {
-		argv = append(append([]string{b, "resume", "--yolo"}, codexDirs(rec)...), rec.Session)
+		model := rec.Model
+		if model == "" {
+			model = envModel(rec.Harness)
+		}
+		return managedCodexArgv(rec, b, rec.Session, prompt, model)
 	}
 	model := rec.Model
 	if model == "" {
@@ -175,7 +175,7 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	if prompt != "" {
 		argv = append(argv, prompt)
 	}
-	return scopedArgv(rec, argv), nil
+	return managedClaudeArgv(rec, argv)
 }
 
 // conversation is the path of rec's conversation, empty when it verifiably has none, and an error when ym cannot tell. Only verified
