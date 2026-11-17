@@ -90,7 +90,7 @@ func (m *Meter) readLedger(now time.Time) error {
 		return nil
 	}
 	m.edges = map[string]string{}
-	profiles, err := profile.Load(m.StateDir)
+	profiles, err := profile.Read(m.StateDir)
 	if err != nil {
 		return err
 	}

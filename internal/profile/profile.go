@@ -78,9 +78,13 @@ func Defaults() []Profile {
 	}
 	return out
 }
-func path(dir string) string { return filepath.Join(dir, "profiles.json") }
-func Load(dir string) ([]Profile, error) {
-	out, err := defaultsAt(dir)
+func path(dir string) string             { return filepath.Join(dir, "profiles.json") }
+func Load(dir string) ([]Profile, error) { return load(dir, true) }
+
+func Read(dir string) ([]Profile, error) { return load(dir, false) }
+
+func load(dir string, persist bool) ([]Profile, error) {
+	out, err := defaultsAt(dir, persist)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +336,7 @@ func (p Profile) Environment(base []string) []string {
 	}
 	return append(out, "YAMNAYA_PROFILE="+p.ID, "YAMNAYA_ACCOUNT="+p.Account)
 }
-func defaultsAt(dir string) ([]Profile, error) {
+func defaultsAt(dir string, persist bool) ([]Profile, error) {
 	if dir == "" {
 		return Defaults(), nil
 	}
@@ -346,6 +350,16 @@ func defaultsAt(dir string) ([]Profile, error) {
 		if ps, ok, err := unchanged[[]Profile](path, info); ok && err == nil {
 			return withAccounts(healInherited(ps)), nil
 		}
+	}
+	if !persist {
+		ps, err := readDecoded(path, decodeDefaults)
+		if errors.Is(err, os.ErrNotExist) {
+			return withAccounts(initialDefaults()), nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return withAccounts(healInherited(ps)), nil
 	}
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -362,23 +376,7 @@ func defaultsAt(dir string) ([]Profile, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	defaults := Defaults()
-	if id := os.Getenv("YAMNAYA_PROFILE"); id != "" && id != "default" {
-		home, _ := os.UserHomeDir()
-		for i := range defaults {
-			defaults[i].Root = filepath.Join(home, "."+defaults[i].Harness)
-			defaults[i].Explicit = false
-			defaults[i].RootValue = ""
-			defaults[i].RootSet = false
-			defaults[i].SecureStorage = ""
-			defaults[i].SecureStorageSet = false
-			defaults[i].SQLiteEnv = ""
-			defaults[i].SQLiteEnvSet = false
-			if defaults[i].Harness == "codex" {
-				defaults[i].SQLiteRoot = sqliteHome(defaults[i].Root, false)
-			}
-		}
-	}
+	defaults := initialDefaults()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
@@ -439,4 +437,25 @@ func (p Profile) NativeRoot() string {
 		return p.RootValue
 	}
 	return p.Root
+}
+
+func initialDefaults() []Profile {
+	defaults := Defaults()
+	if id := os.Getenv("YAMNAYA_PROFILE"); id != "" && id != "default" {
+		home, _ := os.UserHomeDir()
+		for i := range defaults {
+			defaults[i].Root = filepath.Join(home, "."+defaults[i].Harness)
+			defaults[i].Explicit = false
+			defaults[i].RootValue = ""
+			defaults[i].RootSet = false
+			defaults[i].SecureStorage = ""
+			defaults[i].SecureStorageSet = false
+			defaults[i].SQLiteEnv = ""
+			defaults[i].SQLiteEnvSet = false
+			if defaults[i].Harness == "codex" {
+				defaults[i].SQLiteRoot = sqliteHome(defaults[i].Root, false)
+			}
+		}
+	}
+	return defaults
 }

@@ -95,7 +95,7 @@ func RecordProfileLimits(stateDir string, p profile.Profile, in io.Reader, now t
 }
 
 func readClaudeLimits(stateDir string) []core.Limit {
-	ps, err := profile.Load(stateDir)
+	ps, err := profile.Read(stateDir)
 	if err != nil {
 		return nil
 	}
