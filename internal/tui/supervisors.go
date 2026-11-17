@@ -33,7 +33,7 @@ func (m Model) supervisorRows() ([]prow, []pdo) {
 					m.message = err.Error()
 					return m, nil
 				}
-				m.show("O", string(raw))
+				m.show("Z", string(raw))
 				return m, nil
 			}},
 			{"a", "attach work", func(m Model) (tea.Model, tea.Cmd) { return m.supervisorLinks(id, false) }},

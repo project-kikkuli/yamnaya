@@ -1079,7 +1079,7 @@ func (m Model) key(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.message = "pausing every ym agent"
 		}
 		return m, m.do(func() (string, error) { return m.core.Throttle(board, nil, on) })
-	case "E", "H", "Y", "F", "O":
+	case "E", "H", "Y", "F", "Z":
 		r, _ := m.selected()
 		return m.openPanel(panelKeys[k.String()], r)
 	case "I":

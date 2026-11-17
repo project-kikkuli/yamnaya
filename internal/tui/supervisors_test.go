@@ -14,7 +14,7 @@ func TestSupervisorPanelCreatesAndEditsIndependentAttachments(t *testing.T) {
 			if err := c.Store.SetLaunchTarget("remote-execution"); err != nil {
 				t.Fatal(err)
 			}
-			m = press(t, m, "O")
+			m = press(t, m, "Z")
 			if m.pn.kind != panelSupervisors || !strings.Contains(m.View().Content, "SUPERVISORS") {
 				t.Fatal("supervisor panel did not open")
 			}
