@@ -33,7 +33,12 @@ func Socket(t testing.TB) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		owned, err := serverProcesses(tmux, sock)
+		if err != nil {
+			t.Errorf("read private tmux ownership: %v", err)
+		}
 		exec.Command(tmux, "-L", sock, "kill-server").Run()
+		waitServerProcesses(t, owned)
 		os.Remove(path)
 		watch.Process.Kill()
 		watch.Wait()

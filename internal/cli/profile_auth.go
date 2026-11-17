@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/profile"
@@ -63,6 +64,10 @@ func loginConfigured(p profile.Profile, cwd string) error {
 
 // nativeStatus asks the harness itself, unanswered if it takes longer than timeout.
 func nativeStatus(p profile.Profile, timeout time.Duration) error {
+	return nativeStatusContext(context.Background(), p, timeout)
+}
+
+func nativeStatusContext(parent context.Context, p profile.Profile, timeout time.Duration) error {
 	login := loginRequired(p)
 	binary, err := bin(p.Harness)
 	if err != nil {
@@ -72,9 +77,11 @@ func nativeStatus(p profile.Profile, timeout time.Duration) error {
 	if p.Harness == "codex" {
 		args = []string{"-c", "sqlite_home=" + strconv.Quote(sqliteRoot(p)), "login", "status"}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	nativeControlShutdown(cmd, true)
 	cmd.Env, cmd.Dir, cmd.WaitDelay = p.Environment(os.Environ()), p.Root, time.Second
 	out, err := cmd.Output()
 	var exit *exec.ExitError

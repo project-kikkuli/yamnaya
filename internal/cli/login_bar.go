@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -377,6 +378,9 @@ type statusChecks struct {
 	answers map[string]statusAnswer
 	running map[string]chan struct{}
 	started map[string]time.Time
+	ctx     context.Context
+	cancel  context.CancelFunc
+	closed  bool
 }
 
 // loginKey tells logins apart, those with no identity readable right now included.
@@ -394,6 +398,14 @@ const statusFresh = time.Minute
 func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	if c.ctx == nil {
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+	}
 	if c.running == nil {
 		c.running, c.answers, c.started = map[string]chan struct{}{}, map[string]statusAnswer{}, map[string]time.Time{}
 	}
@@ -411,7 +423,7 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 	c.running[loginKey(q)] = done
 	go func() {
 		started := time.Now()
-		err := nativeStatus(q, cmp.Or(c.timeout, statusTimeout))
+		err := nativeStatusContext(c.ctx, q, cmp.Or(c.timeout, statusTimeout))
 		if took := time.Since(started); took > authBudget {
 			log.Printf("ym: status check of %s/%s took %s: %v", q.Harness, q.ID, took.Round(time.Millisecond), err)
 		}
@@ -425,6 +437,22 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 		close(done)
 	}()
 	return done
+}
+
+func (c *statusChecks) Close() {
+	c.mu.Lock()
+	c.closed = true
+	if c.cancel != nil {
+		c.cancel()
+	}
+	var running []chan struct{}
+	for _, done := range c.running {
+		running = append(running, done)
+	}
+	c.mu.Unlock()
+	for _, done := range running {
+		<-done
+	}
 }
 
 func (c *statusChecks) answer(q profile.Profile) (statusAnswer, bool) {
@@ -451,6 +479,7 @@ func (l launcher) loginChecks(ps []profile.Profile, except string) (signedOut, u
 	checks := l.statuses
 	if checks == nil {
 		checks = &statusChecks{}
+		defer checks.Close()
 	}
 	signedOut, unanswered = map[string]bool{}, map[string]bool{}
 	wait := time.After(authBudget)

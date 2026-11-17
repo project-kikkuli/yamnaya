@@ -65,6 +65,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		e.core.Meter = meter
 		if l, ok := e.core.Launches.(launcher); ok {
 			l.statuses = &statusChecks{}
+			defer l.statuses.Close()
 			e.core.Launches = l
 		}
 		self, _ := os.Executable()

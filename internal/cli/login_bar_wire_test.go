@@ -38,19 +38,27 @@ const wireIdle = "✻ Done\n────────────────\n�
 
 const wireClaude = `#!/bin/bash
 case " $* " in *" auth status "*|*" login status "*) echo x >> "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/status-calls"; while [ -f "$CLAUDE_CONFIG_DIR/hang" ]; do sleep 0.2; done; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/fail" ] && exit 3; [ -f "$CLAUDE_CONFIG_DIR/killed" ] && kill -9 $$; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false,"authMethod":"none"}'; exit 1; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
+[ "$1" != --wire-native ] && exec -a claude bash "$0" --wire-native "$@"
+shift
 root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
 printf '%s %s %s\n' "$YAMNAYA_PROFILE" "$CLAUDE_SECURESTORAGE_CONFIG_DIR" "$root" >> "$WIRE_LOG.env"
 mkdir -p "$root/sessions"
 printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $$ "$id" "$PWD" "$(cat "$root/status")" "$(date +%s%3N)" > "$root/sessions/$$.json"
-[ -f "$root/child" ] && { setsid bash -c 'exec -a claude sleep 60' </dev/null >/dev/null 2>&1 & }
+crew=""
+[ -f "$root/child" ] && { setsid bash -c 'exec -a claude sleep 60' </dev/null >/dev/null 2>&1 & crew=$!; }
 state() { printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $main "$id" "$PWD" "$(cat "$root/status")" "$(date +%s%3N)" > "$root/sessions/$main.json.tmp" && mv "$root/sessions/$main.json.tmp" "$root/sessions/$main.json"; }
 main=$$
 ( last=$(stat -c %y "$root/screen.txt"); while kill -0 $main 2>/dev/null; do now=$(stat -c %y "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &
+writer=$!
+sleep 100000 & sleeper=$!
+cleanup() { trap - EXIT HUP TERM; kill "$writer" "$sleeper" $crew 2>/dev/null; wait "$writer" "$sleeper" $crew 2>/dev/null; }
+trap 'cleanup; exit' HUP TERM
+trap cleanup EXIT
 clear
 cat "$root/screen.txt"
-exec -a claude sleep 100000
+wait "$sleeper"
 `
 
 func wireTurn(id string, at time.Time) string {
@@ -131,6 +139,7 @@ func newWireWorld(t *testing.T, inherited ...string) *wireWorld {
 	c.Now = func() time.Time { return *w.clock }
 	w.l = c.Launches.(launcher)
 	w.l.statuses = &statusChecks{}
+	t.Cleanup(w.l.statuses.Close)
 	c.Launches = w.l
 	w.c = c
 	for _, p := range []profile.Profile{w.def, w.work, w.other} {
@@ -2781,6 +2790,7 @@ func (w *wireWorld) restartServe(t *testing.T) {
 	c.Now = func() time.Time { return *w.clock }
 	w.l = c.Launches.(launcher)
 	w.l.statuses = &statusChecks{}
+	t.Cleanup(w.l.statuses.Close)
 	c.Launches = w.l
 	w.c = c
 }
