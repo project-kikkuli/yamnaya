@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -215,12 +216,24 @@ func TestProfileSwitchResumesIdleAndExitedAndQueuesForBusySessions(t *testing.T)
 				if config, err := os.ReadFile(filepath.Join(b.Root, ".claude.json")); harness == "claude" && (err != nil || !strings.Contains(string(config), `"hasCompletedOnboarding": true`) || !strings.Contains(string(config), "fixture-user")) {
 					t.Fatalf("switched onto a profile without onboarding done and its login kept: %s, %v", config, err)
 				}
-				if harness == "codex" && (got[3] != b.Root || got[4] != b.Root || !strings.Contains(got[6], "--no-daemon") || !strings.Contains(got[6], "sqlite_home=")) {
-					t.Fatalf("Codex storage mismatch: %q", got)
+				if harness == "codex" {
+					if got[3] != b.Root || got[4] != b.Root || !strings.Contains(got[6], "sqlite_home="+strconv.Quote(b.Root)) {
+						t.Fatalf("Codex storage mismatch: %q", got)
+					}
+					if !strings.HasPrefix(got[6], "--remote unix://") || !strings.Contains(got[6], " resume ") || !strings.HasSuffix(got[6], " "+profileConversation) {
+						t.Fatalf("Codex native resume lost its bound conversation: %q", got[6])
+					}
+					if strings.Contains(got[6], "--no-daemon") || strings.Contains(got[6], "--action") || strings.Contains(got[6], pending.Text) {
+						t.Fatalf("native frontend received control ownership or synthetic input: %q", got[6])
+					}
 				}
 				saved, _ := l.records.Find(rec.Key)
 				if saved.Profile != "b" || saved.Session != rec.Session || saved.ConfigRoot != b.Root {
 					t.Fatalf("selection not persisted: %#v", saved)
+				}
+				workspace := filepath.Join(state, "chiefs", chief.ID, "workspace")
+				if saved.Worktree.Path != workspace {
+					t.Fatalf("profile switch changed coordination directory: %+v", saved)
 				}
 				copied, err := os.ReadFile(filepath.Join(b.Root, rel))
 				if err != nil || string(copied) != data {

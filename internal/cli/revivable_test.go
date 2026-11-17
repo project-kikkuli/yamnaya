@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +72,38 @@ func resumed(t *testing.T, ran string) string {
 	return ""
 }
 
+func assertClaudeChannelResume(t *testing.T, ran, cwd, session string) {
+	t.Helper()
+	got := resumed(t, ran)
+	args, ok := strings.CutPrefix(got, cwd+" ")
+	if !ok {
+		t.Fatalf("native resume changed directory: %s", got)
+	}
+	prefix, rest, ok := strings.Cut(args, "--mcp-config ")
+	if !ok || !slices.Equal(strings.Fields(prefix), []string{"--dangerously-load-development-channels", "server:yamnaya"}) {
+		t.Fatalf("native channel was not attached: %s", args)
+	}
+	var config struct {
+		Servers map[string]struct {
+			Command string
+			Args    []string
+		} `json:"mcpServers"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(rest))
+	if err := decoder.Decode(&config); err != nil {
+		t.Fatal(err)
+	}
+	channel, ok := config.Servers["yamnaya"]
+	if !ok || channel.Command == "" || len(channel.Args) != 6 || channel.Args[0] != "control" || channel.Args[1] != "claude-channel" || channel.Args[2] != "--socket" || channel.Args[3] == "" || channel.Args[4] != "--session" || channel.Args[5] != session {
+		t.Fatalf("channel lost conversation binding: %+v", config)
+	}
+	native := strings.Fields(rest[decoder.InputOffset():])
+	want := []string{"--chrome", "--dangerously-skip-permissions", "--resume", session}
+	if !slices.Equal(native, want) {
+		t.Fatalf("native resume changed flags/identity or added synthetic prompt: %q, want %q", native, want)
+	}
+}
+
 func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -125,9 +159,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, want := resumed(t, ran), wt+" --chrome --dangerously-skip-permissions --resume s1"; got != want {
-				t.Fatalf("agent ran as %q, want %q", got, want)
-			}
+			assertClaudeChannelResume(t, ran, wt, "s1")
 			if env := regexp.MustCompile(`\b[A-Z][A-Z0-9_]*=\S*`).FindString(msg); env != "" || strings.Contains(msg, "--resume") || !strings.Contains(msg, " in "+wt+";") || !strings.HasSuffix(msg, "; open: ym open "+rec.Key) {
 				t.Fatalf("revive said %q; want what was revived, where and how to open it, with no command line or %q", msg, env)
 			}
@@ -196,9 +228,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 			if _, err := l.Revive("s2"); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := resumed(t, ran), dir+" --chrome --dangerously-skip-permissions --resume s2"; got != want {
-				t.Fatalf("agent ran as %q, want %q", got, want)
-			}
+			assertClaudeChannelResume(t, ran, dir, "s2")
 			if back, _ := l.records.Find("s2"); !back.Seen.IsZero() {
 				t.Fatalf("revived record %+v still marks it as run outside ym", back)
 			}
