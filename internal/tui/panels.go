@@ -45,6 +45,7 @@ type panelState struct {
 	in     *panelInput
 	// harness and host are the new profile's, which tab and ctrl+t change while its label is typed.
 	harness, host string
+	inspected     map[string]string
 	settings      settingsData
 	relays        []core.Relay
 	// run runs the ym command a user would type, on host ("" for this one), with stdin; tty hands it this terminal.
@@ -68,12 +69,16 @@ type panelInput struct {
 }
 
 type settingsData struct {
-	loaded    bool
-	service   map[string]any
-	docs      string
-	cap       int64
-	authority map[string]bool
-	err       error
+	recoverySources []string
+	actions         map[string][]core.Activation
+	launches        map[string][]core.PendingLaunch
+	recoveryErrors  map[string]string
+	loaded          bool
+	service         map[string]any
+	docs            string
+	cap             int64
+	authority       map[string]bool
+	err             error
 }
 
 type settingsMsg settingsData
@@ -171,6 +176,7 @@ func (m Model) openPanel(kind panelKind, r row) (tea.Model, tea.Cmd) {
 		m.contextProfile()
 	}
 	if kind == panelSettings {
+		m.pn.inspected = map[string]string{}
 		return m, m.loadSettings()
 	}
 	if kind == panelLaunched {
@@ -278,7 +284,7 @@ func (m Model) panelView() viewPage {
 	b := viewPage{}
 	rows, _ := m.panelRows()
 	sub := map[panelKind]string{panelProfiles: "every Claude and Codex login on every host, with its limit windows",
-		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "MCP connections, ym serve, Notion discussion inbox, the context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
+		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "supervisor recovery, queued launches, MCP connections, ym serve, Notion inbox, context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
 		panelLaunched: "what ym launched, every ended session or closed or killed goal ym revive brings back, and every other conversation to resume"}[m.pn.kind]
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")
 	if t := m.pn.target; t != nil && m.pn.kind == panelProfiles {
@@ -641,6 +647,7 @@ func (m Model) hostRows() ([]prow, []pdo) {
 // loadSettings reads ym serve's status, Notion's, the context cap and merge authority off the board.
 func (m Model) loadSettings() tea.Cmd {
 	run, st := m.pn.run, m.core.Store
+	hosts := m.recoveryHosts()
 	return func() tea.Msg {
 		d := settingsData{loaded: true}
 		out, err := run("", "", "service", "status")
@@ -654,6 +661,7 @@ func (m Model) loadSettings() tea.Cmd {
 			d.cap, capErr = st.ContextCap()
 			d.authority, authErr = st.Authority()
 		}
+		d.loadRecovery(st, hosts)
 		d.err = errors.Join(err, docsErr, capErr, authErr)
 		return settingsMsg(d)
 	}
@@ -692,7 +700,7 @@ func (m Model) settingRows() ([]prow, []pdo) {
 	kept, _ := d.service["kept"].(string)
 	keep := "kept running across logouts and reboots"
 	if kept == "" {
-		keep = "not kept by launchd: it runs while a board or ym command keeps it up; enter keeps it, as ym service keep does, no sudo needed"
+		keep = "not kept by launchd; enter explicitly keeps it running across logins, as ym service keep does"
 	}
 	keepDo := pdo{"enter", "keep it running", func(m Model) (tea.Model, tea.Cmd) {
 		return m, m.runYM("panel:set:keep", "keeping ym serve", "keep", "", "", "service", "keep")
@@ -709,6 +717,7 @@ func (m Model) settingRows() ([]prow, []pdo) {
 		m.pn.cur = m.firstPanelRow(0, 1)
 		return m, nil
 	}}}})
+	rows = append(rows, m.recoveryRows()...)
 	rows = append(rows, prow{text: ""}, prow{text: pal.bold.Render("Notion discussion inbox (ym docs)")})
 	rows = append(rows, prow{text: d.docs, key: "panel:set:docs", does: []pdo{{"enter", "connect an integration token", func(m Model) (tea.Model, tea.Cmd) {
 		m.askLine("your Notion email", "", false, func(m Model, email string) (tea.Model, tea.Cmd) {

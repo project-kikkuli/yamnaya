@@ -508,7 +508,32 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settingsMsg:
 		m.pn.settings = settingsData(msg)
 		m.pn.cur = m.firstPanelRow(m.pn.cur, 1)
-		return m, nil
+		return m, m.loadNextRecovery()
+	case recoveryMsg:
+		if m.pn.kind != panelSettings || msg.epoch != m.pn.epoch {
+			return m, nil
+		}
+		selected := ""
+		if rows, _ := m.panelRows(); m.pn.cur >= 0 && m.pn.cur < len(rows) {
+			selected = rows[m.pn.cur].key
+		}
+		m.pn.settings.actions[msg.host] = msg.actions
+		m.pn.settings.launches[msg.host] = msg.launches
+		delete(m.pn.settings.recoveryErrors, msg.host)
+		if msg.err != nil {
+			m.pn.settings.recoveryErrors[msg.host] = msg.err.Error()
+		}
+		if selected != "" {
+			if rows, _ := m.panelRows(); len(rows) > 0 {
+				for i, row := range rows {
+					if row.key == selected {
+						m.pn.cur = i
+						break
+					}
+				}
+			}
+		}
+		return m, m.loadNextRecovery()
 	case mcpMsg:
 		if m.pn.mcp.choice != nil && *m.pn.mcp.choice == msg.choice {
 			if msg.inventory != nil && (msg.inventory.Target.Root != msg.choice.root || msg.inventory.Target.Harness != msg.choice.harness || msg.inventory.Target.Profile != msg.choice.id) {
