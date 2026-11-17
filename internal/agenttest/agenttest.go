@@ -44,7 +44,7 @@ func Run(m *testing.M) int {
 	}
 	os.Setenv("YAMNAYA_BRIEFS_ADDR", "127.0.0.1:0")
 	pinGo()
-	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "YAMNAYA_STATE_DIR": "home/.local/state/yamnaya", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
+	for env, sub := range map[string]string{"HOME": "home", "TMPDIR": "tmp", "GOTMPDIR": "tmp", "YAMNAYA_STATE_DIR": "home/.local/state/yamnaya", "CLAUDE_CONFIG_DIR": "claude", "CODEX_HOME": "codex"} {
 		path := filepath.Join(root, sub)
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			panic(err)

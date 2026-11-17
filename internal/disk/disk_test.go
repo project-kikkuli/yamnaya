@@ -73,8 +73,11 @@ func TestADrillOverridesFreeSpaceOnlyUnderARehearsalRoot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if faked := u.Free() < 0.05 && u.Free() > 0.03; faked != c.wantFaked {
-				t.Fatalf("free %v, faked %v, want %v", u.Free(), faked, c.wantFaked)
+			if free, faked := drillFree(); faked != c.wantFaked || faked && free != 0.04 {
+				t.Fatalf("drill free %v, enabled %v, want %v", free, faked, c.wantFaked)
+			}
+			if c.wantFaked && (u.Free() < 0.03 || u.Free() > 0.05) {
+				t.Fatalf("marked drill free = %v", u.Free())
 			}
 			if _, held := Held(base); held != c.wantFaked && c.wantFaked {
 				t.Fatal("a drill at 4% free does not hold new slots")

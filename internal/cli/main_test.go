@@ -2,9 +2,11 @@ package cli
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/agenttest"
+	"github.com/project-kikkuli/yamnaya/internal/disk"
 )
 
 const (
@@ -32,5 +34,18 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv(testChild, "1")
 	detach = func(...string) error { return nil }
-	os.Exit(agenttest.Run(m))
+	code := func() int {
+		dir, err := os.MkdirTemp("", "ym-cli-capacity-")
+		if err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll(dir)
+		file := filepath.Join(dir, "free")
+		if err := os.WriteFile(file, []byte("0.5\n"), 0o600); err != nil {
+			panic(err)
+		}
+		os.Setenv(disk.FreeFileEnv, file)
+		return agenttest.Run(m)
+	}()
+	os.Exit(code)
 }

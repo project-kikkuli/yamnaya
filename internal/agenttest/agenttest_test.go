@@ -26,7 +26,7 @@ func TestATestProcessLivesInsideARehearsalRootAwayFromTheOwnersFiles(t *testing.
 	if _, err := os.Stat(filepath.Join(root, ".ym-rehearsal")); err != nil {
 		t.Fatalf("%s is not a rehearsal root: %v", root, err)
 	}
-	for _, env := range []string{"HOME", "TMPDIR", "YAMNAYA_STATE_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
+	for _, env := range []string{"HOME", "TMPDIR", "GOTMPDIR", "YAMNAYA_STATE_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
 		v := os.Getenv(env)
 		if !strings.HasPrefix(v, root+string(filepath.Separator)) || strings.HasPrefix(v, owner.HomeDir+string(filepath.Separator)) {
 			t.Errorf("%s = %q, want a directory under %s", env, v, root)

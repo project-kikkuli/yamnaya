@@ -42,10 +42,19 @@ func TestInventoryObservesNewAndResumedTranscripts(t *testing.T) {
 			if err := os.WriteFile(newPath, []byte("{}\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chtimes(dir, now.Add(2*time.Second), now.Add(2*time.Second)); err != nil {
+				t.Fatal(err)
+			}
 			if sources := i.scan(now.Add(2*time.Second), false); len(sources) != 2 {
-				t.Fatalf("new source not discovered: %v", sources)
+				cached := i.dirs[dir].ModTime()
+				info, _ := os.Stat(dir)
+				forced := i.scan(now.Add(2*time.Second), true)
+				t.Fatalf("new source not discovered: %v; directory cached=%v observed=%v; forced=%v", sources, cached, info.ModTime(), forced)
 			}
 			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(dir, now.Add(3*time.Second), now.Add(3*time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			if sources := i.scan(now.Add(3*time.Second), false); len(sources) != 1 || sources[0].Path != newPath {
