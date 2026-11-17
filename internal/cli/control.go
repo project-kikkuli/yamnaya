@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/project-kikkuli/yamnaya/internal/core"
 	"github.com/project-kikkuli/yamnaya/internal/harness/codex"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
 	"github.com/spf13/cobra"
@@ -70,7 +71,7 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 		return err
 	}
 	socket := filepath.Join(dir, "s")
-	env := append(os.Environ(), codex.ControlSocketEnv+"="+socket)
+	env := nativeControlEnv(codex.ControlSocketEnv + "=" + socket)
 	serverArgs := []string{"app-server", "--listen", "unix://" + socket}
 	for i := 0; i < len(nativeArgs); i++ {
 		if nativeArgs[i] == "-c" && i+1 < len(nativeArgs) {
@@ -81,11 +82,13 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	server := exec.CommandContext(ctx, binary, serverArgs...)
 	server.Env, server.Stderr = env, os.Stderr
 	server.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	nativeControlShutdown(server, true)
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start native control: %w", err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- server.Wait() }()
+	done := make(chan struct{})
+	var serverErr error
+	go func() { serverErr = server.Wait(); close(done) }()
 	defer func() { _ = syscall.Kill(-server.Process.Pid, syscall.SIGKILL); <-done }()
 	var client *codex.ControlClient
 	deadline := time.NewTimer(10 * time.Second)
@@ -94,6 +97,8 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	defer ticker.Stop()
 	for client == nil {
 		select {
+		case <-done:
+			return fmt.Errorf("native Codex control exited before readiness: %v", serverErr)
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
@@ -133,9 +138,15 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	if thread.Thread.ID == "" {
 		return errors.New("native control returned no thread identity")
 	}
+	if session != "" && thread.Thread.ID != session {
+		return errors.New("native control resumed a different thread")
+	}
 	if action != "" {
 		if err := client.Supervisor(thread.Thread.ID, action); err != nil {
-			return err
+			if !errors.Is(err, core.ErrSubmissionUncertain) {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Yamnaya startup submission is uncertain for %s: %v\n", thread.Thread.ID, err)
 		}
 	}
 	args := []string{"--remote", "unix://" + socket, "resume"}
@@ -145,6 +156,7 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	}
 	args = append(args, thread.Thread.ID)
 	tui := exec.CommandContext(ctx, binary, args...)
+	nativeControlShutdown(tui, false)
 	tui.Env, tui.Stdin, tui.Stdout, tui.Stderr = env, os.Stdin, os.Stdout, os.Stderr
 	return tui.Run()
 }

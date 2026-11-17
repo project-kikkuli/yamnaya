@@ -163,7 +163,10 @@ func (c *ControlClient) Supervisor(thread, text string) error {
 	if err != nil {
 		var rejected *ControlRejection
 		if errors.As(err, &rejected) {
-			return err
+			switch rejected.Code {
+			case -32700, -32600, -32601, -32602:
+				return err
+			}
 		}
 		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}

@@ -94,7 +94,8 @@ func runClaudeControl(parent context.Context, binary, session string, nativeArgs
 	args := []string{"--dangerously-load-development-channels", "server:yamnaya", "--mcp-config", string(raw)}
 	args = append(args, nativeArgs...)
 	child := exec.CommandContext(ctx, binary, args...)
-	child.Env = append(os.Environ(), claude.ChannelSocketEnv+"="+socket)
+	nativeControlShutdown(child, false)
+	child.Env = nativeControlEnv(claude.ChannelSocketEnv + "=" + socket)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return child.Run()
 }
