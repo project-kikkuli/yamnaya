@@ -17,12 +17,22 @@ cleanup() {
 trap cleanup EXIT INT TERM
 chmod 755 "$fixture_stage"
 
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -p 1 -o "$fixture_stage/peer.test" ./internal/harness/claude
+chmod 555 "$fixture_stage/peer.test"
+docker pull node:22-bookworm-slim
+fixture_image="$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)"
+for fixture_version in 2.1.300 2.1.314; do
 # The official native artifact is downloaded before the isolated runtime starts.
-python3 - "$fixture_stage" <<'PY'
+python3 - "$fixture_stage" "$fixture_version" <<'PY'
 import base64, hashlib, pathlib, shutil, sys, tarfile, urllib.request
 stage = pathlib.Path(sys.argv[1])
-url = 'https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.314.tgz'
-expected = 'Yg0a5mpdkGClK0rgFMxbCWZW3wZtqgOhYjbISALqyL5tfADHhX9Ms6ExA0/effgSJ9MaWfHMPntryeOG6Mk6HQ=='
+version = sys.argv[2]
+integrities = {
+    '2.1.300': 'oW4/i4gBd0Y7vqKToK+RaO/fZm4oZWAA81CJ1s0afg+bP+OH9QJdOXKDDwQ9eizcV78a44mQAbce5WYsN18CAw==',
+    '2.1.314': 'Yg0a5mpdkGClK0rgFMxbCWZW3wZtqgOhYjbISALqyL5tfADHhX9Ms6ExA0/effgSJ9MaWfHMPntryeOG6Mk6HQ==',
+}
+expected = integrities[version]
+url = f'https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-{version}.tgz'
 archive = stage / 'claude.tgz'
 digest = hashlib.sha512()
 size = 0
@@ -34,7 +44,8 @@ with urllib.request.urlopen(url, timeout=60) as response, archive.open('wb') as 
         digest.update(chunk)
         output.write(chunk)
 if base64.b64encode(digest.digest()).decode() != expected:
-    raise SystemExit('Pinned Claude 2.1.314 native artifact integrity mismatch')
+    raise SystemExit(f'Pinned Claude {version} native artifact integrity mismatch')
+(stage / 'claude').unlink(missing_ok=True)
 with tarfile.open(archive, 'r:gz') as package:
     binaries = [entry for entry in package.getmembers() if entry.isfile() and pathlib.PurePosixPath(entry.name).name in ('claude', 'claude.exe')]
     if len(binaries) != 1 or not 1024 * 1024 <= binaries[0].size <= 400 * 1024 * 1024:
@@ -45,14 +56,14 @@ with tarfile.open(archive, 'r:gz') as package:
 archive.unlink()
 PY
 
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -p 1 -o "$fixture_stage/peer.test" ./internal/harness/claude
-chmod 555 "$fixture_stage/peer.test"
-docker pull node:22-bookworm-slim
-fixture_image="$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)"
+rm -f "$fixture_stage/container.cid"
+
 timeout --signal=TERM --kill-after=10s 180s docker run --rm --cidfile "$fixture_stage/container.cid" \
   --network none --user node:node --cpus 1 --memory 1536m --pids-limit 96 \
   --read-only --tmpfs /tmp:rw,nosuid,nodev,size=512m --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=bind,src=$fixture_stage,dst=/fixture,readonly" --workdir /tmp \
   --env HOME=/tmp/fixture-home --env TMPDIR=/tmp --env GOMAXPROCS=1 --env GITHUB_ACTIONS=true \
   --env YM_REAL_CLAUDE_PEER_FIXTURE=1 --env YM_REAL_CLAUDE_BIN=/fixture/claude \
+  --env "YM_REAL_CLAUDE_VERSION=$fixture_version" \
   "$fixture_image" /fixture/peer.test -test.run '^TestRealClaudePeerTransportWithSimulatedModel$' -test.v -test.timeout=150s
+done

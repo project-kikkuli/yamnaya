@@ -58,13 +58,17 @@ func TestRealClaudePeerTransportWithSimulatedModel(t *testing.T) {
 	if err != nil || !bytes.Equal(magic[:], []byte{0x7f, 'E', 'L', 'F'}) {
 		t.Fatal("fixture requires the pinned real Linux native binary")
 	}
-	t.Log("REAL Claude CLI 2.1.314 / SIMULATED localhost model; transport evidence only, no real model behavior or provider billing")
+	version := os.Getenv("YM_REAL_CLAUDE_VERSION")
+	if version != "2.1.300" && version != "2.1.314" {
+		t.Fatal("fixture requires an explicitly pinned deployed Claude version")
+	}
+	t.Logf("REAL Claude CLI %s / SIMULATED localhost model; transport evidence only, no real model behavior or provider billing", version)
 	for _, policy := range []string{"accept", "hold", "refuse"} {
 		t.Run(policy, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 			defer cancel()
 			model := newNativePeerModel(t)
-			native := startNativePeer(t, ctx, binary, policy, model.server.URL)
+			native := startNativePeer(t, ctx, binary, version, policy, model.server.URL)
 			native.waitResult(t, ctx)
 			a := New()
 			a.Dir = native.config
@@ -316,7 +320,7 @@ type nativePeerProcess struct {
 	logs            nativePeerLog
 }
 
-func startNativePeer(t *testing.T, ctx context.Context, binary, policy, baseURL string) *nativePeerProcess {
+func startNativePeer(t *testing.T, ctx context.Context, binary, version, policy, baseURL string) *nativePeerProcess {
 	t.Helper()
 	base := t.TempDir()
 	n := &nativePeerProcess{config: filepath.Join(base, "claude"), cwd: filepath.Join(base, "work"), id: map[string]string{"accept": "12345678-1234-4234-8234-123456789ab1", "hold": "12345678-1234-4234-8234-123456789ab2", "refuse": "12345678-1234-4234-8234-123456789ab3"}[policy], results: make(chan string, 8), exited: make(chan struct{})}
@@ -331,12 +335,12 @@ func startNativePeer(t *testing.T, ctx context.Context, binary, policy, baseURL 
 	if err := os.MkdirAll(n.cwd, 0700); err != nil {
 		t.Fatal(err)
 	}
-	version := exec.CommandContext(ctx, binary, "--version")
-	version.Env = env
-	version.Dir = n.cwd
-	out, err := version.CombinedOutput()
+	versionCmd := exec.CommandContext(ctx, binary, "--version")
+	versionCmd.Env = env
+	versionCmd.Dir = n.cwd
+	out, err := versionCmd.CombinedOutput()
 	fields := strings.Fields(string(out))
-	if err != nil || len(fields) == 0 || fields[0] != "2.1.314" {
+	if err != nil || len(fields) == 0 || fields[0] != version {
 		t.Fatalf("wrong native CLI version: %s %v", out, err)
 	}
 	settings, _ := json.Marshal(map[string]string{"crossSessionInbound": policy})
