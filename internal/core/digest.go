@@ -421,21 +421,6 @@ func (s *Store) addDigest(manager string, action, quiet Rollup) error {
 	return s.saveDigest(manager, r)
 }
 
-// pendingDigest is the seq of the digest still waiting for session, 0 when none is.
-func (s *Store) pendingDigest(session string) (int64, error) {
-	var seq int64
-	err := s.db.QueryRow(`SELECT seq FROM ym_messages WHERE session = ? AND state = ? AND text LIKE ? ORDER BY seq DESC LIMIT 1`, session, MsgPending, digestHead+"%").Scan(&seq)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	return seq, err
-}
-
-func (s *Store) rewriteMessage(seq int64, text string) error {
-	_, err := s.db.Exec(`UPDATE ym_messages SET text = ? WHERE seq = ? AND state = ?`, text, seq, MsgPending)
-	return err
-}
-
 // busyTold reports whether told already reached s in the turn it is taking, or s cannot take a message now. A hung session is taking
 // no turn, and no event but this message reaches a hung manager.
 func (c *Core) busyTold(s Live, told time.Time) bool {
