@@ -10,15 +10,43 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 func blockedPanelAction(t *testing.T, c *core.Core, b core.Board) core.Activation {
 	t.Helper()
-	items, err := c.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
-	if err != nil || len(items) == 0 {
-		t.Fatalf("items %+v, %v", items, err)
+	goal, err := c.Store.AddGoal(core.Goal{Ask: "supervise recovery delivery", Repo: "/repo/recovery"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	item := items[0]
+	manager, err := c.Store.AddManager(core.Manager{Role: core.RoleManager, GoalID: goal.ID, Session: "recovery-supervisor", Harness: "claude", Repo: goal.Repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Store.SaveManager(manager); err != nil {
+		t.Fatal(err)
+	}
+	goal.ManagerID = manager.ID
+	if err := c.Store.SaveGoal(goal); err != nil {
+		t.Fatal(err)
+	}
+	c.Harnesses[0].(harness).sessions[7000] = core.Session{ID: manager.Session, Status: core.Idle}
+	previousProcs := c.Procs
+	c.Procs = func() ([]proc.Proc, error) {
+		rows, err := previousProcs()
+		return append(rows, proc.Proc{PID: 7000, TTY: "/dev/recovery-supervisor", Args: []string{"claude"}}), err
+	}
+	if err := c.Store.Link("lead", manager.Session); err != nil {
+		t.Fatal(err)
+	}
+	item, err := c.AddItem(core.Item{Kind: core.KindDecision, Session: "lead", Question: "which recovery behavior?", DoLine: "choose recovery behavior", Rec: "preserve identity", Options: picks})
+	if err != nil || item.Recipient != manager.ID {
+		t.Fatalf("managed ask %+v, %v", item, err)
+	}
+	b, err = c.Board()
+	if err != nil {
+		t.Fatal(err)
+	}
 	c.BackgroundSend = func(core.Live, string) error { return errors.New("native receipt unavailable") }
 	if _, _, err := c.Answer(b, item.Key(), "Original action payload\n"+strings.Repeat("full original request ", 100)+"action-tail"); err != nil {
 		t.Fatal(err)
