@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -257,11 +258,12 @@ func (c *Core) applySteer(b Board, o Org, m Manager, text, author, authorName st
 	}
 	text = steerText(o, m, st)
 	if g, ok := o.Goals[m.GoalID]; ok {
-		_, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventSteered, Payload: text, Key: fmt.Sprintf("%s:steer:%d", g.ID, st.Revision), Created: st.CreatedAt})
-		return st, err
+		if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventSteered, Payload: text, Key: fmt.Sprintf("%s:steer:%d", g.ID, st.Revision), Created: st.CreatedAt}); err != nil {
+			return st, err
+		}
 	}
 	if m.Session != "" {
-		if err := c.tell(b, m.Session, "ym: "+text, author == Owner); err != nil {
+		if err := c.requestAction(b, m.Session, "adopt", strconv.Itoa(st.Revision), text); err != nil {
 			return st, err
 		}
 	}

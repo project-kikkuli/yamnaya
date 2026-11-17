@@ -19,12 +19,15 @@ CREATE TABLE IF NOT EXISTS ym_activations (
  state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL,
  dispatched TEXT, target_session TEXT NOT NULL DEFAULT '',
  error TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '',
- attention INTEGER NOT NULL DEFAULT 0
+ attention INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, batch TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ym_activations_pending ON ym_activations(state,recipient);
+CREATE INDEX IF NOT EXISTS ym_activations_target ON ym_activations(target_session,state);
 `
 
 type Activation struct {
+	Batch                                                 string
+	Attempt                                               int
 	ID, Recipient, Session, Kind, Subject, Payload, State string
 	Created, Dispatched                                   time.Time
 	TargetSession, Error, Result                          string
@@ -39,11 +42,11 @@ func activationID(recipient, kind, subject string) string {
 func (s *Store) Activations() ([]Activation, error) { return s.activations("") }
 
 func (s *Store) activeActivations() ([]Activation, error) {
-	return s.activations(" WHERE state NOT IN ('done','superseded')")
+	return s.activations(" WHERE state IN ('pending','claimed','sent','blocked','uncertain','transferred')")
 }
 
 func (s *Store) activations(where string) ([]Activation, error) {
-	rows, err := s.db.Query(`SELECT id,recipient,session,kind,subject,payload,state,created,dispatched,target_session,error,result,attention FROM ym_activations` + where + ` ORDER BY created,id`)
+	rows, err := s.db.Query(`SELECT id,recipient,session,kind,subject,payload,state,created,dispatched,target_session,error,result,attention,attempt,batch FROM ym_activations` + where + ` ORDER BY created,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +56,7 @@ func (s *Store) activations(where string) ([]Activation, error) {
 		var a Activation
 		var created sql.NullString
 		var dispatched sql.NullString
-		if err := rows.Scan(&a.ID, &a.Recipient, &a.Session, &a.Kind, &a.Subject, &a.Payload, &a.State, &created, &dispatched, &a.TargetSession, &a.Error, &a.Result, &a.Attention); err != nil {
+		if err := rows.Scan(&a.ID, &a.Recipient, &a.Session, &a.Kind, &a.Subject, &a.Payload, &a.State, &created, &dispatched, &a.TargetSession, &a.Error, &a.Result, &a.Attention, &a.Attempt, &a.Batch); err != nil {
 			return nil, err
 		}
 		a.Created, a.Dispatched = parseTime(created), parseTime(dispatched)
@@ -125,9 +128,28 @@ func (c *Core) eventActionNeeded(b Board, o Org, e GoalEvent) (bool, error) {
 			cleared, err := c.Store.CanMerge(prRepoName(PR{URL: url, Repo: strings.TrimPrefix(strings.Split(url, "/pull/")[0], "https://github.com/")}))
 			return cleared && st.ReadyToMerge(c.now()), err
 		}
-	case EventStuck, EventFailedVerify:
+	case EventStuck:
 		g, err := c.Store.Goal(e.Goal)
-		return err == nil && !g.Ended() && g.State == GoalStuck, err
+		return err == nil && !g.Ended() && g.State == GoalStuck && !strings.HasPrefix(g.Evidence, quietEvidence), err
+	case EventFailedVerify:
+		if strings.Contains(e.Payload, " withdrawn: ") {
+			return false, nil
+		}
+		g, err := c.Store.Goal(e.Goal)
+		if err != nil || g.Ended() || g.State == GoalVerifying {
+			return false, err
+		}
+		verifications, err := c.Store.Verifications(e.Goal)
+		if err != nil || len(verifications) == 0 {
+			return false, err
+		}
+		v := verifications[0]
+		for _, candidate := range verifications {
+			if candidate.ID > v.ID {
+				v = candidate
+			}
+		}
+		return (v.Verdict == VerdictFail || v.Verdict == VerdictError) && v.WorkRevision == g.WorkRevision && !v.DecidedAt.After(e.Created), nil
 	case EventTimer, EventGoalReopened:
 		return true, nil
 	case EventRelayFailed:
@@ -152,12 +174,14 @@ func (c *Core) eventActionNeeded(b Board, o Org, e GoalEvent) (bool, error) {
 			}
 		}
 		return !strings.HasPrefix(e.Payload, "assignment "), nil
-	case EventAgentStopped, EventAgentHung, EventAgentAdrift, EventAgentSwollen, EventAgentOnboarding, EventResumeFailed:
+	case EventAgentSwollen:
+		return c.swollenActionNeeded(b, e)
+	case EventAgentStopped, EventAgentHung, EventAgentAdrift, EventAgentOnboarding, EventResumeFailed:
 		fields := strings.Fields(e.Payload)
 		if len(fields) < 2 {
 			return false, nil
 		}
-		ref := fields[1]
+		ref := strings.TrimSuffix(fields[1], "'s")
 		for _, s := range b.Sessions {
 			if ref != Short(s.Key()) && !SessionMatches(s.Key(), ref) {
 				continue
@@ -171,13 +195,7 @@ func (c *Core) eventActionNeeded(b Board, o Org, e GoalEvent) (bool, error) {
 				return s.Status == Onboarding, nil
 			case EventAgentAdrift:
 				return len(s.Drift) > 0, nil
-			case EventAgentSwollen:
-				for _, swollen := range b.Machine.Swollen {
-					if swollen.PID == s.PID || SessionMatches(swollen.Session, s.Key()) {
-						return true, nil
-					}
-				}
-				return false, nil
+
 			}
 		}
 		if e.Kind != EventAgentStopped && e.Kind != EventResumeFailed {
@@ -208,6 +226,17 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 	}
 	if a.Kind == "answer" {
 		return c.answerActionNeeded(a)
+	}
+	if a.Kind == "verdict" {
+		parts := strings.SplitN(a.Subject, ":", 2)
+		if len(parts) != 2 {
+			return false, errors.New("verdict action needs its completion attempt")
+		}
+		v, err := c.Store.OpenVerification(parts[0])
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return err == nil && v.Session == a.Session && strconv.Itoa(v.Attempt) == parts[1], err
 	}
 	if a.Kind == "event" {
 		seq, err := strconv.ParseInt(a.Subject, 10, 64)
@@ -326,7 +355,7 @@ func settleActivationAttentionIn(tx *sql.Tx, a Activation, at time.Time) error {
 	var err error
 	if a.Attention != 0 {
 		var outstanding int
-		if err = tx.QueryRow(`SELECT count(*) FROM ym_activations WHERE attention=? AND state NOT IN ('done','superseded')`, a.Attention).Scan(&outstanding); err != nil {
+		if err = tx.QueryRow(`SELECT count(*) FROM ym_activations WHERE attention=? AND (state NOT IN ('done','superseded','sent') OR error<>'')`, a.Attention).Scan(&outstanding); err != nil {
 			return err
 		}
 		if outstanding == 0 {
@@ -435,57 +464,8 @@ func (c *Core) DispatchActions(b Board) error {
 		if !ok || s.Status != Idle || s.Prompt != nil || s.Paused || c.Off(s.Key()) || len(s.Copies) > 1 || used[session] {
 			continue
 		}
-		res, err := c.Store.db.Exec(`UPDATE ym_activations SET state='claimed',target_session=?,dispatched=? WHERE id=? AND state='pending'`, session, stamp(c.now()), a.ID)
-		if err != nil {
+		if err := c.dispatchNativeActions(b, o, s, a, actions); err != nil {
 			return err
-		}
-		claimed, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if claimed != 1 {
-			continue
-		}
-		text := fmt.Sprintf("Yamnaya supervisor action %s (%s), generated by %s; this is not a message from the human owner.\n%s\nRecord the result with ym action complete %s --result <what changed>, or leave the action open while waiting.", a.ID, a.Kind, a.Recipient, a.Payload, a.ID)
-		if c.BackgroundSend != nil {
-			err = c.BackgroundSend(s, text)
-		} else {
-			err = c.message(s.Session, text, false)
-		}
-		state, why := "sent", ""
-		if err != nil {
-			state, why = "blocked", err.Error()
-			if errors.Is(err, ErrSubmissionUncertain) {
-				state = "uncertain"
-			}
-		}
-		tx, txErr := c.Store.db.Begin()
-		if txErr != nil {
-			return txErr
-		}
-		var changed int64
-		res, txErr = tx.Exec(`UPDATE ym_activations SET state=?,dispatched=?,error=? WHERE id=? AND state='claimed'`, state, stamp(c.now()), why, a.ID)
-		if txErr == nil {
-			changed, txErr = res.RowsAffected()
-			if txErr == nil && changed > 0 {
-				txErr = c.activationReceiptIn(tx, a, state, why)
-			}
-		}
-		if txErr != nil {
-			tx.Rollback()
-			return txErr
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-		if changed == 0 {
-			used[session] = true
-			continue
-		}
-		if why != "" {
-			if err := c.actionAttention(a, why); err != nil {
-				return err
-			}
 		}
 		used[session] = true
 	}
@@ -519,13 +499,25 @@ func (c *Core) RetryAction(id string) error {
 	if handled, err := c.retryTransferredActivation(id); handled || err != nil {
 		return err
 	}
-	res, err := c.Store.db.Exec(`UPDATE ym_activations SET state='pending',error='' WHERE id=? AND state IN ('blocked','uncertain','claimed')`, id)
+	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err == nil && n == 0 {
+	defer tx.Rollback()
+	if err = retryActivationIn(tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func retryActivationIn(tx *sql.Tx, id string) error {
+	var batch, state string
+	if err := tx.QueryRow(`SELECT batch,state FROM ym_activations WHERE id=?`, id).Scan(&batch, &state); err != nil {
+		return err
+	}
+	if state != "blocked" && state != "uncertain" && state != "claimed" {
 		return errors.New("action is not awaiting recovery")
 	}
+	_, err := tx.Exec(`UPDATE ym_activations SET state='pending',error='' WHERE (id=? OR (?<>'' AND batch=?)) AND state IN ('blocked','uncertain','claimed')`, id, batch, batch)
 	return err
 }

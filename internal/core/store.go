@@ -321,7 +321,7 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate review requests: %w", err)
 	}
-	if err := addColumns(db, `ym_messages source TEXT NOT NULL DEFAULT 'legacy'`); err != nil {
+	if err := addColumns(db, `ym_messages source TEXT NOT NULL DEFAULT 'legacy'`, `ym_activations attempt INTEGER NOT NULL DEFAULT 0`, `ym_activations batch TEXT NOT NULL DEFAULT ''`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate message provenance: %w", err)
 	}

@@ -219,7 +219,7 @@ func (c *Core) ReceiveActivation(m ActivationMessage) error {
 		if _, err = tx.Exec(`UPDATE ym_activations SET state=?,result=?,error=? WHERE id=? AND state NOT IN ('done','superseded')`, state, m.Result, why, m.Action.ID); err != nil {
 			return err
 		}
-		if state == "done" || state == "superseded" {
+		if state == "done" || state == "superseded" || state == "sent" {
 			a := Activation{ID: m.Action.ID}
 			if err = tx.QueryRow(`SELECT kind,subject,attention FROM ym_activations WHERE id=?`, a.ID).Scan(&a.Kind, &a.Subject, &a.Attention); err != nil {
 				return err
@@ -378,7 +378,7 @@ func (c *Core) receiveActivationRetry(m ActivationMessage) error {
 		return err
 	}
 	if inserted > 0 {
-		if _, err = tx.Exec(`UPDATE ym_activations SET state='pending',error='' WHERE id=? AND state IN ('blocked','uncertain','claimed')`, m.Action.ID); err != nil {
+		if err = retryActivationIn(tx, m.Action.ID); err != nil {
 			return err
 		}
 	}
@@ -407,6 +407,13 @@ func (c *Core) AcceptAction(id, session string) error {
 		return errors.New("only the accepting supervisor session can acknowledge its current action")
 	}
 	if _, err = tx.Exec(`UPDATE ym_activations SET state='sent',error='' WHERE id=?`, id); err != nil {
+		return err
+	}
+	a := Activation{ID: id}
+	if err = tx.QueryRow(`SELECT attention FROM ym_activations WHERE id=?`, id).Scan(&a.Attention); err != nil {
+		return err
+	}
+	if err = settleActivationAttentionIn(tx, a, c.now()); err != nil {
 		return err
 	}
 	if err = c.activationReceiptIn(tx, Activation{ID: id}, "sent", ""); err != nil {
