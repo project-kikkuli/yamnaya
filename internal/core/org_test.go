@@ -83,7 +83,16 @@ func newOrgWorld(t *testing.T) *orgWorld {
 
 // run starts a fake Claude session id, spawned by parent when it is set, that takes messages in its own inbox.
 func (w *world) spawn(id, parent string) {
-	pid := 1000 + len(w.procs)
+	pid := 1000
+	for _, process := range w.procs {
+		pid = max(pid, process.PID+1)
+	}
+	for known := range w.claude.sessions {
+		pid = max(pid, known+1)
+	}
+	for known := range w.codex.sessions {
+		pid = max(pid, known+1)
+	}
 	tty := fmt.Sprintf("/dev/ttys%d", pid)
 	w.procs = append(w.procs, proc.Proc{PID: pid, Args: []string{"claude"}, TTY: tty})
 	w.claude.sessions[pid] = Session{ID: id, Status: Idle, Title: "work " + id}
@@ -337,7 +346,16 @@ func TestADeadManagerIsRelaunchedAndKeepsItsIdentity(t *testing.T) {
 	if now.Session == m.Session || now.Session != again.Session {
 		t.Fatalf("manager session %s after relaunch, want the new %s", now.Session, again.Session)
 	}
-	w.ask(t, "agent", "still mine?")
+	board := w.board(t)
+	child, childAlive := board.Session("agent")
+	replacement, managerAlive := board.Session(now.Session)
+	if !childAlive || !managerAlive || len(replacement.Copies) != 1 || child.PID == replacement.PID {
+		t.Fatalf("relaunch corrupted distinct live identities: child=%+v manager=%+v", child, replacement)
+	}
+	item := w.ask(t, "agent", "still mine?")
+	if item.Recipient != m.ID {
+		t.Fatalf("old-session child lost manager identity: %+v", item)
+	}
 	w.loop(t, 1)
 	w.dispatch(t)
 	if got := w.handedTo(now.Session); len(got) != 1 {
