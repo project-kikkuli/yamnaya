@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
 )
 
 const launchAdmissionSchema = `
@@ -68,6 +71,37 @@ func (c *Core) queueLaunch(n NewLaunch) (Started, error) {
 }
 
 func (c *Core) startPendingLaunch(id string) (Started, error) {
+	unlock, err := c.lockLaunchRequest(id)
+	if err != nil {
+		return Started{}, err
+	}
+	defer unlock()
+	return c.startPendingLaunchLocked(id)
+}
+
+func (c *Core) lockLaunchRequest(id string) (func(), error) {
+	var databasePath string
+	if err := c.Store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&databasePath); err != nil {
+		return nil, err
+	}
+	if databasePath == "" {
+		if c.StateDir == "" {
+			return nil, errors.New("launch queue requires a durable state directory")
+		}
+		databasePath = filepath.Join(c.StateDir, "ym.db")
+	}
+	lock, err := os.OpenFile(filepath.Join(filepath.Dir(databasePath), "launch-"+activationID("request", "lock", id)+".lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		lock.Close()
+		return nil, err
+	}
+	return func() { lock.Close() }, nil
+}
+
+func (c *Core) startPendingLaunchLocked(id string) (Started, error) {
 	defer c.Store.invalidate()
 	var n NewLaunch
 	var body, state, result string
@@ -109,7 +143,7 @@ func (c *Core) startPendingLaunch(id string) (Started, error) {
 	}
 	if err != nil {
 		_, saveErr := c.Store.db.Exec(`UPDATE ym_pending_launches SET state='blocked',result=? WHERE id=?`, err.Error(), id)
-		return st, errors.Join(err, saveErr)
+		return st, errors.Join(err, saveErr, c.launchAttention(id, n, err.Error()))
 	}
 	if n.Assignment != "" && st.Session != "" {
 		if err := c.SettleAssignment(n.Assignment, st.Session, n.Parent); err != nil {
@@ -147,4 +181,53 @@ func (c *Core) DrainLaunches() error {
 		return nil
 	}
 	return nil
+}
+
+func launchAttentionQuestion(id string) string { return "Launch " + id + " is blocked" }
+
+func (c *Core) launchAttention(id string, n NewLaunch, reason string) error {
+	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		if it.Session == "ym-launch" && it.Question == launchAttentionQuestion(id) {
+			return nil
+		}
+	}
+	_, err = c.Store.AddItem(Item{Session: "ym-launch", Scope: n.Repo, Kind: KindChore, Question: launchAttentionQuestion(id), DoLine: "Inspect blocked launch", Impact: "agents", Rec: reason + ". Inspect ym launch list --json, then explicitly retry with ym launch retry " + id + " after checking prior native effects."})
+	return err
+}
+
+func (c *Core) RetryLaunch(id string) (string, error) {
+	unlock, err := c.lockLaunchRequest(id)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	defer c.Store.invalidate()
+	res, err := c.Store.db.Exec(`UPDATE ym_pending_launches SET state='pending',reason='',result='' WHERE id=? AND state='blocked'`, id)
+	if err != nil {
+		return "", err
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if changed != 1 {
+		return "", fmt.Errorf("launch %s is not blocked", id)
+	}
+	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
+	if err != nil {
+		return "", err
+	}
+	for _, it := range items {
+		if it.Session == "ym-launch" && it.Question == launchAttentionQuestion(id) {
+			if _, err := c.Store.Transition(it.Key(), ItemDismissed, "owner explicitly retries the preserved launch request"); err != nil {
+				return "", err
+			}
+		}
+	}
+	st, err := c.startPendingLaunchLocked(id)
+	return st.Message, err
 }

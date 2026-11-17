@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -144,5 +145,84 @@ func TestClosingAGoalCancelsItsQueuedWorkerBeforeCapacityReturns(t *testing.T) {
 	pending, err := w.core.Store.PendingLaunches()
 	if err != nil || len(pending) != 0 || len(w.launches.starts) != before {
 		t.Fatalf("cancelled work launched: pending %+v, %v", pending, err)
+	}
+}
+
+func TestConcurrentSameSourceReplayUsesOnePreservedLaunch(t *testing.T) {
+	w := newOrgWorld(t)
+	var databasePath string
+	if err := w.core.Store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&databasePath); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := OpenStore(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.Close()
+	other := &Core{Store: secondStore, Launches: w.launches, Now: w.core.Now, StateDir: w.core.StateDir}
+	results := make(chan error, 8)
+	var wg sync.WaitGroup
+	for i := range 8 {
+		c := w.core
+		if i%2 == 1 {
+			c = other
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := c.StartNew(NewLaunch{Repo: "/repo/app", Session: "preserved-worker", Source: "one-source", Prompt: "one action"})
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(w.launches.starts) != 1 {
+		t.Fatalf("concurrent source launched %d agents", len(w.launches.starts))
+	}
+	if w.launches.starts[0].Session != "preserved-worker" {
+		t.Fatalf("identity changed: %+v", w.launches.starts[0])
+	}
+}
+
+func TestBlockedLaunchIsVisibleAndExplicitRetryPreservesIdentity(t *testing.T) {
+	w := newOrgWorld(t)
+	w.launches.fail = errors.New("native startup refused")
+	n := NewLaunch{Repo: "/repo/app", Session: "preserved-worker", Source: "one-source", Prompt: "one action"}
+	if _, err := w.core.StartNew(n); err == nil {
+		t.Fatal("startup failure was hidden")
+	}
+	pending, err := w.core.Store.PendingLaunches()
+	if err != nil || len(pending) != 1 || pending[0].State != "blocked" {
+		t.Fatalf("blocked %+v, %v", pending, err)
+	}
+	items, err := w.core.Store.Items(ItemFilter{States: []string{ItemOpen}})
+	if err != nil || len(items) != 1 || !strings.Contains(items[0].Rec, "ym launch retry "+pending[0].ID) {
+		t.Fatalf("missing actionable owner attention: %+v, %v", items, err)
+	}
+	before := len(w.launches.starts)
+	if err := w.core.DrainLaunches(); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.launches.starts) != before {
+		t.Fatal("blocked launch was retried automatically")
+	}
+	w.launches.fail = nil
+	if _, err := w.core.RetryLaunch(pending[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.launches.starts[len(w.launches.starts)-1]; got.Session != n.Session || got.Request != pending[0].ID || got.Source != n.Source {
+		t.Fatalf("retry changed request: %+v", got)
+	}
+	if _, err := w.core.RetryLaunch(pending[0].ID); err == nil {
+		t.Fatal("completed request retried twice")
+	}
+	items, err = w.core.Store.Items(ItemFilter{States: []string{ItemOpen}})
+	if err != nil || len(items) != 0 {
+		t.Fatalf("resolved attention persists: %+v, %v", items, err)
 	}
 }

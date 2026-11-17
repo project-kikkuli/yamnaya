@@ -35,14 +35,8 @@ func machineLaunchAdmission(stateDir string) func(core.NewLaunch) error {
 		if err != nil {
 			return &core.LaunchDeferred{Reason: "cannot read machine throttle: " + err.Error()}
 		}
-		if throttle.On() {
-			return &core.LaunchDeferred{Reason: "machine throttle is on"}
-		}
-		if host.Level >= pressure.LevelWarn {
-			return &core.LaunchDeferred{Reason: fmt.Sprintf("memory pressure level %d, swap %.1f GiB", host.Level, float64(host.Swap)/(1<<30))}
-		}
-		if pool.Cores > 0 && load >= float64(pool.Cores) {
-			return &core.LaunchDeferred{Reason: fmt.Sprintf("processor load %.1f across %d cores", load, pool.Cores)}
+		if reason := launchMachineReason(host, pool.Cores, load, throttle.On()); reason != "" {
+			return &core.LaunchDeferred{Reason: reason}
 		}
 		path := n.Repo
 		if path == "" || !core.IsRepoPath(path) {
@@ -56,9 +50,29 @@ func machineLaunchAdmission(stateDir string) func(core.NewLaunch) error {
 		if err != nil {
 			return &core.LaunchDeferred{Reason: "cannot read launch filesystem: " + err.Error()}
 		}
-		if usage.Free() < disk.Tier2Free {
-			return &core.LaunchDeferred{Reason: fmt.Sprintf("filesystem %.0f%% free", usage.Free()*100)}
+		if reason := launchFilesystemReason(usage); reason != "" {
+			return &core.LaunchDeferred{Reason: reason}
 		}
 		return nil
 	}
+}
+
+func launchMachineReason(host pressure.Host, cores int, load float64, throttled bool) string {
+	if throttled {
+		return "machine throttle is on"
+	}
+	if host.Level >= pressure.LevelWarn {
+		return fmt.Sprintf("memory pressure level %d, swap %.1f GiB", host.Level, float64(host.Swap)/(1<<30))
+	}
+	if cores > 0 && load >= float64(cores) {
+		return fmt.Sprintf("processor load %.1f across %d cores", load, cores)
+	}
+	return ""
+}
+
+func launchFilesystemReason(usage disk.Usage) string {
+	if usage.Free() < disk.Tier2Free {
+		return fmt.Sprintf("filesystem %.0f%% free", usage.Free()*100)
+	}
+	return ""
 }
