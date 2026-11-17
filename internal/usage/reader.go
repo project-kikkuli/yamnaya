@@ -1,6 +1,11 @@
 package usage
 
 import (
+	"database/sql"
+	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/project-kikkuli/yamnaya/internal/core"
@@ -9,9 +14,33 @@ import (
 
 // NewReader observes persisted accounting; only the collector reads transcripts.
 func NewReader(stateDir string) *Meter {
-	m := New(stateDir)
-	m.reader, m.Fetch = true, nil
-	return m
+	return &Meter{StateDir: stateDir, Every: 5 * time.Second, reader: true}
+}
+
+var errNoUsageData = errors.New("no collected usage")
+
+func openLedgerReader(path string) (*ledger, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, errNoUsageData
+	} else if err != nil {
+		return nil, err
+	}
+	q := url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(5000)", "query_only(ON)", "cache_size(-8192)"}}
+	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	var slices int
+	if err = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='ym_usage_slices'`).Scan(&slices); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if slices == 0 {
+		db.Close()
+		return nil, errNoUsageData
+	}
+	return &ledger{db: db, reader: true}, nil
 }
 
 func (m *Meter) readLedger(now time.Time) error {
@@ -21,7 +50,34 @@ func (m *Meter) readLedger(now time.Time) error {
 		return ErrClosed
 	}
 	before, loaded := m.revision, m.ledger != nil
-	if err := m.open(now); err != nil {
+	if !loaded {
+		l, err := openLedgerReader(filepath.Join(m.StateDir, "ym.db"))
+		if errors.Is(err, errNoUsageData) {
+			m.mu.Lock()
+			m.last, m.read = now, true
+			m.mu.Unlock()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		m.ledger, m.prices = l, loadPrices(m.StateDir)
+	}
+	if _, err := m.ledger.db.Exec(`BEGIN`); err != nil {
+		return err
+	}
+	defer m.ledger.db.Exec(`ROLLBACK`)
+	revision, err := m.ledger.revision()
+	if err != nil {
+		return err
+	}
+	if !loaded || revision != before {
+		if err = m.reload(now); err != nil {
+			return err
+		}
+		m.revision = revision
+	}
+	if _, err = m.ledger.db.Exec(`COMMIT`); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -61,5 +117,6 @@ func (m *Meter) Read(now time.Time) (core.Fleet, error) {
 	f := m.fleet
 	f.Read = m.read
 	m.mu.Unlock()
+	f.Limits = current(append(readClaudeLimits(m.StateDir), f.Limits...), now)
 	return f, nil
 }

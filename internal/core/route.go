@@ -287,7 +287,7 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 			}
 		}
 	}
-	if added.Recipient == Owner || woken {
+	if added.Recipient == Owner {
 		return added, nil
 	}
 	return added, c.askManager(b, o, added)
@@ -295,6 +295,14 @@ func (c *Core) file(b Board, berr error, it Item, owner bool) (Item, error) {
 
 // askManager hands the item to the manager or chief it is routed to, on this host or another.
 func (c *Core) askManager(b Board, o Org, it Item) error {
+	current, err := c.Store.Item(it.Key())
+	if err != nil {
+		return err
+	}
+	it = current
+	if it.Recipient == Owner {
+		return nil
+	}
 	if _, _, remote := SplitRemote(it.Recipient); remote {
 		return c.relayAsk(b, o, it)
 	}

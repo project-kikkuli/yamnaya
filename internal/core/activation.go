@@ -176,7 +176,9 @@ func (c *Core) eventActionNeeded(b Board, o Org, e GoalEvent) (bool, error) {
 		return !strings.HasPrefix(e.Payload, "assignment "), nil
 	case EventAgentSwollen:
 		return c.swollenActionNeeded(b, e)
-	case EventAgentStopped, EventAgentHung, EventAgentAdrift, EventAgentOnboarding, EventResumeFailed:
+	case EventAgentAdrift:
+		return c.driftActionNeeded(b, e)
+	case EventAgentStopped, EventAgentHung, EventAgentOnboarding, EventResumeFailed:
 		fields := strings.Fields(e.Payload)
 		if len(fields) < 2 {
 			return false, nil
@@ -193,8 +195,6 @@ func (c *Core) eventActionNeeded(b Board, o Org, e GoalEvent) (bool, error) {
 				return s.Hung(c.now(), c.Woke), nil
 			case EventAgentOnboarding:
 				return s.Status == Onboarding, nil
-			case EventAgentAdrift:
-				return len(s.Drift) > 0, nil
 
 			}
 		}
@@ -236,16 +236,7 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		pending, err := c.Store.PendingRelays()
-		if err != nil {
-			return false, err
-		}
-		for _, r := range pending {
-			if r.Seq == seq {
-				return r.Error != "" && r.Error == parts[1], nil
-			}
-		}
-		return false, nil
+		return c.Store.relayFailureCurrent(seq, parts[1])
 	}
 	if a.Kind == "verdict" {
 		parts := strings.SplitN(a.Subject, ":", 2)
@@ -514,12 +505,60 @@ func (c *Core) CompleteAction(id, session, result string) error {
 		if a.TargetSession != c.Resolve(session) || a.State != "sent" && a.State != "uncertain" && a.State != "claimed" {
 			return errors.New("only the accepting supervisor session can complete its current action")
 		}
+		if a.Kind == "question" {
+			imported, err := c.importedActivation(a.ID)
+			if err != nil {
+				return err
+			}
+			if !imported {
+				needed, err := c.actionNeeded(Board{}, Org{}, a)
+				if err != nil {
+					return err
+				}
+				if needed {
+					return errors.New("answer or reroute the original question before completing its action")
+				}
+			}
+		}
 		return c.finishActivation(a, "done", result)
 	}
 	return ErrNotFound
 }
 
 func (c *Core) RetryAction(id string) error {
+	actions, err := c.Store.Activations()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, a := range actions {
+		if a.ID != id {
+			continue
+		}
+		found = true
+		if a.State != "blocked" && a.State != "uncertain" && a.State != "claimed" {
+			return errors.New("action is not awaiting recovery")
+		}
+		b, err := c.Board()
+		if err != nil {
+			return err
+		}
+		o, err := c.LoadOrg()
+		if err != nil {
+			return err
+		}
+		needed, err := c.actionNeeded(b, o, a)
+		if err != nil {
+			return err
+		}
+		if !needed {
+			return c.finishActivation(a, "superseded", "current facts no longer require action")
+		}
+		break
+	}
+	if !found {
+		return ErrNotFound
+	}
 	if handled, err := c.retryTransferredActivation(id); handled || err != nil {
 		return err
 	}

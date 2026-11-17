@@ -115,7 +115,8 @@ type stored struct {
 }
 
 type ledger struct {
-	db *sql.DB
+	db     *sql.DB
+	reader bool
 }
 
 func openLedger(path string) (*ledger, error) {
@@ -165,6 +166,16 @@ func (l *ledger) close() error { return l.db.Close() }
 
 func (l *ledger) revision() (int64, error) {
 	var revision int64
+	if l.reader {
+		var exists int
+		if err := l.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name='ym_usage_revision'`).Scan(&exists); err != nil {
+			return 0, err
+		}
+		if exists == 0 {
+			err := l.db.QueryRow(`PRAGMA data_version`).Scan(&revision)
+			return -revision, err
+		}
+	}
 	err := l.db.QueryRow(`SELECT revision FROM ym_usage_revision WHERE id=1`).Scan(&revision)
 	return revision, err
 }
@@ -179,10 +190,12 @@ func b2i(b bool) int {
 // loadSlices drops slices older than keepSlices and reads the rest.
 func (l *ledger) loadSlices(now time.Time) (map[sliceKey]core.Tokens, error) {
 	from := bucketOf(now.Add(-keepSlices).Unix())
-	if _, err := l.db.Exec(`DELETE FROM ym_usage_slices WHERE bucket < ?`, from); err != nil {
-		return nil, err
+	if !l.reader {
+		if _, err := l.db.Exec(`DELETE FROM ym_usage_slices WHERE bucket < ?`, from); err != nil {
+			return nil, err
+		}
 	}
-	rows, err := l.db.Query(`SELECT bucket, file, model, tier, fast, us, input, output, cache_read, cache_5m, cache_1h FROM ym_usage_slices`)
+	rows, err := l.db.Query(`SELECT bucket, file, model, tier, fast, us, input, output, cache_read, cache_5m, cache_1h FROM ym_usage_slices WHERE bucket>=?`, from)
 	if err != nil {
 		return nil, err
 	}

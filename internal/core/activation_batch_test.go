@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,6 +51,61 @@ func TestConcreteActionsShareOneNativeTurnWithoutLosingTheirReceipts(t *testing.
 	}
 	if len(turns) != 2 || strings.Count(turns[1], "Yamnaya supervisor action ") != 1 {
 		t.Fatalf("remaining work: %q", turns)
+	}
+}
+
+func TestRetryOfAnAnsweredRemoteQuestionDoesNotReofferIt(t *testing.T) {
+	w := newOrgWorld(t)
+	it, err := w.core.Store.AddItem(Item{Kind: KindChore, Session: "worker", Question: "which parser?", Recipient: "remote/mgr1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.requestAction(w.board(t), "remote/mgr1", "question", fmt.Sprintf("%s@%d", it.Key(), len(it.History)), "answer the parser question"); err != nil {
+		t.Fatal(err)
+	}
+	actions, err := w.core.Store.Activations()
+	if err != nil || len(actions) != 1 {
+		t.Fatalf("actions: %+v, %v", actions, err)
+	}
+	a := actions[0]
+	if _, err := w.core.transferActivation(a, "remote/mgr1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Store.db.Exec(`UPDATE ym_activations SET state='uncertain' WHERE id=?`, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.core.Store.Transition(it.Key(), ItemAnswered, "streaming parser"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.RetryAction(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	actions, err = w.core.Store.Activations()
+	if err != nil || actions[0].State != "superseded" {
+		t.Fatalf("obsolete action retained: %+v, %v", actions, err)
+	}
+	relays, err := w.core.Store.PendingRelays()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activations, retries := 0, 0
+	for _, r := range relays {
+		if r.Kind != RelayAction {
+			continue
+		}
+		var m ActivationMessage
+		if err := json.Unmarshal([]byte(r.Body), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Operation == "activate" {
+			activations++
+		}
+		if m.Operation == "retry" {
+			retries++
+		}
+	}
+	if activations != 1 || retries != 0 {
+		t.Fatalf("resolved work reoffered: activate %d, retry %d", activations, retries)
 	}
 }
 
