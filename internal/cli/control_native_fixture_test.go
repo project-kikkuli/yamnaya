@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/project-kikkuli/yamnaya/internal/launch"
 )
 
 const codexFixtureBinary = "YM_CODEX_FIXTURE_BINARY"
@@ -268,7 +269,7 @@ func TestManagedCodexInitializesNativeRuntimeAndUsesNoUserSupervisorTurn(t *test
 	}
 }
 
-func TestManagedControlEntryPointRunsTheExplicitBashNativeFixture(t *testing.T) {
+func TestManagedClaudeRunsTheExplicitBashNativeFixtureDirectly(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "claude-bash-fixture")
 	capture := filepath.Join(dir, "native-args")
@@ -277,12 +278,11 @@ func TestManagedControlEntryPointRunsTheExplicitBashNativeFixture(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Setenv("YM_CAPTURE_ARGS", capture)
-	self, err := os.Executable()
+	argv, err := managedClaudeArgv(launch.Record{Harness: "claude", Session: "native-session"}, []string{binary, "--resume", "native-session"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child := exec.Command(self, "control", "claude", "--binary", binary, "--session", "native-session", "--", "--resume", "native-session")
-	child.Env = append(os.Environ(), testChild+"=1")
+	child := exec.Command(argv[0], argv[1:]...)
 	if output, err := child.CombinedOutput(); err != nil {
 		t.Fatalf("managed bash fixture never landed: %v %s", err, output)
 	}
@@ -291,7 +291,7 @@ func TestManagedControlEntryPointRunsTheExplicitBashNativeFixture(t *testing.T) 
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
-	if len(args) < 6 || args[0] != "--dangerously-load-development-channels" || args[1] != "server:yamnaya" || args[len(args)-2] != "--resume" || args[len(args)-1] != "native-session" {
-		t.Fatalf("native wrapper lost channel opt-in or exact resume identity: %q", args)
+	if len(args) != 4 || args[0] != "--settings" || args[1] != `{"crossSessionInbound":"accept"}` || args[2] != "--resume" || args[3] != "native-session" {
+		t.Fatalf("native launch lost scoped peer settings or exact resume identity: %q", args)
 	}
 }

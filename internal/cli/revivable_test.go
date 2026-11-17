@@ -72,30 +72,26 @@ func resumed(t *testing.T, ran string) string {
 	return ""
 }
 
-func assertClaudeChannelResume(t *testing.T, ran, cwd, session string) {
+func assertClaudePeerResume(t *testing.T, ran, cwd, session string) {
 	t.Helper()
 	got := resumed(t, ran)
 	args, ok := strings.CutPrefix(got, cwd+" ")
 	if !ok {
 		t.Fatalf("native resume changed directory: %s", got)
 	}
-	prefix, rest, ok := strings.Cut(args, "--mcp-config ")
-	if !ok || !slices.Equal(strings.Fields(prefix), []string{"--dangerously-load-development-channels", "server:yamnaya"}) {
-		t.Fatalf("native channel was not attached: %s", args)
+	rest, ok := strings.CutPrefix(args, "--settings ")
+	if !ok {
+		t.Fatalf("native peer settings were not scoped: %s", args)
 	}
-	var config struct {
-		Servers map[string]struct {
-			Command string
-			Args    []string
-		} `json:"mcpServers"`
+	var settings struct {
+		Inbound string `json:"crossSessionInbound"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(rest))
-	if err := decoder.Decode(&config); err != nil {
+	if err := decoder.Decode(&settings); err != nil {
 		t.Fatal(err)
 	}
-	channel, ok := config.Servers["yamnaya"]
-	if !ok || channel.Command == "" || len(channel.Args) != 6 || channel.Args[0] != "control" || channel.Args[1] != "claude-channel" || channel.Args[2] != "--socket" || channel.Args[3] == "" || channel.Args[4] != "--session" || channel.Args[5] != session {
-		t.Fatalf("channel lost conversation binding: %+v", config)
+	if settings.Inbound != "accept" {
+		t.Fatalf("native peer inbound policy changed: %+v", settings)
 	}
 	native := strings.Fields(rest[decoder.InputOffset():])
 	want := []string{"--chrome", "--dangerously-skip-permissions", "--resume", session}
@@ -159,7 +155,7 @@ func TestALaunchWhoseRepoIsDeletedStaysDormantAndRevivesItsConversation(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertClaudeChannelResume(t, ran, wt, "s1")
+			assertClaudePeerResume(t, ran, wt, "s1")
 			if env := regexp.MustCompile(`\b[A-Z][A-Z0-9_]*=\S*`).FindString(msg); env != "" || strings.Contains(msg, "--resume") || !strings.Contains(msg, " in "+wt+";") || !strings.HasSuffix(msg, "; open: ym open "+rec.Key) {
 				t.Fatalf("revive said %q; want what was revived, where and how to open it, with no command line or %q", msg, env)
 			}
@@ -228,7 +224,7 @@ func TestASessionYmNeverRanIsRevivableOnceItEnds(t *testing.T) {
 			if _, err := l.Revive("s2"); err != nil {
 				t.Fatal(err)
 			}
-			assertClaudeChannelResume(t, ran, dir, "s2")
+			assertClaudePeerResume(t, ran, dir, "s2")
 			if back, _ := l.records.Find("s2"); !back.Seen.IsZero() {
 				t.Fatalf("revived record %+v still marks it as run outside ym", back)
 			}

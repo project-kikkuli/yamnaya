@@ -51,7 +51,7 @@ func controlCmd() *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "Existing thread")
 	cmd.Flags().StringVar(&action, "action", "", "Supervisor assignment")
 	cmd.Flags().StringVar(&model, "model", "", "Model override")
-	root.AddCommand(cmd, claudeControlCmd(), claudeChannelCmd())
+	root.AddCommand(cmd)
 	return root
 }
 

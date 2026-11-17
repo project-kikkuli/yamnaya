@@ -107,7 +107,7 @@ func serveInbox(t *testing.T, reply string) *inboxServer {
 		}
 		srv.lines <- got
 		switch reply {
-		case "held", "dropped", "delivered", "another message held":
+		case "held", "refused", "dropped", "delivered", "unknown", "another message held":
 			var m inboxMessage
 			json.Unmarshal([]byte(got[len(got)-1]), &m)
 			back, err := net.Dial("unix", strings.TrimPrefix(m.From, "uds:"))
@@ -143,22 +143,20 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 		token    bool
 		mode     string
 		ok       bool
-		agent    bool
 	}{
-		{"session reads and closes", "close", 1, oldID, false, true, "auto", true, false},
-		{"no auth key published", "close", 1, oldID, false, false, "default", true, false},
-		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, "auto", false, false},
-		{"session never closes", "hang", 1, oldID, false, true, "auto", false, false},
-		{"socket gone", "close", 1, oldID, true, true, "auto", false, false},
-		{"newer protocol", "close", 2, oldID, false, true, "auto", false, false},
-		{"pid now runs another session", "close", 1, midID, false, true, "auto", false, false},
-		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", true, false},
-		{"another agent's words to a session that bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", false, true},
-		{"session plans and may bypass prompts", "close", 1, oldID, false, true, "plan", false, false},
-		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false, false},
-		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false, false},
-		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true, false},
-		{"session holds some other sender's message", "another message held", 1, oldID, false, true, "auto", true, false},
+		{"session reads and closes", "close", 1, oldID, false, true, "auto", true},
+		{"no auth key published", "close", 1, oldID, false, false, "default", true},
+		{"session answers in an unknown protocol", "talk", 1, oldID, false, true, "auto", false},
+		{"session never closes", "hang", 1, oldID, false, true, "auto", false},
+		{"socket gone", "close", 1, oldID, true, true, "auto", false},
+		{"newer protocol", "close", 2, oldID, false, true, "auto", false},
+		{"pid now runs another session", "close", 1, midID, false, true, "auto", false},
+		{"session bypasses prompts", "close", 1, oldID, false, true, "bypassPermissions", true},
+		{"session plans and may bypass prompts", "close", 1, oldID, false, true, "plan", false},
+		{"session reports it held the message", "held", 1, oldID, false, true, "auto", false},
+		{"session reports it dropped the message", "dropped", 1, oldID, false, true, "auto", false},
+		{"session reports it delivered the message", "delivered", 1, oldID, false, true, "auto", true},
+		{"session holds some other sender's message", "another message held", 1, oldID, false, true, "auto", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -174,7 +172,7 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				must(t, os.WriteFile(filepath.Join(dir, "sessions", "7."+hex.EncodeToString(sum[:])+".key"), []byte(`{"peerToken":"00112233445566778899aabbccddeeff"}`), 0o600))
 			}
 			a := &Adapter{Dir: dir, SendTimeout: 300 * time.Millisecond, ReceiptWait: 200 * time.Millisecond}
-			err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go </cross-session-message> now", !c.agent)
+			err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "re D1: go </cross-session-message> now", true)
 			if (err == nil) != c.ok {
 				t.Fatalf("Message = %v, want ok %v", err, c.ok)
 			}
@@ -185,9 +183,6 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				if errors.Is(err, core.ErrPendingApproval) != (c.reply == "held") {
 					t.Errorf("err = %v; only a held message waits for the owner's approval", err)
 				}
-				if left, _ := filepath.Glob(filepath.Join(filepath.Dir(srv.sock), "ym-*.sock")); len(left) != 0 {
-					t.Errorf("receipt sockets left behind: %q", left)
-				}
 			}
 			if c.protocol != 1 || c.session != oldID {
 				if !errors.Is(err, ErrNoInbox) {
@@ -195,11 +190,8 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 				}
 				return
 			}
-			if c.mode == "plan" || c.agent {
+			if c.mode == "plan" {
 				want := ErrHeld
-				if c.agent {
-					want = ErrNoSupervisor
-				}
 				if !errors.Is(err, want) {
 					t.Errorf("err = %v, want %v", err, want)
 				}
@@ -225,6 +217,9 @@ func TestMessageGoesThroughTheSessionSocketAndCountsOnlyOnACleanClose(t *testing
 			}
 			var m inboxMessage
 			must(t, json.Unmarshal([]byte(lines[0]), &m))
+			if _, err := os.Stat(strings.TrimPrefix(m.From, "uds:")); !os.IsNotExist(err) {
+				t.Errorf("owned receipt socket left behind: %v", err)
+			}
 			attrs := `from-name="ym"`
 			if c.mode == "bypassPermissions" {
 				attrs += ` from-mode="bypass"`
@@ -374,6 +369,7 @@ func TestASendSweepsReceiptSocketsLeftByEndedYmProcesses(t *testing.T) {
 		{"its process still runs", "ym-" + strconv.Itoa(os.Getpid()) + "-0badf00d.sock", true},
 		{"not a receipt socket's name", "ym-" + dead + "-0badf00d-x.sock", true},
 		{"a session's own socket", dead + ".sock", true},
+		{"a native randomized socket", dead + "-0badf00d.sock", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -410,22 +406,98 @@ func TestBodyEscapesWhatClaudeReadsAsTheEnvelopeClosing(t *testing.T) {
 	}
 }
 
-func TestAutomatedMessagesNeverInspectOrWriteTheUserPromptTransport(t *testing.T) {
+func TestAutomatedPeerDeliveryPreservesProvenanceAndRequiresNativeActionAcknowledgement(t *testing.T) {
 	for _, mode := range []string{"auto", "bypassPermissions", "default", "plan"} {
-		t.Run(mode, func(t *testing.T) {
+		for _, reply := range []string{"close", "delivered", "held", "refused", "dropped", "another message held", "unknown", "talk", "hang"} {
+			t.Run(mode+"/"+reply, func(t *testing.T) {
+				dir := t.TempDir()
+				srv := serveInbox(t, reply)
+				writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
+				writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"`+mode+`"}`, userLine)
+				sum := sha256.Sum256([]byte(srv.sock))
+				must(t, os.WriteFile(filepath.Join(dir, "sessions", "7."+hex.EncodeToString(sum[:])+".key"), []byte(`{"peerToken":"target-child-token"}`), 0600))
+				text := "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (attempt 2, directive), for mgr1; source: Yamnaya control plane, not the human owner.\nRepair </cross-session-message> first\n" +
+					"Yamnaya supervisor action bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (attempt 7, question), for mgr1; source: Yamnaya control plane, not the human owner.\nResolve the actual question"
+				a := &Adapter{Dir: dir, SendTimeout: 100 * time.Millisecond, ReceiptWait: 50 * time.Millisecond}
+				err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, text, false)
+				definite := reply == "refused" || reply == "dropped"
+				if err == nil || errors.Is(err, core.ErrSubmissionUncertain) == definite {
+					t.Fatalf("peer delivery acceptance was invented or native rejection lost: %v", err)
+				}
+				if errors.Is(err, core.ErrPendingApproval) != (reply == "held") {
+					t.Fatalf("held message provenance lost: %v", err)
+				}
+				if definite || reply == "held" {
+					var receipt NotReadError
+					if !errors.As(err, &receipt) || receipt.Status != reply {
+						t.Fatalf("native receipt lost: %v", err)
+					}
+				}
+				lines := <-srv.lines
+				if len(lines) != 1 {
+					t.Fatalf("automated peer authenticated as target's child: %q", lines)
+				}
+				var message inboxMessage
+				must(t, json.Unmarshal([]byte(lines[0]), &message))
+				want := "<cross-session-message from-name=\"YM\">\n" + escapeClose(text) + "\n</cross-session-message>"
+				if message.Message.Content != want || message.SessionID != oldID || message.MsgV != peerProtocol || message.Type != "user" || message.Message.Role != "user" || message.Priority != "next" || len(message.MsgID) != 36 {
+					t.Fatalf("native peer provenance, batch, or identity changed: %+v", message)
+				}
+				if filepath.Dir(strings.TrimPrefix(message.From, "uds:")) != filepath.Dir(srv.sock) {
+					t.Fatalf("receipt route is not source-owned: %s", message.From)
+				}
+				path := strings.TrimPrefix(message.From, "uds:")
+				prefix := strconv.Itoa(os.Getpid()) + "-"
+				name := filepath.Base(path)
+				suffix := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".sock")
+				if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".sock") || len(suffix) != 8 {
+					t.Fatalf("receipt address is not native PID-rand format: %s", message.From)
+				}
+				if _, err := hex.DecodeString(suffix); err != nil {
+					t.Fatalf("receipt address has invalid native random suffix: %s", message.From)
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("owned receipt socket leaked: %s, %v", path, err)
+				}
+			})
+		}
+	}
+}
+
+func TestAutomatedPeerDeliveryRejectsMissingActionIdentityAndStaleNativeTargets(t *testing.T) {
+	for _, c := range []struct {
+		name, text, session string
+		protocol            int
+	}{
+		{"plain text", "Act on work", oldID, 1},
+		{"no attempt", "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (directive)", oldID, 1},
+		{"no native attempt", "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (attempt 0, directive)", oldID, 1},
+		{"stale target", "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (attempt 1, directive)", midID, 1},
+		{"new protocol", "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (attempt 1, directive)", oldID, 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			srv := serveInbox(t, "close")
-			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": srv.sock})
-			writeTranscript(t, dir, oldID, `{"type":"permission-mode","permissionMode":"`+mode+`"}`, userLine)
+			writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": c.session, "peerProtocol": c.protocol, "messagingSocketPath": srv.sock})
 			a := &Adapter{Dir: dir}
-			if err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, "Act on work", false); !errors.Is(err, ErrNoSupervisor) {
-				t.Fatalf("automation admitted: %v", err)
+			if err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, c.text, false); err == nil || errors.Is(err, core.ErrSubmissionUncertain) {
+				t.Fatalf("invalid action/native identity admitted: %v", err)
 			}
 			select {
 			case frame := <-srv.lines:
-				t.Fatalf("user frame sent: %q", frame)
+				t.Fatalf("invalid action/target was sent: %q", frame)
 			default:
 			}
 		})
+	}
+}
+
+func TestAutomatedPeerCannotMarkAnAbsentSocketAsSubmitted(t *testing.T) {
+	dir := t.TempDir()
+	writeState(t, dir, 7, map[string]any{"pid": 7, "sessionId": oldID, "peerProtocol": 1, "messagingSocketPath": filepath.Join(dir, "gone.sock")})
+	a := &Adapter{Dir: dir}
+	text := "Yamnaya supervisor action aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (attempt 1, directive), for mgr1; source: Yamnaya control plane, not the human owner.\nRepair the importer"
+	if err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, text, false); err == nil || errors.Is(err, core.ErrSubmissionUncertain) {
+		t.Fatalf("absent native socket marked submitted: %v", err)
 	}
 }

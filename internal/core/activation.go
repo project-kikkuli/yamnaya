@@ -489,7 +489,11 @@ func (c *Core) DispatchActions(b Board) error {
 			continue
 		}
 		if a.State == "uncertain" || a.State == "claimed" {
-			if err := c.actionAttention(a, "previous submission is uncertain; inspect its effects before retrying"); err != nil {
+			why := a.Error
+			if why == "" {
+				why = "previous submission is uncertain; inspect its effects before retrying"
+			}
+			if err := c.actionAttention(a, why); err != nil {
 				return err
 			}
 			continue

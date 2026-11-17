@@ -28,8 +28,6 @@ const peerProtocol = 1
 // ErrNoInbox means the session advertises no messaging socket in a protocol ym speaks.
 var ErrNoInbox = errors.New("no messaging socket ym can use")
 
-var ErrNoSupervisor = errors.New("native Claude has no supported non-user supervisor continuation transport")
-
 // ErrHeld means the session would hold a message from ym for the owner's review instead of reading it.
 var ErrHeld = errors.New("the session holds messages from ym for review")
 
@@ -69,19 +67,25 @@ type body struct {
 	Content string `json:"content"`
 }
 
-// Message queues text as the session's next prompt through its messaging socket, only where the inbound gate admits ym.
-// It counts once the session read the frame, closed its side and sent no held, refused or dropped receipt in time.
+var supervisorAction = regexp.MustCompile(`(?m)^Yamnaya supervisor action [a-f0-9]{32} \(attempt [1-9][0-9]*, `)
+
+// Message sends genuine owner text or durable YM actions through the native peer socket.
+// Automated peer delivery awaits the receiving session's explicit action acknowledgement.
 func (a *Adapter) Message(s core.Session, text string, owner bool) error {
-	if !owner {
-		return a.channelMessage(s, text)
+	if !owner && !supervisorAction.MatchString(text) {
+		return errors.New("native Claude supervisor delivery requires a durable action identity and attempt")
 	}
 	st, ok := a.state(s.PID)
 	if !ok || st.SessionID != s.ID || st.PeerProtocol != peerProtocol || st.MessagingSocket == "" {
 		return ErrNoInbox
 	}
-	mode := a.scan(a.transcript(st.Cwd, s.ID)).Mode
-	if !a.admits(st.Cwd, mode, owner) {
-		return ErrHeld
+	content := wrapFrom(text, "YM", "")
+	if owner {
+		mode := a.scan(a.transcript(st.Cwd, s.ID)).Mode
+		if !a.admits(st.Cwd, mode, true) {
+			return ErrHeld
+		}
+		content = wrap(text, attested(mode, true))
 	}
 	back, err := listenReceipts(filepath.Dir(st.MessagingSocket))
 	if err != nil {
@@ -89,16 +93,18 @@ func (a *Adapter) Message(s core.Session, text string, owner bool) error {
 	}
 	defer back.Close()
 	var frame bytes.Buffer
-	if token := a.peerToken(s.PID, st.MessagingSocket); token != "" {
-		line, _ := json.Marshal(map[string]string{"type": "auth", "token": token})
-		frame.Write(append(line, '\n'))
+	if owner {
+		if token := a.peerToken(s.PID, st.MessagingSocket); token != "" {
+			line, _ := json.Marshal(map[string]string{"type": "auth", "token": token})
+			frame.Write(append(line, '\n'))
+		}
 	}
 	id := uuid.NewString()
 	line, err := json.Marshal(inboxMessage{
 		MsgV:      peerProtocol,
 		MsgID:     id,
 		Type:      "user",
-		Message:   body{Role: "user", Content: wrap(text, attested(mode, owner))},
+		Message:   body{Role: "user", Content: content},
 		Priority:  "next",
 		From:      "uds:" + back.Addr().String(),
 		SessionID: s.ID,
@@ -118,13 +124,27 @@ func (a *Adapter) Message(s core.Session, text string, owner bool) error {
 	if wait == 0 {
 		wait = time.Second
 	}
-	return awaitReceipt(back, id, wait)
+	err = awaitReceipt(back, id, wait)
+	if !owner {
+		var notRead NotReadError
+		if errors.As(err, &notRead) && notRead.Status != "held" {
+			return err
+		}
+		if err != nil {
+			if errors.Is(err, core.ErrSubmissionUncertain) {
+				return err
+			}
+			return fmt.Errorf("%w: %w", core.ErrSubmissionUncertain, err)
+		}
+		return fmt.Errorf("%w: native Claude peer delivery awaits the receiving session's action acknowledgement", core.ErrSubmissionUncertain)
+	}
+	return err
 }
 
 // listenReceipts opens a socket for receipts beside the session's own, where Claude Code agrees to send them.
 func listenReceipts(dir string) (*net.UnixListener, error) {
 	sweepReceipts(dir)
-	return net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "ym-"+strconv.Itoa(os.Getpid())+"-"+uuid.NewString()[:8]+".sock"), Net: "unix"})
+	return net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, strconv.Itoa(os.Getpid())+"-"+uuid.NewString()[:8]+".sock"), Net: "unix"})
 }
 
 // sweepReceipts removes the receipt sockets of ym processes that ended by a signal before closing them.
@@ -141,7 +161,7 @@ func sweepReceipts(dir string) {
 	}
 }
 
-// receiptName is the name listenReceipts gives a receipt socket.
+// receiptName recognizes legacy YM receipt sockets without matching native inboxes.
 var receiptName = regexp.MustCompile(`^ym-([1-9][0-9]*)-[0-9a-f]{8}\.sock$`)
 
 // awaitReceipt reads receipts until wait passes; one saying the session did not queue message id is the error.
@@ -168,9 +188,14 @@ func awaitReceipt(ln *net.UnixListener, id string, wait time.Duration) error {
 			if r.Type != "control" || r.Action != "peer_message_status" || (r.OrigMsgID != id && !slices.Contains(r.Dropped, id)) {
 				continue
 			}
-			if r.Status != "delivered" {
+			switch r.Status {
+			case "held", "refused", "dropped":
 				conn.Close()
 				return NotReadError{Status: r.Status}
+			case "delivered":
+			default:
+				conn.Close()
+				return fmt.Errorf("%w: unknown native peer receipt %q", core.ErrSubmissionUncertain, r.Status)
 			}
 		}
 		conn.Close()
@@ -260,8 +285,12 @@ func inbound(path string) (value string, set bool) {
 
 // wrap puts text in the envelope Claude Code's own senders use, so the session shows it as a message from ym.
 func wrap(text, mode string) string {
+	return wrapFrom(text, "ym", mode)
+}
+
+func wrapFrom(text, name, mode string) string {
 	text = escapeClose(text)
-	attrs := ` from-name="ym"`
+	attrs := ` from-name="` + name + `"`
 	if mode != "" {
 		attrs += ` from-mode="` + mode + `"`
 	}
@@ -299,17 +328,17 @@ func deliver(sock string, frame []byte, timeout time.Duration) error {
 		return err
 	}
 	if _, err := conn.Write(frame); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}
 	if err := conn.(*net.UnixConn).CloseWrite(); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}
 	n, err := io.Copy(io.Discard, conn)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}
 	if n > 0 {
-		return fmt.Errorf("%s replied %d bytes; ym does not know this messaging protocol", sock, n)
+		return fmt.Errorf("%w: %s replied %d bytes; ym does not know this messaging protocol", core.ErrSubmissionUncertain, sock, n)
 	}
 	return nil
 }

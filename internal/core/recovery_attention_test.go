@@ -271,3 +271,36 @@ func TestLauncherCapacityRecheckDoesNotConsumeRecoveryAttempt(t *testing.T) {
 		t.Fatalf("later native failure lost history: %+v, %v", it, err)
 	}
 }
+
+func TestHeldNativeReceiptSurvivesUncertainPollsWithoutMessagesOrWrites(t *testing.T) {
+	w := newOrgWorld(t)
+	_, manager := w.goal(t, "repair importer", "/repo/august")
+	calls := 0
+	held := fmt.Errorf("%w: native receiver held: %w", ErrSubmissionUncertain, ErrPendingApproval)
+	w.core.BackgroundSend = func(Live, string) error { calls++; return held }
+	if err := w.core.RequestDirective(manager.Session, "Repair the actual importer failure"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.core.DispatchActions(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	actions, err := w.core.Store.Activations()
+	if err != nil || len(actions) != 1 || actions[0].State != "uncertain" || actions[0].Error != held.Error() || actions[0].Attention == 0 {
+		t.Fatalf("native held receipt lost: %+v, %v", actions, err)
+	}
+	original := actions[0]
+	board := w.board(t)
+	assertRecoveryPollIsReadOnly(t, w.core.Store, func() error {
+		return w.core.DispatchActions(board)
+	})
+	actions, err = w.core.Store.Activations()
+	if err != nil || len(actions) != 1 || actions[0].Error != original.Error || actions[0].Attention != original.Attention || actions[0].Attempt != original.Attempt || calls != 1 {
+		t.Fatalf("held action churned or replayed: %+v, calls %d, %v", actions, calls, err)
+	}
+	if err := w.core.AcceptAction(original.ID, manager.Session); err != nil {
+		t.Fatalf("released held message cannot acknowledge its existing action: %v", err)
+	}
+	if err := w.core.CompleteAction(original.ID, manager.Session, "Importer repaired after owner released native held message"); err != nil {
+		t.Fatal(err)
+	}
+}
