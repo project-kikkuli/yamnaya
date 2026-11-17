@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -40,7 +41,7 @@ func fixtureProcesses(args ...string) ([]fixtureProcess, error) {
 		identity := strings.Join(fields[2:7], " ")
 		if runtime.GOOS == "linux" {
 			stat, readErr := os.ReadFile(filepath.Join("/proc", fields[0], "stat"))
-			if os.IsNotExist(readErr) {
+			if os.IsNotExist(readErr) || errors.Is(readErr, syscall.ESRCH) {
 				continue
 			}
 			if readErr != nil {
