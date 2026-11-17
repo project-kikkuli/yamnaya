@@ -552,10 +552,13 @@ func (c *Core) begin(b Board, o Org, m Manager, resume bool, r *restart) Manager
 			return resumed
 		}
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.Shown(),
+	st, err := c.Launches.Start(NewLaunch{Request: activationID(m.ID, "manager-start", m.Session), Prompt: prompt, Harness: m.Harness, Profile: m.Profile, ConfigRoot: m.ConfigRoot, Repo: m.Repo, Directory: m.Directory, Slug: m.Shown(),
 		Session: uuid.NewString(), Await: true})
 	if err != nil {
 		m.LastError = err.Error()
+		if errors.Is(err, ErrLaunchDeferred) {
+			m.LaunchedAt = timeZero
+		}
 		c.Store.SaveManager(m)
 		return m
 	}
