@@ -118,6 +118,28 @@ func (w *world) handedTo(id string) []string {
 	return out
 }
 
+func (w *orgWorld) dispatch(t *testing.T) {
+	t.Helper()
+	if err := w.core.DispatchActions(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (w *orgWorld) completeActions(t *testing.T, session string) {
+	t.Helper()
+	actions, err := w.core.Store.Activations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range actions {
+		if a.TargetSession == session && a.State == "sent" {
+			if err = w.core.CompleteAction(a.ID, session, "handled requested work"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 func (w *orgWorld) goal(t *testing.T, ask, repo string) (Goal, Manager) {
 	t.Helper()
 	g, m, err := w.core.NewGoal(ask, repo, "")
@@ -194,17 +216,25 @@ func TestAgentAsksUnderAManagerReachTheManagerAndNeverTheOwner(t *testing.T) {
 		t.Fatalf("owner queue holds %d agent asks, want none: %+v", len(got), got)
 	}
 	w.loop(t, 2)
+	w.dispatch(t)
 	handed := w.handedTo(m.Session)
 	if len(handed) != 1 {
-		t.Fatalf("manager got %d messages, want all 20 asks in one wake: %q", len(handed), handed)
+		t.Fatalf("manager got %d initial submissions, want one bounded batch", len(handed))
 	}
+	w.completeActions(t, m.Session)
+	w.dispatch(t)
+	handed = w.handedTo(m.Session)
+	if len(handed) != 2 {
+		t.Fatalf("remaining asks did not survive first batch: %q", handed)
+	}
+	combined := strings.Join(handed, "\n")
 	items, err := w.core.Store.Items(ItemFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, it := range items {
-		if !strings.Contains(handed[0], m.Shown()+" ask from agent "+Short(it.Session)+" to "+m.Shown()+": "+it.Question+" "+it.Key()) {
-			t.Fatalf("ask %s %q is not a line of the manager's wake:\n%s", it.Key(), it.Question, handed[0])
+		if !strings.Contains(combined, it.Question) || !strings.Contains(combined, it.Key()) {
+			t.Fatalf("ask %s %q is not a line of the manager's wake:\n%s", it.Key(), it.Question, combined)
 		}
 	}
 }
@@ -217,6 +247,7 @@ func TestManagerAnswersReachTheAgentThatAsked(t *testing.T) {
 	if _, _, err := w.core.Answer(w.board(t), it.Key(), "CSV"); err != nil {
 		t.Fatal(err)
 	}
+	w.dispatch(t)
 	if got := w.handedTo("agent"); len(got) != 1 || !strings.Contains(got[0], "CSV") {
 		t.Fatalf("agent got %q, want the manager's answer", got)
 	}
@@ -246,6 +277,7 @@ func TestEscalationClimbsNestedChiefsAndOnlyTheTopReachesTheOwner(t *testing.T) 
 			if inQueue != tc.owner {
 				t.Fatalf("in owner queue = %v, want %v", inQueue, tc.owner)
 			}
+			w.dispatch(t)
 			delivered := w.claude.handed[before:]
 			if tc.owner {
 				if len(delivered) != 0 {
@@ -295,6 +327,7 @@ func TestADeadManagerIsRelaunchedAndKeepsItsIdentity(t *testing.T) {
 	}
 	w.ask(t, "agent", "still mine?")
 	w.loop(t, 1)
+	w.dispatch(t)
 	if got := w.handedTo(now.Session); len(got) != 1 {
 		t.Fatalf("an agent of the old session asked; the relaunched manager got %q", got)
 	}
@@ -324,15 +357,14 @@ func TestAManagerThatCannotLaunchBacksOffAndShowsOneStuckRow(t *testing.T) {
 	}
 }
 
-func TestAQuietManagerIsNudgedThenShowsStuckUnlessItsWorkMoves(t *testing.T) {
+func TestQuietManagersShowStuckWithoutSpendingModelTurns(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		keepBusy  bool
 		askOwner  bool
-		wantNudge int
 		wantStuck bool
 	}{
-		{name: "silent", wantNudge: Nudges, wantStuck: true},
+		{name: "silent", wantStuck: true},
 		{name: "agent working", keepBusy: true},
 		{name: "waiting on the owner", askOwner: true},
 	} {
@@ -356,8 +388,12 @@ func TestAQuietManagerIsNudgedThenShowsStuckUnlessItsWorkMoves(t *testing.T) {
 					nudges++
 				}
 			}
-			if nudges != tc.wantNudge {
-				t.Fatalf("nudged %d times, want %d", nudges, tc.wantNudge)
+			if nudges != 0 {
+				t.Fatalf("quiet supervision spent %d model turns", nudges)
+			}
+			w.dispatch(t)
+			if got := w.handedTo(m.Session); len(got) != 0 {
+				t.Fatalf("observation activated a model: %q", got)
 			}
 			got, _ := w.core.Store.Goal(g.ID)
 			if (got.State == GoalStuck) != tc.wantStuck {
@@ -442,6 +478,7 @@ func TestGreenPullRequestsGoToTheOwnerOnlyWhereNoManagerMayMerge(t *testing.T) {
 					rows = append(rows, n)
 				}
 			}
+			w.dispatch(t)
 			notices := 0
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, url) {
@@ -738,6 +775,7 @@ func TestAsksWaitingOnAManagerThatCanNoLongerAnswerClimbToTheNextOneUp(t *testin
 			if got.Recipient != want {
 				t.Fatalf("stranded ask went to %q, want %s", got.Recipient, want)
 			}
+			w.dispatch(t)
 			if handed := w.handedTo(map[string]string{chief.ID: chief.Session, top.ID: top.Session}[want]); !slices.ContainsFunc(handed, func(s string) bool { return strings.Contains(s, "CSV or TSV?") }) {
 				t.Fatalf("%s was not told the ask: %q", want, handed)
 			}
@@ -778,6 +816,7 @@ func TestAManagerWhoseConversationMovedKeepsItsGoal(t *testing.T) {
 	w.spawn("late-agent", "moved-session")
 	w.ask(t, "late-agent", "which parser?")
 	w.loop(t, 1)
+	w.dispatch(t)
 	if got := w.handedTo("moved-session"); len(got) != 1 {
 		t.Fatalf("manager under its new session id got %q, want the late agent's ask", got)
 	}

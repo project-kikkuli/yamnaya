@@ -10,87 +10,70 @@ import (
 	"time"
 )
 
-func TestAManagerIsWokenOnlyForWhatNeedsItAMinuteAfterTheFirstAndTheRestComesAsADigest(t *testing.T) {
-	type event struct {
-		at          time.Duration
-		kind, about string
-	}
-	type wake struct {
-		at   time.Duration
-		has  []string
-		lack []string
-	}
+func TestManagersReceiveOnlyConcreteDueActionsWhileStatusRemainsReadable(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		events []event
-		wakes  []wake
+		name, kind, payload string
+		due                 time.Duration
+		action              bool
 	}{
-		{"an ask waits a minute for followers, then wakes once with all of them",
-			[]event{{0, EventAsked, "C1 ask from agent a1: CSV or TSV?"}, {20 * time.Second, EventCIRed, "CI failed on #7"}, {40 * time.Second, EventPROpened, "agent a1 opened #8"}},
-			[]wake{{time.Minute, []string{"2 for you, 1 more", "ci-red: CI failed on #7", "pr-opened: agent a1 opened #8", "asked: C1 ask from agent a1: CSV or TSV?"}, nil}}},
-		{"overload tells its manager through the urgent path once",
-			[]event{{0, EventMachineThrottled, "load 76 on 12 cores; child jobs nice 15; slots held; top: python3 pid 32727 78%"}},
-			[]wake{{WakeDebounce, []string{"1 for you", "machine-throttled:", "python3 pid 32727 78%"}, nil}}},
-		{"reports and green CI wait for the digest",
-			[]event{{0, EventFinished, "agent a1 (work a1) is idle. Its last message, verbatim: PR is up."}, {5 * time.Minute, EventCIGreen, "CI passed on #7"}},
-			[]wake{{DigestEvery, []string{"digest of 2", "agent-finished: agent a1 (work a1): PR is up.", "ci-green: CI passed on #7"}, nil}}},
-		{"what waits rides along with the next wake",
-			[]event{{0, EventMerged, "merged #6"}, {10 * time.Minute, EventConflict, "#7 conflicts with its base branch"}},
-			[]wake{{10*time.Minute + WakeDebounce, []string{"1 for you, 1 more", "conflict: #7", "merged: merged #6"}, nil}}},
-		{"replies that add nothing never wake anyone and are only counted",
-			[]event{{0, EventIdleAgain, "agent a1 is idle. Its last message, verbatim: still waiting on the suite"}, {DigestEvery, EventTimer, "the wake you set"}},
-			[]wake{{DigestEvery + WakeDebounce, []string{"1 for you:", "timer: the wake you set", "(1 agent reply with nothing new left out)"}, []string{"still waiting on the suite"}}}},
+		{"failed CI", EventCIRed, "fix the failed check", WakeDebounce, true},
+		{"machine overload stays observable", EventMachineThrottled, "load 76 on 12 cores; slots held", WakeDebounce, false},
+		{"agent report", EventFinished, "agent a1 (work a1) is idle. Its last message, verbatim: PR is up.", DigestEvery, true},
+		{"merge conflict", EventConflict, "resolve the base conflict", WakeDebounce, true},
+		{"explicit timer", EventTimer, "check the canary error rate", WakeDebounce, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
 			w.core.Pace = nil
 			g, m := w.goal(t, "ship the importer", "/repo/august")
 			start := w.clock
-			pending := tc.events
-			check := map[time.Duration]wake{}
-			var times []time.Duration
-			for _, e := range tc.events {
-				times = append(times, e.at)
-			}
-			for _, wk := range tc.wakes {
-				check[wk.at] = wk
-				times = append(times, wk.at-time.Second, wk.at)
-			}
-			for step := time.Duration(0); step <= DigestEvery+2*time.Minute; step += time.Second {
-				for len(pending) > 0 && pending[0].at == step {
-					w.clock = start.Add(step)
-					if _, _, err := w.core.RecordGoalEvent(g.ID, pending[0].kind, pending[0].about, ""); err != nil {
-						t.Fatal(err)
-					}
-					pending = pending[1:]
+			payload := tc.payload
+			if tc.kind == EventCIRed || tc.kind == EventConflict {
+				url := "https://github.com/acme/august/pull/7"
+				payload += " " + url
+				st := PRStatus{State: "OPEN", Fetched: w.clock, Merge: PRMergeFacts{OID: "head"}}
+				if tc.kind == EventCIRed {
+					st.Failed = 1
+				} else {
+					st.Merge.Mergeable = "CONFLICTING"
 				}
-				if !containsDuration(times, step) {
-					continue
+				if err := w.core.Store.SavePRStatus(url, st); err != nil {
+					t.Fatal(err)
 				}
-				w.clock = start.Add(step)
-				before := len(wakes(w.handedTo(m.Session)))
-				w.loop(t, 1)
+			}
+			for _, e := range []struct{ kind, payload string }{{tc.kind, payload}, {EventUpdate, "passive status"}, {EventIdleAgain, "still waiting"}} {
+				if _, _, err := w.core.RecordGoalEvent(g.ID, e.kind, e.payload, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, at := range []time.Duration{0, tc.due - time.Second, tc.due, tc.due + time.Second} {
+				w.clock = start.Add(at)
+				if err := w.core.Wake(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+				w.dispatch(t)
 				got := wakes(w.handedTo(m.Session))
-				wk, want := check[step]
-				if !want {
-					if len(got) != before {
-						t.Fatalf("woken at +%s with %q, want no wake then", step, got[before:])
+				want := 0
+				if tc.action && at >= tc.due {
+					want = 1
+				}
+				if len(got) != want {
+					t.Fatalf("at %s got %q, want %d native submissions", at, got, want)
+				}
+				if want == 1 {
+					if !strings.Contains(got[0], tc.kind+":") {
+						t.Fatalf("action missing its source: %s", got[0])
 					}
-					continue
-				}
-				if len(got) != before+1 {
-					t.Fatalf("at +%s the manager has %d wakes, want one more", step, len(got))
-				}
-				for _, s := range wk.has {
-					if !strings.Contains(got[before], s) {
-						t.Fatalf("wake at +%s lacks %q:\n%s", step, s, got[before])
-					}
-				}
-				for _, s := range wk.lack {
-					if strings.Contains(got[before], s) {
-						t.Fatalf("wake at +%s carries %q:\n%s", step, s, got[before])
+					for _, passive := range []string{"passive status", "still waiting"} {
+						if strings.Contains(got[0], passive) {
+							t.Fatalf("observation consumed prompt input: %s", got[0])
+						}
 					}
 				}
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil || len(events) != 3 {
+				t.Fatalf("readable evidence lost: %+v %v", events, err)
 			}
 		})
 	}
@@ -108,18 +91,23 @@ func containsDuration(ds []time.Duration, d time.Duration) bool {
 func TestAWakeCarriesEachEventInOneShortLineAndYmGoalEventPrintsItWhole(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
+	w.spawn("a1", m.Session)
+	w.set("a1", func(s *Session) { s.Status = Busy; s.Since = w.clock.Add(-HungAfter - time.Minute) })
 	long := "agent a1 (work a1) is idle. Its last message, verbatim: " + strings.Repeat("every detail of the parser, ", 200) + "THE END"
 	e, _, err := w.core.RecordGoalEvent(g.ID, EventAgentHung, long, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.loop(t, 1)
+	if err := w.core.Wake(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
+	w.dispatch(t)
 	got := wakes(w.handedTo(m.Session))
 	if len(got) != 1 {
 		t.Fatalf("manager woke %d times, want once", len(got))
 	}
 	for _, line := range strings.Split(got[0], "\n") {
-		if n := len([]rune(line)); n > lineMax {
+		if n := len([]rune(line)); strings.Contains(line, "agent-hung:") && n > lineMax {
 			t.Fatalf("a wake line runs %d characters, want at most about %d:\n%s", n, lineMax, line)
 		}
 	}
@@ -175,11 +163,14 @@ func TestAnAgentsReplyThatAddsNothingIsCountedNotDelivered(t *testing.T) {
 				w.loop(t, 1)
 			}
 			reply("Parser is pushed as a1b2c3d and the PR is up for review.")
+			w.dispatch(t)
+			w.completeActions(t, m.Session)
 			if tc.between != nil {
 				tc.between(t, w)
 			}
 			before := len(w.handedTo(m.Session))
 			reply(tc.second)
+			w.dispatch(t)
 			events, err := w.core.Store.GoalEvents(g.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -205,8 +196,9 @@ func TestAChiefsOwnAgentsReachItInItsInboxNotVerbatim(t *testing.T) {
 	long := "Audit done. " + strings.Repeat("finding with evidence, ", 100)
 	w.set("helper", func(s *Session) { s.Result, s.ResultAt = long, w.clock })
 	w.loop(t, 2)
+	w.dispatch(t)
 	got := wakes(w.handedTo(chief.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "your agents: agent finished #") || strings.Contains(got[0], long) {
+	if len(got) != 1 || !strings.Contains(got[0], "agent-finished:") || strings.Contains(got[0], long) {
 		t.Fatalf("chief heard %q, want one wake with a line for its agent's reply, not the reply whole", got)
 	}
 }

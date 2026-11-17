@@ -612,6 +612,7 @@ func TestWhatAManagerIsToldNamesItWithoutItsId(t *testing.T) {
 	if !strings.Contains(prompt.String(), "ym goal adopt --revision") || !strings.Contains(prompt.String(), "ym goal context prints") || !strings.Contains(prompt.String(), "ym goal list lists") {
 		t.Errorf("prompts should name no goal in commands that need none:\n%s", prompt.String())
 	}
+	w.dispatch(t)
 	texts := map[string]string{"prompts": prompt.String(), "plan draft": PlanDraft(o.Managers[m.ID], "text", 1), "steer wake": strings.Join(w.handedTo(m.Session), "\n")}
 	for what, text := range texts {
 		if !strings.Contains(text, "named-") {
@@ -1034,16 +1035,29 @@ func TestAWakeOrErrorAboutAGoalOrChiefNamesIt(t *testing.T) {
 		text func(*testing.T, *orgWorld, Goal, Manager, Manager) string
 		want string
 	}{
-		{"the quiet nudge", func(t *testing.T, w *orgWorld, _ Goal, m, _ Manager) string {
+		{"quiet status", func(t *testing.T, w *orgWorld, g Goal, m, _ Manager) string {
 			w.spawn("agent-1", m.Session)
 			w.clock = w.clock.Add(2 * QuietAfter)
 			w.supervise(t)
-			return strings.Join(w.handedTo(m.Session), "\n")
-		}, "nothing has moved on goal named-goal since"},
+			w.dispatch(t)
+			if got := w.handedTo(m.Session); len(got) != 0 {
+				t.Fatalf("quiet status prompted manager: %q", got)
+			}
+			rows := goalRows(w.board(t))
+			if len(rows) != 1 {
+				t.Fatalf("stuck status missing: %q", rows)
+			}
+			stored, err := w.core.Store.Goal(g.ID)
+			if err != nil || stored.State != GoalStuck {
+				t.Fatalf("quiet status %+v %v", stored, err)
+			}
+			return w.core.RefName(g.ID) + " " + stored.Evidence
+		}, "named-goal"},
 		{"the adopt nudge", func(t *testing.T, w *orgWorld, _ Goal, m, boss Manager) string {
 			w.steer(t, m.ID, "new plan", boss.ID)
 			w.clock = w.clock.Add(AdoptAfter + time.Minute)
 			w.supervise(t)
+			w.dispatch(t)
 			return strings.Join(w.handedTo(m.Session), "\n")
 		}, "ym goal adopt named-goal --revision 1"},
 		{"a goal with outstanding work", func(t *testing.T, w *orgWorld, g Goal, _, _ Manager) string {
@@ -1444,10 +1458,31 @@ func TestWhatARelayedCommandTellsARequesterShowsNoIds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := w.core.tellOutcome(Relay{Seq: 9, Dest: "box", Kind: RelayYM, Body: string(body)}, tc.ref); err != nil {
+			r, _, err := w.core.Store.addRelay(Relay{Dest: "box", Kind: RelayYM, Body: string(body), Created: w.clock})
+			if err != nil {
 				t.Fatal(err)
 			}
+			if tc.ref.Error != "" {
+				if _, err = w.core.Store.db.Exec(`UPDATE ym_relay SET last_error=? WHERE seq=?`, tc.ref.Error, r.Seq); err != nil {
+					t.Fatal(err)
+				}
+				r.Error = tc.ref.Error
+			}
+			if err = w.core.tellOutcome(r, tc.ref); err != nil {
+				t.Fatal(err)
+			}
+			w.dispatch(t)
 			text := strings.Join(w.handedTo(m.Session), "\n")
+			if tc.ref.Error == "" {
+				if text != "" {
+					t.Fatalf("successful relay consumed a model turn: %s", text)
+				}
+				messages, err := w.core.Store.Messages(m.Session)
+				if err != nil || len(messages) != 1 || messages[0].Source != "system" {
+					t.Fatalf("passive relay result lost: %+v %v", messages, err)
+				}
+				text = messages[0].Text
+			}
 			if tc.item {
 				items, err := w.core.Store.Items(ItemFilter{})
 				if err != nil || len(items) != 1 {

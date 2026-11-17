@@ -11,7 +11,7 @@ import (
 func digests(texts []string) []string {
 	var out []string
 	for _, t := range texts {
-		if strings.Contains(t, "changes under you") {
+		if strings.Contains(t, "changes under you") || strings.HasPrefix(t, "Yamnaya supervisor action ") {
 			out = append(out, t)
 		}
 	}
@@ -26,12 +26,13 @@ func TestOnlyWhatNeedsAChiefWakesIt(t *testing.T) {
 	}{
 		{EventFailedVerify, "attempt 1 failed: ci red", true},
 		{EventFailedVerify, "attempt 1 withdrawn: the plan changed", false},
-		{EventStuck, "quiet: nothing moved", true},
-		{EventDone, "shipped", true},
-		{EventVerified, "attempt 1 passed", true},
+		{EventStuck, "quiet: nothing moved", false},
+		{EventStuck, "deployment permission refused", true},
+		{EventDone, "shipped", false},
+		{EventVerified, "attempt 1 passed", false},
 		{EventPRReady, `"Importer" ` + url + " is green and ready to merge", true},
 		{EventResumeFailed, "agent a1's pane went and ym could not resume it", true},
-		{EventRelayFailed, "ym goal send refused", true},
+		{EventRelayFailed, "ym goal send refused", false},
 		{EventAgentStopped, "agent a1 (work) stopped: its process exited with status 143.", true},
 		{EventAgentStopped, "agent a1 (work) stopped: its process exited with status 0.", false},
 		{EventWorkResumed, "resumed", false},
@@ -48,24 +49,55 @@ func TestOnlyWhatNeedsAChiefWakesIt(t *testing.T) {
 		{EventMerged, "merged #7", false},
 		{EventAgentHung, "agent a1 looks hung", false},
 		{EventAgentAdrift, "agent a1 is looping", false},
-		{EventAgentAdrift, "manager mgr1 is looping", true},
-		{EventRelayed, "ym goal relaunch mgr1 ran", true},
+		{EventAgentAdrift, "manager mgr1 is looping", false},
+		{EventRelayed, "ym goal relaunch mgr1 ran", false},
 	} {
 		t.Run(tc.kind+" "+tc.payload, func(t *testing.T) {
 			w := newOrgWorld(t)
 			g, m := w.goal(t, "ship the importer", "/repo/august")
 			chief := w.chief(t, "platform", m.ID)
 			w.clock = w.clock.Add(time.Minute)
+			if tc.kind == EventStuck {
+				g.State, g.Evidence = GoalStuck, tc.payload
+				if err := w.core.Store.SaveGoal(g); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, _, err := w.core.RecordGoalEvent(g.ID, tc.kind, tc.payload, ""); err != nil {
 				t.Fatal(err)
 			}
 			w.clock = w.clock.Add(2 * deathGrace)
-			w.loop(t, 3)
+			if tc.kind == EventPRReady {
+				if err := w.core.Store.SetAuthority("august", true); err != nil {
+					t.Fatal(err)
+				}
+				if err := w.core.Store.SavePRStatus(url, PRStatus{State: "OPEN", Passed: 1, Fetched: w.clock, Merge: PRMergeFacts{OID: "head", Mergeable: "MERGEABLE", MergeState: "CLEAN"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.kind == EventAgentStopped || tc.kind == EventResumeFailed {
+				w.launches.launched = append(w.launches.launched, Launched{Session: "a1", State: "exited"})
+			}
+			for range 3 {
+				if err := w.core.Wake(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.dispatch(t)
 			w.clock = w.clock.Add(24 * time.Hour)
-			w.loop(t, 3)
+			for range 3 {
+				if err := w.core.Wake(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.dispatch(t)
 			got := digests(w.handedTo(chief.Session))
 			if tc.wakes != (len(got) == 1) || len(got) > 1 {
 				t.Fatalf("chief got %q, wakes=%v", got, tc.wakes)
+			}
+			events, err := w.core.Store.GoalEvents(g.ID)
+			if err != nil || !slices.ContainsFunc(events, func(e GoalEvent) bool { return e.Kind == tc.kind && e.Payload == tc.payload }) {
+				t.Fatalf("status evidence lost: %+v %v", events, err)
 			}
 		})
 	}
@@ -75,6 +107,7 @@ func TestAStoppedAgentThatCameBackNeverReachesItsChief(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	chief := w.chief(t, "platform", m.ID)
+	w.launches.launched = append(w.launches.launched, Launched{Session: "a1", State: "exited"})
 	w.clock = w.clock.Add(time.Minute)
 	add := func(kind, text string) {
 		if _, _, err := w.core.RecordGoalEvent(g.ID, kind, text, ""); err != nil {
@@ -83,6 +116,7 @@ func TestAStoppedAgentThatCameBackNeverReachesItsChief(t *testing.T) {
 	}
 	add(EventAgentStopped, "agent a1 (work) stopped: its process exited with status 143.")
 	w.loop(t, 2)
+	w.dispatch(t)
 	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
 		t.Fatalf("chief heard of a stop before ym had the chance to recover it: %q", got)
 	}
@@ -90,6 +124,7 @@ func TestAStoppedAgentThatCameBackNeverReachesItsChief(t *testing.T) {
 	add(EventFinished, "agent a1 (work) is idle. Its last message, verbatim: back")
 	w.clock = w.clock.Add(deathGrace)
 	w.loop(t, 2)
+	w.dispatch(t)
 	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
 		t.Fatalf("chief was woken for an agent that recovered: %q", got)
 	}
@@ -106,6 +141,7 @@ func TestWhatNeedsNoActionNeverStartsATurnAndIsReadOnDemand(t *testing.T) {
 		}
 	}
 	w.loop(t, 3)
+	w.dispatch(t)
 	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
 		t.Fatalf("quiet events started a message: %q", got)
 	}
@@ -138,10 +174,15 @@ func TestQuietNewsRidesAlongAtMostEveryDigestPeriod(t *testing.T) {
 	w.clock = w.clock.Add(DigestEvery)
 	event(EventStuck)
 	w.loop(t, 1)
-	first := digests(w.handedTo(chief.Session))
-	if len(first) != 1 || !strings.Contains(first[0], "1 update") || !strings.Contains(first[0], "stuck #") {
-		t.Fatalf("the wake carried %q, want the stuck and the update riding along", first)
+	w.dispatch(t)
+	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
+		t.Fatalf("status started a model turn: %q", got)
 	}
+	first, err := w.core.Digest(chief.Session)
+	if err != nil || !strings.Contains(strings.Join(first, "\n"), "update") {
+		t.Fatalf("status not readable: %q %v", first, err)
+	}
+
 	w.clock = w.clock.Add(time.Minute)
 	event(EventUpdate)
 	w.clock = w.clock.Add(DigestEvery - 2*time.Minute)
@@ -174,15 +215,24 @@ func TestStuckAndFailedVerifyWakeOnce(t *testing.T) {
 			chief := w.chief(t, "platform", m.ID)
 			for _, e := range tc.events {
 				w.clock = w.clock.Add(time.Minute)
+				if e[0] == EventStuck {
+					g.State, g.Evidence = GoalStuck, "dependency requires supervisor action"
+					if err := w.core.Store.SaveGoal(g); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if _, _, err := w.core.RecordGoalEvent(g.ID, e[0], e[1], ""); err != nil {
 					t.Fatal(err)
 				}
 				w.loop(t, 1)
+				w.dispatch(t)
+				w.completeActions(t, chief.Session)
+				w.completeActions(t, m.Session)
 			}
 			var got []string
 			for _, text := range digests(w.handedTo(chief.Session)) {
-				for _, want := range []string{"stuck #", "failed verify #"} {
-					got = append(got, slices.Repeat([]string{strings.TrimSuffix(want, " #")}, strings.Count(text, want))...)
+				for _, pair := range [][2]string{{"stuck:", "stuck"}, {"failed-verify:", "failed verify"}} {
+					got = append(got, slices.Repeat([]string{pair[1]}, strings.Count(text, pair[0]))...)
 				}
 			}
 			if !slices.Equal(got, tc.want) {
@@ -192,7 +242,7 @@ func TestStuckAndFailedVerifyWakeOnce(t *testing.T) {
 	}
 }
 
-func TestAChiefMidTurnGetsOneDigestAndTheRestMergesIntoTheNext(t *testing.T) {
+func TestChiefStatusAccumulatesAcrossBusyAndIdleTurnsWithoutModelMessages(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	chief := w.chief(t, "platform", m.ID)
@@ -208,17 +258,23 @@ func TestAChiefMidTurnGetsOneDigestAndTheRestMergesIntoTheNext(t *testing.T) {
 	done(1)
 	done(2)
 	done(3)
-	got := digests(w.handedTo(chief.Session))
-	if len(got) != 1 {
-		t.Fatalf("a busy chief got %d digests, want 1: %q", len(got), got)
+	w.dispatch(t)
+	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
+		t.Fatalf("busy chief received status prompts: %q", got)
 	}
 	w.clock = w.clock.Add(time.Minute)
 	w.set(chief.Session, func(s *Session) { s.Status, s.Since = Idle, w.clock })
 	w.loop(t, 2)
-	got = digests(w.handedTo(chief.Session))
-	if len(got) != 2 || strings.Count(got[1], "\n"+g.Name+":") != 1 || strings.Count(got[1], "done #") != 2 {
-		t.Fatalf("once idle the chief got %q, want one more message with both events on one line", got)
+	w.dispatch(t)
+	w.dispatch(t)
+	if got := digests(w.handedTo(chief.Session)); len(got) != 0 {
+		t.Fatalf("idle chief received status prompts: %q", got)
 	}
+	lines, err := w.core.Digest(chief.Session)
+	if err != nil || len(lines) != 1 || !strings.Contains(lines[0], g.Name) || !strings.Contains(lines[0], "3 done") {
+		t.Fatalf("accumulated status lost: %q %v", lines, err)
+	}
+
 }
 
 func TestANewDigestMergesIntoOneStillPending(t *testing.T) {
@@ -245,18 +301,23 @@ func TestANewDigestMergesIntoOneStillPending(t *testing.T) {
 		}
 		w.loop(t, 2)
 	}
-	got := pending()
-	if len(got) != 1 {
-		t.Fatalf("%d digests pending, want one holding everything: %+v", len(got), got)
+	if got := pending(); len(got) != 0 {
+		t.Fatalf("passive digest entered message delivery queue: %+v", got)
 	}
-	for _, want := range []string{g1.Name + ": ", g2.Name + ": ", "stuck #", "done #"} {
-		if !strings.Contains(got[0].Text, want) {
-			t.Fatalf("pending digest lacks %q:\n%s", want, got[0].Text)
+	lines, err := w.core.Digest(chief.Session)
+	if err != nil || len(lines) != 2 {
+		t.Fatalf("merged stream status lost: %q %v", lines, err)
+	}
+	text := strings.Join(lines, "\n")
+	for _, want := range []string{g1.Name + ":", g2.Name + ":"} {
+		if strings.Count(text, want) != 1 {
+			t.Fatalf("stream status not consolidated: %s", text)
 		}
 	}
-	if n := strings.Count(got[0].Text, g1.Name+":"); n != 1 {
-		t.Fatalf("goal %s has %d lines, want 1:\n%s", g1.ID, n, got[0].Text)
+	if lines, err = w.core.Digest(chief.Session); err != nil || len(lines) != 0 {
+		t.Fatalf("consumed digest repeated: %q %v", lines, err)
 	}
+
 }
 
 func TestADigestIsOneCompactLinePerGoal(t *testing.T) {
@@ -336,7 +397,7 @@ func TestWhatAChiefsOwnAgentsDoWakesItAsItWouldAManager(t *testing.T) {
 		{EventConflict, true},
 		{EventReview, true},
 		{EventAgentHung, true},
-		{EventAgentAdrift, true},
+		{EventAgentAdrift, false},
 		{EventCIGreen, false},
 		{EventPROpened, false},
 		{EventMerged, false},
@@ -346,10 +407,46 @@ func TestWhatAChiefsOwnAgentsDoWakesItAsItWouldAManager(t *testing.T) {
 			_, m := w.goal(t, "ship the importer", "/repo/august")
 			chief := w.chief(t, "platform", m.ID)
 			w.clock = w.clock.Add(time.Minute)
-			if _, _, err := w.core.RecordGoalEvent(chief.ID, tc.kind, "agent a1 did it", ""); err != nil {
-				t.Fatal(err)
+			w.spawn("a1", chief.Session)
+			payload := "agent a1 did it"
+			if tc.kind == EventAsked {
+				w.ask(t, "a1", "which format?")
+			} else {
+				if tc.kind == EventCIRed || tc.kind == EventConflict || tc.kind == EventReview {
+					url := "https://github.com/acme/august/pull/9"
+					payload = url
+					st := PRStatus{State: "OPEN", Fetched: w.clock, Merge: PRMergeFacts{OID: "head"}}
+					switch tc.kind {
+					case EventCIRed:
+						st.Failed = 1
+					case EventConflict:
+						st.Merge.Mergeable = "CONFLICTING"
+					case EventReview:
+						st.Unresolved = 1
+					}
+					if err := w.core.Store.SavePRStatus(url, st); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.kind == EventAgentHung {
+					w.set("a1", func(s *Session) {
+						s.Status = Busy
+						s.Since = w.clock.Add(-HungAfter - time.Minute)
+						s.Doing = Action{At: s.Since}
+					})
+				}
+				if _, _, err := w.core.RecordGoalEvent(chief.ID, tc.kind, payload, ""); err != nil {
+					t.Fatal(err)
+				}
 			}
-			w.loop(t, 2)
+			for range 2 {
+				if err := w.core.Wake(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w.dispatch(t)
+
+			w.dispatch(t)
 			got := digests(w.handedTo(chief.Session))
 			if tc.wakes != (len(got) == 1) || len(got) > 1 {
 				t.Fatalf("chief got %q, wakes=%v", got, tc.wakes)
@@ -358,14 +455,20 @@ func TestWhatAChiefsOwnAgentsDoWakesItAsItWouldAManager(t *testing.T) {
 	}
 }
 
-func TestAManagerMidTurnGetsOneWakeAndTheRestMergesIntoTheNext(t *testing.T) {
+func TestManagersWaitForIdleThenReceiveOnlyCurrentActionsInOneSubmission(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	w.set(m.Session, func(s *Session) { s.Status, s.Since = Busy, w.clock })
+	nextPR := 0
 	red := func(what string) {
 		t.Helper()
 		w.clock = w.clock.Add(time.Minute)
-		if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, what, ""); err != nil {
+		nextPR++
+		url := fmt.Sprintf("https://github.com/acme/august/pull/%d", nextPR)
+		if err := w.core.Store.SavePRStatus(url, PRStatus{State: "OPEN", Failed: 1, Fetched: w.clock, Merge: PRMergeFacts{OID: what}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, what+" "+url, ""); err != nil {
 			t.Fatal(err)
 		}
 		w.loop(t, 1)
@@ -373,15 +476,22 @@ func TestAManagerMidTurnGetsOneWakeAndTheRestMergesIntoTheNext(t *testing.T) {
 	for _, what := range []string{"first", "second", "third"} {
 		red(what)
 	}
-	if got := wakes(w.handedTo(m.Session)); len(got) != 1 || !strings.Contains(got[0], "first") {
-		t.Fatalf("a busy manager got %q, want the first wake alone", got)
+	w.dispatch(t)
+	if got := wakes(w.handedTo(m.Session)); len(got) != 0 {
+		t.Fatalf("busy manager received model work: %q", got)
 	}
 	w.clock = w.clock.Add(time.Minute)
 	w.set(m.Session, func(s *Session) { s.Status, s.Since = Idle, w.clock })
 	w.loop(t, 1)
+	w.dispatch(t)
 	got := wakes(w.handedTo(m.Session))
-	if len(got) != 2 || !strings.Contains(got[1], "second") || !strings.Contains(got[1], "third") {
-		t.Fatalf("once idle the manager got %q, want one more wake with both held events", got)
+	if len(got) != 1 {
+		t.Fatalf("idle manager submissions %q, want one bounded batch", got)
+	}
+	for _, want := range []string{"first", "second", "third"} {
+		if !strings.Contains(got[0], want) {
+			t.Fatalf("held action %s lost: %q", want, got)
+		}
 	}
 }
 
@@ -389,7 +499,11 @@ func TestYmDigestLeavesAManagersEventsForItsWake(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	w.set(m.Session, func(s *Session) { s.Prompt = &Prompt{} })
-	if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "red", ""); err != nil {
+	url := "https://github.com/acme/august/pull/9"
+	if err := w.core.Store.SavePRStatus(url, PRStatus{State: "OPEN", Failed: 1, Fetched: w.clock, Merge: PRMergeFacts{OID: "red"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "red "+url, ""); err != nil {
 		t.Fatal(err)
 	}
 	lines, err := w.core.Digest(m.Session)
@@ -399,6 +513,7 @@ func TestYmDigestLeavesAManagersEventsForItsWake(t *testing.T) {
 	w.set(m.Session, func(s *Session) { s.Prompt = nil })
 	w.clock = w.clock.Add(time.Minute)
 	w.loop(t, 1)
+	w.dispatch(t)
 	if got := wakes(w.handedTo(m.Session)); len(got) != 1 {
 		t.Fatalf("after ym digest the manager was woken with %q, want the red CI", got)
 	}

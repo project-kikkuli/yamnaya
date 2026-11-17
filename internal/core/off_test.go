@@ -26,10 +26,9 @@ func TestYmOffHoldsEveryDeliveryAndOnHandsItOverInOneMessage(t *testing.T) {
 		want      string
 		do        deliver
 	}{
-		{"a wake with the goal's events", false, false, "CI failed on pr 7", func(t *testing.T, w *orgWorld, g Goal, m Manager, agent string) {
-			if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "CI failed on pr 7", ""); err != nil {
-				t.Fatal(err)
-			}
+		{"a wake with the goal's events", false, false, "https://github.com/acme/august/pull/7", func(t *testing.T, w *orgWorld, g Goal, m Manager, agent string) {
+			w.pr(t, agent, "https://github.com/acme/august/pull/7", PRStatus{State: "OPEN", Failed: 1, Merge: PRMergeFacts{OID: "head"}})
+
 		}},
 		{"an answer to the manager's ask", false, false, "ship it", func(t *testing.T, w *orgWorld, g Goal, m Manager, agent string) {
 			it := w.ask(t, m.Session, "ready?")
@@ -53,7 +52,7 @@ func TestYmOffHoldsEveryDeliveryAndOnHandsItOverInOneMessage(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"a quiet nudge", false, true, "nothing has moved on goal", func(t *testing.T, w *orgWorld, g Goal, m Manager, agent string) {
+		{"quiet status stays passive", false, true, "", func(t *testing.T, w *orgWorld, g Goal, m Manager, agent string) {
 			w.clock = w.clock.Add(2 * QuietAfter)
 		}},
 	} {
@@ -81,9 +80,17 @@ func TestYmOffHoldsEveryDeliveryAndOnHandsItOverInOneMessage(t *testing.T) {
 				if _, err := w.core.Redeliver(w.board(t)); err != nil {
 					t.Fatal(err)
 				}
+				w.dispatch(t)
 				to, other := m.Session, agent
 				if d.toAgent {
 					to, other = agent, m.Session
+				}
+				if !off && d.suspended {
+					g, err := w.core.Store.Goal(g.ID)
+					if err != nil || g.State != GoalStuck || len(w.got(to)) != 0 {
+						t.Fatalf("quiet status not passive: %+v %v %q", g, err, w.got(to))
+					}
+					return
 				}
 				if !off {
 					if got := strings.Join(w.got(to), "\n"); !strings.Contains(got, d.want) {
@@ -113,13 +120,17 @@ func TestYmOffHoldsEveryDeliveryAndOnHandsItOverInOneMessage(t *testing.T) {
 				}
 				if d.suspended {
 					w.supervise(t)
-					if got := strings.Join(w.got(to), "\n"); !strings.Contains(got, d.want) {
-						t.Fatalf("once ym is on, %s got %q, want supervision to resume with %q", Short(to), got, d.want)
+					w.dispatch(t)
+					g, err := w.core.Store.Goal(g.ID)
+					if err != nil || g.State != GoalStuck || len(w.got(to)) != 0 {
+						t.Fatalf("quiet status after on not passive: %+v %v %q", g, err, w.got(to))
 					}
 					return
 				}
+				w.dispatch(t)
+
 				got := w.got(to)
-				if len(got) != 1 || !strings.Contains(got[0], "While it was off") || !strings.Contains(got[0], d.want) {
+				if len(got) != 1 || !strings.Contains(got[0], d.want) {
 					t.Fatalf("after ym on, %s got %q, want one message holding %q", Short(to), got, d.want)
 				}
 				if others := strings.Join(w.got(other), "\n"); strings.Contains(others, d.want) {
