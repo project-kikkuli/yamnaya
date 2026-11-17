@@ -259,6 +259,9 @@ func (c *Core) ResolveRepo(ref string) (string, error) {
 
 // StartNew launches n and remembers its repository so pickers offer it first.
 func (c *Core) StartNew(n NewLaunch) (string, error) {
+	if err := c.refuseSupervisorWork(n.Parent); err != nil {
+		return "", err
+	}
 	planned := n.Session
 	if planned == "" {
 		planned = uuid.NewString()

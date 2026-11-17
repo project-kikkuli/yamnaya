@@ -30,6 +30,9 @@ func pinLaunchHost(host string, args []string) []string {
 }
 
 func (c *Core) NewChiefOn(host, name, remit, repo, harness, selected string, children []string) (string, error) {
+	if err := c.refuseSupervisorWork(""); err != nil {
+		return "", err
+	}
 	args := c.chiefArgs(name, remit, c.RepoForHost(repo), harness, selected, children)
 	return c.RunOrRelay(host, pinLaunchHost(host, args)...)
 }

@@ -107,7 +107,7 @@ func (n briefNode) By(st core.Steer) string { return n.org.SteerBy(st) }
 
 // Name is what the site calls n: its goal's id, or the chief's.
 func (n briefNode) Name() string {
-	if n.Kind == "chief" {
+	if n.Kind == core.RoleChief || n.Kind == core.RoleSupervisor {
 		return n.ID
 	}
 	return n.Kind
@@ -497,7 +497,7 @@ func (s *briefSite) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var build func(core.Manager, int, map[string]bool) briefNode
 	build = func(m core.Manager, depth int, seen map[string]bool) briefNode {
 		seen[m.ID] = true
-		n := briefNode{ID: m.Shown(), Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: "chief", Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
+		n := briefNode{ID: m.Shown(), Title: m.Name, page: func(b core.Brief) string { return o.BriefPage(m, b) }, Kind: m.Role, Standing: s.standOf(m.ID), Artifact: m.ArtifactURL, Session: m.Session,
 			Fresh: fresh[m.ID], Now: time.Now()}
 		if g, ok := o.Goals[m.GoalID]; ok {
 			n.Kind, n.Title, n.Repo = g.Shown(), g.Ask, g.Repo
@@ -638,7 +638,7 @@ func (s *briefSite) serveRemote(w http.ResponseWriter, r *http.Request, host, re
 		http.Error(w, fmt.Sprintf("%s: no goal or chief %s on %s as of %s", rb.StateAt(time.Now()), ref, host, rb.At.Local().Format(time.Kitchen)), http.StatusNotFound)
 		return
 	}
-	n := briefNode{ID: core.RemoteKey(host, m.Shown()), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: "chief", Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
+	n := briefNode{ID: core.RemoteKey(host, m.Shown()), Title: m.Name, page: func(b core.Brief) string { return b.Markdown(m.Name) }, Kind: m.Role, Standing: rb.Standing[m.ID], Artifact: m.ArtifactURL, Session: m.Session,
 		Fresh: rb.Fresh[m.ID], Now: time.Now()}
 	for _, g := range rb.Goals {
 		if g.ID == m.GoalID {

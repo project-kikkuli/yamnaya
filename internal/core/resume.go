@@ -136,8 +136,8 @@ func (c *Core) resumeManager(o Org, m Manager, waiting []Message, events []GoalE
 }
 
 func managerWho(m Manager) string {
-	if m.Role == RoleChief {
-		return "chief " + m.Shown()
+	if m.Role == RoleChief || m.Role == RoleSupervisor {
+		return m.Role + " " + m.Shown()
 	}
 	return "manager " + m.Shown()
 }

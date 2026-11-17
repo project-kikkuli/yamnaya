@@ -89,6 +89,7 @@ type relayYM struct {
 }
 
 type relayVouch struct {
+	Supervisor bool `json:"supervisor,omitempty"`
 	// Chief is the chief on the destination the climb reached; Target names the steered manager by its host.
 	Chief  string `json:"chief"`
 	Author string `json:"author"`
@@ -913,6 +914,9 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		if g := o.Goals[m.GoalID]; m.Retired || g.State == GoalKilled || g.State == GoalDropped {
 			return c.tellManager(b, o, c.hereFrom(v.Author), fmt.Sprintf("ym: your steer of %s did not land: it has ended.", RemoteKey(c.SelfName(), m.Shown())))
 		}
+		if v.Supervisor {
+			v.AuthorName = "supervisor " + c.actorName(v.Author, v.AuthorName)
+		}
 		_, err = c.applySteer(b, o, m, v.Text, c.hereFrom(v.Author), v.AuthorName)
 		return err
 	case RelayNotify:
@@ -1059,7 +1063,16 @@ func (c *Core) wakeRemoteChiefs(b Board, o Org) error {
 func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 	author := c.hereFrom(v.Author)
 	reports, via := climb(o, author, v.Chief)
-	reports = reports || author == v.Chief
+	if v.Supervisor || o.Managers[author].Role == RoleSupervisor {
+		reports = o.Managers[author].Role == RoleSupervisor && !o.Managers[author].Retired && v.Close == nil && c.supervises(author, c.hereFrom(v.Target))
+		via = ""
+		v.Supervisor = true
+		if v.AuthorName == "" {
+			v.AuthorName = c.RefName(author)
+		}
+	} else {
+		reports = reports || author == v.Chief
+	}
 	host, _, _ := SplitRemote(v.Target)
 	ask, answer, what := RelayVouch, RelayVouched, "steer"
 	if v.Close != nil {
@@ -1076,7 +1089,11 @@ func (c *Core) vouch(b Board, o Org, v relayVouch) error {
 	if _, _, remote := SplitRemote(author); !remote && o.Managers[author].Session == "" {
 		return nil
 	}
-	return c.tellManager(b, o, author, fmt.Sprintf("ym: your %s of %s was refused: it does not report to you.", what, c.RefName(v.Target)))
+	reason := "it does not report to you."
+	if v.Supervisor {
+		reason = "no active supervision attachment authorizes it."
+	}
+	return c.tellManager(b, o, author, fmt.Sprintf("ym: your %s of %s was refused: %s", what, c.RefName(v.Target), reason))
 }
 
 // noteFinal records a relay this host refused for good where the owner reads its outcome: an item's history, or the goal's feed.

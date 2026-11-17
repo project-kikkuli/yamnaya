@@ -1403,6 +1403,7 @@ const Help = ` ym runs your work like a company: you hand a goal to a manager, t
                 stops thrashing, and ym serve resumes or relaunches none, even after a reboot; Q again
                 resumes them all. A red THROTTLED line heads the board while on;
                 ym throttle and ym unthrottle take a session, goal or chief to pause or resume just those
+   O            supervisors: n Claude or N Codex; attach/detach work, append context, inspect evidence and reports
    C            new chief, the same as c n
    D            detach the goal or chief from its chief, the same as c d
    t            goals by repository with chiefs nesting their reports, or every goal by its own repository

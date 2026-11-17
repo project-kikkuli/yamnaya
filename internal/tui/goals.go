@@ -84,6 +84,9 @@ const chiefGroup = "chiefs"
 
 // goalGroup is the group a top-level goal or chief row shows in: the goal's repository, or the chiefs.
 func goalGroup(n core.Node) string {
+	if n.Manager.Role == core.RoleSupervisor {
+		return "supervisors"
+	}
 	if n.Goal == nil {
 		return chiefGroup
 	}
@@ -612,7 +615,7 @@ func (m Model) chiefView() viewPage {
 		return textPage(" that chief left the board\n", "")
 	}
 	b := viewPage{}
-	b.WriteString(fmt.Sprintf(" %s  %s\n", pal.bold.Render("CHIEF "+n.Manager.Shown()), standStyle[n.Standing](n.Standing)))
+	b.WriteString(fmt.Sprintf(" %s  %s\n", pal.bold.Render(strings.ToUpper(n.Manager.Role)+" "+n.Manager.Shown()), standStyle[n.Standing](n.Standing)))
 	m.field(&b, "session", managerState(m.board, n))
 	m.field(&b, "plan", m.planField(n))
 	m.field(&b, "brief", briefMeta(m.board.At, n)+"  "+core.BriefURL(n.Manager.Ref())+pal.dim.Render("  b shows it, W opens the page with its reports' briefs"))

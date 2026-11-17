@@ -124,7 +124,7 @@ func NewRoot() *cobra.Command {
 			defer c.Store.Close()
 			e.core = c
 			c.Requester = func() string {
-				cl, err := e.caller()
+				cl, err := c.Calling(os.Getpid(), os.Getenv)
 				if err != nil {
 					return ""
 				}
@@ -183,6 +183,7 @@ func NewRoot() *cobra.Command {
 		goalCmd(with, withHosts),
 		digestCmd(with),
 		chiefCmd(with, withHosts),
+		supervisorCmd(with, withHosts),
 		itemCmd(with, routed),
 		copyCmd(with, routed),
 		phaseCmd(with),

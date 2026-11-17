@@ -20,8 +20,9 @@ const (
 	// GoalKilled is a goal ym kill ended with its manager and agents; ym revive brings it back.
 	GoalKilled = "killed"
 
-	RoleManager = "manager"
-	RoleChief   = "chief"
+	RoleManager    = "manager"
+	RoleChief      = "chief"
+	RoleSupervisor = "supervisor"
 
 	// Owner is the recipient of an item that climbed past every manager and chief.
 	Owner = ""
@@ -352,7 +353,7 @@ func (s *Store) AddManager(m Manager) (Manager, error) {
 		return m, err
 	}
 	defer tx.Rollback()
-	if m.Role == RoleChief {
+	if m.Role == RoleChief || m.Role == RoleSupervisor {
 		if m.Name, err = freeName(tx, m.Name); err != nil {
 			return m, err
 		}

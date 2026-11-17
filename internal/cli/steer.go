@@ -15,8 +15,11 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/core"
 )
 
-// author is who steers from this shell: the manager or chief the calling session runs as, else the owner.
+// author resolves authority from the native caller, never an identity override.
 func (e *env) author() (string, error) {
+	if e.session != "" {
+		return "", errors.New("authority comes from the native caller, without --session")
+	}
 	c, err := e.core.Calling(os.Getpid(), os.Getenv)
 	if errors.Is(err, core.ErrNotFound) {
 		return core.Owner, nil
@@ -31,11 +34,12 @@ func (e *env) author() (string, error) {
 	if m, ok := o.ManagerOf(e.core.Resolve(c.Session)); ok {
 		return m.ID, nil
 	}
-	return core.Owner, nil
+	return "", fmt.Errorf("session %s is not an owner shell or a managed identity", core.Short(c.Session))
 }
 
 func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var file, inline, by, byName string
+	var bySupervisor bool
 	cmd := &cobra.Command{
 		Use:   "steer [--file PATH|-] <goal|manager|chief>",
 		Short: "Change what a goal or chief is about as its next numbered revision; its manager must adopt it",
@@ -87,12 +91,14 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			}
 			if _, _, remote := core.SplitRemote(by); remote && author == core.Owner {
 				author = by
+			} else {
+				byName, bySupervisor = "", false
 			}
 			b, err := e.core.Board()
 			if err != nil {
 				return err
 			}
-			st, err := e.core.SteerContextAs(b, m.ID, text, author, byName)
+			st, err := e.core.SteerContextAs(b, m.ID, text, author, byName, bySupervisor)
 			if err != nil {
 				return err
 			}
@@ -114,6 +120,8 @@ func goalSteerCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	cmd.Flags().StringVar(&by, "by", "", "the chief on another host that steers, as host/id")
 	cmd.Flags().MarkHidden("text")
 	cmd.Flags().MarkHidden("by")
+	cmd.Flags().BoolVar(&bySupervisor, "by-supervisor", false, "attributed supervisor steering; its host confirms the attachment")
+	cmd.Flags().MarkHidden("by-supervisor")
 	cmd.Flags().StringVar(&byName, "by-name", "", "how that chief shows")
 	cmd.Flags().MarkHidden("by-name")
 	return cmd

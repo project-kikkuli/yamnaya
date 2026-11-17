@@ -365,8 +365,8 @@ func printGoalRow(w io.Writer, r goalRow) {
 	if r.Ask != "" {
 		what = r.Ask
 	}
-	if r.Role == core.RoleChief {
-		what = "chief"
+	if r.Role == core.RoleChief || r.Role == core.RoleSupervisor {
+		what = r.Role
 	}
 	id := r.Name
 	indent := strings.Repeat("  ", r.Depth)

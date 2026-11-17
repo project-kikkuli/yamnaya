@@ -224,6 +224,11 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 	if err != nil || imported {
 		return imported, err
 	}
+	if a.Kind == "supervise" {
+		var fingerprint string
+		err := c.Store.db.QueryRow(`SELECT coalesce((SELECT generation||':'||fingerprint FROM ym_supervisor_evidence WHERE supervisor=?),'')`, a.Recipient).Scan(&fingerprint)
+		return o.Managers[a.Recipient].Role == RoleSupervisor && !o.Managers[a.Recipient].Retired && fingerprint == a.Subject, err
+	}
 	if a.Kind == "answer" {
 		return c.answerActionNeeded(a)
 	}

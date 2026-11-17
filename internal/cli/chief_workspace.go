@@ -26,10 +26,14 @@ func (l launcher) chiefRecord(rec launch.Record) (launch.Record, error) {
 		return rec, err
 	}
 	m, ok := org.ManagerOf(rec.Session)
-	if !ok || m.Role != core.RoleChief || m.Session != rec.Session {
+	if !ok || (m.Role != core.RoleChief && m.Role != core.RoleSupervisor) || m.Session != rec.Session {
 		return rec, nil
 	}
-	dir := filepath.Join(l.core.StateDir, "chiefs", m.ID, "workspace")
+	group := "chiefs"
+	if m.Role == core.RoleSupervisor {
+		group = "supervisors"
+	}
+	dir := filepath.Join(l.core.StateDir, group, m.ID, "workspace")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return rec, err
 	}

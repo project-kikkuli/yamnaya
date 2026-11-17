@@ -143,7 +143,13 @@ func (o Org) SteerBy(st Steer) string {
 		return "the owner"
 	}
 	if m, ok := o.Managers[st.Author]; ok {
+		if m.Role == RoleSupervisor {
+			return "supervisor " + m.Ref()
+		}
 		return "chief " + m.Ref()
+	}
+	if strings.HasPrefix(st.AuthorName, "supervisor ") {
+		return st.AuthorName
 	}
 	if st.AuthorName != "" {
 		return chiefPhrase(st.AuthorName)
@@ -319,7 +325,7 @@ func (c *Core) Rename(ref, name string) (string, error) {
 		return "", err
 	}
 	g, isGoal := o.Goals[m.GoalID]
-	if !isGoal && m.Role != RoleChief {
+	if !isGoal && m.Role != RoleChief && m.Role != RoleSupervisor {
 		return "", errors.New(m.Shown() + " is neither a goal's manager nor a chief")
 	}
 	old, title := m.Shown(), name

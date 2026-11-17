@@ -24,6 +24,9 @@ func (c *Core) NewGoalUnder(ask, repo, harness, under string, selected ...string
 
 // NewGoalNamed is NewGoalUnder with the goal named name; empty names it from its ask.
 func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...string) (Goal, Manager, error) {
+	if err := c.refuseSupervisorWork(""); err != nil {
+		return Goal{}, Manager{}, err
+	}
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, Manager{}, errors.New("a goal needs the ask in your words")
@@ -78,6 +81,9 @@ func (c *Core) NewGoalNamed(name, ask, repo, harness, under string, selected ...
 // NewGoalOn starts a goal named name (empty names it from ask) for ask on host, in the repository repo names there, its manager reporting to under. A host ym does not
 // reach now gets it through a relay; if that host refuses it for good, requester, a session here, hears of it in an item.
 func (c *Core) NewGoalOn(host, name, ask, repo, harness, under, requester string, selected ...string) (Goal, error) {
+	if err := c.refuseSupervisorWork(requester); err != nil {
+		return Goal{}, err
+	}
 	ask = strings.TrimSpace(ask)
 	if ask == "" {
 		return Goal{}, errors.New("a goal needs the ask in your words")
@@ -169,6 +175,9 @@ func managerHarness(harness string) (string, error) {
 
 // NewChief records a chief over children, managers or chiefs by id, and starts its session in repo on harness.
 func (c *Core) NewChief(name, remit, repo, harness string, children []string, selected ...string) (Manager, error) {
+	if err := c.refuseSupervisorWork(""); err != nil {
+		return Manager{}, err
+	}
 	name, remit = strings.TrimSpace(name), strings.TrimSpace(remit)
 	if name == "" {
 		return Manager{}, errors.New("a chief needs a name")
@@ -249,6 +258,9 @@ func (c *Core) Attach(child, chief string) error {
 	m, err := o.lookup(child)
 	if err != nil {
 		return err
+	}
+	if m.Role == RoleSupervisor {
+		return errors.New("supervisors attach independently; they do not join execution reporting lines")
 	}
 	if _, _, remote := SplitRemote(chief); remote {
 		boss, err := c.checkRemoteChief(m, chief)

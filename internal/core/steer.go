@@ -185,7 +185,7 @@ func (c *Core) Context(ref string) (Manager, string, int, error) {
 
 // Ask is what m started out to do: its goal's ask, or the remit a chief was started with.
 func (o Org) Ask(m Manager) string {
-	if m.Role == RoleChief {
+	if m.Role == RoleChief || m.Role == RoleSupervisor {
 		return m.Remit
 	}
 	return o.Goals[m.GoalID].Ask
@@ -198,7 +198,7 @@ func (c *Core) SteerContext(b Board, ref, text, author string) (Steer, error) {
 }
 
 // SteerContextAs is SteerContext for a chief on another host that came with its name.
-func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string) (Steer, error) {
+func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string, supervisor ...bool) (Steer, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return Steer{}, errors.New("a steer needs the new plan in words")
@@ -207,6 +207,9 @@ func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string) (St
 		args := []string{"goal", "steer", "--text", text}
 		if author != Owner {
 			args = append(args, "--by", RemoteKey(c.SelfName(), author))
+			if m, err := c.Store.Manager(author); err == nil && m.Role == RoleSupervisor {
+				args = append(args, "--by-supervisor")
+			}
 		}
 		y := relayYM{Args: append(args, rest)}
 		if author != Owner {
@@ -230,12 +233,22 @@ func (c *Core) SteerContextAs(b Board, ref, text, author, authorName string) (St
 	}
 	if author != Owner {
 		reports, via := climb(o, author, m.ID)
+		if o.Managers[author].Role == RoleSupervisor {
+			reports = c.supervises(author, m.ID)
+		}
+		if host, id, remote := SplitRemote(author); !reports && remote && (via == "" || len(supervisor) > 0 && supervisor[0]) {
+			v := relayVouch{Supervisor: true, Chief: id, Author: author, AuthorName: authorName, Target: RemoteKey(c.SelfName(), m.ID), Text: text}
+			return Steer{Manager: m.ID, Text: text, Author: author, Pending: author}, c.Relay(host, RelayVouch, v)
+		}
 		if !reports && via != "" {
 			host, rest, _ := SplitRemote(via)
 			v := relayVouch{Chief: rest, Author: c.fromHere(author), AuthorName: cmp.Or(authorName, c.RefName(author)), Target: RemoteKey(c.SelfName(), m.ID), Text: text}
 			return Steer{Manager: m.ID, Text: text, Author: author, Pending: via}, c.Relay(host, RelayVouch, v)
 		}
 		if !reports {
+			if o.Managers[author].Role == RoleSupervisor {
+				return Steer{}, Final(fmt.Errorf("%s is not attached to supervisor %s", m.Shown(), c.RefName(author)))
+			}
 			return Steer{}, Final(fmt.Errorf("%s does not report to %s; a chief steers only its own reports", m.Shown(), c.RefName(author)))
 		}
 	}
@@ -320,10 +333,16 @@ func subject(o Org, m Manager) string {
 	if g, ok := o.Goals[m.GoalID]; ok {
 		return "goal " + g.Shown()
 	}
+	if m.Role == RoleSupervisor {
+		return "supervisor " + m.Shown()
+	}
 	return "chief " + m.Shown()
 }
 
 func steerText(o Org, m Manager, st Steer) string {
+	if m.Role == RoleSupervisor {
+		return fmt.Sprintf("%s updated supervisor %s context at revision %d:\n\n%s\n\nRead the original intent and all corrections, then run ym goal adopt %s --revision %d. This records context; it grants no new execution authority.", o.SteerBy(st), m.Shown(), st.Revision, st.Text, m.Shown(), st.Revision)
+	}
 	reopened := ""
 	if g, ok := o.Goals[m.GoalID]; ok && (g.State == GoalVerifying || g.State == GoalDone) {
 		reopened = " Your ym goal done was for the plan before it, so the goal is active again and its verification is called off."

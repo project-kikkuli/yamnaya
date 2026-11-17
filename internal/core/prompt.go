@@ -24,7 +24,9 @@ func (c *Core) prompt(m Manager, o Org, waiting []Message) string {
 // launchPrompt is what every session of m starts from: who it is, its goal or reports, its plan and how it works.
 func (c *Core) launchPrompt(m Manager, o Org) string {
 	var sb strings.Builder
-	if m.Role == RoleChief {
+	if m.Role == RoleSupervisor {
+		c.supervisorPrompt(&sb, o, m)
+	} else if m.Role == RoleChief {
 		c.chiefPrompt(&sb, o, m)
 	} else {
 		c.managerPrompt(&sb, o, m)
@@ -139,6 +141,9 @@ func (c *Core) steerRules(sb *strings.Builder, m Manager) {
 	who := "The owner"
 	if m.ParentID != "" {
 		who = "The owner or a chief above you"
+	}
+	if m.Role != RoleSupervisor {
+		who += " or an attached supervisor acting within the owner's existing authorization"
 	}
 	fmt.Fprintf(sb, "- %s may steer you: a numbered revision of what you are about arrives as a message and replaces earlier direction where they differ. Rework your plan and your agents' course to fit, then run ym goal adopt --revision <N>; until you do, the board shows it not adopted and ym nudges you, then tells whoever steered. ym goal context prints the current revision.\n",
 		who)

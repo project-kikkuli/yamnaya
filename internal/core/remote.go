@@ -56,7 +56,8 @@ type RemoteBoard struct {
 	// Feeds are its goals' news for the owner.
 	Feeds map[string]Feed
 	// Fresh is each of its managers' and chiefs' latest brief and whether it is behind, by its own reading.
-	Fresh map[string]Freshness
+	Steers map[string]Steer
+	Fresh  map[string]Freshness
 	// Swollen are its processes holding a large share of its memory.
 	Swollen []Swollen
 	// Missions and GoalStats are its missions' stats by project key and its goals' and chiefs' by manager id, as it computed them.

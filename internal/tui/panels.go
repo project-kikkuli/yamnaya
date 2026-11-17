@@ -29,10 +29,11 @@ const (
 	panelSettings
 	panelLaunched
 	panelMCP
+	panelSupervisors
 )
 
 // panelKeys are the board keys that open each panel; the same key closes it.
-var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "F": panelMCP}
+var panelKeys = map[string]panelKind{"B": panelProfiles, "H": panelHosts, "Y": panelSettings, "E": panelLaunched, "F": panelMCP, "O": panelSupervisors}
 
 type panelState struct {
 	kind   panelKind
@@ -272,18 +273,20 @@ func (m Model) panelRows() ([]prow, []pdo) {
 		return m.settingRows()
 	case panelLaunched:
 		return m.launchRows()
+	case panelSupervisors:
+		return m.supervisorRows()
 	case panelMCP:
 		return m.mcpRows()
 	}
 	return nil, nil
 }
 
-var panelTitles = map[panelKind]string{panelProfiles: "LOGIN PROFILES", panelHosts: "HOSTS", panelSettings: "SETTINGS", panelLaunched: "LAUNCHED", panelMCP: "MCP CONNECTIONS"}
+var panelTitles = map[panelKind]string{panelProfiles: "LOGIN PROFILES", panelHosts: "HOSTS", panelSettings: "SETTINGS", panelLaunched: "LAUNCHED", panelMCP: "MCP CONNECTIONS", panelSupervisors: "SUPERVISORS"}
 
 func (m Model) panelView() viewPage {
 	b := viewPage{}
 	rows, _ := m.panelRows()
-	sub := map[panelKind]string{panelProfiles: "every Claude and Codex login on every host, with its limit windows",
+	sub := map[panelKind]string{panelSupervisors: "independent context, attachments and evidence; execution keeps its own reporting lines", panelProfiles: "every Claude and Codex login on every host, with its limit windows",
 		panelHosts: "every remembered host and what this host still carries to them", panelSettings: "supervisor recovery, queued launches, MCP connections, ym serve, Notion inbox, context cap, merge authority", panelMCP: "native servers by host and login; inventory never starts servers",
 		panelLaunched: "what ym launched, every ended session or closed or killed goal ym revive brings back, and every other conversation to resume"}[m.pn.kind]
 	b.WriteString(pal.bold.Render(" "+panelTitles[m.pn.kind]) + pal.dim.Render("  "+sub) + "\n")

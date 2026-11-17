@@ -11,6 +11,7 @@ import (
 
 // agentOnly are agent, setup, or CLI integration commands outside the board.
 var agentOnly = map[string]bool{
+	"ym supervisor remember": true, "ym supervisor report": true,
 	"ym action accept": true, "ym action complete": true, "ym linear": true,
 	"ym item add": true, "ym item review": true, "ym item inbox": true, "ym digest": true, "ym item prepare": true, "ym spawn": true, "ym limits record": true,
 	"ym disk": true, "ym disk reclaim": true, "ym install": true, "ym completion": true, "ym board": true, "ym help": true, "ym serve": true, "ym service ensure": true, "ym slot": true,
