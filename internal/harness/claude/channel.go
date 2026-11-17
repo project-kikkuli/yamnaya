@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,11 +21,12 @@ import (
 
 const ChannelSocketEnv = "YAMNAYA_CLAUDE_CHANNEL_SOCKET"
 
-var channelActionID = regexp.MustCompile(`Yamnaya supervisor action ([a-f0-9]{32}) `)
+var channelActionID = regexp.MustCompile(`(?m)^Yamnaya supervisor action ([a-f0-9]{32}) (?:\(attempt ([0-9]+), )?`)
 
 type channelAction struct {
 	Session string `json:"session"`
 	ID      string `json:"id"`
+	Attempt int    `json:"attempt,omitempty"`
 	Content string `json:"content"`
 }
 type channelResponse struct {
@@ -40,8 +43,8 @@ func (a *Adapter) channelMessage(s core.Session, text string) error {
 	if err != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm()&0077 != 0 {
 		return ErrNoSupervisor
 	}
-	match := channelActionID.FindStringSubmatch(text)
-	if len(match) != 2 {
+	actions := channelActions(text)
+	if len(actions) == 0 {
 		return errors.New("Claude supervisor delivery requires a durable action identity")
 	}
 	conn, err := net.DialTimeout("unix", path, 3*time.Second)
@@ -52,7 +55,7 @@ func (a *Adapter) channelMessage(s core.Session, text string) error {
 	if err = conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
 	}
-	if err = json.NewEncoder(conn).Encode(channelAction{Session: s.ID, ID: match[1], Content: text}); err != nil {
+	if err = json.NewEncoder(conn).Encode(channelAction{Session: s.ID, ID: actions[0].ID, Attempt: actions[0].Attempt, Content: text}); err != nil {
 		return fmt.Errorf("%w: %v", core.ErrSubmissionUncertain, err)
 	}
 	var reply channelResponse
@@ -85,6 +88,8 @@ func ServeChannel(parent context.Context, socket, session string, in io.Reader, 
 	var mu, write sync.Mutex
 	ready := false
 	pending := map[string]channelAction{}
+	submitted := map[channelActionRef]struct{}{}
+	latest := map[string]int{}
 	encode := func(v any) error { write.Lock(); defer write.Unlock(); return json.NewEncoder(out).Encode(v) }
 	go func() { <-ctx.Done(); listener.Close() }()
 	go func() {
@@ -100,11 +105,33 @@ func ServeChannel(parent context.Context, socket, session string, in io.Reader, 
 				if err := json.NewDecoder(io.LimitReader(conn, 4*1024*1024)).Decode(&action); err != nil {
 					return
 				}
+				actions := channelActions(action.Content)
+				ids := make([]string, 0, len(actions))
+				attempts := map[string]int{}
+				for _, entry := range actions {
+					if _, known := attempts[entry.ID]; !known {
+						ids = append(ids, entry.ID)
+					}
+					if entry.Attempt >= attempts[entry.ID] {
+						attempts[entry.ID] = entry.Attempt
+					}
+				}
 				mu.Lock()
-				valid := ready && action.Session == session && action.ID != "" && action.Content != ""
-				_, duplicate := pending[action.ID]
-				if valid && !duplicate {
-					pending[action.ID] = action
+				valid := ready && action.Session == session && len(actions) > 0 && action.ID == actions[0].ID
+				duplicate := true
+				if valid {
+					for _, ref := range actions {
+						_, known := submitted[ref]
+						submitted[ref] = struct{}{}
+						if known || ref.Attempt < latest[ref.ID] {
+							continue
+						}
+						entry := action
+						entry.ID, entry.Attempt = ref.ID, ref.Attempt
+						pending[ref.ID] = entry
+						latest[ref.ID] = ref.Attempt
+						duplicate = false
+					}
 				}
 				mu.Unlock()
 				reply := channelResponse{Status: "written"}
@@ -120,7 +147,8 @@ func ServeChannel(parent context.Context, socket, session string, in io.Reader, 
 						} `json:"params"`
 					}{JSONRPC: "2.0", Method: "notifications/claude/channel"}
 					notification.Params.Content = action.Content
-					notification.Params.Meta = map[string]string{"action_id": action.ID, "session_id": session, "authority": "yamnaya_supervisor"}
+					attemptMeta, _ := json.Marshal(attempts)
+					notification.Params.Meta = map[string]string{"action_id": ids[0], "action_ids": strings.Join(ids, ","), "action_attempts": string(attemptMeta), "session_id": session, "authority": "yamnaya_supervisor"}
 					if err := encode(notification); err != nil {
 						reply.Error = err.Error()
 					}
@@ -225,4 +253,30 @@ func ServeChannel(parent context.Context, socket, session string, in io.Reader, 
 		}
 	}
 	return scanner.Err()
+}
+
+type channelActionRef struct {
+	ID      string
+	Attempt int
+}
+
+func channelActions(content string) []channelActionRef {
+	matches := channelActionID.FindAllStringSubmatch(content, -1)
+	actions := make([]channelActionRef, 0, len(matches))
+	seen := map[channelActionRef]bool{}
+	for _, match := range matches {
+		ref := channelActionRef{ID: match[1]}
+		if match[2] != "" {
+			attempt, err := strconv.Atoi(match[2])
+			if err != nil {
+				continue
+			}
+			ref.Attempt = attempt
+		}
+		if !seen[ref] {
+			seen[ref] = true
+			actions = append(actions, ref)
+		}
+	}
+	return actions
 }
