@@ -240,6 +240,25 @@ func (w *wireWorld) settle(t *testing.T, want int) {
 	}
 }
 
+func (w *wireWorld) awaitNativeStart(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, err := w.c.Board()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, found := w.l.records.Find(w.rec.Key)
+		if session, ok := b.Session(rec.Session); found && ok && session.PID != 0 && session.TTY != "" && profile.ID(session.Profile) == profile.ID(rec.Profile) && len(w.starts(t)) >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("native start %d not published: starts %q, record %+v, sessions %+v", want, w.starts(t), rec, b.Sessions)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func (w *wireWorld) starts(t *testing.T) []string {
 	t.Helper()
 	b, err := os.ReadFile(w.log)
@@ -2130,6 +2149,7 @@ func TestWireTheFirstPassBeforeRowsAreReadMovesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		pass(t, w)
+		w.awaitNativeStart(t, 1)
 		pass(t, w)
 		if got := strings.Join(w.starts(t), " "); got != "default" || *ports != 0 {
 			t.Fatalf("starts %q, %d ports", got, *ports)
