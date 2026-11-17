@@ -228,7 +228,7 @@ func endedGoalAsk(impact, snooze string) func(*testing.T, *orgWorld) string {
 	}
 }
 
-func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testing.T) {
+func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T) {
 	url := "https://github.com/acme/repo/pull/5"
 	for _, tc := range []struct {
 		name  string
@@ -305,10 +305,10 @@ func TestLaterFoldsSnoozedRowsAndEndedGoalsAndSnoozesComeBackOnTheirOwn(t *testi
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, 0},
+		}, stayRanked},
 		{"a prod item of a finished goal stays ranked", endedGoalAsk(ImpactProd, ""), stayRanked},
 		{"a clinical item of a finished goal stays ranked", endedGoalAsk(ImpactClinical, ""), stayRanked},
-		{"a routine item of a finished goal folds", endedGoalAsk(ImpactRoutine, ""), 0},
+		{"a routine item of a finished goal stays ranked", endedGoalAsk(ImpactRoutine, ""), stayRanked},
 		{"a snoozed prod item of a finished goal folds until it wakes", endedGoalAsk(ImpactProd, "1h"), time.Hour + time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

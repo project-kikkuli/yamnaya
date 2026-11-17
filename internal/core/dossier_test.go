@@ -148,7 +148,7 @@ func TestAsksReportOnlyTheGoalNewsTheOwnerHasNotRead(t *testing.T) {
 	}
 }
 
-func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheManagerPreparesIt(t *testing.T) {
+func TestAnAskPastADeadManagerKeepsItsMissingContextWithoutPretendingToWakeIt(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		it          Item
@@ -194,11 +194,10 @@ func TestAnAskThatClimbsPastADeadManagerReachesTheOwnerMarkedUnpreparedUntilTheM
 			told := slices.ContainsFunc(append(w.handedTo(m.Session)[before:], texts(pending)...), func(s string) bool {
 				return strings.Contains(s, "ym item prepare '"+it.Key()+"'")
 			})
-			wantTold := tc.wantMissing != nil && !tc.dropped
-			if told != wantTold || (got.Preparer == m.ID) != told || (len(Unprepared(got)) > 0) != told {
-				t.Fatalf("manager told to prepare %v, preparer %q, unprepared %q; want told %v", told, got.Preparer, Unprepared(got), wantTold)
+			if told || got.Preparer != "" || !slices.Equal(Unprepared(got), tc.wantMissing) {
+				t.Fatalf("dead manager told %v, preparer %q, missing marker %q; want no wake and %q", told, got.Preparer, Unprepared(got), tc.wantMissing)
 			}
-			if !wantTold {
+			if tc.wantMissing == nil {
 				return
 			}
 			if _, err := w.core.Prepare(w.board(t), it.Key(), Prepared{Do: "Use v2", Rec: "v2"}); tc.it.Kind == KindDecision && !errors.Is(err, ErrNotReady) {

@@ -317,6 +317,9 @@ func TestAChiefOnAnotherHostClosesAGoalDirectlyOrThroughAVouch(t *testing.T) {
 				if now.State != GoalActive || f.b.closure(t, g.ID) != nil {
 					t.Fatalf("a stranger closed the goal: %s %+v", now.State, f.b.closure(t, g.ID))
 				}
+				if err := f.c.core.DispatchActions(f.c.board(t)); err != nil {
+					t.Fatal(err)
+				}
 				if !slices.ContainsFunc(f.c.handedTo(other.Session), func(s string) bool { return strings.Contains(s, "your close of") && strings.Contains(s, "was refused") }) {
 					t.Fatalf("stranger heard %q", f.c.handedTo(other.Session))
 				}
@@ -330,7 +333,7 @@ func TestAChiefOnAnotherHostClosesAGoalDirectlyOrThroughAVouch(t *testing.T) {
 	}
 }
 
-func TestAChiefOnAnotherHostHearsAGoalClosedBelowIt(t *testing.T) {
+func TestAChiefOnAnotherHostSeesClosureWithoutAModelTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		// heardBefore has the host report something to the chief first, so the close is not the first thing it hears.
@@ -372,27 +375,34 @@ func TestAChiefOnAnotherHostHearsAGoalClosedBelowIt(t *testing.T) {
 				f.sync(t)
 				f.c.clock = f.c.clock.Add(31 * time.Minute)
 				f.c.loop(t, 1)
+				if err := f.c.core.DispatchActions(f.c.board(t)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			heard := 0
 			for _, s := range f.c.handedTo(top.Session) {
 				heard += strings.Count(s, EventGoalClosed)
 			}
-			if heard != 1 {
-				t.Fatalf("remote chief heard the close %d times: %q", heard, f.c.handedTo(top.Session))
+			if heard != 0 {
+				t.Fatalf("passive closure woke remote chief: %q", f.c.handedTo(top.Session))
+			}
+			assertRecordedClosure(t, f.b.core, g.ID)
+			if state := f.c.board(t).Org.Goals[RemoteKey("b", g.ID)].State; state != GoalDropped {
+				t.Fatalf("remote closure status %s", state)
 			}
 		})
 	}
 }
 
-func TestAChiefAboveTheGoalHearsItsCloseOnce(t *testing.T) {
+func TestAChiefAboveTheGoalSeesItsCloseWithoutAModelTurn(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		midRetired bool
 		bossCloses bool
 		wantWoken  int
 	}{
-		{name: "direct chief, closed by the owner", wantWoken: 1},
-		{name: "above a retired chief, closed by the owner", midRetired: true, wantWoken: 1},
+		{name: "direct chief, closed by the owner"},
+		{name: "above a retired chief, closed by the owner", midRetired: true},
 		{name: "the closing chief is not woken by its own close", bossCloses: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -418,6 +428,9 @@ func TestAChiefAboveTheGoalHearsItsCloseOnce(t *testing.T) {
 			for range 3 {
 				w.clock = w.clock.Add(31 * time.Minute)
 				w.loop(t, 1)
+				if err := w.core.DispatchActions(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			woken := 0
 			for _, s := range w.handedTo(boss.Session) {
@@ -426,21 +439,22 @@ func TestAChiefAboveTheGoalHearsItsCloseOnce(t *testing.T) {
 			if woken != tc.wantWoken {
 				t.Fatalf("boss heard the close %d times, want %d: %q", woken, tc.wantWoken, w.handedTo(boss.Session))
 			}
+			assertRecordedClosure(t, w.core, g.ID)
 		})
 	}
 }
 
-func TestOnlyTheClosingChiefSleepsThroughAClose(t *testing.T) {
+func TestClosureStatusDoesNotWakeAnyChief(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		closer             func(low, top Manager) string
 		why                func(low, top Manager) string
 		lowHears, topHears bool
 	}{
-		{"the owner closes", func(_, _ Manager) string { return Owner }, func(_, _ Manager) string { return "stop" }, true, true},
-		{"the lower chief closes", func(l, _ Manager) string { return l.ID }, func(_, _ Manager) string { return "stop" }, false, true},
-		{"the top chief closes", func(_, u Manager) string { return u.ID }, func(_, _ Manager) string { return "stop" }, true, false},
-		{"the reason reads like a chief's name", func(_, _ Manager) string { return Owner }, func(l, _ Manager) string { return "replaced by chief " + l.ID + ": see goal9" }, true, true},
+		{"the owner closes", func(_, _ Manager) string { return Owner }, func(_, _ Manager) string { return "stop" }, false, false},
+		{"the lower chief closes", func(l, _ Manager) string { return l.ID }, func(_, _ Manager) string { return "stop" }, false, false},
+		{"the top chief closes", func(_, u Manager) string { return u.ID }, func(_, _ Manager) string { return "stop" }, false, false},
+		{"the reason reads like a chief's name", func(_, _ Manager) string { return Owner }, func(l, _ Manager) string { return "replaced by chief " + l.ID + ": see goal9" }, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -452,10 +466,14 @@ func TestOnlyTheClosingChiefSleepsThroughAClose(t *testing.T) {
 			if _, err := w.core.CloseGoal(w.board(t), CloseOrder{Ref: g.ID, As: CloseAbandoned, Why: tc.why(low, top), Author: tc.closer(low, top)}); err != nil {
 				t.Fatal(err)
 			}
+			assertRecordedClosure(t, w.core, g.ID)
 			lowHad, topHad := len(w.handedTo(low.Session)), len(w.handedTo(top.Session))
 			for range 2 {
 				w.clock = w.clock.Add(2 * time.Minute)
 				w.loop(t, 1)
+				if err := w.core.DispatchActions(w.board(t)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			heard := func(got []string) bool {
 				return slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, EventGoalClosed) })
@@ -612,6 +630,9 @@ func TestAnIDSharedAcrossHostsGrantsNothing(t *testing.T) {
 						t.Fatalf("steer author %q, want %q", steers[0].Author, local.ID)
 					}
 					return
+				}
+				if err := f.b.core.DispatchActions(f.b.board(t)); err != nil {
+					t.Fatal(err)
 				}
 				if !slices.ContainsFunc(f.b.handedTo(local.Session), func(s string) bool { return strings.Contains(s, "was refused") }) {
 					t.Fatalf("the namesake heard %q, want the refusal", f.b.handedTo(local.Session))
@@ -1097,5 +1118,29 @@ func TestAClosedGoalsItemsOnAnotherHostRemainUnresolved(t *testing.T) {
 				t.Fatalf("host b ended %v, want only the closed goal's worker", f.b.launches.forgot)
 			}
 		})
+	}
+}
+
+func assertRecordedClosure(t *testing.T, c *Core, goal string) {
+	t.Helper()
+	events, err := c.Store.GoalEvents(goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := 0
+	for _, e := range events {
+		if e.Kind == EventGoalClosed {
+			closed++
+		}
+	}
+	if closed != 1 {
+		t.Fatalf("closure recorded %d times, want once", closed)
+	}
+	feeds, err := c.Store.Feeds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(feeds[goal].Recent, func(e GoalEvent) bool { return e.Kind == EventGoalClosed }) {
+		t.Fatal("closure missing from durable status feed")
 	}
 }

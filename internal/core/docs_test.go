@@ -23,6 +23,9 @@ func (w *orgWorld) route(t *testing.T) Board {
 	if err := w.core.RouteDocs(w.board(t)); err != nil {
 		t.Fatal(err)
 	}
+	if err := w.core.DispatchActions(w.board(t)); err != nil {
+		t.Fatal(err)
+	}
 	return w.board(t)
 }
 

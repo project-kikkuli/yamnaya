@@ -133,6 +133,10 @@ func TestClosingAGoalCancelsItsQueuedWorkerBeforeCapacityReturns(t *testing.T) {
 	if _, err := w.core.StartNew(NewLaunch{Parent: manager.Session, Repo: "/repo/app", Prompt: "work", Source: "queued-worker", Session: "worker"}); err != nil {
 		t.Fatal(err)
 	}
+	g, err := w.core.Store.Goal(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	g.State = GoalDropped
 	if err := w.core.Store.SaveGoal(g); err != nil {
 		t.Fatal(err)

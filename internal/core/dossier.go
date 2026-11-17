@@ -112,10 +112,9 @@ func Missing(it Item) []string {
 	return out
 }
 
-// Unprepared is what an open ask that climbed to the owner past a stuck or retired manager still lacks; an ask the owner's own
-// session filed, or one filed before ym refused thin asks, has no one to prepare it and is never unprepared.
+// Unprepared retains missing decision context after a managed ask reaches the owner.
 func Unprepared(it Item) []string {
-	if it.State != ItemOpen || it.Recipient != Owner || it.Preparer == "" {
+	if it.State != ItemOpen || it.Recipient != Owner || it.Preparer == "" && it.GoalOwner == "" && it.Dossier.Goal == "" {
 		return nil
 	}
 	return Missing(it)

@@ -104,6 +104,9 @@ func TestCollidingSessionPrefixesKeepItemsAndGoalAgentsSeparate(t *testing.T) {
 		if _, _, err := w.core.Answer(w.board(t), it.Key(), "use this delimiter"); err != nil {
 			t.Fatal(err)
 		}
+		if err := w.core.DispatchActions(w.board(t)); err != nil {
+			t.Fatal(err)
+		}
 		if got := w.handedTo(id); len(got) != 1 {
 			t.Fatalf("answers to %s: %v", id, got)
 		}

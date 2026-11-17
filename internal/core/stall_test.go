@@ -41,6 +41,9 @@ func TestAHungAgentReachesItsManagerOnceAndStopsCountingAsMovement(t *testing.T)
 				}
 			})
 			w.loop(t, 3)
+			if err := w.core.DispatchActions(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
 			var got []string
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, "looks hung") {
@@ -140,6 +143,9 @@ func TestAProcessHoldingALargeShareOfMemoryReachesItsAgentsManagerOnce(t *testin
 			w.core.Loads = func() float64 { return 1 }
 			w.core.Mem = func() (map[int]float64, error) { return map[int]float64{agent: 0.3 * gib, 5000: c.bytes}, nil }
 			w.loop(t, 3)
+			if err := w.core.DispatchActions(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
 			var got []string
 			for _, text := range w.handedTo(m.Session) {
 				if strings.Contains(text, "memory:") {
