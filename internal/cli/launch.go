@@ -397,7 +397,7 @@ func (l launcher) StartBound(n core.NewLaunch, bind func(string, string, string)
 
 // Start creates a worktree for the new session, then starts its agent there on ym's server.
 func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
-	if n.Assignment != "" {
+	if n.Assignment != "" || n.Request != "" {
 		if err := os.MkdirAll(l.records.Dir, 0o755); err != nil {
 			return core.Started{}, err
 		}
@@ -417,7 +417,7 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 			return core.Started{}, err
 		}
 		for _, rec := range all {
-			if rec.Assignment != n.Assignment {
+			if n.Assignment != "" && rec.Assignment != n.Assignment || n.Assignment == "" && rec.Request != n.Request {
 				continue
 			}
 			if rec.Starting {
@@ -441,11 +441,26 @@ func (l launcher) Start(n core.NewLaunch) (core.Started, error) {
 			return l.started(rec), nil
 		}
 	}
+	if l.core != nil {
+		if err := l.core.CheckLaunch(n); err != nil {
+			return core.Started{}, err
+		}
+	}
+	if n.Repo != "" && !core.IsRepoPath(n.Repo) && l.core != nil {
+		var err error
+		n.Repo, err = l.core.ResolveRepo(n.Repo)
+		if err != nil {
+			return core.Started{}, err
+		}
+		if err := l.core.CheckLaunch(n); err != nil {
+			return core.Started{}, err
+		}
+	}
 	slug := launch.NormalizeSlug(n.Slug)
 	if slug == "" {
 		slug = launch.Unique(launch.Slug(launch.Strip(n.Prompt, l.boilerplate(n))))
 	}
-	rec := launch.Record{Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Assignment: n.Assignment, Started: time.Now()}
+	rec := launch.Record{Request: n.Request, Harness: claude.Name, Prompt: n.Prompt, Parent: n.Parent, Assignment: n.Assignment, Started: time.Now()}
 	switch n.Harness {
 	case codex.Name:
 		rec.Harness = codex.Name
@@ -582,26 +597,34 @@ func (l launcher) await(rec launch.Record) (launch.Record, error) {
 
 func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Command {
 	var useCodex bool
-	var repo, slug, selected, source string
+	var repo, slug, selected, source, host string
 	cmd := &cobra.Command{
 		Use:   "new [--codex] [--repo NAME|PATH] [--slug S] <prompt>",
 		Short: "Start claude (or codex) on a prompt in a new worktree, in ym's own tmux server",
 		Args:  cobra.ExactArgs(1),
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			if e.core.Launches == nil {
-				return errors.New("ym's launcher is unavailable")
+			if host == "" {
+				var err error
+				host, err = e.core.Store.LaunchTarget()
+				if err != nil {
+					return err
+				}
 			}
-			if err := ensureWorkService(); err != nil {
-				return err
+			if host != "" && host != e.core.SelfName() {
+				to, err := e.core.Store.RouteHost(host)
+				if err != nil {
+					return err
+				}
+				host = to
 			}
-			n := core.NewLaunch{Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug, Profile: selected, Source: source}
+			n := core.NewLaunch{Host: host, Prompt: args[0], Harness: claude.Name, Repo: repo, Slug: slug, Profile: selected, Source: source}
 			if useCodex {
 				n.Harness = codex.Name
 			}
 			var err error
 			if n.Repo == "" {
 				n.Repo, err = os.Getwd()
-			} else {
+			} else if host == "" || host == e.core.SelfName() {
 				n.Repo, err = e.core.ResolveRepo(n.Repo)
 			}
 			if err != nil {
@@ -617,12 +640,16 @@ func newCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Comm
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), msg)
+			if err := startService(); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "launch recorded, but background service did not start: %v\n", err)
+			}
 			return nil
 		}),
 	}
 	cmd.Flags().StringVar(&selected, "profile", "", "login profile id on this host")
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "start codex instead of claude")
 	cmd.Flags().StringVar(&repo, "repo", "", "repository to branch from, by path or by any part of its name (default: the current directory's)")
+	cmd.Flags().StringVar(&host, "host", "", "host to launch on (default: the board's selected host)")
 	cmd.Flags().StringVar(&source, "source", "", "stable work identity for idempotent launch replay")
 	cmd.Flags().StringVar(&slug, "slug", "", "worktree and branch name (default: from the prompt)")
 	return cmd
@@ -947,6 +974,11 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 
 // restart runs the command argv makes for rec in rec's pane, recreating its worktree when it is gone, and keeps rec unlanded.
 func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string, error)) ([]string, string, error) {
+	if l.core != nil {
+		if err := l.core.CheckLaunch(core.NewLaunch{Repo: rec.Worktree.Path}); err != nil {
+			return nil, "", err
+		}
+	}
 	if err := recordProfile(rec).DefaultConstraint(); err != nil {
 		return nil, "", err
 	}
@@ -1104,7 +1136,6 @@ func (l launcher) Dormant() []core.Dormant {
 // nothing lands, the rest end as a kill does, their work bundled first, so ym revive brings them back. A cleanup that refuses,
 // as when git fails, is recorded and not tried again until the worktree changes; one a process works in waits for it to leave.
 func (l launcher) Sweep(seen map[string]string) error {
-	l.sweepSoon()
 	all, err := l.records.All()
 	if err != nil {
 		return err

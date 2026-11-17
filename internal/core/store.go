@@ -217,7 +217,7 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + continuedSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema + workSchema + remoteWorkSchema + workDispatchSchema + digestSchema); err != nil {
+	if _, err := db.Exec(schema + messageSchema + waitingSchema + seenSchema + continuedSchema + forwardSchema + orgSchema + verifySchema + hostSchema + nicknameSchema + docSchema + eventSchema + steerSchema + briefSchema + relaySchema + paceSchema + contextSchema + offSchema + themeSchema + workSchema + remoteWorkSchema + workDispatchSchema + digestSchema + linearSchema + activationSchema + activationRemoteSchema + launchAdmissionSchema + itemConsolidationSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
@@ -320,6 +320,10 @@ func OpenStore(path string) (*Store, error) {
 	if err := addColumns(db, `ym_review_requests title TEXT NOT NULL DEFAULT ''`, `ym_review_requests author TEXT NOT NULL DEFAULT ''`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate review requests: %w", err)
+	}
+	if err := addColumns(db, `ym_messages source TEXT NOT NULL DEFAULT 'legacy'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate message provenance: %w", err)
 	}
 	scans, err := sql.Open("sqlite", "file:"+strings.TrimSuffix(path, ".db")+"-scans.db?"+q.Encode())
 	if err == nil {

@@ -967,7 +967,7 @@ func (c *Core) wakeRemoteChiefs(o Org) error {
 		}
 		host, rest, _ := SplitRemote(chief)
 		self := c.SelfName()
-		errs = append(errs, c.rollChief(chief, o, events, func(action, quiet Rollup) error {
+		errs = append(errs, c.rollChief(b, chief, o, events, func(action, quiet Rollup) error {
 			text := ""
 			if len(action) > 0 {
 				text = action.merged(quiet).text()

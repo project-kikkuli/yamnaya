@@ -442,49 +442,8 @@ func (c *Core) busyTold(s Live, told time.Time) bool {
 	return s.Status == Waiting || s.Status == Onboarding || s.Prompt != nil || s.Status == Busy && !s.Hung(c.now(), c.Woke) && told.After(s.Since)
 }
 
-// flushDigest hands a chief what waits for it. New content goes into a digest still pending; a session mid-turn gets at most one,
-// so anything later waits here for its next message, and only what needs the chief ever starts a message. Quiet content rides
-// along at most every Digest.
-func (c *Core) flushDigest(b Board, m Manager) error {
-	r, err := c.Store.digest(m.ID)
-	if err != nil || len(r.Action) == 0 {
-		return err
-	}
-	s, ok := c.reach(b, m.Session)
-	if !ok {
-		return nil
-	}
-	seq, err := c.Store.pendingDigest(m.Session)
-	if err != nil {
-		return err
-	}
-	if seq != 0 {
-		r.Sent, r.Action = r.Sent.merged(r.Action), Rollup{}
-		if err := c.Store.rewriteMessage(seq, c.Store.Nicked(r.Sent.text())); err != nil {
-			return err
-		}
-		return c.Store.saveDigest(m.ID, r)
-	}
-	if c.busyTold(s, r.ToldAt) {
-		return nil
-	}
-	body := r.Action
-	if now := c.now(); len(r.Quiet) > 0 && !now.Before(r.SummedAt.Add(c.pace().Digest)) {
-		body, r.Quiet, r.SummedAt = body.merged(r.Quiet), Rollup{}, now
-	}
-	text := body.text()
-	if err := c.tell(b, m.Session, text, false); err != nil {
-		return err
-	}
-	r.Action, r.Sent, r.ToldAt = Rollup{}, Rollup{}, c.now()
-	if seq, err = c.Store.pendingDigest(m.Session); err != nil {
-		return err
-	}
-	if seq != 0 {
-		r.Sent = body
-	}
-	return c.Store.saveDigest(m.ID, r)
-}
+// flushDigest keeps summaries available for reads; concrete actions are queued from their source events.
+func (c *Core) flushDigest(_ Board, _ Manager) error { return nil }
 
 // Digest is the calling manager's or chief's changes it has not been handed, one line per goal; a chief's are handed by this.
 func (c *Core) Digest(session string) ([]string, error) {
@@ -539,14 +498,14 @@ func (c *Core) chiefChanges(session string, force bool) ([]string, error) {
 		return nil, err
 	}
 	r.Quiet = r.Quiet.merged(quietRollup(split.quiet, chiefLabel(o, "")))
-	lines := r.Quiet.lines()
+	lines := r.Action.merged(r.Quiet).lines()
 	if len(lines) == 0 && !force {
 		if err := c.Store.markHeard(m.ID, split.quiet, now); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
-	r.Quiet, r.SummedAt = Rollup{}, now
+	r.Action, r.Quiet, r.SummedAt = Rollup{}, Rollup{}, now
 	if err := c.Store.saveDigest(m.ID, r); err != nil {
 		return nil, err
 	}

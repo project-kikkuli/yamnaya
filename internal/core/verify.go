@@ -148,8 +148,8 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 		if s.Status != Idle || s.Prompt != nil || !v.NudgedAt.IsZero() || starting {
 			return nil
 		}
-		text := fmt.Sprintf("ym: you have not recorded a verdict on %s. Finish checking, then run ym goal verdict --pass or --fail with a --finding for each concrete gap.", g.Shown())
-		if err := c.tell(b, v.Session, text, false); err != nil {
+		text := fmt.Sprintf("Finish checking %s and record a verdict with concrete findings.", g.Shown())
+		if err := c.requestAction(b, v.Session, "verdict", fmt.Sprintf("%s:%d", g.ID, v.Attempt), text); err != nil {
 			return err
 		}
 		v.NudgedAt = now
@@ -169,6 +169,10 @@ func (c *Core) verifyOne(b Board, o Org, m Manager, g Goal, v Verification) erro
 
 // launchVerifier starts a fresh verifier session on v, in a new worktree of the goal's repository.
 func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
+	if err := c.CheckLaunch(NewLaunch{Repo: g.Repo}); err != nil {
+		v.LaunchedAt, v.Session, v.LastError = timeZero, "", err.Error()
+		return c.Store.SaveVerification(v)
+	}
 	v.LaunchedAt, v.NudgedAt = c.now(), timeZero
 	v.previousSession = v.Session
 	v.Session = uuid.NewString()
@@ -182,10 +186,13 @@ func (c *Core) launchVerifier(o Org, g Goal, v Verification) error {
 	if err != nil {
 		return err
 	}
-	st, err := c.Launches.Start(NewLaunch{Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
+	st, err := c.Launches.Start(NewLaunch{Request: activationID(g.ID, "verifier-start", fmt.Sprintf("%d:%d", v.Attempt, v.Failures)), Prompt: c.verifierPrompt(o, g, v), Harness: o.Managers[g.ManagerID].Harness, Profile: o.Managers[g.ManagerID].Profile, ConfigRoot: o.Managers[g.ManagerID].ConfigRoot, Repo: g.Repo,
 		Slug: fmt.Sprintf("verify-%s-%d", g.Shown(), v.Attempt), Session: v.Session, Await: true})
 	if err != nil {
 		v.Session, v.LastError = "", err.Error()
+		if errors.Is(err, ErrLaunchDeferred) {
+			v.LaunchedAt = timeZero
+		}
 	} else {
 		v.Session = st.Session
 	}
@@ -290,11 +297,8 @@ func (c *Core) decide(b Board, o Org, g Goal, v Verification, verdict string, fi
 	if err != nil {
 		return err
 	}
-	if verdict == VerdictPass {
-		if m, ok := o.Managers[current.ManagerID]; ok && m.Session != "" {
-			return c.tell(b, m.Session, fmt.Sprintf("ym: %s passed verification (attempt %d). It is done and the owner sees it.", g.Shown(), v.Attempt), false)
-		}
-	}
+	_ = current
+
 	return nil
 }
 

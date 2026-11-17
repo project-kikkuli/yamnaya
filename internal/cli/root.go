@@ -51,27 +51,28 @@ func Wire(path string) (*core.Core, error) {
 			}
 			return out
 		},
-		Store:       st,
-		Scoped:      !core.DefaultStateDir(filepath.Dir(path)),
-		Harnesses:   []core.Harness{cl, cx},
-		Hosts:       []core.Host{tmux.New(), srv},
-		Front:       app.New().Front,
-		Procs:       proc.List,
-		Git:         core.ReadGit,
-		PRs:         gh.New(),
-		Landings:    gh.New(),
-		Port:        port,
-		Roots:       core.RepoRoots,
-		History:     readHistory,
-		Ask:         health.Addressed,
-		Measure:     func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() },
-		StateDir:    filepath.Dir(path),
-		Notify:      desktopNotify,
-		RunSelf:     runSelf,
-		Slots:       slot.Machine,
-		ThrottleDir: slot.Dir,
-		CPU:         slot.CPU,
-		Mem:         slot.Mem,
+		LaunchAdmission: machineLaunchAdmission(filepath.Dir(path)),
+		Store:           st,
+		Scoped:          !core.DefaultStateDir(filepath.Dir(path)),
+		Harnesses:       []core.Harness{cl, cx},
+		Hosts:           []core.Host{tmux.New(), srv},
+		Front:           app.New().Front,
+		Procs:           proc.List,
+		Git:             core.ReadGit,
+		PRs:             gh.New(),
+		Landings:        gh.New(),
+		Port:            port,
+		Roots:           core.RepoRoots,
+		History:         readHistory,
+		Ask:             health.Addressed,
+		Measure:         func(p core.Project) (float64, bool) { return progress.Of(p).Fraction() },
+		StateDir:        filepath.Dir(path),
+		Notify:          desktopNotify,
+		RunSelf:         runSelf,
+		Slots:           slot.Machine,
+		ThrottleDir:     slot.Dir,
+		CPU:             slot.CPU,
+		Mem:             slot.Mem,
 	}
 	if l, err := newLauncher(filepath.Dir(path)); err == nil {
 		l.core, l.srv = c, srv
@@ -135,9 +136,6 @@ func NewRoot() *cobra.Command {
 			if err := e.refuseOff(cmd); err != nil {
 				return err
 			}
-			if cmd.Name() != "serve" && cmd.Name() != "throttle" {
-				keepServing(cmd.ErrOrStderr())
-			}
 			return run(e, cmd, args)
 		}
 	}
@@ -157,16 +155,11 @@ func NewRoot() *cobra.Command {
 			return err
 		}
 		adoptChildren()
-		keepDefault(cmd.ErrOrStderr())
-		if err := ensureWorkService(); err != nil {
-			return err
-		}
-		e.core.KeepAlive = ensureWorkService
 		dir, err := stateDir()
 		if err != nil {
 			return err
 		}
-		m := usage.New(dir)
+		m := usage.NewReader(dir)
 		defer m.Close()
 		e.core.Meter = m
 		e.core.Health = healthText
@@ -179,6 +172,9 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(
 		serveCmd(with),
 		docsCmd(with),
+		linearCmd(with),
+		actionCmd(with),
+		controlCmd(),
 		serviceCmd(),
 		slotCmd(),
 		profilesCmd(with),

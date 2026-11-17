@@ -14,7 +14,7 @@ func (c *Core) Loop(b Board) error {
 	var errs []error
 	c.watchCold(b)
 	c.trackRunning(b)
-	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold, c.archiveDone, c.sweepLaunches} {
+	for _, step := range []func(Board) error{c.ForwardIdle, c.Notice, c.NoticeDrift, c.Supervise, c.ReviveWork, c.Wake, c.reportCold, c.archiveDone} {
 		errs = append(errs, step(b))
 	}
 	return errors.Join(append(errs, c.NotifyOwner())...)
@@ -240,7 +240,7 @@ func (c *Core) Wake(b Board) error {
 			errs = append(errs, fmt.Errorf("%s: %w", m.Shown(), err))
 		}
 	}
-	return errors.Join(append(errs, c.wakeRemoteChiefs(o), c.returnUnfed(o))...)
+	return errors.Join(append(errs, c.wakeRemoteChiefs(o), c.returnUnfed(o), c.DispatchActions(b))...)
 }
 
 func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
@@ -248,21 +248,19 @@ func (c *Core) wakeManager(b Board, m Manager, g Goal) error {
 	if err != nil || !c.wakeDue(events) {
 		return err
 	}
-	if hold, err := c.holdWake(b, m, g); err != nil || hold {
-		return err
+	for _, e := range events {
+		needed, err := c.eventActionNeeded(b, b.Org, e)
+		if err != nil {
+			return err
+		}
+		if needed {
+			text := "Assess this unresolved work and take the required action:\n" + eventLine(e, "")
+			if err := c.requestAction(b, m.Session, "event", strconv.FormatInt(e.Seq, 10), text); err != nil {
+				return err
+			}
+		}
 	}
-	if err := c.tell(b, m.Session, wakeText(g, events), false); err != nil {
-		return err
-	}
-	if err := c.Store.markDelivered(events, c.now()); err != nil {
-		return err
-	}
-	r, err := c.Store.digest(m.ID)
-	if err != nil {
-		return err
-	}
-	r.ToldAt = c.now()
-	return c.Store.saveDigest(m.ID, r)
+	return c.Store.markDelivered(events, c.now())
 }
 
 // holdWake reports whether the manager's events should keep waiting, to arrive as one message: a wake is still pending in its session,
@@ -306,14 +304,14 @@ func (c *Core) wakeChief(b Board, o Org, m Manager) error {
 	if err != nil {
 		return err
 	}
-	if err := c.rollChief(m.ID, o, events, func(action, quiet Rollup) error { return c.Store.addDigest(m.ID, action, quiet) }, ""); err != nil {
+	if err := c.rollChief(b, m.ID, o, events, func(action, quiet Rollup) error { return c.Store.addDigest(m.ID, action, quiet) }, ""); err != nil {
 		return err
 	}
 	return c.flushDigest(b, m)
 }
 
 // rollChief hands deliver what of chief's events is due, split into what needs it and what does not, and marks those heard.
-func (c *Core) rollChief(chief string, o Org, events []GoalEvent, deliver func(action, quiet Rollup) error, host string) error {
+func (c *Core) rollChief(b Board, chief string, o Org, events []GoalEvent, deliver func(action, quiet Rollup) error, host string) error {
 	split, err := c.sortChief(chief, events)
 	if err != nil {
 		return err
@@ -322,7 +320,26 @@ func (c *Core) rollChief(chief string, o Org, events []GoalEvent, deliver func(a
 	var heard []GoalEvent
 	action, quiet := Rollup{}, Rollup{}
 	if c.actionDue(split, chief) {
-		action = actionRollup(split.action, chiefLabel(o, host), host)
+		var needed []GoalEvent
+		for _, e := range split.action {
+			actionable, err := c.eventActionNeeded(b, o, e)
+			if err != nil {
+				return err
+			}
+			if !actionable {
+				split.quiet = append(split.quiet, e)
+				continue
+			}
+			session := chief
+			if manager, ok := o.Managers[chief]; ok {
+				session = manager.Session
+			}
+			if err := c.requestAction(b, session, "event", strconv.FormatInt(e.Seq, 10), "Assess this unresolved work and take the required action:\n"+eventLine(e, "")); err != nil {
+				return err
+			}
+			needed = append(needed, e)
+		}
+		action = actionRollup(needed, chiefLabel(o, host), host)
 		heard = append(heard, split.action...)
 	}
 	if split.quietDue(pace, now) {
@@ -471,29 +488,8 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 // nudgeIdle wakes a manager when it ended a turn with nothing in flight: no agent working, no pull request awaiting CI, no wake
 // set, no ask waiting on someone, and nothing that wakes it since its last wake; what waits for the digest rides along. It nudges once until something else happens on the
 // goal; a manager that stays idle after that is the quiet watch's to nudge and flag.
-func (c *Core) nudgeIdle(b Board, o Org, m Manager, g Goal) error {
-	if g.State != GoalActive {
-		return nil
-	}
-	s, ok := b.Session(m.Session)
-	if !ok || s.Status != Idle || s.Prompt != nil || s.ResultAt.IsZero() {
-		return nil
-	}
-	if pending, err := c.Store.undelivered(g.ID); err != nil || urgent(pending) {
-		return err
-	}
-	if last, err := c.Store.lastDelivered(g.ID); err != nil || last.After(s.ResultAt) {
-		return err
-	}
-	if kind, err := c.Store.lastKind(g.ID); err != nil || kind == EventNudge {
-		return err
-	}
-	if c.inFlight(b, o, m) {
-		return nil
-	}
-	_, _, err := c.RecordGoalEvent(g.ID, EventNudge, "you ended your turn with nothing in flight: no agent working, no pull request awaiting CI, no wake set, nobody owing you an answer.",
-		"nudge:"+m.Session+"@"+s.ResultAt.UTC().Format(time.RFC3339Nano))
-	return err
+func (c *Core) nudgeIdle(_ Board, _ Org, _ Manager, _ Goal) error {
+	return nil
 }
 
 // inFlight reports whether anything of m's is still moving on its own: an agent that is not hung, or a subagent of one, working or just launched, a pull request with CI

@@ -397,13 +397,11 @@ func (c *Core) watchSteers(b Board, o Org) error {
 			continue
 		}
 		if st.Nudges < Nudges {
-			text := fmt.Sprintf("ym: you have not adopted revision %d of %s, which %s sent %s ago. Read it with ym goal context %s, rework your plan to fit, then run ym goal adopt %s --revision %d.",
-				st.Revision, subject(o, m), o.SteerBy(st), now.Sub(st.CreatedAt).Round(time.Minute), m.Shown(), m.Shown(), st.Revision)
-			if err := c.tell(b, m.Session, text, false); err != nil {
-				errs = append(errs, err)
-				continue
+			text := fmt.Sprintf("Read and adopt plan revision %d with ym goal context %s, then ym goal adopt %s --revision %d.", st.Revision, m.Shown(), m.Shown(), st.Revision)
+			if err := c.requestAction(b, m.Session, "adopt", fmt.Sprint(st.Revision), text); err != nil {
+				return err
 			}
-			st.Nudges, st.NudgedAt = st.Nudges+1, now
+			st.Nudges, st.NudgedAt = Nudges, now
 			errs = append(errs, c.Store.saveSteer(st))
 			continue
 		}

@@ -427,7 +427,7 @@ func (c *Core) typePending(b Board, o Org) (int, error) {
 	bySession := map[string][]Message{}
 	var order []string
 	for _, m := range msgs {
-		if now.Sub(m.CreatedAt) > pendingFresh {
+		if m.Source != "owner" || now.Sub(m.CreatedAt) > pendingFresh {
 			continue
 		}
 		s, ok := c.reach(b, c.carrier(o, m.Session))
@@ -544,6 +544,21 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 	if o, err := c.LoadOrg(); err == nil {
 		session = c.carrier(o, session)
 	}
+	var ownerItems []Item
+	for _, it := range items {
+		if it.Recipient == Owner {
+			ownerItems = append(ownerItems, it)
+			continue
+		}
+		subject := fmt.Sprintf("%d:%d", it.Seq, len(it.History))
+		if err := c.requestAction(b, session, "answer", subject, notice(it)); err != nil {
+			return Queued, err.Error()
+		}
+	}
+	if len(ownerItems) == 0 {
+		return Queued, "awaiting supervisor control delivery"
+	}
+	items = ownerItems
 	s, ok := c.reach(b, c.Resolve(session))
 	if !ok {
 		return Queued, ""
@@ -564,9 +579,6 @@ func (c *Core) deliverWhy(b Board, session string, items []Item) (Delivery, stri
 	}
 	text := strings.Join(notices, "; ")
 	owner := true
-	for _, it := range claimed {
-		owner = owner && it.Recipient == Owner
-	}
 	err := c.message(s.Session, text, owner)
 	switch {
 	case err == nil:

@@ -25,6 +25,7 @@ type Message struct {
 	Session   string
 	Text      string
 	State     string
+	Source    string
 	CreatedAt time.Time
 	Delivered time.Time
 }
@@ -36,7 +37,8 @@ CREATE TABLE IF NOT EXISTS ym_messages (
 	text TEXT NOT NULL,
 	state TEXT NOT NULL,
 	created_at TEXT NOT NULL,
-	delivered_at TEXT
+	delivered_at TEXT,
+	source TEXT NOT NULL DEFAULT 'legacy'
 );
 CREATE INDEX IF NOT EXISTS ym_messages_session ON ym_messages(session, state);
 `
@@ -48,7 +50,7 @@ func (s *Store) AddMessage(session, text, state string) (Message, error) {
 	if state != MsgPending {
 		delivered = at
 	}
-	res, err := s.db.Exec(`INSERT INTO ym_messages (session, text, state, created_at, delivered_at) VALUES (?, ?, ?, ?, ?)`, session, text, state, at, delivered)
+	res, err := s.db.Exec(`INSERT INTO ym_messages (session, text, state, created_at, delivered_at, source) VALUES (?, ?, ?, ?, ?, 'owner')`, session, text, state, at, delivered)
 	if err != nil {
 		return Message{}, err
 	}
@@ -87,7 +89,7 @@ func (s *Store) messagesOf(sessions []string) ([]Message, error) {
 }
 
 func (s *Store) messages(where string, args ...any) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT seq, session, text, state, created_at, delivered_at FROM ym_messages `+where+` ORDER BY seq`, args...)
+	rows, err := s.db.Query(`SELECT seq, session, text, state, created_at, delivered_at, source FROM ym_messages `+where+` ORDER BY seq`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +98,7 @@ func (s *Store) messages(where string, args ...any) ([]Message, error) {
 	for rows.Next() {
 		var m Message
 		var created, delivered sql.NullString
-		if err := rows.Scan(&m.Seq, &m.Session, &m.Text, &m.State, &created, &delivered); err != nil {
+		if err := rows.Scan(&m.Seq, &m.Session, &m.Text, &m.State, &created, &delivered, &m.Source); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, m.Delivered = parseTime(created), parseTime(delivered)

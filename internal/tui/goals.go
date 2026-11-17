@@ -705,9 +705,11 @@ func (m Model) goalKey(k tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 	}
-	if r.need != nil && (r.need.PR != nil || r.need.Review != nil || r.need.Doc != nil) {
+	if r.need != nil && (r.need.PR != nil || r.need.Review != nil || r.need.Doc != nil || r.need.Linear != nil) {
 		url := ""
 		switch {
+		case r.need.Linear != nil:
+			url = r.need.Linear.URL
 		case r.need.PR != nil:
 			url = r.need.PR.URL
 		case r.need.Review != nil:
@@ -1121,6 +1123,17 @@ func (m *Model) dropPR(n core.Node) {
 
 func (m Model) goalSections(n core.Node) []treeNode {
 	var out []treeNode
+	if n.Goal != nil {
+		var lines []string
+		for _, i := range m.board.Linear.Issues {
+			if i.Goal == n.Goal.ID {
+				lines = append(lines, strings.Join(i.Details(), "\n   "))
+			}
+		}
+		if len(lines) > 0 {
+			out = append(out, textSection("node/"+n.Manager.ID+"/linear", "LINEAR", "   "+strings.Join(lines, "\n   ")+"\n"))
+		}
+	}
 	b := viewPage{}
 	if len(n.Feed.Recent) == 0 {
 		b.WriteString(pal.dim.Render("   nothing yet; ym records PRs, CI, merges, agent replies and the manager's updates here") + "\n")

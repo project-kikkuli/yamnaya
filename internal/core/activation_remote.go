@@ -219,6 +219,21 @@ func (c *Core) ReceiveActivation(m ActivationMessage) error {
 		if _, err = tx.Exec(`UPDATE ym_activations SET state=?,result=?,error=? WHERE id=? AND state NOT IN ('done','superseded')`, state, m.Result, why, m.Action.ID); err != nil {
 			return err
 		}
+		if state == "done" || state == "superseded" {
+			a := Activation{ID: m.Action.ID}
+			if err = tx.QueryRow(`SELECT kind,subject,attention FROM ym_activations WHERE id=?`, a.ID).Scan(&a.Kind, &a.Subject, &a.Attention); err != nil {
+				return err
+			}
+			if state == "done" && a.Kind == "answer" {
+				if err = settleAnswerIn(tx, a, c.now()); err != nil {
+					return err
+				}
+			}
+			if err = settleActivationAttentionIn(tx, a, c.now()); err != nil {
+				return err
+			}
+		}
+
 		if err = tx.Commit(); err != nil {
 			return err
 		}

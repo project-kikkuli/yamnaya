@@ -128,6 +128,14 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 		if now.Before(m.NextAttempt) {
 			break
 		}
+		if err := c.CheckLaunch(NewLaunch{Repo: m.Repo, Directory: m.Directory}); err != nil {
+			m.LastError = err.Error()
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+			break
+		}
+		previousFailures, previousAttempt := m.Failures, m.NextAttempt
 		m.Failures++
 		m.NextAttempt = now.Add(backoff(m.Failures))
 		if _, err := c.Stop(s); err != nil {
@@ -138,6 +146,12 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 			break
 		}
 		m = c.bringBack(b, o, m)
+		if strings.HasPrefix(m.LastError, "queued for machine capacity:") {
+			m.Failures, m.NextAttempt = previousFailures, previousAttempt
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+		}
 	case alive && !starting:
 		if m.Failures > 0 || !m.NextAttempt.IsZero() {
 			m.Failures, m.NextAttempt = 0, timeZero
@@ -146,9 +160,23 @@ func (c *Core) supervise(b Board, o Org, act activity, m Manager, g Goal, hasGoa
 			}
 		}
 	case !alive && !starting && !now.Before(m.NextAttempt) && c.slot():
+		if err := c.CheckLaunch(NewLaunch{Repo: m.Repo, Directory: m.Directory}); err != nil {
+			m.LastError = err.Error()
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+			break
+		}
+		previousFailures, previousAttempt := m.Failures, m.NextAttempt
 		m.Failures++
 		m.NextAttempt = now.Add(backoff(m.Failures))
 		m = c.bringBack(b, o, m)
+		if strings.HasPrefix(m.LastError, "queued for machine capacity:") {
+			m.Failures, m.NextAttempt = previousFailures, previousAttempt
+			if err := c.Store.SaveManager(m); err != nil {
+				return err
+			}
+		}
 	}
 	if !hasGoal || m.Retired {
 		return nil
@@ -203,15 +231,6 @@ func (c *Core) watchQuiet(b Board, act activity, m Manager, g Goal) error {
 	}
 	if now.Sub(since) < QuietAfter {
 		return nil
-	}
-	if m.Nudges < Nudges {
-		text := fmt.Sprintf("ym: nothing has moved on goal %s since %s. Check your agents and PRs, refresh your brief with ym goal brief, and keep driving the goal to done; if it is blocked on something beyond your authority, escalate with ym item add.",
-			g.Shown(), g.LastMovedAt.Local().Format(time.Kitchen))
-		if err := c.tell(b, m.Session, text, false); err != nil {
-			return err
-		}
-		m.Nudges, m.NudgedAt = m.Nudges+1, now
-		return c.Store.SaveManager(m)
 	}
 	if g.State == GoalStuck {
 		return nil
@@ -308,7 +327,7 @@ func (c *Core) noticeMerges(b Board, o Org) error {
 				continue
 			}
 			text := fmt.Sprintf("ym: %s is green, approved or unreviewed, with no open threads and a clean merge state. You are cleared to merge in %s: merge it when it is what the goal needs.", pr.URL, prRepoName(pr))
-			if err := c.tell(b, m.Session, text, false); err != nil {
+			if err := c.requestAction(b, m.Session, "merge", pr.URL+"@"+st.Merge.OID, text); err != nil {
 				return err
 			}
 		}

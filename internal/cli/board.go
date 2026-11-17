@@ -17,8 +17,10 @@ import (
 
 // boardJSON is this host's board as another host's ym reads it.
 type boardJSON struct {
-	Profiles []core.LoginProfile `json:"profiles,omitempty"`
-	Usage    *usageJSON          `json:"usage,omitempty"`
+	PendingLaunches []core.PendingLaunch `json:"pending_launches,omitempty"`
+	Linear          core.LinearSnapshot  `json:"linear,omitempty"`
+	Profiles        []core.LoginProfile  `json:"profiles,omitempty"`
+	Usage           *usageJSON           `json:"usage,omitempty"`
 	// At is when ym serve took the snapshot.
 	At       string         `json:"at,omitempty"`
 	Sessions []sessionJSON  `json:"sessions"`
@@ -166,7 +168,10 @@ func hostBoard(c *core.Core, b core.Board) (boardJSON, error) {
 		return boardJSON{}, err
 	}
 	b.Fleet.Failovers = failoverStates(c.StateDir)
-	out := boardJSON{Profiles: b.Profiles, Usage: usageWire(b.Fleet), Sessions: sessionsJSON(c, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+	out := boardJSON{PendingLaunches: b.PendingLaunches, Profiles: b.Profiles, Usage: usageWire(b.Fleet), Sessions: sessionsJSON(c, b), Items: []itemJSON{}, Launched: []launchedJSON{}, Dormant: []dormantJSON{}, Waiting: waitingList(b)}
+	if out.Linear, err = c.Store.LinearSnapshot(); err != nil {
+		return out, err
+	}
 	for i := range out.Sessions {
 		out.Sessions[i].Resume = nil
 	}
@@ -252,7 +257,13 @@ func remoteBoard(host string, j boardJSON) core.RemoteBoard {
 		}
 		return id
 	}
-	r := core.RemoteBoard{Host: host, Profiles: append([]core.LoginProfile(nil), j.Profiles...), Usage: usageFromWire(j.Usage)}
+	r := core.RemoteBoard{PendingLaunches: j.PendingLaunches, Host: host, Profiles: append([]core.LoginProfile(nil), j.Profiles...), Usage: usageFromWire(j.Usage)}
+	r.Linear = j.Linear
+	for i := range r.Linear.Issues {
+		if r.Linear.Issues[i].Goal != "" {
+			r.Linear.Issues[i].Goal = qualify(r.Linear.Issues[i].Goal)
+		}
+	}
 	for i := range r.Profiles {
 		r.Profiles[i].Host = host
 	}

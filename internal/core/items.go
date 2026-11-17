@@ -180,10 +180,24 @@ func scanItem(row interface{ Scan(...any) error }) (Item, error) {
 
 // AddItem files it in its Scope with that scope's next ID.
 func (s *Store) AddItem(it Item) (Item, error) {
+	defer s.invalidate()
 	return s.addItem(it)
 }
 
 func (s *Store) addItem(it Item) (Item, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return it, err
+	}
+	defer tx.Rollback()
+	it, err = addItemIn(tx, it)
+	if err != nil {
+		return it, err
+	}
+	return it, tx.Commit()
+}
+
+func addItemIn(tx *sql.Tx, it Item) (Item, error) {
 	if _, ok := kindPrefix[it.Kind]; !ok {
 		return it, fmt.Errorf("unknown kind %q (want decision, default, chore, go, or review)", it.Kind)
 	}
@@ -221,11 +235,6 @@ func (s *Store) addItem(it Item) (Item, error) {
 		}
 		dossier = string(raw)
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return it, err
-	}
-	defer tx.Rollback()
 	it.GoalOwner, err = historicalGoalIn(tx, it.Session)
 	if err != nil {
 		return it, err
@@ -249,7 +258,7 @@ func (s *Store) addItem(it Item) (Item, error) {
 		return it, err
 	}
 	it.History = []Event{{At: it.CreatedAt, To: ItemOpen}}
-	return it, tx.Commit()
+	return it, nil
 }
 
 func addEvent(tx *sql.Tx, key, from, to, text string) error {

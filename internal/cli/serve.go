@@ -120,16 +120,12 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		}
 		gh := intake.New()
 		reviews := reviewPoll{fetch: gh.Requests, authored: gh.Authored, every: 5 * time.Minute}
+		linear := &linearPoll{dir: dir, every: 5 * time.Minute}
 		docs := &docSweeper{dir: dir, every: 3 * time.Minute, recheck: 15 * time.Minute, pace: 350 * time.Millisecond, api: os.Getenv("YAMNAYA_NOTION_API")}
 		if discover && !once {
 			go docs.run(ctx, e.core.Store, cmd.ErrOrStderr())
+			go linear.run(ctx, e.core.Store, cmd.ErrOrStderr())
 			go func() {
-				if n, err := e.core.NameUnnamed(); err != nil || n > 0 {
-					fmt.Fprintf(cmd.ErrOrStderr(), "named %d goals and chiefs: %v\n", n, err)
-				}
-				if n, err := e.core.BetterNames(); err != nil || n > 0 {
-					fmt.Fprintf(cmd.ErrOrStderr(), "renamed %d goals named when the namer failed: %v\n", n, err)
-				}
 				if n, err := e.core.SettleItemFroms(); err != nil || n > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), "settled %d items' from lines: %v\n", n, err)
 				}
@@ -158,6 +154,9 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 			last = time.Now()
 			if discover && once {
+				if err := linear.poll(ctx, e.core.Store, true); err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), "Linear:", err)
+				}
 				if err := docs.sweep(ctx, e.core.Store); err != nil {
 					return err
 				}
@@ -239,6 +238,9 @@ func serveCycle(c *core.Core, seen ...func(core.Board)) error {
 		return err
 	}
 	var failures []error
+	if err := c.DrainLaunches(); err != nil {
+		failures = append(failures, err)
+	}
 	if _, err = c.RefreshPRs(b); err != nil {
 		failures = append(failures, err)
 	}
@@ -292,24 +294,6 @@ func (r *reviewPoll) poll(ctx context.Context, c *core.Core) error {
 		errs = append(errs, c.Store.SyncAuthored(out))
 	}
 	return errors.Join(errs...)
-}
-
-// ensureService starts ym serve when its lock is free; a variable so tests can watch it.
-var ensureService = ensureWorkService
-
-// keepServing restarts ym serve from any ym command once a state dir has had one, so a serve that died comes back the next time
-// an agent or the owner runs ym, board or not.
-func keepServing(w io.Writer) {
-	dir, err := stateDir()
-	if err != nil {
-		return
-	}
-	if _, err := os.Stat(filepath.Join(dir, "work-service.lock")); err != nil {
-		return
-	}
-	if err := ensureService(); err != nil {
-		fmt.Fprintf(w, "ym serve is down and did not restart: %v. Fix: %s\n", err, keepFix)
-	}
 }
 
 // ensureWorkService starts ym serve unless it runs, or YAMNAYA_NO_SERVE=1 keeps this command from starting it.

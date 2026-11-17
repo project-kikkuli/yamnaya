@@ -1,8 +1,12 @@
 name: Go checks
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'ym-validate/**']
+
+env:
+  GOMAXPROCS: '2'
 
 permissions:
   contents: read
@@ -16,8 +20,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: go build -o "$RUNNER_TEMP/ym" ./cmd/ym
-      - run: '"$RUNNER_TEMP/ym" slot --lane yamnaya-test -- nice -n 19 go test -p 2 ./...'
-      - run: '"$RUNNER_TEMP/ym" slot -- go vet ./...'
+      - run: go build -p 1 -o "$RUNNER_TEMP/ym" ./cmd/ym
+      - run: go test -p 1 ./...
+      - run: go vet -p 1 ./...
       - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
-      - run: '"$RUNNER_TEMP/ym" slot -- staticcheck ./...'
+      - run: staticcheck ./...

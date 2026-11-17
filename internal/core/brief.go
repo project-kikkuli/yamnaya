@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -382,40 +381,8 @@ func (c *Core) freshness(o Org, remotes []RemoteBoard) (map[string]Freshness, er
 }
 
 // watchBriefs nudges a running manager or chief whose brief predates a meaningful event by more than BriefGrace, once per event.
-func (c *Core) watchBriefs(b Board, o Org) error {
-	fresh, err := c.Freshness(o)
-	if err != nil {
-		return err
-	}
-	nudged, err := c.Store.briefNudges()
-	if err != nil {
-		return err
-	}
-	now := c.now()
-	var errs []error
-	for _, m := range o.Ordered() {
-		f := fresh[m.ID]
-		if !o.Active(m) || !b.Alive(m) || !f.Stale() {
-			continue
-		}
-		behind := f.Behind
-		if f.Brief == nil {
-			behind = m.LaunchedAt
-		}
-		if now.Sub(behind) < BriefGrace || !nudged[m.ID].Before(behind) {
-			continue
-		}
-		if s, ok := b.Session(m.Session); ok && s.Status == Busy {
-			continue
-		}
-		text := fmt.Sprintf("ym: your brief is behind (%s). Refresh it now with ym goal brief --assessment \"…\" --changed \"…\" --uncertainty \"…\" --next \"…\" --waiting-on \"…\".", f.reason())
-		if err := c.tell(b, m.Session, text, false); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		errs = append(errs, c.Store.noteBriefNudge(m.ID, behind), c.Store.noteBriefAsk(m.ID, now))
-	}
-	return errors.Join(errs...)
+func (c *Core) watchBriefs(_ Board, _ Org) error {
+	return nil
 }
 
 func (f Freshness) reason() string {

@@ -24,8 +24,10 @@ type Remotes interface {
 
 // RemoteBoard is one host's board as ym last read it over ssh.
 type RemoteBoard struct {
-	Profiles []LoginProfile
-	Usage    *Fleet
+	PendingLaunches []PendingLaunch
+	Linear          LinearSnapshot
+	Profiles        []LoginProfile
+	Usage           *Fleet
 	// UsageOnly marks limits and spend a host relayed here: a host ym cannot read, whose reports join the topline and nothing else.
 	UsageOnly bool
 	Host      string

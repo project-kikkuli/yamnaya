@@ -177,7 +177,7 @@ func (c *Core) waitingFor(o Org, m Manager) []Message {
 	}
 	var out []Message
 	for _, msg := range pending {
-		if o.Sessions[msg.Session] == m.ID || (m.Session != "" && msg.Session == m.Session) {
+		if msg.Source == "owner" && (o.Sessions[msg.Session] == m.ID || (m.Session != "" && msg.Session == m.Session)) {
 			out = append(out, msg)
 		}
 	}

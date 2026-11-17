@@ -19,10 +19,11 @@ import (
 
 // Core composes harnesses, hosts and the store.
 type Core struct {
-	ProfileList func() []LoginProfile
-	Store       *Store
-	Harnesses   []Harness
-	Hosts       []Host
+	LaunchAdmission func(NewLaunch) error
+	ProfileList     func() []LoginProfile
+	Store           *Store
+	Harnesses       []Harness
+	Hosts           []Host
 	// Front brings forward the terminal app window and tab whose terminal is tty; ErrNoHost when no app shows it.
 	Front func(tty string) error
 	Procs func() ([]proc.Proc, error)
@@ -203,6 +204,7 @@ func (p Project) Duplicated() bool {
 
 // Need is one row of the needs-you list: a permission prompt, a session on its first-run setup, an open item, or an idle session whose last reply asks the owner.
 type Need struct {
+	Linear  *LinearIssue
 	Session *Live
 	Item    *Item
 	Project string
@@ -250,6 +252,8 @@ type Repo struct {
 }
 
 type Board struct {
+	PendingLaunches []PendingLaunch
+	Linear          LinearSnapshot
 	// Org is every manager, chief and goal; Tree arranges them chiefs over managers.
 	Org              Org
 	VerifierSessions map[string]VerifierSession
@@ -440,6 +444,12 @@ func terminals(procs []proc.Proc) uint64 {
 // Board reads every session, groups sessions into projects and lists what needs the owner.
 func (c *Core) Board() (Board, error) {
 	b := Board{At: c.now()}
+	var pendingErr error
+	b.PendingLaunches, pendingErr = c.Store.PendingLaunches()
+	if pendingErr != nil {
+		return b, pendingErr
+	}
+	b.Machine.PendingLaunches = b.PendingLaunches
 	if err := c.Store.wakeSnoozed(b.At); err != nil {
 		return b, err
 	}

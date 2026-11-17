@@ -120,7 +120,7 @@ func refreshStep(tokens, limit int64, idle, stale bool, asked, replied, now time
 	case !idle:
 		return holdWake
 	case stale && asked.IsZero():
-		return askBrief
+		return restartFresh
 	case !asked.IsZero() && !replied.After(asked) && now.Sub(asked) < BriefGrace:
 		return holdWake
 	}
@@ -187,7 +187,7 @@ func (c *Core) refreshSwollen(b Board, o Org) (map[string]bool, error) {
 				return held, err
 			}
 		}
-		due, err := c.wakeWaits(o, m, timers)
+		due, err := c.wakeWaits(b, o, m, timers)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -227,7 +227,7 @@ func (c *Core) refreshSwollen(b Board, o Org) (map[string]bool, error) {
 }
 
 // wakeWaits reports whether a wake is due to m: its goal's or subtree's events, or a timer of its own.
-func (c *Core) wakeWaits(o Org, m Manager, timers []Timer) (bool, error) {
+func (c *Core) wakeWaits(b Board, o Org, m Manager, timers []Timer) (bool, error) {
 	now := c.now()
 	for _, t := range timers {
 		if t.Manager == m.ID && !t.Due.After(now) {
@@ -241,7 +241,30 @@ func (c *Core) wakeWaits(o Org, m Manager, timers []Timer) (bool, error) {
 	} else if m.Role == RoleChief {
 		events, err = c.chiefEvents(o, m)
 	}
-	return err == nil && c.wakeDue(events), err
+	if err != nil {
+		return false, err
+	}
+	if c.wakeDue(events) {
+		for _, e := range events {
+			needed, err := c.eventActionNeeded(b, o, e)
+			if err != nil || needed {
+				return needed, err
+			}
+		}
+	}
+	actions, err := c.Store.activeActivations()
+	if err != nil {
+		return false, err
+	}
+	for _, a := range actions {
+		if a.Recipient == m.ID && a.State == "pending" {
+			needed, err := c.actionNeeded(b, o, a)
+			if err != nil || needed {
+				return needed, err
+			}
+		}
+	}
+	return false, nil
 }
 
 // bringBack brings a manager or chief that is down back: fresh from its brief when resuming would read a large transcript cold,
@@ -262,6 +285,9 @@ func (c *Core) bringBack(b Board, o Org, m Manager) Manager {
 // refresh retires m's session, s when it still runs, and starts a fresh one from m's prompt, brief, plan, state and the events since
 // its brief, then records the restart on m's goal, or in a chief's own feed.
 func (c *Core) refresh(b Board, o Org, m Manager, s Live, tokens int64, cold bool) (Manager, error) {
+	if err := c.CheckLaunch(NewLaunch{Repo: m.Repo, Directory: m.Directory}); err != nil {
+		return m, err
+	}
 	if s.Key() != "" {
 		if _, err := c.Kill(s); err != nil {
 			return m, err

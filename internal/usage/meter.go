@@ -56,6 +56,8 @@ type Meter struct {
 	nextID      int64
 	sums        map[sumKey]core.Tokens
 	slices      map[sliceKey]core.Tokens
+	inventories map[string]*sourceInventory
+	epochCache  map[string]cachedEpochs
 	exhaustions map[string]core.Exhaustion
 	limits      map[string]core.Limit
 	edges       map[string]string
@@ -64,6 +66,7 @@ type Meter struct {
 	running     bool
 	last        time.Time
 	err         error
+	reader      bool
 }
 
 func New(stateDir string) *Meter {
@@ -120,7 +123,12 @@ func (m *Meter) Fleet(now time.Time) core.Fleet {
 	if !m.running && now.Sub(m.last) >= m.Every {
 		m.running = true
 		go func() {
-			_, err := m.Scan(time.Now())
+			var err error
+			if m.reader {
+				err = m.readLedger(time.Now())
+			} else {
+				_, err = m.scan(time.Now(), true)
+			}
 			if err != nil {
 				log.Printf("ym: usage scan: %v", err)
 			}
@@ -220,6 +228,10 @@ type parsed struct {
 
 // Scan reads every new transcript line, stores what it adds and rebuilds the fleet view.
 func (m *Meter) Scan(now time.Time) (Stats, error) {
+	return m.scan(now, false)
+}
+
+func (m *Meter) scan(now time.Time, incremental bool) (Stats, error) {
 	m.scanMu.Lock()
 	defer m.scanMu.Unlock()
 	defer func() {
@@ -281,12 +293,16 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 	}
 	var srcs []source
 	for _, p := range ps {
-		var sources []source
-		if p.Harness == claudeName {
-			sources = claudeSources(p.Root)
-		} else {
-			sources = codexSources(p.Root)
+		if m.inventories == nil {
+			m.inventories = map[string]*sourceInventory{}
 		}
+		key := p.Harness + "/" + p.Root
+		inventory := m.inventories[key]
+		if inventory == nil {
+			inventory = &sourceInventory{harness: p.Harness, root: p.Root}
+			m.inventories[key] = inventory
+		}
+		sources := inventory.scan(now, !incremental)
 		for _, s := range sources {
 			if m.closing.Load() {
 				return st, ErrClosed
@@ -299,7 +315,7 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 			if account, known := owners[s.Harness+"/"+profile.ID(s.Profile)+"/"+s.Session]; known {
 				s.Account = account
 			}
-			epochs, err := m.accountSources(s)
+			epochs, err := m.cachedAccountSources(s, now, incremental)
 			if err != nil {
 				return st, err
 			}
@@ -396,7 +412,7 @@ func (m *Meter) Scan(now time.Time) (Stats, error) {
 func (m *Meter) parse(work []*parsed) {
 	jobs := make(chan *parsed)
 	var wg sync.WaitGroup
-	for range max(1, runtime.NumCPU()-1) {
+	for range min(2, max(1, runtime.GOMAXPROCS(0)-1)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

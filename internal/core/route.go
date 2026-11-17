@@ -297,7 +297,7 @@ func (c *Core) askManager(b Board, o Org, it Item) error {
 	if _, _, remote := SplitRemote(it.Recipient); remote {
 		return c.relayAsk(b, o, it)
 	}
-	return c.tell(b, o.Managers[it.Recipient].Session, askText(b, o, it), false)
+	return c.requestAction(b, o.Managers[it.Recipient].Session, "question", it.Key(), askText(b, o, it))
 }
 
 func askerOf(o Org, session string) string {
@@ -329,22 +329,16 @@ func askLine(o Org, it Item, from string, room int) string {
 // owner marks text as the owner's own words.
 func (c *Core) tell(b Board, session, text string, owner bool) error {
 	if !owner {
-		text = c.Store.Nicked(text)
+		return c.requestAction(b, session, "directive", "", text)
 	}
-	if s, ok := c.reach(b, session); ok {
-		var err error
-		switch {
-		case owner && c.Launches != nil:
-			_, err = c.Launches.Send(s, text)
-		case !owner && c.BackgroundSend != nil:
-			err = c.BackgroundSend(s, text)
-		case c.message(s.Session, "msg: "+text, owner) == nil:
-			_, err = c.Store.AddMessage(session, text, MsgSent)
-		default:
-			err = errNoMessenger
+	if live, ok := c.reach(b, session); ok {
+		if c.Launches != nil {
+			_, err := c.Launches.Send(live, text)
+			return err
 		}
-		if err == nil || errors.Is(err, ErrSubmissionUncertain) {
-			return nil
+		if err := c.message(live.Session, text, true); err == nil {
+			_, err = c.Store.AddMessage(session, text, MsgSent)
+			return err
 		}
 	}
 	_, err := c.Store.AddMessage(session, text, MsgPending)

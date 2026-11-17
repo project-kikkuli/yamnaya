@@ -481,6 +481,10 @@ func (n Need) RowID() string {
 // MarkKey names the row across changes of its head or review update, so a snooze or pin holds through them. A pull request has one
 // key whichever kind of row shows it.
 func (n Need) MarkKey() string {
+	if n.Linear != nil {
+		return "linear:" + n.Linear.ID
+	}
+
 	switch {
 	case n.PR != nil:
 		return "pr:" + n.PR.URL
@@ -554,6 +558,10 @@ func (n Need) blocked() int {
 
 // Since is when the row began waiting, zero when nothing says.
 func (n Need) Since() time.Time {
+	if n.Linear != nil {
+		return n.Linear.ReadAt
+	}
+
 	switch {
 	case n.Item != nil:
 		return n.Item.CreatedAt
@@ -767,6 +775,10 @@ func (n Need) nameIn(o Org) string {
 
 // Verb is the row's three-letter action.
 func (n Need) Verb() string {
+	if n.Linear != nil {
+		return "lin"
+	}
+
 	switch {
 	case n.HeldPR != nil:
 		if n.HeldPR.Status != nil && n.HeldPR.Status.Foreign() {
@@ -812,6 +824,10 @@ func prLabel(pr PR, title string) string {
 
 // DoLine is the row's words: what its filer wrote, else the goal's name and the question, cut to fit when there is no name.
 func (n Need) DoLine() string {
+	if n.Linear != nil {
+		return n.Linear.Identifier + " " + oneLine(n.Linear.Attention)
+	}
+
 	switch {
 	case n.Held != "" && n.HeldPR == nil:
 		return n.Held
@@ -856,6 +872,10 @@ func (n Need) DoLine() string {
 
 // Why is what opening the row adds: the question and rec behind an item's do-line, the facts of a pull request, a goal's ask.
 func (n Need) Why() []string {
+	if n.Linear != nil {
+		return n.Linear.Details()
+	}
+
 	switch {
 	case n.Item != nil:
 		out := []string{oneLine(n.Item.Question)}
@@ -927,6 +947,10 @@ func (n Need) managerShown() string {
 
 // ID names the row: an item's reference, a pull request's repo and number, a goal.
 func (n Need) ID() string {
+	if n.Linear != nil {
+		return n.Linear.Identifier
+	}
+
 	switch {
 	case n.Item != nil:
 		return n.Item.Ref()

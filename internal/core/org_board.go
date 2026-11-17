@@ -409,6 +409,9 @@ func (c *Core) queue(b *Board, o Org, asks map[string][]Item) error {
 			}
 		}
 	}
+	if err := c.linearNeeds(b, dismissed); err != nil {
+		return err
+	}
 	extra, b.Later = attachMergeAsks(extra, b.Later, asks, statuses, dismissed)
 	b.Needs = append(extra, b.Needs...)
 	b.Needs, b.Later = dropAskedReviews(b.Needs, b.Later)
@@ -430,6 +433,9 @@ func (n Need) DismissKeys() []string {
 
 // Key names the row for dismissal; a new head or review update gives the same duty a new key.
 func (n Need) Key() string {
+	if n.Linear != nil {
+		return fmt.Sprintf("linear:%s@%d", n.Linear.ID, n.Linear.AttentionVersion)
+	}
 	switch {
 	case n.Goal != nil:
 		return "goal:" + n.Goal.ID

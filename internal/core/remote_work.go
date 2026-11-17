@@ -139,6 +139,9 @@ func (c *Core) localKey(key string) string {
 }
 
 func (c *Core) sendRemoteLaunch(host string, n NewLaunch, a Assignment) (string, error) {
+	if n.Host != "" {
+		n.Repo = c.RepoForHost(n.Repo)
+	}
 	g, err := c.Store.Goal(a.Goal)
 	if err != nil {
 		return "", err
@@ -183,7 +186,7 @@ func (c *Core) requestRemoteAssignment(parent, worker, source, reason string, n 
 	a := Assignment{ID: uuid.NewString(), Goal: RemoteKey(root.Origin, root.Goal), Session: worker, Source: source, Reason: reason, State: "pending"}
 	host := c.SelfName()
 	if n != nil {
-		if target, remote := c.RepoHost(n.Repo); remote {
+		if target, remote := c.workerHost(*n); remote {
 			host = target
 		}
 	}
@@ -236,6 +239,9 @@ func (c *Core) launchForeign(w RemoteAssignment) error {
 		return errors.New("live dispatch is not addressed to this host")
 	}
 
+	if err := c.CheckLaunch(*current.Launch); err != nil {
+		return err
+	}
 	if _, err = c.Store.db.Exec(`UPDATE ym_remote_work SET state='starting' WHERE id=? AND state='approved'`, w.Assignment.ID); err != nil {
 		return err
 	}
@@ -246,6 +252,10 @@ func (c *Core) launchForeign(w RemoteAssignment) error {
 		return errors.New("destination launcher is unavailable")
 	}
 	st, err := c.Launches.Start(n)
+	if errors.Is(err, ErrLaunchDeferred) {
+		_, saveErr := c.Store.db.Exec(`UPDATE ym_remote_work SET state='approved' WHERE id=? AND state='starting'`, w.Assignment.ID)
+		return errors.Join(err, saveErr)
+	}
 	if err != nil {
 		if _, saveErr := c.Store.db.Exec(`UPDATE ym_remote_work SET state='failed' WHERE id=?`, w.Assignment.ID); saveErr != nil {
 			return saveErr

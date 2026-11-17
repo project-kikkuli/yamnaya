@@ -680,6 +680,9 @@ func rowKey(r row) string {
 
 // needID names a Needs you row by what it asks about, not by the head or version of it the board last read.
 func needID(n core.Need) string {
+	if n.Linear != nil {
+		return n.MarkKey()
+	}
 	switch {
 	case n.PR != nil:
 		return "merge:" + n.PR.URL
@@ -765,6 +768,9 @@ func (m Model) hostText(host string) string {
 }
 
 func needText(n core.Need) string {
+	if n.Linear != nil {
+		return strings.Join(n.Linear.Details(), " ") + " " + n.Linear.Attention
+	}
 	switch {
 	case n.Goal != nil:
 		return n.Goal.Shown() + " " + n.Goal.State + " " + n.Goal.Ask
