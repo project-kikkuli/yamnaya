@@ -136,13 +136,6 @@ func resumeArgv(rec launch.Record, prompt string) ([]string, error) {
 	if rec.ConfigRoot != "" {
 		rec.Account = recordProfile(rec).Account
 	}
-	if rec.Handoff != "" {
-		if prompt != "" && prompt != rec.Handoff {
-			prompt = rec.Handoff + "\n\n" + prompt
-		} else {
-			prompt = rec.Handoff
-		}
-	}
 	if rec.ConfigRoot != "" {
 		if err := recordProfile(rec).ValidateSubscription(rec.Worktree.Path); err != nil {
 			return nil, err
@@ -266,6 +259,13 @@ func (l launcher) settle(rec launch.Record) (launch.Record, error) {
 		}
 		if err := bind(rec.Assignment, rec.Session, rec.Parent); err != nil {
 			return rec, fmt.Errorf("settle assignment %s for %s: %w", rec.Assignment, rec.Key, err)
+		}
+	}
+	if rec.Handoff != "" && rec.Session != "" {
+		if _, state := l.state(rec); state == "running" {
+			if err := l.queueRecoveryDirective(rec); err != nil {
+				return rec, err
+			}
 		}
 	}
 	return rec, nil
@@ -879,7 +879,7 @@ func (l launcher) revive(rec launch.Record) (string, error) {
 			return startOverArgv(rec, "")
 		}
 		if rec.Session != "" {
-			return resumeArgv(*rec, l.resumeNote)
+			return resumeArgv(*rec, "")
 		}
 		return startArgv(*rec)
 	})
@@ -915,9 +915,9 @@ func startOverArgv(rec *launch.Record, start string) ([]string, error) {
 	return startArgv(fresh)
 }
 
-// Resume continues session, a session ym launched, in its own conversation with prompt as its next message or, when its transcript
-// is gone, starts it over in its worktree on start, or on its first prompt when start is empty.
+// Resume restores a launched conversation and queues its recovery directive, or restarts its original task when the transcript is gone.
 func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
+	l.resumeNote = mergeRecoveryNote(l.resumeNote, prompt)
 	session, err := l.portedTo(session)
 	if err != nil {
 		return "", false, err
@@ -943,7 +943,7 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	}
 	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) {
 		if resumed {
-			return resumeArgv(*rec, prompt)
+			return resumeArgv(*rec, "")
 		}
 		return startOverArgv(rec, start)
 	})
@@ -955,9 +955,9 @@ func (l launcher) Resume(session, prompt, start string) (string, bool, error) {
 	return rec.Session, resumed, err
 }
 
-// Bring resumes s, a session that ran outside ym's server, on ym's server in its own directory and conversation, with prompt as
-// its next message; it fails when its transcript is gone.
+// Bring restores an external conversation on ym's server and queues its recovery directive; it refuses a missing transcript.
 func (l launcher) Bring(s core.Live, prompt string) error {
+	l.resumeNote = mergeRecoveryNote(l.resumeNote, prompt)
 	rec, err := l.takeOver(s, s.Harness, s.ID)
 	if err != nil {
 		return err
@@ -968,7 +968,7 @@ func (l launcher) Bring(s core.Live, prompt string) error {
 	if moved, _, err := l.offWall(rec, prompt); moved || err != nil {
 		return err
 	}
-	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, prompt) })
+	_, _, err = l.restart(rec, func(rec *launch.Record) ([]string, error) { return resumeArgv(*rec, "") })
 	return err
 }
 
@@ -1053,6 +1053,7 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 	}
 	rec.Account = recordProfile(rec).Account
 	rec.AttachedAt = time.Now()
+	rec.Handoff = mergeRecoveryNote(rec.Handoff, l.resumeNote)
 	args, err := argv(&rec)
 	if err != nil {
 		return nil, "", err
@@ -1085,6 +1086,9 @@ func (l launcher) restart(rec launch.Record, argv func(*launch.Record) ([]string
 		if err = l.core.Store.ClearKill(rec.Session); err != nil {
 			return nil, "", err
 		}
+	}
+	if err := l.queueRecoveryDirective(rec); err != nil {
+		return nil, "", err
 	}
 	return args, lost, nil
 }

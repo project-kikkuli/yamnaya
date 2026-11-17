@@ -213,7 +213,10 @@ func (w queueWorld) applied(t *testing.T) string {
 	if p := w.l.PendingSwitches(); len(p) != 0 {
 		t.Fatalf("board still shows a pending switch: %+v", p)
 	}
-	return got[1]
+	if saved.Handoff != "" && strings.Contains(got[1], handoffMark(saved.Handoff)) {
+		t.Fatalf("handoff injected as native input: %q", got[1])
+	}
+	return got[1] + "\n" + recoveryDirectivePayload(t, w.l)
 }
 
 func TestAQueuedSwitchAppliesWhenTheSessionItselfEndsItsTurn(t *testing.T) {
@@ -867,7 +870,7 @@ func TestReviveSettlesAQueuedFailover(t *testing.T) {
 	if _, err := w.l.revive(saved); err != nil {
 		t.Fatal(err)
 	}
-	if got := resumed(t, w.ran); !strings.Contains(got, "Reason: "+exhaustedReason) {
+	if got := recoveryDirectivePayload(t, w.l); !strings.Contains(got, "Reason: "+exhaustedReason) {
 		t.Fatalf("revive note = %q", got)
 	}
 	*w.alive = true

@@ -182,7 +182,7 @@ func TestExhaustedHostLoginFailsOverToUsableLoginAndNeverResumesIntoTheWall(t *t
 				if got := strings.Split(resumed(t, ran), "\n"); got[0] != "claude-work" || !strings.Contains(got[1], profileConversation) {
 					t.Fatalf("resumed as %q", got)
 				}
-				if got := resumed(t, ran); c.restart && !strings.Contains(got, workResumeTextFixture) {
+				if got := recoveryDirectivePayload(t, l); c.restart && !strings.Contains(got, workResumeTextFixture) {
 					t.Fatalf("the resume message did not reach the moved session: %q", got)
 				}
 				return
@@ -780,7 +780,7 @@ func TestRestartResumesAManagedSessionOnCodexWhenEveryClaudeLoginIsExhausted(t *
 			if rec.Session != c.want || rec.Harness != c.wantH {
 				t.Fatalf("record %+v", rec)
 			}
-			if got := resumed(t, w.ran); !strings.Contains(got, workResumeTextFixture) || !strings.Contains(got, c.want) {
+			if got := recoveryDirectivePayload(t, w.l) + "\n" + resumed(t, w.ran); !strings.Contains(got, workResumeTextFixture) || !strings.Contains(got, c.want) {
 				t.Fatalf("resumed without its message: %q", got)
 			}
 		})
