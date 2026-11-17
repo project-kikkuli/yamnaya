@@ -24,8 +24,6 @@ import (
 const (
 	// diskCheckEvery is how often serve reads free space, which costs one statfs per filesystem.
 	diskCheckEvery = time.Minute
-	// diskRetryAfter is how long serve waits before another pass at the same tier: a pass that fell short walks whole caches.
-	diskRetryAfter = 15 * time.Minute
 	// passLimit ends a pass whatever hangs in it, so disk.lock cannot be held for good.
 	passLimit = 90 * time.Minute
 	// reapIdle replaces gc's idle time at tier 2.
