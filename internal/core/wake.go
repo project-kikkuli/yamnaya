@@ -476,11 +476,6 @@ func (c *Core) UpdateGoal(session, line string) (GoalEvent, error) {
 	return e, err
 }
 
-// nudgeIdle preserves idle state without requesting another model turn.
-func (c *Core) nudgeIdle(_ Board, _ Org, _ Manager, _ Goal) error {
-	return nil
-}
-
 // inFlight reports whether anything of m's is still moving on its own: an agent that is not hung, or a subagent of one, working or just launched, a pull request with CI
 // still running, a wake set, or an open ask one of its sessions filed.
 func (c *Core) inFlight(b Board, o Org, m Manager) bool {

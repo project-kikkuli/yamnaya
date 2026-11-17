@@ -79,15 +79,6 @@ func TestManagersReceiveOnlyConcreteDueActionsWhileStatusRemainsReadable(t *test
 	}
 }
 
-func containsDuration(ds []time.Duration, d time.Duration) bool {
-	for _, x := range ds {
-		if x == d {
-			return true
-		}
-	}
-	return false
-}
-
 func TestAWakeCarriesEachEventInOneShortLineAndYmGoalEventPrintsItWhole(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")

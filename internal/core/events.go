@@ -265,21 +265,6 @@ func (s *Store) markDelivered(events []GoalEvent, at time.Time) error {
 	return tx.Commit()
 }
 
-// lastKind is the kind of the goal's newest event that is not an agent's reply adding nothing or a restart, "" when it has none.
-func (s *Store) lastKind(goal string) (string, error) {
-	var kind string
-	err := s.db.QueryRow(`SELECT kind FROM ym_goal_events WHERE goal = ? AND kind NOT IN (?, ?) ORDER BY seq DESC LIMIT 1`, goal, EventIdleAgain, EventRefreshed).Scan(&kind)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return kind, err
-}
-
-// lastDelivered is when the goal's manager was last woken with an event.
-func (s *Store) lastDelivered(goal string) (time.Time, error) {
-	return s.latest(`SELECT delivered_to_manager FROM ym_goal_events WHERE goal = ? AND delivered_to_manager IS NOT NULL`, goal, true)
-}
-
 // latest is the latest, or with !last the earliest, of the times q selects.
 func (s *Store) latest(q, arg string, last bool) (time.Time, error) {
 	rows, err := s.db.Query(q, arg)

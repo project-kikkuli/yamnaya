@@ -13,7 +13,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-func blockedPanelAction(t *testing.T, c *core.Core, b core.Board) core.Activation {
+func blockedPanelAction(t *testing.T, c *core.Core) core.Activation {
 	t.Helper()
 	goal, err := c.Store.AddGoal(core.Goal{Ask: "supervise recovery delivery", Repo: "/repo/recovery"})
 	if err != nil {
@@ -43,7 +43,7 @@ func blockedPanelAction(t *testing.T, c *core.Core, b core.Board) core.Activatio
 	if err != nil || item.Recipient != manager.ID {
 		t.Fatalf("managed ask %+v, %v", item, err)
 	}
-	b, err = c.Board()
+	b, err := c.Board()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func panelActionState(t *testing.T, c *core.Core, id string) string {
 
 func TestYInspectsFullActionBeforeExplicitLocalRetry(t *testing.T) {
 	m, _, _ := panelBoard(t)
-	a := blockedPanelAction(t, m.core, m.board)
+	a := blockedPanelAction(t, m.core)
 	m = recoveryPress(t, m, "Y")
 	m = toPanelRow(t, m, a.ID)
 	m = recoveryPress(t, m, "r")
@@ -146,9 +146,9 @@ func TestYInspectsPreservedLaunchAndRetriesOnlyAfterConfirmation(t *testing.T) {
 
 func TestYRoutesInspectionAndRetryToTheSourceHost(t *testing.T) {
 	m, _, _ := panelBoard(t)
-	local := blockedPanelAction(t, m.core, m.board)
-	remoteModel, remote, _ := setup(t)
-	a := blockedPanelAction(t, remote, remoteModel.board)
+	local := blockedPanelAction(t, m.core)
+	_, remote, _ := setup(t)
+	a := blockedPanelAction(t, remote)
 	var retries []string
 	m.pn.run = func(host, stdin string, args ...string) (string, error) {
 		if host == "" {

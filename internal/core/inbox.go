@@ -57,16 +57,6 @@ func (p WakePace) due(events []GoalEvent, now time.Time) bool {
 	return !oldest.IsZero() && !now.Before(oldest.Add(p.Digest))
 }
 
-// urgent reports whether any of events wakes its manager.
-func urgent(events []GoalEvent) bool {
-	for _, e := range events {
-		if wakeKinds[e.Kind] {
-			return true
-		}
-	}
-	return false
-}
-
 // inboxText is a wake: one line per event, those that need the reader first, then how many agents' replies added nothing. host
 // names this host to a reader on another one, "" otherwise; label names each event's goal for a chief, nil for a manager.
 func inboxText(head string, events []GoalEvent, host string, label func(GoalEvent) string) string {

@@ -133,24 +133,6 @@ func (s *Store) latestBriefs() (map[string]Brief, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) briefNudges() (map[string]time.Time, error) {
-	rows, err := s.db.Query(`SELECT manager, behind FROM ym_brief_nudges`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]time.Time{}
-	for rows.Next() {
-		var m string
-		var behind sql.NullString
-		if err := rows.Scan(&m, &behind); err != nil {
-			return nil, err
-		}
-		out[m] = parseTime(behind)
-	}
-	return out, rows.Err()
-}
-
 func (s *Store) noteBriefNudge(manager string, behind time.Time) error {
 	_, err := s.db.Exec(`INSERT INTO ym_brief_nudges (manager, behind, at) VALUES (?, ?, ?) ON CONFLICT(manager) DO UPDATE SET behind = excluded.behind, at = excluded.at`,
 		manager, stamp(behind), now())
