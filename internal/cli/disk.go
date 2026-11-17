@@ -182,7 +182,7 @@ func fileLowDisk(c *core.Core) func(disk.Usage) (string, error) {
 				return it.Key(), nil
 			}
 		}
-		it, err := c.Store.AddItem(core.Item{Scope: c.StateDir, Session: diskItemSession, Kind: core.KindChore, Question: question, DoLine: "Review disk usage before reclaiming", Impact: "agents",
+		it, err := c.Store.AddItem(core.Item{Scope: c.StateDir, Session: diskItemSession, Kind: core.KindChore, Question: question, DoLine: "Review disk usage", Impact: "agents",
 			Rec: fmt.Sprintf("%s has %.1f%% free. Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free.", low.Path, low.Free()*100), Evidence: []string{low.Path}})
 		return it.Key(), err
 	}
