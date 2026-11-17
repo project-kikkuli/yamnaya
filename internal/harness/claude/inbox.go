@@ -53,7 +53,7 @@ type receipt struct {
 	Dropped   []string `json:"dropped_msg_ids"`
 }
 
-// NotReadError is a session's receipt saying it held, refused or dropped a message instead of queueing it.
+// NotReadError is a session's receipt saying it held, refused, expired or dropped a message instead of queueing it.
 type NotReadError struct{ Status string }
 
 func (e NotReadError) Error() string { return "the session reported the message " + e.Status }
@@ -189,7 +189,7 @@ func awaitReceipt(ln *net.UnixListener, id string, wait time.Duration) error {
 				continue
 			}
 			switch r.Status {
-			case "held", "refused", "dropped":
+			case "held", "refused", "expired", "dropped":
 				conn.Close()
 				return NotReadError{Status: r.Status}
 			case "delivered":

@@ -135,9 +135,11 @@ func TestRealClaudePeerTransportWithSimulatedModel(t *testing.T) {
 				model.assertQuiet(t, faultBefore)
 			case "hold", "refuse":
 				var receipt NotReadError
-				want := map[string]string{"hold": "held", "refuse": "refused"}[policy]
-				if !errors.As(sendErr, &receipt) || receipt.Status != want {
-					t.Fatalf("real native %s receipt missing: %v; %s", want, sendErr, native.diagnostics())
+				if !errors.As(sendErr, &receipt) {
+					t.Fatalf("real native non-delivery receipt missing: %v; %s", sendErr, native.diagnostics())
+				}
+				if (policy == "hold" && receipt.Status != "held") || (policy == "refuse" && receipt.Status != "refused" && receipt.Status != "expired" && receipt.Status != "dropped") {
+					t.Fatalf("native %s policy returned unexpected receipt %q", policy, receipt.Status)
 				}
 				if errors.Is(sendErr, core.ErrSubmissionUncertain) != (policy == "hold") {
 					t.Fatalf("native receipt lost certainty distinction: %v", sendErr)

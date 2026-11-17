@@ -107,7 +107,7 @@ func serveInbox(t *testing.T, reply string) *inboxServer {
 		}
 		srv.lines <- got
 		switch reply {
-		case "held", "refused", "dropped", "delivered", "unknown", "another message held":
+		case "held", "refused", "expired", "dropped", "delivered", "unknown", "another message held":
 			var m inboxMessage
 			json.Unmarshal([]byte(got[len(got)-1]), &m)
 			back, err := net.Dial("unix", strings.TrimPrefix(m.From, "uds:"))
@@ -408,7 +408,7 @@ func TestBodyEscapesWhatClaudeReadsAsTheEnvelopeClosing(t *testing.T) {
 
 func TestAutomatedPeerDeliveryPreservesProvenanceAndRequiresNativeActionAcknowledgement(t *testing.T) {
 	for _, mode := range []string{"auto", "bypassPermissions", "default", "plan"} {
-		for _, reply := range []string{"close", "delivered", "held", "refused", "dropped", "another message held", "unknown", "talk", "hang"} {
+		for _, reply := range []string{"close", "delivered", "held", "refused", "expired", "dropped", "another message held", "unknown", "talk", "hang"} {
 			t.Run(mode+"/"+reply, func(t *testing.T) {
 				dir := t.TempDir()
 				srv := serveInbox(t, reply)
@@ -420,7 +420,7 @@ func TestAutomatedPeerDeliveryPreservesProvenanceAndRequiresNativeActionAcknowle
 					"Yamnaya supervisor action bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb (attempt 7, question), for mgr1; source: Yamnaya control plane, not the human owner.\nResolve the actual question"
 				a := &Adapter{Dir: dir, SendTimeout: 100 * time.Millisecond, ReceiptWait: 50 * time.Millisecond}
 				err := a.Message(core.Session{Harness: Name, ID: oldID, PID: 7}, text, false)
-				definite := reply == "refused" || reply == "dropped"
+				definite := reply == "refused" || reply == "expired" || reply == "dropped"
 				if err == nil || errors.Is(err, core.ErrSubmissionUncertain) == definite {
 					t.Fatalf("peer delivery acceptance was invented or native rejection lost: %v", err)
 				}
