@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,8 +51,9 @@ func dispatchControlFixture() bool {
 		prefix := make([]byte, 64)
 		n, _ := file.Read(prefix)
 		file.Close()
-		if !strings.HasPrefix(string(prefix[:n]), "#!/bin/sh") {
-			fmt.Fprintln(os.Stderr, "native control fixture refuses a non-fixture executable")
+		header, _, _ := strings.Cut(string(prefix[:n]), "\n")
+		if header != "#!/bin/sh" && header != "#!/bin/bash" {
+			fmt.Fprintln(os.Stderr, "native control fixture requires an explicit sh or bash fixture")
 			os.Exit(1)
 		}
 		if len(args) > 1 && args[1] == "codex" {
@@ -165,7 +167,9 @@ func runCodexNativeFixture(args []string) error {
 					if data, e := os.ReadFile(os.Getenv("YM_CODEX_FIXTURE_ID_FILE")); e == nil && strings.TrimSpace(string(data)) != "" {
 						thread = strings.TrimSpace(string(data))
 					}
-					_, err = db.Exec(`INSERT OR REPLACE INTO threads(id,rollout_path,created_at,updated_at,cwd,title) VALUES(?,'',?,?,?,'fixture')`, thread, time.Now().Unix(), time.Now().Unix(), request.Params.Cwd)
+					if os.Getenv("YM_CODEX_FIXTURE_DELAY_REGISTRATION") != "1" {
+						_, err = db.Exec(`INSERT OR REPLACE INTO threads(id,rollout_path,created_at,updated_at,cwd,title) VALUES(?,'',?,?,?,'fixture')`, thread, time.Now().Unix(), time.Now().Unix(), request.Params.Cwd)
+					}
 					result = map[string]any{"thread": map[string]any{"id": thread, "status": map[string]string{"type": "idle"}}}
 				case "thread/resume":
 					thread = request.Params.ThreadID
@@ -261,5 +265,33 @@ func TestManagedCodexInitializesNativeRuntimeAndUsesNoUserSupervisorTurn(t *test
 	}
 	if strings.Contains(string(args), "Review the completed result") || !strings.Contains(string(args), "--remote") {
 		t.Fatalf("supervisor action became TUI user input: %s", args)
+	}
+}
+
+func TestManagedControlEntryPointRunsTheExplicitBashNativeFixture(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "claude-bash-fixture")
+	capture := filepath.Join(dir, "native-args")
+	script := "#!/bin/bash\nprintf '%s\\n' \"$@\" > \"$YM_CAPTURE_ARGS\"\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YM_CAPTURE_ARGS", capture)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(self, "control", "claude", "--binary", binary, "--session", "native-session", "--", "--resume", "native-session")
+	child.Env = append(os.Environ(), testChild+"=1")
+	if output, err := child.CombinedOutput(); err != nil {
+		t.Fatalf("managed bash fixture never landed: %v %s", err, output)
+	}
+	raw, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(args) < 6 || args[0] != "--dangerously-load-development-channels" || args[1] != "server:yamnaya" || args[len(args)-2] != "--resume" || args[len(args)-1] != "native-session" {
+		t.Fatalf("native wrapper lost channel opt-in or exact resume identity: %q", args)
 	}
 }

@@ -200,7 +200,10 @@ func (w *wireWorld) settle(t *testing.T, want int) {
 		}
 		if time.Now().After(deadline) {
 			b, _ := w.c.Board()
-			t.Fatalf("no landing %d: starts %q, sessions %+v", want, w.starts(t), b.Sessions)
+			rec, _ := w.l.records.Find(w.rec.Key)
+			pane, state := w.l.state(rec)
+			screen, screenErr := w.l.srv.Screen(core.Handle{ID: pane.ID})
+			t.Fatalf("no landing %d: starts %q, sessions %+v, pane state %s, screen error %v, screen:\n%s", want, w.starts(t), b.Sessions, state, screenErr, screen)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
