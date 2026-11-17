@@ -762,7 +762,7 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFleet(t)
 			chief := f.b.chief(t, "platform")
-			g, mgr := f.a.goal(t, "ship the fix", "/repo/app")
+			_, mgr := f.a.goal(t, "ship the fix", "/repo/app")
 			if err := f.a.core.Attach(mgr.ID, RemoteKey("b", chief.ID)); err != nil {
 				t.Fatal(err)
 			}
