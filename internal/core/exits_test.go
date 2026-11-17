@@ -62,7 +62,7 @@ func TestAStoppedAgentReachesItsChiefAndTheFeedButNotTheOwnersUnread(t *testing.
 	w.loop(t, 3)
 	w.clock = w.clock.Add(deathGrace)
 	w.loop(t, 1)
-	if got := wakes(w.handedTo(chief.Session)); len(got) != 1 || !strings.Contains(got[0], "agent died #") {
+	if got := wakes(w.handedTo(chief.Session)); len(got) != 1 || !strings.Contains(got[0], EventAgentStopped) || !strings.Contains(got[0], "agent agent") || !strings.Contains(got[0], "Yamnaya supervisor action ") {
 		t.Fatalf("chief heard %q, want one batch with the agent that stayed down", got)
 	}
 	n, _ := w.board(t).Node(m.ID)

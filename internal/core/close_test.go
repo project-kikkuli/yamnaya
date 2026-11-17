@@ -387,8 +387,9 @@ func TestAChiefOnAnotherHostSeesClosureWithoutAModelTurn(t *testing.T) {
 				t.Fatalf("passive closure woke remote chief: %q", f.c.handedTo(top.Session))
 			}
 			assertRecordedClosure(t, f.b.core, g.ID)
-			if state := f.c.board(t).Org.Goals[RemoteKey("b", g.ID)].State; state != GoalDropped {
-				t.Fatalf("remote closure status %s", state)
+			changes, err := f.c.core.Digest(top.Session)
+			if err != nil || !strings.Contains(strings.Join(changes, "\n"), EventGoalClosed) {
+				t.Fatalf("remote readable closure summary %q, %v", changes, err)
 			}
 		})
 	}

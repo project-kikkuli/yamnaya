@@ -18,16 +18,9 @@ func (c *Core) swollenActionNeeded(b Board, e GoalEvent) (bool, error) {
 		if !e.Created.IsZero() && b.At.Add(-s.Elapsed).After(e.Created) {
 			continue
 		}
-		goal := s.Goal
-		if goal == "" {
-			m, managed := b.Org.Managed(s.Session, b.parents)
-			if !managed {
-				continue
-			}
-			goal = m.GoalID
-			if goal == "" {
-				goal = m.ID
-			}
+		goal, managed := agentEventGoal(b, s.Session)
+		if !managed {
+			continue
 		}
 		if goal == e.Goal {
 			return true, nil

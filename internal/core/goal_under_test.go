@@ -78,7 +78,7 @@ func TestAGoalStartedOnAnotherHostCarriesItsChief(t *testing.T) {
 			if _, _, err := w.core.NewGoalUnder("explore the github org", boxRepo, "", tc.under(chief)); err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"box", "goal", "--repo", boxRepo}
+			want := []string{"box", "goal", "--host", "box", "--repo", boxRepo}
 			if u := tc.want(w.core, chief); u != "" {
 				want = append(want, "--under", u)
 			}

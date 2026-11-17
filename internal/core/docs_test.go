@@ -91,6 +91,19 @@ func TestDocAsksAboutAGoalsWorkReachItsManagerAndTheRestReachTheOwner(t *testing
 			if !tc.mgr && (!slices.Equal(rows, []string{"notion:d1@c1"}) || told != 0) {
 				t.Fatalf("unrelated ask: owner rows %q, manager told %d; want the owner row and no notice", rows, told)
 			}
+			if tc.mgr {
+				actions, err := w.core.Store.Activations()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, action := range actions {
+					if action.State == "sent" && action.TargetSession == m.Session {
+						if err := w.core.CompleteAction(action.ID, m.Session, "reviewed initial document thread"); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
 			a.Version, a.Text = "c2", "Still need your sign-off"
 			if err := w.core.Store.SyncDocPage("notion", a.Page, "e1", []DocAsk{a}); err != nil {
 				t.Fatal(err)

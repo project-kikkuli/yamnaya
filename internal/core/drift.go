@@ -148,7 +148,7 @@ func (c *Core) NoticeDrift(b Board) error {
 			who += " (" + oneLine(s.Title) + ")"
 		}
 		notice := func(who, id string, sign drift.Sign) {
-			ep := "adrift\x00" + id + "\x00" + sign.Kind + "\x00" + sign.Since.UTC().Format(time.RFC3339Nano)
+			ep := driftNoticeKey(id, sign)
 			if err := c.noticeAgent(b, o, key, EventAgentAdrift, driftText(who, sign), ep); err != nil {
 				errs = append(errs, err)
 			}
