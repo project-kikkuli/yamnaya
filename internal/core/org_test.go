@@ -133,6 +133,18 @@ func (w *orgWorld) completeActions(t *testing.T, session string) {
 	}
 	for _, a := range actions {
 		if a.TargetSession == session && a.State == "sent" {
+			if a.Kind == "question" {
+				ref, _, _ := strings.Cut(a.Subject, "@")
+				it, readErr := w.core.Store.Item(ref)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if it.State == ItemOpen || it.State == ItemSnoozed {
+					if _, _, answerErr := w.core.Answer(w.board(t), it.Key(), "follow the recommendation"); answerErr != nil {
+						t.Fatal(answerErr)
+					}
+				}
+			}
 			if err = w.core.CompleteAction(a.ID, session, "handled requested work"); err != nil {
 				t.Fatal(err)
 			}

@@ -18,6 +18,21 @@ func digests(texts []string) []string {
 	return out
 }
 
+func (w *orgWorld) failVerification(t *testing.T, goal string, findings []string) {
+	t.Helper()
+	v, err := w.core.Store.AddVerification(Verification{Goal: goal, Summary: "claimed completion", CreatedAt: w.clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := w.core.Store.Goal(goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.core.Store.commitVerdict(g, v, VerdictFail, findings, w.clock); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOnlyWhatNeedsAChiefWakesIt(t *testing.T) {
 	url := "https://github.com/acme/august/pull/19637"
 	for _, tc := range []struct {
@@ -63,7 +78,9 @@ func TestOnlyWhatNeedsAChiefWakesIt(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, _, err := w.core.RecordGoalEvent(g.ID, tc.kind, tc.payload, ""); err != nil {
+			if tc.kind == EventFailedVerify && !strings.Contains(tc.payload, "withdrawn:") {
+				w.failVerification(t, g.ID, []string{"ci red"})
+			} else if _, _, err := w.core.RecordGoalEvent(g.ID, tc.kind, tc.payload, ""); err != nil {
 				t.Fatal(err)
 			}
 			w.clock = w.clock.Add(2 * deathGrace)
@@ -96,7 +113,9 @@ func TestOnlyWhatNeedsAChiefWakesIt(t *testing.T) {
 				t.Fatalf("chief got %q, wakes=%v", got, tc.wakes)
 			}
 			events, err := w.core.Store.GoalEvents(g.ID)
-			if err != nil || !slices.ContainsFunc(events, func(e GoalEvent) bool { return e.Kind == tc.kind && e.Payload == tc.payload }) {
+			if err != nil || !slices.ContainsFunc(events, func(e GoalEvent) bool {
+				return e.Kind == tc.kind && (e.Payload == tc.payload || tc.kind == EventFailedVerify && !strings.Contains(tc.payload, "withdrawn:"))
+			}) {
 				t.Fatalf("status evidence lost: %+v %v", events, err)
 			}
 		})
@@ -216,12 +235,20 @@ func TestStuckAndFailedVerifyWakeOnce(t *testing.T) {
 			for _, e := range tc.events {
 				w.clock = w.clock.Add(time.Minute)
 				if e[0] == EventStuck {
+					var err error
+					g, err = w.core.Store.Goal(g.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
 					g.State, g.Evidence = GoalStuck, "dependency requires supervisor action"
 					if err := w.core.Store.SaveGoal(g); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if _, _, err := w.core.RecordGoalEvent(g.ID, e[0], e[1], ""); err != nil {
+				if e[0] == EventFailedVerify {
+					_, finding, _ := strings.Cut(e[1], "\n  - ")
+					w.failVerification(t, g.ID, []string{finding})
+				} else if _, _, err := w.core.RecordGoalEvent(g.ID, e[0], e[1], ""); err != nil {
 					t.Fatal(err)
 				}
 				w.loop(t, 1)

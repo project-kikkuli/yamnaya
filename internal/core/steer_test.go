@@ -333,9 +333,22 @@ func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTh
 	if g.State != GoalActive || v.Verdict != VerdictSuperseded {
 		t.Fatalf("after a steer the goal is %s with verification %q, want active and superseded", g.State, v.Verdict)
 	}
+	if told := w.messages(w.manager.Session); len(told) != 0 {
+		t.Fatalf("busy manager received a new plan mid-turn: %q", told)
+	}
+	w.set(w.manager.Session, func(s *Session) { s.Status = Idle })
+	w.dispatch(t)
 	if told := strings.Join(w.messages(w.manager.Session), "\n"); !strings.Contains(told, "verification is called off") {
 		t.Fatalf("manager was not told its done claim was withdrawn: %q", told)
 	}
+	latest, err := w.core.Store.LatestSteers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = w.core.Adopt(w.manager.Session, w.manager.ID, latest[w.manager.ID].Revision); err != nil {
+		t.Fatal(err)
+	}
+	w.completeActions(t, w.manager.Session)
 	w.done(t, "importer handles CSV and TSV")
 	w.tick(t, time.Minute)
 	starts := w.launches.starts
@@ -543,6 +556,7 @@ func TestAChiefTwoHostsUpSteersAGoalThroughTheChiefBetweenThemAndAStrangerIsTold
 	if steers, _ := f.b.core.Store.Steers(mgr.ID); len(steers) != 0 {
 		t.Fatalf("a chief nothing reports to steered %s: %+v", mgr.ID, steers)
 	}
+	f.c.dispatch(t)
 	if !slices.ContainsFunc(f.c.handedTo(stranger.Session), func(s string) bool { return strings.Contains(s, "was refused") }) {
 		t.Errorf("stranger heard %q, want that its steer was refused", f.c.handedTo(stranger.Session))
 	}
@@ -556,6 +570,7 @@ func TestAChiefTwoHostsUpSteersAGoalThroughTheChiefBetweenThemAndAStrangerIsTold
 		f.b.supervise(t)
 		f.sync(t)
 	}
+	f.c.dispatch(t)
 	if !slices.ContainsFunc(f.c.handedTo(top.Session), func(s string) bool {
 		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")
 	}) {
