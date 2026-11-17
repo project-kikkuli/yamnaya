@@ -7,6 +7,20 @@ import (
 	"testing"
 )
 
+func recoveryNoticesWithHistory(store *Store) ([]Item, error) {
+	items, err := store.Items(ItemFilter{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i], err = store.Item(items[i].Key())
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
 func assertRecoveryPollIsReadOnly(t *testing.T, store *Store, poll func() error) {
 	t.Helper()
 	var before, after int64
@@ -94,7 +108,7 @@ func TestOwnerRecoveryDispositionSurvivesPollingAndRetryReusesBatchNotice(t *tes
 					}
 					return nil
 				})
-				items, err := w.core.Store.Items(ItemFilter{})
+				items, err := recoveryNoticesWithHistory(w.core.Store)
 				if err != nil || len(items) != 1 || items[0].Seq != notice || items[0].State != disposition || len(items[0].History) != len(item.History) || calls != 1 {
 					t.Fatalf("owner disposition lost: %+v, calls %d, %v", items, calls, err)
 				}
@@ -102,7 +116,7 @@ func TestOwnerRecoveryDispositionSurvivesPollingAndRetryReusesBatchNotice(t *tes
 					t.Fatal(err)
 				}
 				dispatch()
-				items, err = w.core.Store.Items(ItemFilter{})
+				items, err = recoveryNoticesWithHistory(w.core.Store)
 				if err != nil || len(items) != 1 || items[0].Seq != notice || items[0].State != ItemOpen || len(items[0].History) != len(item.History)+1 || calls != 2 {
 					t.Fatalf("retry replaced notice/history: %+v, calls %d, %v", items, calls, err)
 				}
@@ -177,7 +191,7 @@ func TestLaunchRetryRetainsNoticeAndCapacityDeferralDoesNotReopenIt(t *testing.T
 				assertRecoveryPollIsReadOnly(t, w.core.Store, func() error {
 					return w.core.launchAttention(launch.ID, launch.Launch, "same attempt remains blocked")
 				})
-				items, err := w.core.Store.Items(ItemFilter{})
+				items, err := recoveryNoticesWithHistory(w.core.Store)
 				if err != nil || len(items) != 1 || items[0].Seq != item.Seq || items[0].State != disposition || len(items[0].History) != len(item.History) {
 					t.Fatalf("passive launch checks lost owner disposition: %+v, %v", items, err)
 				}
@@ -191,7 +205,7 @@ func TestLaunchRetryRetainsNoticeAndCapacityDeferralDoesNotReopenIt(t *testing.T
 							t.Fatal(err)
 						}
 					}
-					items, err = w.core.Store.Items(ItemFilter{})
+					items, err = recoveryNoticesWithHistory(w.core.Store)
 					if err != nil || len(items) != 1 || items[0].State != disposition || len(items[0].History) != len(item.History) {
 						t.Fatalf("capacity deferral reopened notice: %+v, %v", items, err)
 					}
@@ -202,7 +216,7 @@ func TestLaunchRetryRetainsNoticeAndCapacityDeferralDoesNotReopenIt(t *testing.T
 				} else if _, err := w.core.RetryLaunch(launch.ID); err == nil {
 					t.Fatal("retried startup failure hidden")
 				}
-				items, err = w.core.Store.Items(ItemFilter{})
+				items, err = recoveryNoticesWithHistory(w.core.Store)
 				if err != nil || len(items) != 1 || items[0].Seq != item.Seq || items[0].State != ItemOpen || len(items[0].History) != len(item.History)+1 {
 					t.Fatalf("new launch failure lost notice identity/history: %+v, %v", items, err)
 				}
