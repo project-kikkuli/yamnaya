@@ -66,7 +66,20 @@ func TestAStoppedAgentReachesItsChiefAndTheFeedButNotTheOwnersUnread(t *testing.
 		t.Fatalf("chief heard %q, want one batch with the agent that stayed down", got)
 	}
 	n, _ := w.board(t).Node(m.ID)
-	if len(n.Feed.Recent) == 0 || n.Feed.Recent[0].Kind != EventAgentStopped || n.Feed.Unread != 0 {
-		t.Fatalf("feed %v unread %d, want the stop shown and not counted as news for the owner", kinds(n.Feed.Recent), n.Feed.Unread)
+	stops := 0
+	quietStuck := false
+	for _, event := range n.Feed.Recent {
+		if event.Kind == EventAgentStopped {
+			stops++
+			if event.OwnerNews() {
+				t.Fatal("agent stop counted as owner news")
+			}
+		}
+		if event.Kind == EventStuck && strings.HasPrefix(event.Payload, quietEvidence) {
+			quietStuck = true
+		}
+	}
+	if stops != 1 || !quietStuck || n.Feed.Unread != 1 {
+		t.Fatalf("feed %v unread %d, want one stop plus independent quiet-stuck owner news", kinds(n.Feed.Recent), n.Feed.Unread)
 	}
 }

@@ -232,19 +232,21 @@ func TestStuckAndFailedVerifyWakeOnce(t *testing.T) {
 			w := newOrgWorld(t)
 			g, m := w.goal(t, "ship the importer", "/repo/august")
 			chief := w.chief(t, "platform", m.ID)
+			if tc.events[0][0] == EventStuck {
+				persisted, err := w.core.Store.Manager(m.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m = persisted
+				w.stop(m.Session)
+				m.Failures, m.LastError, m.NextAttempt = stuckFailures, "credentials refused native startup", w.clock.Add(time.Hour)
+				if err := w.core.Store.SaveManager(m); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			for _, e := range tc.events {
 				w.clock = w.clock.Add(time.Minute)
-				if e[0] == EventStuck {
-					var err error
-					g, err = w.core.Store.Goal(g.ID)
-					if err != nil {
-						t.Fatal(err)
-					}
-					g.State, g.Evidence = GoalStuck, "dependency requires supervisor action"
-					if err := w.core.Store.SaveGoal(g); err != nil {
-						t.Fatal(err)
-					}
-				}
 				if e[0] == EventFailedVerify {
 					_, finding, _ := strings.Cut(e[1], "\n  - ")
 					w.failVerification(t, g.ID, []string{finding})
