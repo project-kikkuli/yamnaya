@@ -23,6 +23,7 @@ func fakeCodex(t *testing.T) (*sql.DB, string) {
 	}
 	t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
 	t.Setenv("CODEX_HOME", home)
+	t.Setenv("YM_CODEX_FIXTURE_ID_FILE", ran+".thread")
 	t.Setenv("YAMNAYA_STATE_DIR", t.TempDir())
 	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
 	if err != nil {
@@ -42,6 +43,10 @@ func fakeCodex(t *testing.T) (*sql.DB, string) {
 
 // recordThread writes thread id into Codex's table once the fake codex has started, as Codex does a moment after it starts.
 func recordThread(t *testing.T, db *sql.DB, ran, id string) {
+	t.Helper()
+	if err := os.WriteFile(ran+".thread", []byte(id), 0600); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
 			if b, err := os.ReadFile(ran); err == nil && len(b) > 0 {

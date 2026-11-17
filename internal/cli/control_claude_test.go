@@ -16,12 +16,18 @@ func TestManagedClaudePreservesNativeTaskAndAttachesItsOwnChannel(t *testing.T) 
 	binary := filepath.Join(dir, "claude-fixture")
 	capture := filepath.Join(dir, "args")
 	endpoint := filepath.Join(dir, "endpoint")
+	identities := filepath.Join(dir, "identities")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YM_CAPTURE_ARGS\"\nprintf '%s' \"$YAMNAYA_CLAUDE_CHANNEL_SOCKET\" > \"$YM_CAPTURE_SOCKET\"\n"
+	script += "printf '%s:%s:%s' \"$CODEX_THREAD_ID\" \"$CLAUDE_CODE_SESSION_ID\" \"$CLAUDECODE\" > \"$YM_CAPTURE_IDENTITIES\"\n"
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("YM_CAPTURE_ARGS", capture)
 	t.Setenv("YM_CAPTURE_SOCKET", endpoint)
+	t.Setenv("YM_CAPTURE_IDENTITIES", identities)
+	t.Setenv("CODEX_THREAD_ID", "parent-codex")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "parent-claude")
+	t.Setenv("CLAUDECODE", "1")
 	if err := runClaudeControl(context.Background(), binary, "native", []string{"--dangerously-skip-permissions", "--session-id", "native", "initial task"}); err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +58,10 @@ func TestManagedClaudePreservesNativeTaskAndAttachesItsOwnChannel(t *testing.T) 
 	}
 	if len(socket) == 0 {
 		t.Fatal(claude.ChannelSocketEnv + " not inherited")
+	}
+	caller, err := os.ReadFile(identities)
+	if err != nil || string(caller) != "::" {
+		t.Fatalf("native child inherited caller identity: %q %v", caller, err)
 	}
 	if _, err := os.Stat(filepath.Dir(string(socket))); !os.IsNotExist(err) {
 		t.Fatalf("private runtime directory leaked: %v", err)
