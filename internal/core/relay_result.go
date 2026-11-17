@@ -322,7 +322,7 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 		if out == "" {
 			out = "done"
 		}
-		return c.tell(b, y.Requester, fmt.Sprintf("ym: %s on %s: %s", cmd, r.Dest, out), false)
+		return c.recordSystemRelayOutcome(r, c.carrier(o, c.Resolve(y.Requester)), fmt.Sprintf("ym: %s on %s: %s", cmd, r.Dest, out))
 	case !ref.Final:
 		text := fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle", cmd, r.Dest, oneLine(why))
 		drop := fmt.Sprintf("ym relay drop %d", r.Seq)
@@ -336,10 +336,10 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 				return err
 			}
 			if !held {
-				return c.tell(b, y.Requester, text, false)
+				return c.requestAction(b, y.Requester, "relay-failure", fmt.Sprintf("%d@%s", r.Seq, ref.Error), text)
 			}
 		}
-		return c.tell(b, y.Requester, text+", "+drop+" stops it", false)
+		return c.requestAction(b, y.Requester, "relay-failure", fmt.Sprintf("%d@%s", r.Seq, ref.Error), text+", "+drop+" stops it")
 	}
 	it := Item{Kind: KindChore, DoLine: "Fix relay to " + clip(r.Dest, MaxDoLine-len("Fix relay to ")), Session: y.Requester, CreatedAt: c.now(), Evidence: []string{cmd},
 		Question: fmt.Sprintf("%s on %s was refused for good: %s", cmd, r.Dest, why),

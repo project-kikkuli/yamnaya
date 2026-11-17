@@ -66,6 +66,45 @@ func (f *fleet) sync(t *testing.T) {
 	}
 }
 
+func (f *fleet) dispatch(t *testing.T) {
+	t.Helper()
+	for _, world := range []*orgWorld{f.a, f.b, f.c} {
+		if err := world.core.DispatchActions(world.board(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func storedChiefDigest(t *testing.T, w *orgWorld, session string) []string {
+	t.Helper()
+	org, err := w.core.LoadOrg()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, ok := org.ManagerOf(w.core.Resolve(session))
+	if !ok {
+		t.Fatalf("no chief for %s", session)
+	}
+	digest, err := w.core.Store.digest(manager.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest.Action.merged(digest.Quiet).lines()
+}
+
+func storedMessages(t *testing.T, w *orgWorld, session string) []string {
+	t.Helper()
+	messages, err := w.core.Store.Messages(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, message.Text)
+	}
+	return out
+}
+
 func lastHanded(w *orgWorld, session string) string {
 	got := w.handedTo(session)
 	if len(got) == 0 {
@@ -123,6 +162,7 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 			}
 			for range 3 {
 				f.sync(t)
+				f.dispatch(t)
 			}
 			got := lastHanded(cw, chief.Session)
 			key := RemoteKey(tc.managerOn, esc.Key())
@@ -139,7 +179,7 @@ func TestAnAskClimbsToAChiefOnAnotherHostAndComesBackWhenThatChiefCannotAnswer(t
 				}
 				return
 			}
-			if !strings.Contains(got, "drop the old API") || !strings.HasSuffix(got, "  "+key) || !strings.Contains(got, " ask from ") {
+			if !strings.Contains(got, "drop the old API") || !strings.Contains(got, "  "+key) || !strings.Contains(got, " ask from ") {
 				t.Errorf("chief on %s was handed %q; want the ask with its key %s as that host names it", tc.chiefOn, got, key)
 			}
 		})
@@ -157,6 +197,7 @@ func TestRelaysWaitOutAHostThatIsDownAndTakeEffectOnceWhenItIsBack(t *testing.T)
 	esc := f.b.ask(t, mgr.Session, "may I drop the old API?")
 	for range 3 {
 		f.sync(t)
+		f.dispatch(t)
 	}
 	if got := f.a.handedTo(chief.Session); len(got) != 0 {
 		t.Fatalf("chief heard %q while b was down", got)
@@ -168,6 +209,7 @@ func TestRelaysWaitOutAHostThatIsDownAndTakeEffectOnceWhenItIsBack(t *testing.T)
 	f.net.down["b"], f.net.loseAcks = false, 1
 	for range 3 {
 		f.sync(t)
+		f.dispatch(t)
 	}
 	want := RemoteKey("b", esc.Key())
 	var heard int
@@ -204,6 +246,7 @@ func TestARelayedCommandRunsOnTheHostItNames(t *testing.T) {
 	}
 	for range 3 {
 		f.sync(t)
+		f.dispatch(t)
 	}
 	if len(ran) != 1 || strings.Join(ran[0], " ") != "c item answer #3 yes" {
 		t.Errorf("ran %q, want b's answer run once on c", ran)
@@ -296,7 +339,9 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 			t.Fatal(err)
 		}
 		f.sync(t)
+		f.dispatch(t)
 		f.sync(t)
+		f.dispatch(t)
 		if err := f.a.core.Loop(f.a.board(t)); err != nil {
 			t.Fatal(err)
 		}
@@ -305,6 +350,11 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 		t.Fatal(err)
 	}
 	cycle()
+	for _, who := range []Manager{chief, top} {
+		if _, err := f.a.core.Digest(who.Session); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, _, err := f.b.core.RecordGoalEvent(g.ID, EventMerged, "PR 7 merged", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -314,8 +364,11 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 	cycle()
 	cycle()
 	for _, who := range []Manager{chief, top} {
+		if got := f.a.handedTo(who.Session); len(got) > 0 {
+			t.Errorf("passive completion started a model turn: %q", got)
+		}
 		var heard []string
-		for _, h := range f.a.handedTo(who.Session) {
+		for _, h := range storedChiefDigest(t, f.a, who.Session) {
 			if strings.Contains(h, "b/"+g.Name) {
 				heard = append(heard, h)
 			}
@@ -454,6 +507,7 @@ func TestARelayRefusedForGoodEndsAndLeavesItsOutcomeWhereTheOwnerLooks(t *testin
 			}
 			for range 4 {
 				f.sync(t)
+				f.dispatch(t)
 			}
 			if runs != 1 {
 				t.Errorf("c ran the answer %d times, want once: a final refusal is not tried again", runs)
@@ -500,6 +554,7 @@ func TestARelayRefusedOverAndOverReachesTheOwnersQueueUntilDropped(t *testing.T)
 			}
 			for range tc.syncs {
 				f.sync(t)
+				f.dispatch(t)
 			}
 			f.a.clock = f.a.clock.Add(tc.wait)
 			b := f.a.board(t)
@@ -532,6 +587,7 @@ func TestARefusedRelayLeavesTheQueueWhenItsHostCanActAgain(t *testing.T) {
 	}
 	for range RefusalsBeforeOwner {
 		f.sync(t)
+		f.dispatch(t)
 	}
 	isRelay := func(n Need) bool { return n.Relay != nil }
 	if !slices.ContainsFunc(f.a.board(t).Needs, isRelay) {
@@ -539,6 +595,7 @@ func TestARefusedRelayLeavesTheQueueWhenItsHostCanActAgain(t *testing.T) {
 	}
 	f.c.core.RunSelf = func(...string) (string, error) { return "answered", nil }
 	f.sync(t)
+	f.dispatch(t)
 	if slices.ContainsFunc(f.a.board(t).Needs, isRelay) {
 		t.Fatal("the delivered command still needs the owner")
 	}
@@ -619,6 +676,7 @@ func TestAQueuedKillLandsOnceWhetherItsTargetLivesEndedOrWasKilledTwice(t *testi
 			}
 			for range RefusalsBeforeOwner {
 				f.sync(t)
+				f.dispatch(t)
 			}
 			if pending, _ := f.a.core.Store.PendingRelays(); len(pending) != 0 {
 				t.Errorf("still pending after the host answered: %+v", pending)
@@ -738,21 +796,18 @@ func TestARelayedGoalCommandsOutcomeReachesTheChiefThatAskedWhole(t *testing.T) 
 			for range 3 + tc.fails {
 				cycle()
 			}
-			var heard []string
-			for _, h := range f.b.handedTo(chief.Session) {
-				for _, line := range strings.Split(h, "\n") {
-					if _, kind, ok := strings.Cut(line, " #a/"); ok && strings.Contains(line, "a/"+g.Name) {
-						_, rest, _ := strings.Cut(kind, " ")
-						heard = append(heard, rest)
-					}
+			summary := strings.Join(storedChiefDigest(t, f.b, chief.Session), "\n")
+			for _, want := range tc.want {
+				want = strings.ReplaceAll(strings.ReplaceAll(want, "MGR", mgr.ID), "NAME", mgr.Name)
+				if count := strings.Count(summary, want); count != 1 {
+					t.Errorf("passive outcome count %d, want once for %q in %q", count, want, summary)
 				}
 			}
-			var want []string
-			for _, w := range tc.want {
-				want = append(want, strings.ReplaceAll(strings.ReplaceAll(w, "MGR", mgr.ID), "NAME", mgr.Name))
+			if count := strings.Count(summary, "relayed: ") + strings.Count(summary, "relay-failed: "); count != len(tc.want) {
+				t.Errorf("passive outcomes %d, want %d: %s", count, len(tc.want), summary)
 			}
-			if !slices.Equal(heard, want) {
-				t.Errorf("chief heard %q, want %q", heard, want)
+			if tc.fails == 0 && len(f.b.handedTo(chief.Session)) != 0 {
+				t.Errorf("successful outcome started a model turn: %q", f.b.handedTo(chief.Session))
 			}
 			if items, _ := f.b.core.Store.Items(ItemFilter{}); len(items) != 0 {
 				t.Errorf("b filed %+v; the goal's feed carries the outcome", items)
@@ -771,9 +826,9 @@ func TestARelayedCommandThatNamesNoGoalTellsItsRequesterHowItWent(t *testing.T) 
 		// told is what the requester hears directly; asked is the item it gets, "" for none.
 		told, asked string
 	}{
-		{name: "ran on the host that pulls", dest: "a", told: "msg: ym: ym item answer #3 yes on a: answered #3"},
-		{name: "ran on a host the puller reaches", dest: "c", told: "msg: ym: ym item answer #3 yes on c: answered #3"},
-		{name: "failed twice, then ran", dest: "a", fails: 2, told: "msg: ym: ym item answer #3 yes on a: answered #3"},
+		{name: "ran on the host that pulls", dest: "a", told: "ym: ym item answer #3 yes on a: answered #3"},
+		{name: "ran on a host the puller reaches", dest: "c", told: "ym: ym item answer #3 yes on c: answered #3"},
+		{name: "failed twice, then ran", dest: "a", fails: 2, told: "ym: ym item answer #3 yes on a: answered #3"},
 		{name: "refused for good past the puller", dest: "c", fails: 1, final: true,
 			asked: "ym item answer #3 yes on c was refused for good: database is locked"},
 	} {
@@ -800,7 +855,7 @@ func TestARelayedCommandThatNamesNoGoalTellsItsRequesterHowItWent(t *testing.T) 
 				f.a.core.SyncRelays([]string{"b", "c"}, f.net)
 			}
 			var told []string
-			for _, h := range f.b.handedTo(chief.Session) {
+			for _, h := range storedMessages(t, f.b, chief.Session) {
 				if strings.Contains(h, " on "+tc.dest+": ") {
 					told = append(told, h)
 				}
@@ -821,6 +876,60 @@ func TestARelayedCommandThatNamesNoGoalTellsItsRequesterHowItWent(t *testing.T) 
 			}
 			if tc.asked != "" && len(items) == 1 && items[0].Recipient != chief.ID {
 				t.Errorf("item went to %q, want the chief that asked, %s", items[0].Recipient, chief.ID)
+			}
+		})
+	}
+}
+
+func TestRemoteAskRechecksTheFilingHostsFactsBeforeActivatingAChief(t *testing.T) {
+	for _, change := range []string{"answered", "routed to owner"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFleet(t)
+			chief := f.a.chief(t, "platform")
+			_, manager := f.b.goal(t, "ship", "/repo/app")
+			if err := f.b.core.Attach(manager.ID, RemoteKey("a", chief.ID)); err != nil {
+				t.Fatal(err)
+			}
+			item := f.b.ask(t, manager.Session, "Can we ship?")
+			for range 3 {
+				f.sync(t)
+			}
+			if got := f.a.handedTo(chief.Session); len(got) > 0 {
+				t.Fatalf("route discovery activated chief: %q", got)
+			}
+			actions, err := f.b.core.Store.Activations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(actions, func(action Activation) bool {
+				return action.Kind == "question" && strings.HasPrefix(action.Subject, item.Key()+"@")
+			}) {
+				t.Fatalf("filing host lost authoritative question: %+v", actions)
+			}
+			if change == "answered" {
+				_, err = f.b.core.Store.Transition(item.Key(), ItemAnswered, "ship")
+			} else {
+				err = f.b.core.Store.SetRecipient(item.Seq, Owner)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.dispatch(t)
+			for range 3 {
+				f.sync(t)
+				f.dispatch(t)
+			}
+			if got := f.a.handedTo(chief.Session); len(got) > 0 {
+				t.Fatalf("obsolete remote ask activated chief: %q", got)
+			}
+			actions, err = f.b.core.Store.Activations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, action := range actions {
+				if action.Kind == "question" && action.State != "superseded" {
+					t.Fatalf("source did not supersede obsolete ask: %+v", action)
+				}
 			}
 		})
 	}

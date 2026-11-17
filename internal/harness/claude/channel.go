@@ -121,13 +121,13 @@ func ServeChannel(parent context.Context, socket, session string, in io.Reader, 
 				duplicate := true
 				if valid {
 					for _, ref := range actions {
-						_, known := submitted[ref]
-						submitted[ref] = struct{}{}
+						_, known := submitted[ref.channelActionRef]
+						submitted[ref.channelActionRef] = struct{}{}
 						if known || ref.Attempt < latest[ref.ID] {
 							continue
 						}
 						entry := action
-						entry.ID, entry.Attempt = ref.ID, ref.Attempt
+						entry.ID, entry.Attempt, entry.Content = ref.ID, ref.Attempt, ref.Content
 						pending[ref.ID] = entry
 						latest[ref.ID] = ref.Attempt
 						duplicate = false
@@ -260,22 +260,31 @@ type channelActionRef struct {
 	Attempt int
 }
 
-func channelActions(content string) []channelActionRef {
-	matches := channelActionID.FindAllStringSubmatch(content, -1)
-	actions := make([]channelActionRef, 0, len(matches))
+type channelActionSection struct {
+	channelActionRef
+	Content string
+}
+
+func channelActions(content string) []channelActionSection {
+	matches := channelActionID.FindAllStringSubmatchIndex(content, -1)
+	actions := make([]channelActionSection, 0, len(matches))
 	seen := map[channelActionRef]bool{}
-	for _, match := range matches {
-		ref := channelActionRef{ID: match[1]}
-		if match[2] != "" {
-			attempt, err := strconv.Atoi(match[2])
+	for i, match := range matches {
+		ref := channelActionRef{ID: content[match[2]:match[3]]}
+		if match[4] >= 0 {
+			attempt, err := strconv.Atoi(content[match[4]:match[5]])
 			if err != nil {
 				continue
 			}
 			ref.Attempt = attempt
 		}
+		end := len(content)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
 		if !seen[ref] {
 			seen[ref] = true
-			actions = append(actions, ref)
+			actions = append(actions, channelActionSection{channelActionRef: ref, Content: content[match[0]:end]})
 		}
 	}
 	return actions

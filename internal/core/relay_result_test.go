@@ -11,17 +11,27 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
-func cycleAll(f *fleet, n int) {
+func cycleAll(t *testing.T, f *fleet, n int) {
+	t.Helper()
 	for range n {
 		f.a.core.SyncRelays([]string{"b", "c"}, f.net)
 	}
 }
 
-func heardWith(w *orgWorld, session, text string) []string {
+func heardWith(t *testing.T, w *orgWorld, session, text string) []string {
+	t.Helper()
 	var out []string
-	for _, h := range w.handedTo(session) {
-		if strings.Contains(h, text) {
-			out = append(out, h)
+	for _, entry := range append(storedMessages(t, w, session), storedChiefDigest(t, w, session)...) {
+		if strings.Contains(entry, text) {
+			out = append(out, entry)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, entry := range w.handedTo(session) {
+		if strings.Contains(entry, text) {
+			out = append(out, entry)
 		}
 	}
 	return out
@@ -69,11 +79,11 @@ func TestAnOutcomeSurvivesALinkLostBeforeItWasConfirmed(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.net.loseAcks, f.net.loseReplies = tc.loseAcks, tc.loseReply
-			cycleAll(f, 5)
+			cycleAll(t, f, 5)
 			if runs != 1 {
 				t.Errorf("%s ran the command %d times, want once", tc.dest, runs)
 			}
-			told, asked := heardWith(f.b, chief.Session, "answered #3"), questions(t, f.b)
+			told, asked := heardWith(t, f.b, chief.Session, "answered #3"), questions(t, f.b)
 			if tc.final {
 				if len(asked) != 1 || !strings.Contains(asked[0], "no such item") {
 					t.Errorf("requester's items %q, want the refusal once", asked)
@@ -82,6 +92,17 @@ func TestAnOutcomeSurvivesALinkLostBeforeItWasConfirmed(t *testing.T) {
 			}
 			if len(told) != 1 || len(asked) != 0 {
 				t.Errorf("requester was told %q and asked %q, want the output once", told, asked)
+			}
+			f.dispatch(t)
+			if got := f.b.handedTo(chief.Session); len(got) != 0 {
+				t.Fatalf("passive outcome started a model turn: %q", got)
+			}
+			messages, err := f.b.core.TakeMessages(chief.Session)
+			if err != nil || len(messages) != 1 || messages[0].Source != "system" || !strings.Contains(messages[0].Text, "answered #3") {
+				t.Fatalf("passive outcome missing from agent inbox: %+v %v", messages, err)
+			}
+			if again, err := f.b.core.TakeMessages(chief.Session); err != nil || len(again) != 0 {
+				t.Fatalf("outcome inbox replay: %+v %v", again, err)
 			}
 		})
 	}
@@ -116,7 +137,7 @@ func TestAnOutcomeLandsOnTheGoalACommandTargetsAndNoOther(t *testing.T) {
 			if _, err := f.b.core.RunOrRelay("a", tc.args(m, g)...); err != nil {
 				t.Fatal(err)
 			}
-			cycleAll(f, 3)
+			cycleAll(t, f, 3)
 			events, err := f.a.core.Store.GoalEvents(g.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -124,7 +145,7 @@ func TestAnOutcomeLandsOnTheGoalACommandTargetsAndNoOther(t *testing.T) {
 			if got := slices.ContainsFunc(events, func(e GoalEvent) bool { return e.Kind == EventRelayed }); got != tc.recorded {
 				t.Errorf("goal's feed recorded the outcome = %v, want %v: %+v", got, tc.recorded, events)
 			}
-			if told := heardWith(f.b, chief.Session, "ran it"); len(told) != 1 {
+			if told := heardWith(t, f.b, chief.Session, "ran it"); len(told) != 1 {
 				t.Errorf("requester was told %q, want the output once", told)
 			}
 		})
@@ -161,10 +182,11 @@ func TestTheRequesterHearsAGoalCommandsOutcomeOnceWhoeverItIs(t *testing.T) {
 				if err := f.a.core.Loop(f.a.board(t)); err != nil {
 					t.Fatal(err)
 				}
-				cycleAll(f, 1)
+				cycleAll(t, f, 1)
 				if err := f.b.core.Loop(f.b.board(t)); err != nil {
 					t.Fatal(err)
 				}
+				f.dispatch(t)
 			}
 			cycle()
 			f.a.core.RunSelf = func(args ...string) (string, error) {
@@ -181,12 +203,12 @@ func TestTheRequesterHearsAGoalCommandsOutcomeOnceWhoeverItIs(t *testing.T) {
 			for range 4 {
 				cycle()
 			}
-			heard := len(heardWith(f.b, requester.Session, "the marker"))
+			heard := len(heardWith(t, f.b, requester.Session, "the marker"))
 			if heard != 1 {
 				t.Errorf("requester %s was handed the outcome %d times, want once: %q", tc.rung, heard, f.b.handedTo(requester.Session))
 			}
 			if tc.rung == "unrelated" {
-				if got := heardWith(f.b, chief.Session, RemoteKey("a", g.Name)); len(got) == 0 {
+				if got := heardWith(t, f.b, chief.Session, RemoteKey("a", g.Name)); len(got) == 0 {
 					t.Errorf("the goal's chief heard nothing of it: %q", f.b.handedTo(chief.Session))
 				}
 			}
@@ -213,11 +235,12 @@ func TestARefusalThatMayClearFilesNoItemAndItsDropAdviceWorksWhereItSaysTo(t *te
 			if _, err := f.b.core.RunOrRelay(tc.dest, "item", "answer", "#3", "yes"); err != nil {
 				t.Fatal(err)
 			}
-			cycleAll(f, 5)
+			cycleAll(t, f, 5)
+			f.dispatch(t)
 			if asked := questions(t, f.b); len(asked) != 0 {
 				t.Errorf("a refusal that may clear filed %q", asked)
 			}
-			told := heardWith(f.b, chief.Session, "database is locked")
+			told := heardWith(t, f.b, chief.Session, "database is locked")
 			if len(told) != 1 {
 				t.Fatalf("requester was told %q, want the refusal once", told)
 			}
@@ -260,11 +283,7 @@ func breakMessages(t *testing.T, w *orgWorld) func() {
 
 func recorded(t *testing.T, w *orgWorld, session, text string) int {
 	t.Helper()
-	var n int
-	if err := w.core.Store.db.QueryRow(`SELECT count(*) FROM ym_messages WHERE session = ? AND text LIKE ?`, session, "%"+text+"%").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
+	return len(heardWith(t, w, session, text))
 }
 
 func TestAnOutcomeIsToldOnceHoweverTheHostReportingItFails(t *testing.T) {
@@ -309,9 +328,9 @@ func TestAnOutcomeIsToldOnceHoweverTheHostReportingItFails(t *testing.T) {
 					t.Fatal(err)
 				}
 				mend := fail(t, map[string]*orgWorld{"a": f.a, "b": f.b}[tc.reporter])
-				cycleAll(f, 4)
+				cycleAll(t, f, 4)
 				mend()
-				cycleAll(f, 4)
+				cycleAll(t, f, 4)
 				if tc.final {
 					if asked := questions(t, f.b); len(asked) != 1 {
 						t.Errorf("requester's items %q, want the refusal once", asked)
@@ -349,7 +368,7 @@ func TestAHostThatCannotReportStillCarriesRelaysToTheNextHost(t *testing.T) {
 		}
 	}
 	defer breakMessages(t, f.a)()
-	cycleAll(f, 1)
+	cycleAll(t, f, 1)
 	if !slices.Contains(ran, "item answer #1 c") {
 		t.Errorf("c ran %q while a could not report b's outcome, want its command carried", ran)
 	}
@@ -409,10 +428,11 @@ func TestARequesterHearsDirectlyWhenTheGoalsFeedWillNotReachIt(t *testing.T) {
 				if err := f.a.core.Loop(f.a.board(t)); err != nil {
 					t.Fatal(err)
 				}
-				cycleAll(f, 1)
+				cycleAll(t, f, 1)
 				if err := f.b.core.Loop(f.b.board(t)); err != nil {
 					t.Fatal(err)
 				}
+				f.dispatch(t)
 			}
 			cycle()
 			if tc.end != nil {
@@ -529,10 +549,11 @@ func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
 					if err := f.a.core.Loop(f.a.board(t)); err != nil {
 						t.Fatal(err)
 					}
-					cycleAll(f, 1)
+					cycleAll(t, f, 1)
 					if err := f.b.core.Loop(f.b.board(t)); err != nil {
 						t.Fatal(err)
 					}
+					f.dispatch(t)
 				}
 				cycle()
 				s.m, _ = f.a.core.Store.Manager(m.ID)
@@ -552,7 +573,7 @@ func TestARequesterHearsOnceWhenTheFeedLeftToTellItStopsCarrying(t *testing.T) {
 				if err := f.b.core.AckGoal(RemoteKey("a", g.ID)); err != nil {
 					t.Fatal(err)
 				}
-				cycleAll(f, 1)
+				cycleAll(t, f, 1)
 				if tc.stops != nil {
 					tc.stops(t, s)
 				}
@@ -614,10 +635,11 @@ func TestAFailureHandedBackTellsOnlyWhoItWasLeftFromAndOffersOnlyADropThatWorks(
 						t.Fatal(err)
 					}
 				}
-				cycleAll(f, 1)
+				cycleAll(t, f, 1)
 				if err := f.b.core.Loop(f.b.board(t)); err != nil {
 					t.Fatal(err)
 				}
+				f.dispatch(t)
 			}
 			cycle()
 			runs.core.RunSelf = func(args ...string) (string, error) { return "", stderrors.New("the marker") }
@@ -634,7 +656,7 @@ func TestAFailureHandedBackTellsOnlyWhoItWasLeftFromAndOffersOnlyADropThatWorks(
 				t.Fatal(err)
 			}
 			for range 3 {
-				cycleAll(f, 1)
+				cycleAll(t, f, 1)
 			}
 			if _, err := runs.core.KillGoal(runs.board(t), g.ID); err != nil {
 				t.Fatal(err)
@@ -645,13 +667,9 @@ func TestAFailureHandedBackTellsOnlyWhoItWasLeftFromAndOffersOnlyADropThatWorks(
 			if n := recorded(t, f.b, asks, "the marker"); n != 1 {
 				t.Errorf("requester told %d times, want once", n)
 			}
-			msgs, err := f.b.core.Store.Messages(asks)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, m := range msgs {
-				if strings.Contains(m.Text, "the marker") && strings.Contains(m.Text, "ym relay drop") != tc.wantDrop {
-					t.Errorf("told %q, want drop advice %v", m.Text, tc.wantDrop)
+			for _, text := range heardWith(t, f.b, asks, "the marker") {
+				if strings.Contains(text, "ym relay drop") != tc.wantDrop {
+					t.Errorf("told %q, want drop advice %v", text, tc.wantDrop)
 				}
 			}
 			if items, _ := f.b.core.Store.Items(ItemFilter{}); len(items) != 0 {

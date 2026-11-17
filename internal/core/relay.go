@@ -774,6 +774,14 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 					to = r
 				}
 				err = c.Store.SetRecipient(a.Seq, to)
+				if err != nil || up == Owner {
+					return err
+				}
+				item, err := c.Store.Item("#" + strconv.FormatInt(a.Seq, 10))
+				if err != nil {
+					return err
+				}
+				return c.askManager(b, o, item)
 			} else {
 				err = c.Relay(a.Item, RelayRoute, relayRoute{Seq: a.Seq, Recipient: to})
 			}
@@ -784,7 +792,7 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 		if host, rest, remote := SplitRemote(up); remote {
 			return c.Relay(host, RelayAsk, relayAsk{Item: a.Item, Seq: a.Seq, Recipient: rest, Text: a.Text, Hops: a.Hops + 1})
 		}
-		return c.tell(b, o.Managers[up].Session, a.Text, false)
+		return nil
 	case RelayRoute:
 		var rt relayRoute
 		if err := unmarshal(r.Body, &rt); err != nil {
@@ -801,9 +809,6 @@ func (c *Core) actOn(b Board, berr error, r Relay) error {
 			return err
 		}
 		if it.Recipient = rt.Recipient; it.Recipient == Owner {
-			return nil
-		}
-		if _, _, remote := SplitRemote(it.Recipient); remote {
 			return nil
 		}
 		return c.askManager(b, o, it)
@@ -872,7 +877,11 @@ func (c *Core) relayAsk(b Board, o Org, it Item) error {
 	host, rest, _ := SplitRemote(it.Recipient)
 	shown := it
 	shown.Host = c.SelfName()
-	return c.Relay(host, RelayAsk, relayAsk{Item: shown.Host, Seq: it.Seq, Recipient: rest, Text: askText(b, o, shown)})
+	text := askText(b, o, shown)
+	if err := c.Relay(host, RelayAsk, relayAsk{Item: shown.Host, Seq: it.Seq, Recipient: rest, Text: text}); err != nil {
+		return err
+	}
+	return c.requestAction(b, it.Recipient, "question", fmt.Sprintf("%s@%d", it.Key(), len(it.History)), text)
 }
 
 // tellChiefs hands text to the chief id names, or the first one above it that can answer, and to every chief above that one, here

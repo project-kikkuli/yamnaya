@@ -178,10 +178,15 @@ func testChannelBatch(t *testing.T, size int) {
 	if len(registered) != size {
 		t.Fatalf("batch lost individual actions: %+v", registered)
 	}
+	total := 0
 	for _, action := range registered {
-		if action.Content != text {
-			t.Fatalf("pending context lost: %+v", action)
+		total += len(action.Content)
+		if !strings.HasPrefix(action.Content, "Yamnaya supervisor action "+action.ID+" ") || strings.Count(action.Content, "Yamnaya supervisor action ") != 1 {
+			t.Fatalf("pending repeats unrelated batch context: %+v", action)
 		}
+	}
+	if total != len(text) {
+		t.Fatalf("pending content expands batch: %d bytes, original %d", total, len(text))
 	}
 	submit(text)
 	request("ping", nil)
@@ -216,7 +221,7 @@ func testChannelBatch(t *testing.T, size int) {
 	event(mixed, ids[:1], 3)
 	submit(mixed)
 	registered = pending()
-	if len(registered) != 1 || registered[0].Attempt != 3 || registered[0].Content != mixed {
+	if len(registered) != 1 || registered[0].Attempt != 3 || registered[0].Content != strings.SplitN(mixed, "\n\n", 2)[0]+"\n\n" {
 		t.Fatalf("mixed-attempt batch lost newest attempt: %+v", registered)
 	}
 	send.Close()

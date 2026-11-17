@@ -121,6 +121,7 @@ func TestRemoteItemActionsChangeTheFilingHostAndReachTheFiler(t *testing.T) {
 			for range 3 {
 				f.sync(t)
 			}
+			f.dispatch(t)
 			changed, err := f.c.core.Store.Item(it.Key())
 			if err != nil {
 				t.Fatal(err)
