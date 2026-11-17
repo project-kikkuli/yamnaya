@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS ym_activations (
  state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL,
  dispatched TEXT, target_session TEXT NOT NULL DEFAULT '',
  error TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '',
- attention INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, batch TEXT NOT NULL DEFAULT ''
+ attention INTEGER NOT NULL DEFAULT 0, attention_attempt INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, batch TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ym_activations_pending ON ym_activations(state,recipient);
 CREATE INDEX IF NOT EXISTS ym_activations_target ON ym_activations(target_session,state);
@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS ym_activations_target ON ym_activations(target_sessio
 
 type Activation struct {
 	Batch                                                 string
-	Attempt                                               int
+	Attempt, AttentionAttempt                             int
 	ID, Recipient, Session, Kind, Subject, Payload, State string
 	Created, Dispatched                                   time.Time
 	TargetSession, Error, Result                          string
@@ -46,7 +46,7 @@ func (s *Store) activeActivations() ([]Activation, error) {
 }
 
 func (s *Store) activations(where string) ([]Activation, error) {
-	rows, err := s.db.Query(`SELECT id,recipient,session,kind,subject,payload,state,created,dispatched,target_session,error,result,attention,attempt,batch FROM ym_activations` + where + ` ORDER BY created,id`)
+	rows, err := s.db.Query(`SELECT id,recipient,session,kind,subject,payload,state,created,dispatched,target_session,error,result,attention,attempt,batch,attention_attempt FROM ym_activations` + where + ` ORDER BY created,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (s *Store) activations(where string) ([]Activation, error) {
 		var a Activation
 		var created sql.NullString
 		var dispatched sql.NullString
-		if err := rows.Scan(&a.ID, &a.Recipient, &a.Session, &a.Kind, &a.Subject, &a.Payload, &a.State, &created, &dispatched, &a.TargetSession, &a.Error, &a.Result, &a.Attention, &a.Attempt, &a.Batch); err != nil {
+		if err := rows.Scan(&a.ID, &a.Recipient, &a.Session, &a.Kind, &a.Subject, &a.Payload, &a.State, &created, &dispatched, &a.TargetSession, &a.Error, &a.Result, &a.Attention, &a.Attempt, &a.Batch, &a.AttentionAttempt); err != nil {
 			return nil, err
 		}
 		a.Created, a.Dispatched = parseTime(created), parseTime(dispatched)
@@ -289,37 +289,80 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 }
 
 func (c *Core) actionAttention(a Activation, why string) error {
-	if a.Attention != 0 && a.Error == why {
-		it, err := c.Store.Item(fmt.Sprintf("#%d", a.Attention))
-		if err != nil {
-			return err
-		}
-		if it.State == ItemOpen || it.State == ItemSnoozed {
-			return nil
-		}
-	}
 	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var attention int64
-	err = tx.QueryRow(`SELECT x.attention FROM ym_activations x JOIN ym_items i ON i.seq=x.attention WHERE x.recipient=? AND i.state IN ('open','snoozed') ORDER BY x.created LIMIT 1`, a.Recipient).Scan(&attention)
-	if errors.Is(err, sql.ErrNoRows) {
-		it, addErr := addItemIn(tx, Item{Kind: KindChore, Session: "ym", Recipient: Owner,
-			Question: "Supervisor control needs recovery for " + a.Recipient + ": " + why,
-			Rec:      "Inspect ym action list and the supervisor's connection, then explicitly retry blocked actions.",
-			DoLine:   "Recover supervisor control", Impact: ImpactAgents,
-			Evidence: []string{"ym action list", "ym action show " + a.ID}})
-		if addErr != nil {
-			return addErr
-		}
-		attention = it.Seq
-	} else if err != nil {
+	if err = tx.QueryRow(`SELECT attention,attempt,attention_attempt,recipient,error FROM ym_activations WHERE id=?`, a.ID).Scan(&a.Attention, &a.Attempt, &a.AttentionAttempt, &a.Recipient, &a.Error); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`UPDATE ym_activations SET attention=?,error=? WHERE id=?`, attention, why, a.ID); err != nil {
+	if a.Attention != 0 && a.AttentionAttempt == a.Attempt && a.Error == why {
+		return nil
+	}
+	attention := a.Attention
+	if attention != 0 {
+		if a.AttentionAttempt != a.Attempt {
+			if err = reopenRecoveryAttentionIn(tx, attention, why); err != nil {
+				return err
+			}
+		}
+	} else {
+		err = tx.QueryRow(`SELECT x.attention FROM ym_activations x JOIN ym_items i ON i.seq=x.attention WHERE x.recipient=? AND i.state IN ('open','snoozed') ORDER BY x.created LIMIT 1`, a.Recipient).Scan(&attention)
+		if errors.Is(err, sql.ErrNoRows) {
+			it, addErr := addItemIn(tx, Item{Kind: KindChore, Session: "ym", Recipient: Owner,
+				Question: "Supervisor control needs recovery for " + a.Recipient + ": " + why,
+				Rec:      "Open Y on the board to inspect supervisor recovery and the original request, then explicitly retry after checking the connection and prior effects. CLI: ym action list; ym action retry <id>.",
+				DoLine:   "Recover supervisor control", Impact: ImpactAgents,
+				Evidence: []string{"ym action list", "ym action show " + a.ID}})
+			if addErr != nil {
+				return addErr
+			}
+			attention = it.Seq
+		} else if err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(`UPDATE ym_activations SET attention=?,attention_attempt=attempt,error=? WHERE id=?`, attention, why, a.ID); err != nil {
 		return err
+	}
+	if err = tx.Commit(); err == nil {
+		c.Store.invalidate()
+	}
+	return err
+}
+
+func reopenRecoveryAttentionIn(tx *sql.Tx, seq int64, why string) error {
+	var previous string
+	if err := tx.QueryRow(`SELECT state FROM ym_items WHERE seq=?`, seq).Scan(&previous); err != nil {
+		return err
+	}
+	if previous == ItemOpen || previous == ItemSnoozed {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE ym_items SET state='open',answer='',reason='',answered_at=NULL,delivered_at=NULL,held_at=NULL,snooze_until=NULL WHERE seq=?`, seq); err != nil {
+		return err
+	}
+	return addEvent(tx, fmt.Sprintf("#%d", seq), previous, ItemOpen, why)
+}
+
+func migrateActivationAttention(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var has int
+	if err = tx.QueryRow(`SELECT count(*) FROM pragma_table_info('ym_activations') WHERE name='attention_attempt'`).Scan(&has); err != nil {
+		return err
+	}
+	if has == 0 {
+		if _, err = tx.Exec(`ALTER TABLE ym_activations ADD COLUMN attention_attempt INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(`UPDATE ym_activations SET attention_attempt=attempt WHERE attention<>0`); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

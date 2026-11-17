@@ -325,6 +325,14 @@ func OpenStore(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate message provenance: %w", err)
 	}
+	if err := migrateActivationAttention(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate activation attention: %w", err)
+	}
+	if err := addColumns(db, `ym_pending_launches attention INTEGER NOT NULL DEFAULT 0`, `ym_pending_launches attempt INTEGER NOT NULL DEFAULT 0`, `ym_pending_launches attention_attempt INTEGER NOT NULL DEFAULT 0`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate launch attention: %w", err)
+	}
 	scans, err := sql.Open("sqlite", "file:"+strings.TrimSuffix(path, ".db")+"-scans.db?"+q.Encode())
 	if err == nil {
 		_, err = scans.Exec(`CREATE TABLE IF NOT EXISTS ym_scans (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, data BLOB NOT NULL)`)

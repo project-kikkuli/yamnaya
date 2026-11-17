@@ -12,7 +12,8 @@ import (
 const launchAdmissionSchema = `
 CREATE TABLE IF NOT EXISTS ym_pending_launches (
  id TEXT PRIMARY KEY, body TEXT NOT NULL, state TEXT NOT NULL,
- reason TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', created TEXT NOT NULL
+ reason TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '', created TEXT NOT NULL,
+ attention INTEGER NOT NULL DEFAULT 0, attempt INTEGER NOT NULL DEFAULT 0, attention_attempt INTEGER NOT NULL DEFAULT 0
 );
 `
 
@@ -34,10 +35,12 @@ func (c *Core) CheckLaunch(n NewLaunch) error {
 type PendingLaunch struct {
 	ID, State, Reason, Result string
 	Launch                    NewLaunch
+	Attention                 int64
+	Attempt, AttentionAttempt int
 }
 
 func (s *Store) PendingLaunches() ([]PendingLaunch, error) {
-	rows, err := s.db.Query(`SELECT id,body,state,reason,result FROM ym_pending_launches WHERE state IN ('pending','blocked') ORDER BY created,id`)
+	rows, err := s.db.Query(`SELECT id,body,state,reason,result,attention,attempt,attention_attempt FROM ym_pending_launches WHERE state IN ('pending','blocked') ORDER BY created,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +49,7 @@ func (s *Store) PendingLaunches() ([]PendingLaunch, error) {
 	for rows.Next() {
 		var p PendingLaunch
 		var body string
-		if err := rows.Scan(&p.ID, &body, &p.State, &p.Reason, &p.Result); err != nil {
+		if err := rows.Scan(&p.ID, &body, &p.State, &p.Reason, &p.Result, &p.Attention, &p.Attempt, &p.AttentionAttempt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(body), &p.Launch); err != nil {
@@ -128,6 +131,7 @@ func (c *Core) startPendingLaunchLocked(id string) (Started, error) {
 		}
 	}
 	err := c.CheckLaunch(n)
+	var deferred *LaunchDeferred
 	var st Started
 	if err == nil {
 		if c.Launches == nil {
@@ -136,10 +140,12 @@ func (c *Core) startPendingLaunchLocked(id string) (Started, error) {
 			st, err = c.Launches.Start(n)
 		}
 	}
-	var deferred *LaunchDeferred
 	if errors.As(err, &deferred) {
 		_, saveErr := c.Store.db.Exec(`UPDATE ym_pending_launches SET reason=? WHERE id=? AND state='pending'`, deferred.Reason, id)
 		return Started{Message: "queued launch " + id + ": " + deferred.Reason}, saveErr
+	}
+	if _, saveErr := c.Store.db.Exec(`UPDATE ym_pending_launches SET attempt=attempt+1 WHERE id=?`, id); saveErr != nil {
+		return Started{}, saveErr
 	}
 	if err != nil {
 		_, saveErr := c.Store.db.Exec(`UPDATE ym_pending_launches SET state='blocked',result=? WHERE id=?`, err.Error(), id)
@@ -186,16 +192,36 @@ func (c *Core) DrainLaunches() error {
 func launchAttentionQuestion(id string) string { return "Launch " + id + " is blocked" }
 
 func (c *Core) launchAttention(id string, n NewLaunch, reason string) error {
-	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
+	tx, err := c.Store.db.Begin()
 	if err != nil {
 		return err
 	}
-	for _, it := range items {
-		if it.Session == "ym-launch" && it.Question == launchAttentionQuestion(id) {
-			return nil
+	defer tx.Rollback()
+	var attention int64
+	var attempt, attentionAttempt int
+	if err = tx.QueryRow(`SELECT attention,attempt,attention_attempt FROM ym_pending_launches WHERE id=?`, id).Scan(&attention, &attempt, &attentionAttempt); err != nil {
+		return err
+	}
+	if attention != 0 && attentionAttempt == attempt {
+		return nil
+	}
+	if attention == 0 {
+		it, addErr := addItemIn(tx, Item{Session: "ym-launch", Scope: n.Repo, Kind: KindChore, Question: launchAttentionQuestion(id), DoLine: "Inspect blocked launch", Impact: "agents", Rec: reason + ". Open Y on the board to inspect the preserved launch and prior native effects before explicitly retrying. CLI: ym launch list --json; ym launch retry " + id + "."})
+		if addErr != nil {
+			return addErr
+		}
+		attention = it.Seq
+	} else if attentionAttempt != attempt {
+		if err = reopenRecoveryAttentionIn(tx, attention, reason); err != nil {
+			return err
 		}
 	}
-	_, err = c.Store.AddItem(Item{Session: "ym-launch", Scope: n.Repo, Kind: KindChore, Question: launchAttentionQuestion(id), DoLine: "Inspect blocked launch", Impact: "agents", Rec: reason + ". Inspect ym launch list --json, then explicitly retry with ym launch retry " + id + " after checking prior native effects."})
+	if _, err = tx.Exec(`UPDATE ym_pending_launches SET attention=?,attention_attempt=attempt WHERE id=?`, attention, id); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err == nil {
+		c.Store.invalidate()
+	}
 	return err
 }
 
@@ -217,12 +243,16 @@ func (c *Core) RetryLaunch(id string) (string, error) {
 	if changed != 1 {
 		return "", fmt.Errorf("launch %s is not blocked", id)
 	}
-	items, err := c.Store.Items(ItemFilter{States: []string{ItemOpen, ItemSnoozed}})
-	if err != nil {
+	var attention int64
+	if err := c.Store.db.QueryRow(`SELECT attention FROM ym_pending_launches WHERE id=?`, id).Scan(&attention); err != nil {
 		return "", err
 	}
-	for _, it := range items {
-		if it.Session == "ym-launch" && it.Question == launchAttentionQuestion(id) {
+	if attention != 0 {
+		it, err := c.Store.Item(fmt.Sprintf("#%d", attention))
+		if err != nil {
+			return "", err
+		}
+		if it.State == ItemOpen || it.State == ItemSnoozed {
 			if _, err := c.Store.Transition(it.Key(), ItemDismissed, "owner explicitly retries the preserved launch request"); err != nil {
 				return "", err
 			}
