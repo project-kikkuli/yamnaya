@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,8 @@ func TestChiefWorkspaceLaunchAndLegacyConversationMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			ran := filepath.Join(base, "ran")
+			events := filepath.Join(base, "native-events")
+			t.Setenv("YM_CODEX_FIXTURE_EVENTS", events)
 			script := "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > '" + ran + "'\nexec sleep 60\n"
 			if err := os.WriteFile(filepath.Join(bins, harness), []byte(script), 0755); err != nil {
 				t.Fatal(err)
@@ -66,6 +69,12 @@ func TestChiefWorkspaceLaunchAndLegacyConversationMigration(t *testing.T) {
 			if err := st.SaveManager(chief); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Remove(ran); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Remove(events); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			args, _, err := l.restart(rec, func(r *launch.Record) ([]string, error) { return resumeArgv(*r, "carry on") })
 			if err != nil {
 				t.Fatal(err)
@@ -75,11 +84,52 @@ func TestChiefWorkspaceLaunchAndLegacyConversationMigration(t *testing.T) {
 			}
 			for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 				b, _ := os.ReadFile(ran)
-				if strings.HasPrefix(string(b), workspace+"\n") && strings.Contains(string(b), "carry on") {
+				if strings.HasPrefix(string(b), workspace+"\n") && (harness == "claude" && strings.Contains(string(b), "carry on") || harness == "codex" && strings.Contains(string(b), "--remote\nunix://")) {
 					break
 				}
 				if time.Now().After(end) {
 					t.Fatalf("did not resume in workspace: %s", b)
+				}
+			}
+			if harness == "codex" {
+				native, err := os.ReadFile(ran)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(native), "carry on") {
+					t.Fatalf("recovery text became native frontend input: %s", native)
+				}
+				raw, err := os.ReadFile(events)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resumed, activated := false, false
+				for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+					var request struct {
+						Method string
+						Params struct {
+							ThreadID, Cwd, TurnTrigger string
+							Input                      []json.RawMessage
+							ToolOutput                 *struct{ Namespace, Name, Output string }
+						}
+					}
+					if err = json.Unmarshal([]byte(line), &request); err != nil {
+						t.Fatal(err)
+					}
+					if request.Method == "thread/resume" {
+						resumed = request.Params.ThreadID == rec.Session && request.Params.Cwd == workspace
+					}
+					if request.Method == "turn/start" {
+						if len(request.Params.Input) != 0 {
+							t.Fatalf("workspace migration fabricated user input: %s", line)
+						}
+						if request.Params.ToolOutput != nil && strings.Contains(request.Params.ToolOutput.Output, "carry on") {
+							activated = true
+						}
+					}
+				}
+				if !resumed || !activated {
+					t.Fatalf("native migration lost conversation or explicit control input: %s", raw)
 				}
 			}
 			got, _ := l.records.Find(rec.Key)

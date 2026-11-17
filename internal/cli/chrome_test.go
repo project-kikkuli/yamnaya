@@ -183,6 +183,21 @@ func TestClaudeSessionsAttachChromeAndCodexSessionsDoNot(t *testing.T) {
 					t.Fatal(err)
 				}
 				argv := c.argv(t, p)
+				wantRecovery := ""
+				switch c.name {
+				case "goal resume", "goal start over when the transcript is gone":
+					wantRecovery = "you stopped"
+				case "bring onto ym's server":
+					wantRecovery = "come over"
+				}
+				if wantRecovery != "" {
+					if notes := recoveryDirectivePayload(t, p.l); !strings.Contains(notes, wantRecovery) {
+						t.Fatalf("recovery directive was not persisted: %s", notes)
+					}
+					if slices.Contains(argv, wantRecovery) {
+						t.Fatalf("recovery became native user input: %q", argv)
+					}
+				}
 				if len(argv) == 0 {
 					t.Fatal("no command")
 				}

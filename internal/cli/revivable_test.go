@@ -15,6 +15,7 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux"
 	"github.com/project-kikkuli/yamnaya/internal/host/tmux/tmuxtest"
 	"github.com/project-kikkuli/yamnaya/internal/launch"
+	"github.com/project-kikkuli/yamnaya/internal/proc"
 )
 
 // fakeAgent puts a claude on PATH that writes where it started and with what arguments to the file it returns.
@@ -37,7 +38,12 @@ func testLauncher(t *testing.T, base string) launcher {
 	if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
+	store, err := core.OpenStore(filepath.Join(base, "ym.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return launcher{core: &core.Core{Store: store, StateDir: base, Procs: func() ([]proc.Proc, error) { return nil, nil }}, srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
 }
 
 // putConversationFor leaves session a conversation on the default login, for what resumes one.

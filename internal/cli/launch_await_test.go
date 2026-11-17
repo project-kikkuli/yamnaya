@@ -99,4 +99,11 @@ func TestACodexManagerIsKeyedByTheThreadCodexRecordsOnStartAndOnStartingOver(t *
 	if rec, _ := l.records.Find(st.Key); rec.Session != now {
 		t.Fatalf("launch record keeps %s, want %s", rec.Session, now)
 	}
+	actions, err := l.core.Store.Activations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || actions[0].Session != now || actions[0].Kind != "directive" || !strings.Contains(actions[0].Payload, "you stopped") {
+		t.Fatalf("recovery lost its new native identity or persisted work: %+v", actions)
+	}
 }

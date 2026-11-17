@@ -128,9 +128,15 @@ func TestBoardKeysRunTheSameCoreActionsAsTheirCommands(t *testing.T) {
 		check func(t *testing.T, f fixture) string
 	}{
 		{"+ starts a session once the prompt is typed, tab picks codex", nil, []string{"+", "fix", " ", "login", "tab", "enter"}, func(t *testing.T, f fixture) string {
-			want := core.NewLaunch{Prompt: "fix login", Harness: "codex", Repo: core.MainCheckout(cwd)}
-			if len(f.l.started) != 1 || f.l.started[0] != want || !strings.HasPrefix(f.m.message, "started codex") {
+			if len(f.l.started) != 1 {
+				return "started " + fmtLaunches(f.l.started)
+			}
+			got := f.l.started[0]
+			if got.Prompt != "fix login" || got.Harness != "codex" || got.Repo != core.MainCheckout(cwd) || got.Session == "" || got.Source == "" || got.Request == "" || !strings.HasPrefix(f.m.message, "started codex") {
 				return "started " + fmtLaunches(f.l.started) + " message " + f.m.message
+			}
+			if pending, err := f.c.Store.PendingLaunches(); err != nil || len(pending) != 0 {
+				return fmt.Sprintf("successful launch remained pending: %+v %v", pending, err)
 			}
 			return ""
 		}},
