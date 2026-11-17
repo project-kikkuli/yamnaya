@@ -386,7 +386,7 @@ func (c *Core) ReopenGoal(ref string) (Manager, error) {
 		}
 		if held {
 			now := c.now()
-			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.Shown() + " reopened; any items a close dismissed stay dismissed", Created: now, Delivered: now}); err != nil {
+			if _, _, err := c.Store.AddGoalEvent(GoalEvent{Goal: g.ID, Kind: EventGoalReopened, Payload: g.Shown() + " reopened; unresolved decisions remain available", Created: now, Delivered: now}); err != nil {
 				return m, err
 			}
 		}

@@ -93,8 +93,8 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 		toManager    string
 		findingsHave string
 	}{
-		{name: "no pull requests, verifier passes", verdict: VerdictPass, launched: true, state: GoalDone, toManager: "passed verification"},
-		{name: "merged green, verifier passes", landing: &merged, verdict: VerdictPass, launched: true, state: GoalDone, toManager: "passed verification"},
+		{name: "no pull requests, verifier passes", verdict: VerdictPass, launched: true, state: GoalDone},
+		{name: "merged green, verifier passes", landing: &merged, verdict: VerdictPass, launched: true, state: GoalDone},
 		{name: "merged green, verifier fails", landing: &merged, verdict: VerdictFail, findings: []string{"CSV with quoted commas is rejected: importer/csv.go:40"},
 			launched: true, state: GoalActive, toManager: "quoted commas", findingsHave: "quoted commas"},
 		{name: "pull request still open", landing: &Landing{State: "OPEN"}, state: GoalActive, toManager: "still open", findingsHave: "fail merged " + pr1 + ": still open"},
@@ -142,12 +142,19 @@ func TestVerificationDecidesTheGoalFromFactsAndAFreshVerifier(t *testing.T) {
 					t.Fatalf("decided verifier %s still runs; forgot %q", verifier, w.launches.forgot)
 				}
 			}
+			w.set(w.manager.Session, func(s *Session) { s.Status = Idle })
+			if err := w.core.DispatchActions(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
 			g, v := w.state(t)
 			if g.State != tc.state {
 				t.Fatalf("goal %s, want %s; verification %+v", g.State, tc.state, v)
 			}
 			if rows := goalRows(w.board(t)); len(rows) != 0 {
 				t.Fatalf("owner rows %q, want none: a done goal reports on the tree, a failed one goes back to its manager", rows)
+			}
+			if tc.state == GoalDone && w.toManager() != "" {
+				t.Fatalf("successful verification activated the manager: %q", w.toManager())
 			}
 			if !strings.Contains(w.toManager(), tc.toManager) {
 				t.Fatalf("manager was told %q, want it to mention %q", w.toManager(), tc.toManager)
@@ -262,6 +269,10 @@ func TestAVerifierThatDiesOrHangsIsReplacedThenTheGoalShowsStuck(t *testing.T) {
 				tc.fail(w, vs[i])
 				w.tick(t, tc.wait+backoff(i+1))
 			}
+			w.set(w.manager.Session, func(s *Session) { s.Status = Idle })
+			if err := w.core.DispatchActions(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
 			g, v := w.state(t)
 			if g.State != GoalStuck || v.Verdict != VerdictError || len(w.verifiers()) != VerifierLaunches {
 				t.Fatalf("goal %s verdict %q with %d verifiers, want stuck after %d", g.State, v.Verdict, len(w.verifiers()), VerifierLaunches)
@@ -277,15 +288,15 @@ func TestAVerifierThatDiesOrHangsIsReplacedThenTheGoalShowsStuck(t *testing.T) {
 	}
 }
 
-func TestAnIdleVerifierIsRemindedOnce(t *testing.T) {
+func TestAnIdleVerifierReceivesOneConcreteVerdictAction(t *testing.T) {
 	w := newVerifyWorld(t)
 	w.done(t, "importer reads CSV")
 	w.tick(t, time.Second)
 	verifier := w.verifiers()[0]
 	w.tick(t, StartGrace)
 	w.tick(t, time.Minute)
-	if got := w.handedTo(verifier); len(got) != 1 || !strings.Contains(got[0], "ym goal verdict --pass") {
-		t.Fatalf("idle verifier was told %q, want one reminder", got)
+	if got := w.handedTo(verifier); len(got) != 1 || !strings.Contains(got[0], "record a verdict with concrete findings") {
+		t.Fatalf("idle verifier was told %q, want one durable verdict action", got)
 	}
 }
 

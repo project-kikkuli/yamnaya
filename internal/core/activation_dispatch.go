@@ -33,6 +33,10 @@ func (c *Core) dispatchNativeActions(b Board, o Org, s Live, first Activation, a
 			return err
 		}
 		if needed {
+			a, err = c.refreshQuestionPayload(b, o, a, session)
+			if err != nil {
+				return err
+			}
 			batch = append(batch, a)
 			bytes += len(a.Payload)
 		}

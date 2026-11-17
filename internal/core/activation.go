@@ -227,6 +227,26 @@ func (c *Core) actionNeeded(b Board, o Org, a Activation) (bool, error) {
 	if a.Kind == "answer" {
 		return c.answerActionNeeded(a)
 	}
+	if a.Kind == "relay-failure" {
+		parts := strings.SplitN(a.Subject, "@", 2)
+		if len(parts) != 2 {
+			return false, errors.New("relay failure needs its source refusal")
+		}
+		seq, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			return false, err
+		}
+		pending, err := c.Store.PendingRelays()
+		if err != nil {
+			return false, err
+		}
+		for _, r := range pending {
+			if r.Seq == seq {
+				return r.Error != "" && r.Error == parts[1], nil
+			}
+		}
+		return false, nil
+	}
 	if a.Kind == "verdict" {
 		parts := strings.SplitN(a.Subject, ":", 2)
 		if len(parts) != 2 {
@@ -421,6 +441,10 @@ func (c *Core) DispatchActions(b Board) error {
 			}
 			session = m.Session
 		}
+		a, err = c.refreshQuestionPayload(b, o, a, session)
+		if err != nil {
+			return err
+		}
 		if _, _, remote := SplitRemote(session); !remote {
 			if _, err := c.returnActivationLocal(a, session); err != nil {
 				return err
@@ -461,7 +485,7 @@ func (c *Core) DispatchActions(b Board) error {
 			}
 		}
 		s, ok := c.reach(b, session)
-		if !ok || s.Status != Idle || s.Prompt != nil || s.Paused || c.Off(s.Key()) || len(s.Copies) > 1 || used[session] {
+		if !ok || s.Status != Idle || s.Prompt != nil || s.Paused || len(s.Copies) > 1 || used[session] {
 			continue
 		}
 		if err := c.dispatchNativeActions(b, o, s, a, actions); err != nil {
