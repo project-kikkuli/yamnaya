@@ -65,6 +65,7 @@ func servePlist(label, self, state string, env map[string]string) string {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>AbandonProcessGroup</key><true/>
   <key>ProcessType</key><string>Interactive</string>
   <key>EnvironmentVariables</key><dict>
 `)

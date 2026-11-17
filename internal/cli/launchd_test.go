@@ -84,7 +84,7 @@ func TestKeepingServeLoadsOneAgentPerStateDirAndLeavesALoadedOneRunning(t *testi
 		t.Fatalf("first keep wrote %s and ran launchctl %q, want a plist in %s loaded once", path, f.calls, agents)
 	}
 	raw, _ := os.ReadFile(path)
-	for _, want := range []string{"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>", "<string>service</string><string>run</string>",
+	for _, want := range []string{"<key>RunAtLoad</key><true/>", "<key>KeepAlive</key><true/>", "<key>AbandonProcessGroup</key><true/>", "<string>service</string><string>run</string>",
 		"<key>YAMNAYA_STATE_DIR</key><string>" + state + "</string>", "<key>YAMNAYA_YM_SOCKET</key><string>rehearsal</string>",
 		"<key>SHELL</key>", filepath.Join(state, "work-service.log")} {
 		if !strings.Contains(string(raw), want) {
