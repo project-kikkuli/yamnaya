@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -203,8 +204,27 @@ func TestRelaysWaitOutAHostThatIsDownAndTakeEffectOnceWhenItIsBack(t *testing.T)
 		t.Fatalf("chief heard %q while b was down", got)
 	}
 	pending, err := f.b.core.Store.PendingRelays()
-	if err != nil || len(pending) != 1 {
-		t.Fatalf("b holds %d relays (%v), want the ask kept while a cannot reach it", len(pending), err)
+	if err != nil || len(pending) != 2 {
+		t.Fatalf("b holds %d relays (%v), want routing discovery and source-owned activation", len(pending), err)
+	}
+	var route relayAsk
+	var activation ActivationMessage
+	for _, relay := range pending {
+		switch relay.Kind {
+		case RelayAsk:
+			if err := json.Unmarshal([]byte(relay.Body), &route); err != nil {
+				t.Fatal(err)
+			}
+		case RelayAction:
+			if err := json.Unmarshal([]byte(relay.Body), &activation); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected queued relay: %+v", relay)
+		}
+	}
+	if route.Seq != esc.Seq || activation.Operation != "activate" || activation.Action.Kind != "question" || !strings.HasPrefix(activation.Action.Subject, esc.Key()+"@") {
+		t.Fatalf("durable ask identity lost: %+v %+v", route, activation)
 	}
 	f.net.down["b"], f.net.loseAcks = false, 1
 	for range 3 {
@@ -373,7 +393,7 @@ func TestAChiefOnAnotherHostHearsItsGoalsAndTheOwnerIsNotifiedWhereTheySit(t *te
 				heard = append(heard, h)
 			}
 		}
-		if len(heard) != 1 || !strings.Contains(heard[0], "done #") || !strings.Contains(heard[0], "1 merged PR") || strings.Contains(heard[0], "update") {
+		if len(heard) != 1 || !strings.Contains(heard[0], "1 done") || !strings.Contains(heard[0], "1 merged PR") || strings.Contains(heard[0], "update") {
 			t.Errorf("%s heard %q; want one line for b's goal, done with its merge counted, and nothing from before it was told", who.Name, heard)
 		}
 	}

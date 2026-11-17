@@ -260,8 +260,41 @@ func TestARefusalThatMayClearFilesNoItemAndItsDropAdviceWorksWhereItSaysTo(t *te
 			if err != nil || !ok {
 				t.Errorf("following the advice on %s: dropped %v, %v", holder, ok, err)
 			}
-			if pending, _ := f.a.core.Store.PendingRelays(); holder == "a" && len(pending) != 0 {
-				t.Errorf("a still carries %+v", pending)
+			if holder == "a" {
+				pending, err := f.a.core.Store.PendingRelays()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(pending) != 1 || pending[0].Kind != RelayResult {
+					t.Fatalf("holder lost durable drop receipt: %+v", pending)
+				}
+			}
+			before := len(f.b.handedTo(chief.Session))
+			f.net.loseReplies = 1
+			cycleAll(t, f, 5)
+			f.dispatch(t)
+			if after := len(f.b.handedTo(chief.Session)); after != before {
+				t.Fatalf("drop started another native turn: before %d after %d", before, after)
+			}
+			actions, err := f.b.core.Store.Activations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, action := range actions {
+				if action.Kind == "relay-failure" && action.State != "superseded" {
+					t.Fatalf("drop left stale failure actionable: %+v", action)
+				}
+			}
+			if holder == "a" {
+				cancellations := 0
+				for _, message := range storedMessages(t, f.b, chief.Session) {
+					if strings.Contains(message, "canceled: relay dropped by owner") {
+						cancellations++
+					}
+				}
+				if cancellations != 1 {
+					t.Fatalf("origin recorded drop %d times, want once", cancellations)
+				}
 			}
 		})
 	}

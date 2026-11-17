@@ -38,6 +38,7 @@ const ownAgents = "your agents"
 // GoalDigest is one goal's line in a digest: what needs the chief, and how many of each kind of event do not.
 type GoalDigest struct {
 	Actions []string       `json:"actions,omitempty"`
+	Details []string       `json:"details,omitempty"`
 	Counts  map[string]int `json:"counts,omitempty"`
 }
 
@@ -52,6 +53,11 @@ func (r Rollup) merged(more Rollup) Rollup {
 			for _, a := range d.Actions {
 				if !slices.Contains(got.Actions, a) {
 					got.Actions = append(got.Actions, a)
+				}
+			}
+			for _, detail := range d.Details {
+				if !slices.Contains(got.Details, detail) {
+					got.Details = append(got.Details, detail)
 				}
 			}
 			for kind, n := range d.Counts {
@@ -100,7 +106,7 @@ func (r Rollup) lines() []string {
 	out := make([]string, 0, len(labels))
 	for _, label := range labels {
 		d := r[label]
-		parts := slices.Clone(d.Actions)
+		parts := append(slices.Clone(d.Actions), d.Details...)
 		kinds := make([]string, 0, len(d.Counts))
 		for kind := range d.Counts {
 			kinds = append(kinds, kind)
@@ -344,13 +350,28 @@ func actionRollup(events []GoalEvent, label func(GoalEvent) string, host string)
 	return out
 }
 
-func quietRollup(events []GoalEvent, label func(GoalEvent) string) Rollup {
+func quietRollup(events []GoalEvent, label func(GoalEvent) string, hosts ...string) Rollup {
+	host := ""
+	if len(hosts) > 0 {
+		host = hosts[0]
+	}
 	out := Rollup{}
 	for _, e := range events {
 		if e.Kind == EventIdleAgain {
 			continue
 		}
 		d := out[label(e)]
+		switch e.Kind {
+		case EventRelayed, EventRelayFailed, EventGoalClosed:
+			id := strconv.FormatInt(e.Seq, 10)
+			if host != "" {
+				id = RemoteKey(host, id)
+			}
+			detail := "#" + id + " " + e.Kind + ": " + e.Payload
+			if !slices.Contains(d.Details, detail) {
+				d.Details = append(d.Details, detail)
+			}
+		}
 		if d.Counts == nil {
 			d.Counts = map[string]int{}
 		}

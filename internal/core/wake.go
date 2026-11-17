@@ -334,7 +334,7 @@ func (c *Core) rollChief(b Board, chief string, o Org, events []GoalEvent, deliv
 		heard = append(heard, split.action...)
 	}
 	if split.quietDue(pace, now) {
-		quiet = quietRollup(split.quiet, chiefLabel(o, host))
+		quiet = quietRollup(split.quiet, chiefLabel(o, host), host)
 		heard = append(heard, split.quiet...)
 	}
 	if len(heard) == 0 {

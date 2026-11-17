@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -317,6 +318,8 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 	cmd := "ym " + clip(oneLine(strings.Join(o.NameArgs(r.Dest, y.Args), " ")), commandMax)
 	why := relayWhy(y, ref.Error)
 	switch {
+	case ref.Dropped:
+		return c.recordSystemRelayOutcome(r, c.carrier(o, c.Resolve(y.Requester)), fmt.Sprintf("ym: %s on %s canceled: relay dropped by owner", cmd, r.Dest))
 	case ref.Error == "":
 		out := oneLine(ref.Output)
 		if out == "" {
@@ -324,6 +327,9 @@ func (c *Core) tellOutcome(r Relay, ref RelayRef) error {
 		}
 		return c.recordSystemRelayOutcome(r, c.carrier(o, c.Resolve(y.Requester)), fmt.Sprintf("ym: %s on %s: %s", cmd, r.Dest, out))
 	case !ref.Final:
+		if _, err := c.Store.db.Exec(`UPDATE ym_relay SET last_error=? WHERE seq=? AND origin='' AND reported=0`, ref.Error, r.Seq); err != nil {
+			return err
+		}
 		text := fmt.Sprintf("ym: %s on %s failed: %s; ym retries it each cycle", cmd, r.Dest, oneLine(why))
 		drop := fmt.Sprintf("ym relay drop %d", r.Seq)
 		if ref.Holder != "" {
@@ -435,4 +441,14 @@ func (s *Store) ownRelay(seq int64) (Relay, error) {
 	r := Relay{Seq: seq}
 	err := s.db.QueryRow(`SELECT dest, kind, body FROM ym_relay WHERE seq = ? AND origin = ''`, seq).Scan(&r.Dest, &r.Kind, &r.Body)
 	return r, err
+}
+
+func (s *Store) relayFailureCurrent(seq int64, refusal string) (bool, error) {
+	var current string
+	var reported bool
+	err := s.db.QueryRow(`SELECT last_error,reported FROM ym_relay WHERE seq=? AND origin=''`, seq).Scan(&current, &reported)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return !reported && current != "" && current == refusal, err
 }

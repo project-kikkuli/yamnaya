@@ -146,7 +146,8 @@ type RelayRef struct {
 	// Error is why the host refused it, for ym relay to show.
 	Error string `json:"error,omitempty"`
 	// Final says no later try can change the refusal, so the relay ends with it; the receiver recorded where the owner looks.
-	Final bool `json:"final,omitempty"`
+	Final   bool `json:"final,omitempty"`
+	Dropped bool `json:"dropped,omitempty"`
 	// Output is what a ym command printed where it ran; Goal is the goal there whose feed recorded how it turned out, if any.
 	Output string `json:"output,omitempty"`
 	Goal   string `json:"goal,omitempty"`
@@ -373,12 +374,34 @@ func (s *Store) noteRefused(self string, refs []RelayRef, at time.Time) ([]Relay
 
 // DropRelay stops carrying relay seq, as the owner decides for one that keeps being refused.
 func (s *Store) DropRelay(seq int64) (bool, error) {
-	res, err := s.db.Exec(`UPDATE ym_relay SET delivered = ? WHERE seq = ? AND delivered IS NULL`, time.Now().UnixNano(), seq)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
-	n, err := res.RowsAffected()
-	return n == 1, err
+	defer tx.Rollback()
+	var origin, kind string
+	var original int64
+	err = tx.QueryRow(`SELECT origin,origin_seq,kind FROM ym_relay WHERE seq=? AND delivered IS NULL`, seq).Scan(&origin, &original, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err = tx.Exec(`UPDATE ym_relay SET delivered=?,reported=1 WHERE seq=? AND delivered IS NULL`, time.Now().UnixNano(), seq); err != nil {
+		return false, err
+	}
+	if origin != "" && kind == RelayYM {
+		receipt := RelayRef{Origin: origin, OriginSeq: original, Dropped: true, Output: "relay dropped by owner"}
+		raw, err := json.Marshal(receipt)
+		if err != nil {
+			return false, err
+		}
+		if _, err = tx.Exec(`INSERT INTO ym_relay(origin,origin_seq,dest,kind,body,created) VALUES('',0,?,?,?,?)`, origin, RelayResult, string(raw), time.Now().UnixNano()); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 // RelaySelf is how this host was last named by a host that carries its relays; zero when none has.
