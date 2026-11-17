@@ -149,6 +149,13 @@ func TestOriginAuthorityBindsRealLauncherWithoutNestedStoreWrite(t *testing.T) {
 	for _, await := range []bool{false, true} {
 		t.Run(fmt.Sprintf("await=%v", await), func(t *testing.T) {
 			db, ran := fakeCodex(t)
+			worker := "019a0000-0000-7000-8000-000000000088"
+			if !await {
+				t.Setenv("YM_CODEX_FIXTURE_DELAY_REGISTRATION", "1")
+				if err := os.WriteFile(ran+".thread", []byte(worker), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			state := t.TempDir()
 			path := filepath.Join(state, "ym.db")
 			st, err := core.OpenStore(path)
@@ -170,7 +177,6 @@ func TestOriginAuthorityBindsRealLauncherWithoutNestedStoreWrite(t *testing.T) {
 			if err = k.WorkReceive(core.WorkMessage{Op: "launch-request", Work: w}); err != nil {
 				t.Fatal(err)
 			}
-			worker := "019a0000-0000-7000-8000-000000000088"
 			if await {
 				recordThread(t, db, ran, worker)
 			}
@@ -213,6 +219,10 @@ func TestOriginAuthorityBindsRealLauncherWithoutNestedStoreWrite(t *testing.T) {
 			k.Store = st
 			if !await {
 				cwd := resumed(t, ran)
+				pending, err := st.Assignments(g.ID)
+				if err != nil || len(pending) != 1 || pending[0].Session != "planned" {
+					t.Fatalf("unregistered identity bound early: %+v, %v", pending, err)
+				}
 				if _, err = db.Exec(`INSERT INTO threads (id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), cwd); err != nil {
 					t.Fatal(err)
 				}
@@ -247,6 +257,11 @@ func TestNonAwaitAssignmentLaunchPersistsIdentityBindingAndReusesProcess(t *test
 		t.Skip("tmux not installed")
 	}
 	db, ran := fakeCodex(t)
+	worker := "019a0000-0000-7000-8000-000000000088"
+	t.Setenv("YM_CODEX_FIXTURE_DELAY_REGISTRATION", "1")
+	if err := os.WriteFile(ran+".thread", []byte(worker), 0600); err != nil {
+		t.Fatal(err)
+	}
 	state := t.TempDir()
 	st, err := core.OpenStore(filepath.Join(state, "ym.db"))
 	if err != nil {
@@ -283,6 +298,10 @@ func TestNonAwaitAssignmentLaunchPersistsIdentityBindingAndReusesProcess(t *test
 		t.Fatalf("concurrent replay created another launch: %+v %v", concurrent.started, concurrent.err)
 	}
 	cwd := resumed(t, ran)
+	var registered int
+	if err := db.QueryRow(`SELECT count(*) FROM threads`).Scan(&registered); err != nil || registered != 0 {
+		t.Fatalf("fixture registered before publication: %d, %v", registered, err)
+	}
 	rec, ok := l.records.Find(first.Key)
 	if !ok || rec.Assignment != a.ID {
 		t.Fatalf("assignment not durable before discovery: %+v", rec)
@@ -302,7 +321,6 @@ func TestNonAwaitAssignmentLaunchPersistsIdentityBindingAndReusesProcess(t *test
 	if err != nil || len(all) != 1 {
 		t.Fatalf("replay created more than one launch: %+v %v", all, err)
 	}
-	worker := "019a0000-0000-7000-8000-000000000088"
 	if _, err = db.Exec(`INSERT INTO threads(id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), cwd); err != nil {
 		t.Fatal(err)
 	}
