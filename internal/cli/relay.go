@@ -69,9 +69,6 @@ func relayCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 		Args:   cobra.NoArgs,
 		Hidden: true,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			if err := ensureWorkService(); err != nil {
-				return err
-			}
 			var req core.RelaySync
 			if err := json.NewDecoder(cmd.InOrStdin()).Decode(&req); err != nil {
 				return fmt.Errorf("relay sync request: %w", err)

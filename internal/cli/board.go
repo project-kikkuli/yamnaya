@@ -91,9 +91,6 @@ func boardCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			"so another host's read stays quick however loaded this one is. --build builds the board instead.",
 		Args: cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
-			if err := ensureWorkService(); err != nil {
-				return err
-			}
 			if !build {
 				dir, err := stateDir()
 				if err != nil {
