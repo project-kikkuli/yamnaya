@@ -28,13 +28,13 @@ jobs:
       - run: go vet -p 1 ./...
       - run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
       - run: staticcheck ./...
-      - run: go test -p 1 ./internal/core ./internal/usage ./internal/intake ./internal/harness/claude ./internal/harness/codex ./internal/tui ./internal/cli
-        if: startsWith(github.ref, 'refs/heads/ym-validate/')
-      - run: go test -p 1 ./...
       - name: Real Claude peer transport with simulated model
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ym-validate/')
         timeout-minutes: 8
         run: .github/scripts/claude-peer-native-ci.sh
+      - run: go test -p 1 ./internal/core ./internal/usage ./internal/intake ./internal/harness/claude ./internal/harness/codex ./internal/tui ./internal/cli
+        if: startsWith(github.ref, 'refs/heads/ym-validate/')
+      - run: go test -p 1 ./...
       - run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -p 1 -o "$RUNNER_TEMP/ym-darwin-arm64" ./cmd/ym
       - uses: actions/upload-artifact@v4
         with:
