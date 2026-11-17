@@ -86,7 +86,7 @@ func (c *Core) resumeText(o Org, m Manager, waiting []Message, events []GoalEven
 	if len(waiting) > 0 {
 		sb.WriteString(" Messages that arrived while you were down, oldest first:")
 		for _, msg := range waiting {
-			sb.WriteString("\n- " + oneLine(msg.Text))
+			sb.WriteString("\n- [" + msg.SourceLabel() + "] " + oneLine(msg.Text))
 		}
 	}
 	if len(events) > 0 {

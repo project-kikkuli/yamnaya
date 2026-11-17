@@ -349,7 +349,7 @@ func (c *Core) restartText(b Board, o Org, m Manager, r restart, waiting []Messa
 	if len(waiting) > 0 {
 		sb.WriteString("\n\nMessages that waited for you, oldest first:")
 		for _, msg := range waiting {
-			sb.WriteString("\n- " + oneLine(msg.Text))
+			sb.WriteString("\n- [" + msg.SourceLabel() + "] " + oneLine(msg.Text))
 		}
 	}
 	events := c.sinceBrief(o, m, since, missed)

@@ -19,7 +19,7 @@ const (
 	MsgSent = "sent"
 )
 
-// Message is a follow-up the owner sent to a session.
+// Message retains the recorded source of content addressed to a session.
 type Message struct {
 	Seq       int64
 	Session   string
@@ -28,6 +28,17 @@ type Message struct {
 	Source    string
 	CreatedAt time.Time
 	Delivered time.Time
+}
+
+func (m Message) SourceLabel() string {
+	switch m.Source {
+	case "owner":
+		return "owner"
+	case "system":
+		return "system tool result"
+	default:
+		return "legacy, source unknown"
+	}
 }
 
 const messageSchema = `
@@ -43,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ym_messages (
 CREATE INDEX IF NOT EXISTS ym_messages_session ON ym_messages(session, state);
 `
 
-// AddMessage records a message to session in state; a typed or inboxed message is delivered now.
+// AddMessage records an owner message; a typed or inboxed message is delivered now.
 func (s *Store) AddMessage(session, text, state string) (Message, error) {
 	at := now()
 	var delivered any

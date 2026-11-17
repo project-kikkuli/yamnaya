@@ -428,7 +428,7 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "inbox",
-		Short: "Print answers, dismissals and the owner's messages for the calling session that it has not received yet, and mark them received; while its mission's vibe is missing or stale, a vibe: line asks for one",
+		Short: "Print answers, dismissals and source-labeled messages for the calling session, and mark them received",
 		Args:  cobra.NoArgs,
 		RunE: with(func(e *env, cmd *cobra.Command, args []string) error {
 			c, err := e.caller()
@@ -447,12 +447,20 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			if err != nil {
 				return err
 			}
+			msgs, err := e.core.TakeMessages(c.Session)
+			if err != nil {
+				return err
+			}
 			if asJSON {
 				out := struct {
-					Items []itemJSON `json:"items"`
-					Asks  []itemJSON `json:"asks,omitempty"`
-					Vibe  string     `json:"vibe,omitempty"`
+					Messages []inboxMessageJSON `json:"messages,omitempty"`
+					Items    []itemJSON         `json:"items"`
+					Asks     []itemJSON         `json:"asks,omitempty"`
+					Vibe     string             `json:"vibe,omitempty"`
 				}{Items: []itemJSON{}, Vibe: nudge}
+				for _, m := range msgs {
+					out.Messages = append(out.Messages, inboxMessage(m))
+				}
 				for _, it := range items {
 					out.Items = append(out.Items, toJSON(it))
 				}
@@ -472,9 +480,8 @@ func itemInboxCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobr
 			for _, it := range asks {
 				fmt.Fprintf(out, "ask: %s: %s\n", it.Ref(), it.Question)
 			}
-			msgs, err := e.core.TakeMessages(c.Session)
 			for _, m := range msgs {
-				fmt.Fprintf(out, "msg: %s\n", m.Text)
+				fmt.Fprintf(out, "msg: [%s] %s\n", m.SourceLabel(), m.Text)
 			}
 			changes, changesErr := e.core.ChangesDue(c.Session)
 			for _, line := range changes {

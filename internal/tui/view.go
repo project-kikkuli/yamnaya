@@ -1503,7 +1503,7 @@ func (m Model) sessionSections(s core.Live) []treeNode {
 					when = "attempted " + age(m.board.At, msg.Delivered)
 				}
 			}
-			line := "   " + pad(state, 10) + " " + msg.Text + pal.dim.Render("  "+when)
+			line := "   " + pad(state, 10) + " [" + msg.SourceLabel() + "] " + msg.Text + pal.dim.Render("  "+when)
 			if msg.State != core.MsgPending {
 				line = pal.dim.Render(line)
 			}
