@@ -25,6 +25,36 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/profile"
 )
 
+func currentQuotaRecoveryAction(t *testing.T, w queueWorld) core.Activation {
+	t.Helper()
+	rec, ok := w.l.records.Find(w.rec.Key)
+	if !ok || rec.Session == "" || rec.AttachedAt.IsZero() || rec.Handoff == "" {
+		t.Fatalf("missing current recovery record: %+v", rec)
+	}
+	actions, err := w.l.core.Store.Activations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := fmt.Sprintf("Yamnaya resumed launch %s at %s.\n\n", rec.Key, rec.AttachedAt.UTC().Format(time.RFC3339Nano))
+	var found []core.Activation
+	for _, action := range actions {
+		if action.Kind == "directive" && action.Session == rec.Session && strings.HasPrefix(action.Payload, prefix) {
+			found = append(found, action)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("current recovery has %d actions, want one: %+v", len(found), actions)
+	}
+	action := found[0]
+	if action.Payload != prefix+rec.Handoff || action.State != "pending" || action.Attempt != 0 || action.Attention != 0 {
+		t.Fatalf("recovery note is not retained as one pending non-user action: %+v, handoff %q", action, rec.Handoff)
+	}
+	if strings.Contains(resumed(t, w.ran), rec.Handoff) {
+		t.Fatal("recovery note leaked into native CLI arguments")
+	}
+	return action
+}
+
 func TestExhaustedHostLoginFailsOverToUsableLoginAndNeverResumesIntoTheWall(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
@@ -688,11 +718,12 @@ func TestEveryClaudeLoginExhaustedFailsOverToCodexAtTheTurnEndAndKeepsItsLinks(t
 			if rec.Session != ported || rec.Profile != cx.ID || rec.ConfigRoot != cx.Root || rec.Model != "" {
 				t.Fatalf("record not on the port: %+v", rec)
 			}
-			if lines[0] != cx.ID || !strings.Contains(lines[1], ported) || !strings.Contains(lines[1], "exhausted its usage window") {
-				t.Fatalf("resumed without the port or its note: %q", lines)
+			if lines[0] != cx.ID || !strings.Contains(lines[1], ported) {
+				t.Fatalf("resumed without the port: %q", lines)
 			}
-			if !strings.Contains(lines[1], "prompts and replies only") || strings.Contains(lines[1], "recorded tool results") {
-				t.Fatalf("the note misstates what the port carried: %q", lines[1])
+			action := currentQuotaRecoveryAction(t, w)
+			if !strings.Contains(action.Payload, "exhausted its usage window") || !strings.Contains(action.Payload, "prompts and replies only") || strings.Contains(action.Payload, "recorded tool results") {
+				t.Fatalf("the recovery action lost or misstated the port note: %q", action.Payload)
 			}
 			if got := w.l.core.Resolve(profileConversation); got != ported {
 				t.Fatalf("old id resolves to %q", got)
@@ -1680,8 +1711,11 @@ func TestAPortFinishesFromWhicheverStepItStoppedAt(t *testing.T) {
 				if writes != 0 {
 					t.Fatalf("%d more ports written", writes)
 				}
-				if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != cx.ID || !strings.Contains(got[1], ported) || !strings.Contains(got[1], "the note") {
+				if got := strings.Split(resumed(t, w.ran), "\n"); got[0] != cx.ID || !strings.Contains(got[1], ported) {
 					t.Fatalf("resumed as %q", got)
+				}
+				if action := currentQuotaRecoveryAction(t, w); !strings.Contains(action.Payload, "the note") {
+					t.Fatalf("recovery action lost the port note: %+v", action)
 				}
 			})
 		}
@@ -1756,10 +1790,15 @@ func TestARetriedPortKeepsItsNoteAndTheCrewItKilled(t *testing.T) {
 	}
 	*w.alive = false
 	tick(e)
-	got := resumed(t, w.ran)
+	rec, _ := w.l.records.Find(w.rec.Key)
+	got := strings.Split(resumed(t, w.ran), "\n")
+	if got[0] != rec.Profile || !strings.Contains(got[1], rec.Session) || rec.Session == profileConversation {
+		t.Fatalf("retry resumed without the port: %q, record %+v", got, rec)
+	}
+	action := currentQuotaRecoveryAction(t, w)
 	for _, want := range []string{"exhausted its usage window", "crewC"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the retry lost %q: %q", want, got)
+		if !strings.Contains(action.Payload, want) || strings.Contains(got[1], want) {
+			t.Fatalf("the retry did not retain %q only in the recovery action: %+v, argv %q", want, action, got)
 		}
 	}
 }
@@ -2004,8 +2043,11 @@ func TestSweepLeavesASessionAPortStoppedSoTheRetryKeepsItsNote(t *testing.T) {
 		t.Fatal("sweep landed a session its own port had stopped")
 	}
 	tick(e)
-	if got := resumed(t, w.ran); !strings.Contains(got, "crewC") || !strings.Contains(got, ported) {
+	if got := resumed(t, w.ran); !strings.Contains(got, ported) || strings.Contains(got, "crewC") {
 		t.Fatalf("resumed as %q", got)
+	}
+	if action := currentQuotaRecoveryAction(t, w); !strings.Contains(action.Payload, "crewC") {
+		t.Fatalf("recovery action lost the killed crew: %+v", action)
 	}
 }
 
@@ -2711,8 +2753,11 @@ func TestAPassedLimitContinuesTheSessionWhereItIs(t *testing.T) {
 				return
 			}
 			got := strings.Split(resumed(t, w.ran), "\n")
-			if got[0] != "default" || !strings.Contains(got[1], "has passed") {
+			if got[0] != "default" || !strings.Contains(got[1], profileConversation) || strings.Contains(got[1], "has passed") {
 				t.Fatalf("resumed as %q", got)
+			}
+			if action := currentQuotaRecoveryAction(t, w); !strings.Contains(action.Payload, "has passed") {
+				t.Fatalf("recovery action lost the reset note: %+v", action)
 			}
 			if rec, _ := w.l.records.Find(w.rec.Key); rec.Profile != "default" {
 				t.Fatalf("moved to %s", rec.Profile)
