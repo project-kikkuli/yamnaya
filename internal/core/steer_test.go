@@ -110,18 +110,17 @@ func TestOnlyTheOwnerOrAChiefAboveMaySteer(t *testing.T) {
 	}
 }
 
-func TestAnUnadoptedSteerIsNudgedThenRaisedToWhoeverSteered(t *testing.T) {
+func TestUnadoptedPlansKeepOneActionAndEscalateWithoutReminderPrompts(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		byChief   bool
 		adoptAt   int
-		wantNudge int
 		wantOwner bool
 		wantChief bool
 	}{
-		{name: "owner steer never adopted", wantNudge: Nudges, wantOwner: true},
-		{name: "chief steer never adopted", byChief: true, wantNudge: Nudges, wantChief: true},
-		{name: "adopted after the first nudge", adoptAt: 1, wantNudge: 1},
+		{name: "owner steer never adopted", wantOwner: true},
+		{name: "chief steer never adopted", byChief: true, wantChief: true},
+		{name: "adopted after the first nudge", adoptAt: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newOrgWorld(t)
@@ -141,15 +140,35 @@ func TestAnUnadoptedSteerIsNudgedThenRaisedToWhoeverSteered(t *testing.T) {
 				w.clock = w.clock.Add(AdoptAfter + time.Minute)
 				w.supervise(t)
 			}
-			nudges := 0
-			for _, text := range w.handedTo(m.Session) {
-				if strings.Contains(text, "have not adopted revision") {
-					nudges++
+			actions, err := w.core.Store.Activations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			adopts := 0
+			for _, a := range actions {
+				if a.Kind == "adopt" && a.Recipient == m.ID {
+					adopts++
 				}
 			}
-			if nudges != tc.wantNudge {
-				t.Fatalf("nudged %d times, want %d", nudges, tc.wantNudge)
+			if adopts != 1 {
+				t.Fatalf("plan revision queued %d adoption actions: %+v", adopts, actions)
 			}
+			if err = w.core.DispatchActions(w.board(t)); err != nil {
+				t.Fatal(err)
+			}
+			wantPrompts := 1
+			if tc.adoptAt > 0 {
+				wantPrompts = 0
+			}
+			if got := wakes(w.handedTo(m.Session)); len(got) != wantPrompts {
+				t.Fatalf("plan adoption prompts %q, want %d", got, wantPrompts)
+			}
+			for _, text := range w.handedTo(m.Session) {
+				if strings.Contains(text, "have not adopted revision") {
+					t.Fatalf("supervisor sent a reminder prompt: %s", text)
+				}
+			}
+
 			b := w.board(t)
 			inQueue := slices.ContainsFunc(b.Needs, func(n Need) bool { return n.Steer != nil && n.Manager == m.ID })
 			if inQueue != tc.wantOwner {
@@ -254,49 +273,55 @@ func TestABriefGoesStaleWhenSomethingMeaningfulHappensAfterIt(t *testing.T) {
 	}
 }
 
-func TestAStaleBriefNudgesItsManagerOncePerEventAndNotMidTurn(t *testing.T) {
+func TestStaleBriefsStayVisibleWithoutActivatingManagers(t *testing.T) {
 	w := newOrgWorld(t)
 	_, m := w.goal(t, "ship the importer", "/repo/august")
-	nudges := func() int {
-		n := 0
-		for _, text := range w.handedTo(m.Session) {
-			if strings.Contains(text, "your brief is behind") {
-				n++
+	check := func(wantStale bool) {
+		t.Helper()
+		before, err := w.core.Store.Activations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 3 {
+			w.clock = w.clock.Add(BriefGrace + time.Minute)
+			b := w.board(t)
+			if err = w.core.watchBriefs(b, b.Org); err != nil {
+				t.Fatal(err)
 			}
 		}
-		return n
+		f := node(t, w.board(t), m.ID).Fresh
+		if f.Stale() != wantStale {
+			t.Fatalf("brief visibility %+v, want stale %t", f, wantStale)
+		}
+		after, err := w.core.Store.Activations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("staleness manufactured model work: %+v", after)
+		}
+		if got := w.handedTo(m.Session); len(got) != 0 {
+			t.Fatalf("cheap brief checks prompted a model: %q", got)
+		}
 	}
 	w.set(m.Session, func(s *Session) { s.Status = Busy })
-	w.clock = w.clock.Add(BriefGrace + time.Minute)
-	w.supervise(t)
-	if n := nudges(); n != 0 {
-		t.Fatalf("nudged a busy manager mid-turn %d times", n)
-	}
+	check(true)
 	w.set(m.Session, func(s *Session) { s.Status = Idle })
-	for range 3 {
-		w.clock = w.clock.Add(BriefGrace + time.Minute)
-		w.supervise(t)
+	check(true)
+	if _, err := w.core.WriteBrief(m.Session, brief("open the PR")); err != nil {
+		t.Fatal(err)
 	}
-	if n := nudges(); n != 1 {
-		t.Fatalf("a manager with no brief was nudged %d times, want once", n)
-	}
-	w.core.WriteBrief(m.Session, brief("open the PR"))
-	w.clock = w.clock.Add(time.Minute)
+	check(false)
 	st := w.steer(t, m.ID, "CSV only", Owner)
-	w.core.Adopt(m.Session, m.ID, st.Revision)
-	for range 3 {
-		w.clock = w.clock.Add(BriefGrace + time.Minute)
-		w.supervise(t)
+	w.clock = w.clock.Add(time.Minute)
+	if _, err := w.core.Adopt(m.Session, m.ID, st.Revision); err != nil {
+		t.Fatal(err)
 	}
-	if n := nudges(); n != 2 {
-		t.Fatalf("after adopting a steer the stale brief drew %d nudges in all, want 2", n)
+	check(true)
+	if _, err := w.core.WriteBrief(m.Session, brief("ship CSV")); err != nil {
+		t.Fatal(err)
 	}
-	w.core.WriteBrief(m.Session, brief("ship CSV"))
-	w.clock = w.clock.Add(BriefGrace + time.Minute)
-	w.supervise(t)
-	if n := nudges(); n != 2 {
-		t.Fatalf("a refreshed brief still drew nudges: %d", n)
-	}
+	check(false)
 }
 
 func TestSteeringAVerifyingGoalCallsOffItsVerificationAndTheNextVerifierJudgesTheNewPlan(t *testing.T) {
@@ -346,7 +371,7 @@ func TestAFailedVerificationMakesTheBriefStaleAndAPassDoesNot(t *testing.T) {
 	}
 }
 
-func TestASteerWakesTheManagerAndWaitsInItsChiefsDigestAndAGoalEventStalesTheBriefInTheSameWake(t *testing.T) {
+func TestPlanChangesRequestAdoptionWhilePRStatusOnlyStalesTheVisibleBrief(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "make the importer handle CSV", "/repo/august")
 	chief := w.chief(t, "data", m.ID)
@@ -355,8 +380,12 @@ func TestASteerWakesTheManagerAndWaitsInItsChiefsDigestAndAGoalEventStalesTheBri
 	w.steer(t, g.ID, "make the importer handle CSV and TSV", Owner)
 	w.loop(t, 2)
 	got := wakes(w.handedTo(m.Session))
-	if len(got) != 1 || !strings.Contains(got[0], "steered: the owner steered goal "+g.Name) || !strings.Contains(got[0], "Revision 1") {
-		t.Fatalf("manager wakes %q, want one carrying the steer's revision", got)
+	if len(got) != 1 || !strings.Contains(got[0], "CSV and TSV") {
+		t.Fatalf("manager needs exactly one explicit plan adoption action: %q", got)
+	}
+	actions, err := w.core.Store.Activations()
+	if err != nil || !slices.ContainsFunc(actions, func(a Activation) bool { return a.Kind == "adopt" && a.Recipient == m.ID && a.Subject == "1" }) {
+		t.Fatalf("plan action was not durable: %+v %v", actions, err)
 	}
 	if heard := digests(w.handedTo(chief.Session)); len(heard) != 0 {
 		t.Fatalf("a steer below the chief started a message: %q", heard)
@@ -368,8 +397,12 @@ func TestASteerWakesTheManagerAndWaitsInItsChiefsDigestAndAGoalEventStalesTheBri
 	w.pr(t, "agent", "https://github.com/acme/august/pull/7", PRStatus{State: "OPEN", Title: "TSV importer"})
 	w.loop(t, 1)
 	got = wakes(w.handedTo(m.Session))
-	if len(got) != 2 || !strings.Contains(got[1], "pr-opened") {
-		t.Fatalf("a pull request opening did not reach the manager: %q", got)
+	if len(got) != 1 {
+		t.Fatalf("opening a PR consumed another model turn: %q", got)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil || !slices.Contains(kinds(events), EventPROpened) {
+		t.Fatalf("PR status missing from stream: %v %v", kinds(events), err)
 	}
 	if f := node(t, w.board(t), m.ID).Fresh; !f.Stale() || !strings.HasPrefix(f.BehindWhat, EventPROpened) {
 		t.Fatalf("brief after the pull request opened: %+v, want stale behind pr-opened", f)
@@ -433,6 +466,9 @@ func TestAChiefOnAnotherHostSteersItsReportThereAndHearsThroughTheRelayWhenItGoe
 		f.b.clock = f.b.clock.Add(AdoptAfter + time.Minute)
 		f.b.supervise(t)
 		f.sync(t)
+	}
+	if err := f.a.core.DispatchActions(f.a.board(t)); err != nil {
+		t.Fatal(err)
 	}
 	if !slices.ContainsFunc(f.a.handedTo(chief.Session), func(s string) bool {
 		return strings.Contains(s, "has not adopted revision") && strings.Contains(s, "ym goal relaunch "+RemoteKey("b", mgr.Name)+",")

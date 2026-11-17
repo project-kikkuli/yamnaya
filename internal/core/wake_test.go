@@ -44,14 +44,14 @@ func kinds(events []GoalEvent) []string {
 func wakes(texts []string) []string {
 	var out []string
 	for _, t := range texts {
-		if strings.Contains(t, "ym: goal ") || strings.Contains(t, "changes under you") {
+		if strings.Contains(t, "ym: goal ") || strings.Contains(t, "changes under you") || strings.HasPrefix(t, "Yamnaya supervisor action ") {
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-func TestAGoalsEventsWakeItsManagerOnceInOneMessageAcrossRestartsAndRelaunches(t *testing.T) {
+func TestActionableAgentReportsAreDurableAcrossRestartsWhileStatusStaysReadable(t *testing.T) {
 	w := newOrgWorld(t)
 	path := filepath.Join(t.TempDir(), "ym.db")
 	st, err := OpenStore(path)
@@ -70,9 +70,30 @@ func TestAGoalsEventsWakeItsManagerOnceInOneMessageAcrossRestartsAndRelaunches(t
 	if len(got) != 1 {
 		t.Fatalf("manager woke %d times, want once with every event: %q", len(got), got)
 	}
-	for _, want := range []string{"agent-finished: agent agent", "Parser done, PR is up.", "pr-opened:", "ci-green: CI passed on \"CSV importer\""} {
+	for _, want := range []string{"agent-finished:", "Parser done, PR is up."} {
 		if !strings.Contains(got[0], want) {
-			t.Fatalf("wake lacks %q:\n%s", want, got[0])
+			t.Fatalf("action lacks report %q: %s", want, got[0])
+		}
+	}
+	for _, observation := range []string{"pr-opened:", "ci-green:"} {
+		if strings.Contains(got[0], observation) {
+			t.Fatalf("bookkeeping expanded a model prompt: %s", got[0])
+		}
+	}
+	actions, err := w.core.Store.Activations()
+	if err != nil || len(actions) != 1 {
+		t.Fatalf("report action not durable: %+v %v", actions, err)
+	}
+	if err = w.core.CompleteAction(actions[0].ID, m.Session, "reviewed the parser report"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{EventFinished, EventPROpened, EventCIGreen} {
+		if !slices.Contains(kinds(events), kind) {
+			t.Fatalf("status lost %s: %v", kind, kinds(events))
 		}
 	}
 
@@ -104,7 +125,7 @@ func TestAGoalsEventsWakeItsManagerOnceInOneMessageAcrossRestartsAndRelaunches(t
 	if got := wakes(w.handedTo(relaunched.Session)); len(got) != 0 {
 		t.Fatalf("the relaunched manager was woken again with what its prompt carried: %q", got)
 	}
-	events, err := w.core.Store.GoalEvents(g.ID)
+	events, err = w.core.Store.GoalEvents(g.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,13 +188,13 @@ func TestPullRequestStatesBecomeOneEventEach(t *testing.T) {
 	}
 }
 
-func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
+func TestIdleStateNeverPromptsButConcreteFailuresAndQuestionsDo(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		setup  func(t *testing.T, w *orgWorld, m Manager)
-		nudged bool
+		action bool
 	}{
-		{"nothing in flight", func(*testing.T, *orgWorld, Manager) {}, true},
+		{"nothing in flight", func(*testing.T, *orgWorld, Manager) {}, false},
 		{"an agent works", func(t *testing.T, w *orgWorld, m Manager) {
 			w.spawn("agent", m.Session)
 			w.set("agent", func(s *Session) { s.Status = Busy })
@@ -226,15 +247,34 @@ func TestAManagerThatEndsItsTurnWithNothingInFlightIsNudgedOnce(t *testing.T) {
 					nudges = append(nudges, text)
 				}
 			}
-			if want := map[bool]int{true: 1, false: 0}[tc.nudged]; len(nudges) != want {
-				t.Fatalf("manager got %d nudges, want %d: %q", len(nudges), want, nudges)
+			if len(nudges) != 0 {
+				t.Fatalf("idle bookkeeping prompted the manager: %q", nudges)
 			}
+			got := wakes(w.handedTo(m.Session))
+			want := 0
+			if tc.action {
+				want = 1
+			}
+			if len(got) != want {
+				t.Fatalf("concrete action prompts %q, want %d", got, want)
+			}
+			actions, err := w.core.Store.Activations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(actions) != want {
+				t.Fatalf("durable actions %+v, want %d", actions, want)
+			}
+
 			w.clock = w.clock.Add(time.Minute)
 			w.set(m.Session, func(s *Session) { s.ResultAt = w.clock })
 			w.loop(t, 1)
 			events, _ := w.core.Store.GoalEvents(g.ID)
-			if n := strings.Count(strings.Join(kinds(events), " "), EventNudge); tc.nudged && n != 1 {
-				t.Fatalf("a second idle turn with nothing new got %d nudges in all, want still 1", n)
+			if slices.Contains(kinds(events), EventNudge) {
+				t.Fatalf("idle turns manufactured work: %v", kinds(events))
+			}
+			if got := wakes(w.handedTo(m.Session)); len(got) != want {
+				t.Fatalf("idle turn replayed an accepted action: %q", got)
 			}
 		})
 	}
@@ -311,27 +351,26 @@ func TestNestedChiefsHearWhatNeedsThemWithTheRestCountedAndNeverGateWork(t *test
 	}
 	w.loop(t, 3)
 
-	lowerGot := wakes(w.handedTo(lower.Session))
-	if len(lowerGot) != 1 || !strings.Contains(lowerGot[0], g1.Name) || strings.Contains(lowerGot[0], g2.Name) {
-		t.Fatalf("chief auth heard %q, want one batch about %s alone", lowerGot, g1.ID)
-	}
-	upperGot := wakes(w.handedTo(upper.Session))
-	if len(upperGot) != 1 {
-		t.Fatalf("chief platform heard %d batches, want one: %q", len(upperGot), upperGot)
-	}
-	for _, want := range []string{g1.Name + ": done #", g2.Name + ": done #", "1 red CI run", "1 update"} {
-		if !strings.Contains(upperGot[0], want) {
-			t.Fatalf("chief platform's batch lacks %q:\n%s", want, upperGot[0])
+	for _, chief := range []Manager{lower, upper} {
+		if got := wakes(w.handedTo(chief.Session)); len(got) != 0 {
+			t.Fatalf("chief consumed bookkeeping prompts: %q", got)
+		}
+		lines, err := w.core.Digest(chief.Session)
+		if err != nil || len(lines) == 0 {
+			t.Fatalf("chief lost readable stream status: %q %v", lines, err)
+		}
+		text := strings.Join(lines, "\n")
+		if !strings.Contains(text, g1.Name) {
+			t.Fatalf("chief status lost its auth stream: %s", text)
+		}
+		if chief.ID == upper.ID && !strings.Contains(text, g2.Name) {
+			t.Fatalf("upper chief status lost its importer stream: %s", text)
 		}
 	}
-	for _, chief := range []string{lowerGot[0], upperGot[0]} {
-		if strings.Contains(chief, "keys rotated") {
-			t.Fatalf("a chief heard an agent's reply, which only its manager needs:\n%s", chief)
-		}
+	if got := wakes(w.handedTo(m2.Session)); len(got) != 1 || !strings.Contains(got[0], "ci-red:") || strings.Contains(got[0], "parser half done") {
+		t.Fatalf("manager did not receive only concrete failed CI: %q", got)
 	}
-	if got := wakes(w.handedTo(m2.Session)); len(got) != 1 || strings.Contains(got[0], "parser half done") {
-		t.Fatalf("manager %s was woken with %q; its own update never wakes it", m2.ID, got)
-	}
+
 	it := w.ask(t, "a1", "keep the old key for a day?")
 	if it.Recipient != m1.ID {
 		t.Fatalf("an agent's ask went to %q with chiefs above, want its manager %s", it.Recipient, m1.ID)
@@ -498,7 +537,7 @@ func TestAWakeOfAGoalThatEndedFiresSilently(t *testing.T) {
 	}
 }
 
-func TestAManagerThatOnlyAnswersNudgesIsNudgedOnceUntilSomethingHappens(t *testing.T) {
+func TestRepeatedIdleRepliesDoNotManufactureWorkAndAgentReportsDispatchOnce(t *testing.T) {
 	w := newOrgWorld(t)
 	g, m := w.goal(t, "ship the importer", "/repo/august")
 	turn := func() {
@@ -513,8 +552,11 @@ func TestAManagerThatOnlyAnswersNudgesIsNudgedOnceUntilSomethingHappens(t *testi
 	for range 10 {
 		turn()
 	}
-	if n := nudges(); n != 1 {
-		t.Fatalf("a manager that answered every nudge with OK got %d nudges, want 1", n)
+	if n := nudges(); n != 0 {
+		t.Fatalf("idle replies generated %d nudges", n)
+	}
+	if got := wakes(w.handedTo(m.Session)); len(got) != 0 {
+		t.Fatalf("idle replies activated a model: %q", got)
 	}
 	w.spawn("agent", m.Session)
 	w.set("agent", func(s *Session) { s.Result, s.ResultAt = "parser done", w.clock })
@@ -522,15 +564,28 @@ func TestAManagerThatOnlyAnswersNudgesIsNudgedOnceUntilSomethingHappens(t *testi
 	for range 5 {
 		turn()
 	}
-	if n := nudges(); n != 2 {
-		t.Fatalf("after its agent finished the manager got %d nudges in all, want 2", n)
+	if n := nudges(); n != 0 {
+		t.Fatalf("agent report caused idle reminders: %d", n)
+	}
+	if got := wakes(w.handedTo(m.Session)); len(got) != 1 || !strings.Contains(got[0], "parser done") {
+		t.Fatalf("actionable report not dispatched once: %q", got)
 	}
 	w.set("agent", func(s *Session) { s.Result, s.ResultAt = "parser done", w.clock.Add(time.Second) })
 	w.loop(t, 1)
 	for range 5 {
 		turn()
 	}
-	if n := nudges(); n != 2 {
-		t.Fatalf("an agent repeating itself got the manager %d nudges in all, want still 2", n)
+	if n := nudges(); n != 0 {
+		t.Fatalf("repeated replies caused idle reminders: %d", n)
+	}
+	if got := wakes(w.handedTo(m.Session)); len(got) != 1 {
+		t.Fatalf("repeated report burned another prompt: %q", got)
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(kinds(events), EventFinished) || !slices.Contains(kinds(events), EventIdleAgain) {
+		t.Fatalf("readable report status lost: %v", kinds(events))
 	}
 }

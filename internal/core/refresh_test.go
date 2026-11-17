@@ -1,13 +1,14 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
-func TestRefreshStepRestartsOnlyAnIdleSessionPastTheCapWithItsBriefCurrent(t *testing.T) {
+func TestRefreshStepRestartsIdleSessionsWithoutRequestingBriefs(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	asked := now.Add(-time.Minute)
 	for _, tc := range []struct {
@@ -21,7 +22,7 @@ func TestRefreshStepRestartsOnlyAnIdleSessionPastTheCapWithItsBriefCurrent(t *te
 		{"cap off", 900_000, 0, true, false, timeZero, now, wakeAsUsual},
 		{"past the cap mid-turn", 260_000, 100_000, false, false, timeZero, now, holdWake},
 		{"past the cap, idle, brief current", 260_000, 100_000, true, false, timeZero, now, restartFresh},
-		{"past the cap, idle, brief stale", 260_000, 100_000, true, true, timeZero, now, askBrief},
+		{"past the cap, idle, brief stale", 260_000, 100_000, true, true, timeZero, now, restartFresh},
 		{"asked for a brief, not yet replied", 260_000, 100_000, true, true, asked, asked.Add(-time.Hour), holdWake},
 		{"asked for a brief, replied without one", 260_000, 100_000, true, true, asked, now, restartFresh},
 		{"asked for a brief, wrote it", 260_000, 100_000, true, false, asked, now, restartFresh},
@@ -64,13 +65,12 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 		brief     bool
 		restarted bool
 		woken     bool
-		askedOld  bool
 		off       bool
 	}{
 		{name: "under the cap", tokens: 40_000, brief: true, woken: true},
 		{name: "past the cap with its brief current", tokens: 120_000, brief: true, restarted: true},
 		{name: "past the cap mid-turn", tokens: 120_000, brief: true, busy: true},
-		{name: "past the cap with no brief", tokens: 120_000, askedOld: true},
+		{name: "past the cap with no brief", tokens: 120_000, restarted: true},
 		{name: "past the cap with ym off", tokens: 120_000, brief: true, off: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,10 +85,16 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 			g, m := w.goal(t, "ship the importer", "/repo/august")
 			w.spawn("agent-1", m.Session)
 			w.set("agent-1", func(s *Session) { s.Title, s.Result, s.ResultAt = "parser agent", "Pushed the CSV parser.", w.clock })
-			if _, err := w.core.SteerContext(w.board(t), m.ID, "ship CSV first, TSV later", Owner); err != nil {
+			st, err := w.core.SteerContext(w.board(t), m.ID, "ship CSV first, TSV later", Owner)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "CI failed on the parser: 1 failing", "red-1"); err != nil {
+			if _, err = w.core.Adopt(m.Session, m.ID, st.Revision); err != nil {
+				t.Fatal(err)
+			}
+			url := "https://github.com/acme/august/pull/7"
+			w.pr(t, "agent-1", url, PRStatus{State: "OPEN", Title: "CSV parser", Failed: 1, Merge: PRMergeFacts{OID: "parser-head"}})
+			if err = w.core.Notice(w.board(t)); err != nil {
 				t.Fatal(err)
 			}
 			w.clock = w.clock.Add(time.Minute)
@@ -118,17 +124,21 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 				t.Fatalf("manager went %s -> %s, want restarted=%v", Short(m.Session), Short(now.Session), tc.restarted)
 			}
 			old := strings.Join(w.handedTo(m.Session), "\n")
-			if woken := strings.Contains(old, "CI failed on the parser"); woken != tc.woken {
+			if woken := strings.Contains(old, "Yamnaya supervisor action"); woken != tc.woken {
 				t.Fatalf("old session woken=%v, want %v:\n%s", woken, tc.woken, old)
 			}
-			if asked := strings.Contains(old, "Record a fresh brief now"); asked != tc.askedOld {
-				t.Fatalf("old session asked for a brief=%v, want %v:\n%s", asked, tc.askedOld, old)
+			if strings.Contains(old, "Record a fresh brief now") {
+				t.Fatalf("context refresh requested an extra model turn: %s", old)
 			}
 			if !tc.restarted {
 				return
 			}
 			prompt := w.launches.starts[len(w.launches.starts)-1].Prompt
-			for _, want := range []string{"ym restarted you fresh", "120k tokens", "parser half done", "ship CSV first, TSV later", "CI failed on the parser", "parser agent", "Pushed the CSV parser."} {
+			wantPrompt := []string{"ym restarted you fresh", "120k tokens", "ship CSV first, TSV later", url, "parser agent", "Pushed the CSV parser."}
+			if tc.brief {
+				wantPrompt = append(wantPrompt, "parser half done")
+			}
+			for _, want := range wantPrompt {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("fresh session's prompt lacks %q:\n%s", want, prompt)
 				}
@@ -152,33 +162,40 @@ func TestAManagerPastItsContextCapGetsItsWakeInAFreshSessionFromItsBrief(t *test
 	}
 }
 
-func TestAManagerAskedForABriefIsRestartedOnceItEndsThatTurn(t *testing.T) {
+func TestAManagerWithStaleContextRestartsFromPersistedFactsWithoutABriefRequest(t *testing.T) {
 	w := newOrgWorld(t)
-	w.core.Signal = func(pid int, _ syscall.Signal) error {
-		w.stop(w.claude.sessions[pid].ID)
-		return nil
-	}
+	w.core.Signal = func(pid int, _ syscall.Signal) error { w.stop(w.claude.sessions[pid].ID); return nil }
 	g, m := w.goal(t, "ship the importer", "/repo/august")
-	if _, _, err := w.core.RecordGoalEvent(g.ID, EventCIRed, "CI failed on the parser: 1 failing", "red-1"); err != nil {
+	if _, err := w.core.WriteBrief(m.Session, brief("fix headers")); err != nil {
 		t.Fatal(err)
-	}
-	w.set(m.Session, func(s *Session) { s.Context, s.ContextAt, s.Result, s.ResultAt = 180_000, w.clock, "Looked.", w.clock })
-	w.loop(t, 2)
-	if n := strings.Count(strings.Join(w.handedTo(m.Session), "\n"), "Record a fresh brief now"); n != 1 {
-		t.Fatalf("old session was asked for a brief %d times, want once", n)
 	}
 	w.clock = w.clock.Add(time.Minute)
-	if _, err := w.core.WriteBrief(m.Session, Brief{Assessment: "the parser test is flaky, not wrong", Changed: "x", Uncertainty: "none", Next: "retry", WaitingOn: "CI"}); err != nil {
+	url := "https://github.com/acme/august/pull/7"
+	w.pr(t, m.Session, url, PRStatus{State: "OPEN", Title: "CSV parser", Failed: 1, Merge: PRMergeFacts{OID: "head"}})
+	w.set(m.Session, func(s *Session) { s.Context, s.ContextAt, s.Result, s.ResultAt = 180_000, w.clock, "Looked.", w.clock })
+	w.loop(t, 2)
+	o, err := w.core.LoadOrg()
+	if err != nil {
 		t.Fatal(err)
 	}
-	w.set(m.Session, func(s *Session) { s.ResultAt = w.clock })
-	w.loop(t, 1)
-	o, _ := w.core.LoadOrg()
 	if o.Managers[m.ID].Session == m.Session {
-		t.Fatal("the manager was not restarted after it wrote its brief")
+		t.Fatal("oversized context was retained despite concrete failed CI")
 	}
-	if prompt := w.launches.starts[len(w.launches.starts)-1].Prompt; !strings.Contains(prompt, "the parser test is flaky, not wrong") || !strings.Contains(prompt, "CI failed on the parser") {
-		t.Fatalf("fresh session lacks the new brief or the wake:\n%s", prompt)
+	if got := w.handedTo(m.Session); len(got) != 0 {
+		t.Fatalf("retired context consumed another prompt: %q", got)
+	}
+	prompt := w.launches.starts[len(w.launches.starts)-1].Prompt
+	for _, want := range []string{"fix headers", url, "ym restarted you fresh"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("persisted restart lacks %q: %s", want, prompt)
+		}
+	}
+	events, err := w.core.Store.GoalEvents(g.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(kinds(events), EventCIRed) || !slices.Contains(kinds(events), EventRefreshed) {
+		t.Fatalf("restart lost failure or restart status: %v", kinds(events))
 	}
 }
 
