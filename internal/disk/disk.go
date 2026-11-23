@@ -21,6 +21,9 @@ const (
 	ClearFree  = 0.20
 )
 
+// SlotFloor is the free space, in bytes, below which new ym slot admissions wait.
+const SlotFloor = 5 << 30
+
 // FreeFileEnv names a file holding a fraction that replaces every filesystem's free space, for a drill under a rehearsal root.
 const FreeFileEnv = "YAMNAYA_DISK_FREE"
 
@@ -138,8 +141,17 @@ func Watched() []string {
 	return paths
 }
 
-// Held is the filesystem below Tier3Free among Watched and extra, the reason new slots wait.
+// Held is the filesystem below SlotFloor among Watched and extra, the reason new slots wait.
 func Held(extra ...string) (Usage, bool) {
-	low, ok := Lowest(Stat, append(Watched(), extra...))
-	return low, ok && low.Free() < Tier3Free
+	return heldAmong(Stat, append(Watched(), extra...))
+}
+
+func heldAmong(stat func(string) (Usage, error), paths []string) (low Usage, held bool) {
+	ok := false
+	for _, u := range Each(stat, paths) {
+		if !ok || u.Avail < low.Avail {
+			low, ok = u, true
+		}
+	}
+	return low, ok && low.Avail < SlotFloor
 }

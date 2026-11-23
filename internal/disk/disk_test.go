@@ -51,10 +51,41 @@ func TestLowestReadsEachFilesystemOnceAndSkipsWhatIsMissing(t *testing.T) {
 	}
 }
 
+func TestNewSlotsWaitOnlyBelowFiveGiBFree(t *testing.T) {
+	const gib = 1 << 30
+	for _, c := range []struct {
+		name     string
+		disks    map[string][2]uint64
+		wantHeld bool
+		wantPath string
+	}{
+		{"a big disk with a small share free runs", map[string][2]uint64{"/tmp": {460 * gib, 14 * gib}}, false, "/tmp"},
+		{"a small disk with a large share free under the floor waits", map[string][2]uint64{"/tmp": {8 * gib, 4 * gib}}, true, "/tmp"},
+		{"just under the floor waits", map[string][2]uint64{"/tmp": {1000 * gib, 5*gib - 1}}, true, "/tmp"},
+		{"exactly the floor runs", map[string][2]uint64{"/tmp": {1000 * gib, 5 * gib}}, false, "/tmp"},
+		{"the disk with the least free holds", map[string][2]uint64{"/home": {100 * gib, 2 * gib}, "/tmp": {10 * gib, 3 * gib}}, true, "/home"},
+		{"no readable disk runs", map[string][2]uint64{}, false, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stat := func(path string) (Usage, error) {
+				d, ok := c.disks[path]
+				if !ok {
+					return Usage{}, os.ErrNotExist
+				}
+				return Usage{Path: path, Dev: uint64(len(path)), Total: d[0], Avail: d[1]}, nil
+			}
+			low, held := heldAmong(stat, []string{"/tmp", "/home", "/gone"})
+			if held != c.wantHeld || low.Path != c.wantPath {
+				t.Fatalf("heldAmong = %s %v, want %s %v", low.Path, held, c.wantPath, c.wantHeld)
+			}
+		})
+	}
+}
+
 func TestADrillOverridesFreeSpaceOnlyUnderARehearsalRoot(t *testing.T) {
 	base := t.TempDir()
 	file := filepath.Join(base, "free")
-	os.WriteFile(file, []byte("0.04\n"), 0o644)
+	os.WriteFile(file, []byte("0\n"), 0o644)
 	t.Setenv(FreeFileEnv, file)
 	for _, c := range []struct {
 		name      string
@@ -73,14 +104,14 @@ func TestADrillOverridesFreeSpaceOnlyUnderARehearsalRoot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if free, faked := drillFree(); faked != c.wantFaked || faked && free != 0.04 {
+			if free, faked := drillFree(); faked != c.wantFaked || faked && free != 0 {
 				t.Fatalf("drill free %v, enabled %v, want %v", free, faked, c.wantFaked)
 			}
-			if c.wantFaked && (u.Free() < 0.03 || u.Free() > 0.05) {
-				t.Fatalf("marked drill free = %v", u.Free())
+			if c.wantFaked && u.Avail != 0 {
+				t.Fatalf("marked drill avail = %v", u.Avail)
 			}
 			if _, held := Held(base); held != c.wantFaked && c.wantFaked {
-				t.Fatal("a drill at 4% free does not hold new slots")
+				t.Fatal("a drill with nothing free does not hold new slots")
 			}
 		})
 	}

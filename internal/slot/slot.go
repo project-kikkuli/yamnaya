@@ -382,7 +382,7 @@ func (p Pool) Status() (Status, error) {
 	for i := range st.Waiters {
 		u := p.diskHold(st.Waiters[i])
 		st.Waiters[i].DiskLow = u
-		if u != nil && (st.Disk == nil || u.Free() < st.Disk.Free()) {
+		if u != nil && (st.Disk == nil || u.Avail < st.Disk.Avail) {
 			st.Disk = u
 		}
 	}

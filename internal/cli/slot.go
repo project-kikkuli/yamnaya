@@ -134,7 +134,7 @@ func printSlots(w io.Writer, st slot.Status, load float64, now time.Time) {
 }
 
 func diskHoldLine(u disk.Usage) string {
-	return fmt.Sprintf("%s has %.1f%% free (%s), below %.0f%%", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Tier3Free*100)
+	return fmt.Sprintf("%s has %.1f%% free (%s), below %s", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(disk.SlotFloor))
 }
 
 // diskHeldLines names, for each low filesystem, the waiters it holds back. Jobs whose TMPDIR, GOCACHE and cwd are on other filesystems can still take slots.

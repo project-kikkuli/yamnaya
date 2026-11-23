@@ -13,6 +13,8 @@ import (
 	"github.com/project-kikkuli/yamnaya/internal/slot"
 )
 
+var machineLoad = slot.Load
+
 func machineLaunchAdmission(stateDir string) func(core.NewLaunch) error {
 	var mu sync.Mutex
 	var meter pressure.Meter
@@ -27,7 +29,7 @@ func machineLaunchAdmission(stateDir string) func(core.NewLaunch) error {
 		if err != nil {
 			return &core.LaunchDeferred{Reason: "cannot read machine capacity: " + err.Error()}
 		}
-		load, err := slot.Load()
+		load, err := machineLoad()
 		if err != nil {
 			return &core.LaunchDeferred{Reason: "cannot read processor load: " + err.Error()}
 		}

@@ -249,7 +249,7 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, 25 * time.Hour},
+		}, 37 * time.Hour},
 		{"an item whose session has no live project", func(t *testing.T, w *orgWorld) string {
 			it, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "gone", Rec: "x", Session: "gone-session"})
 			if err != nil {

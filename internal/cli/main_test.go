@@ -15,9 +15,11 @@ const (
 )
 
 // TestMain keeps ym from starting itself under go test, where the executable is the test binary: a detached helper, serve or
-// relay would rerun every test instead, unreaped. A copy started anyway exits at once. Agents tests start keep out of the owner's config.
+// relay would rerun every test instead, unreaped. A copy started anyway exits at once. Agents tests start keep out of the owner's config,
+// and launches never wait on this host's processor load.
 // A copy started with testRun set runs the ym command its arguments name instead.
 func TestMain(m *testing.M) {
+	machineLoad = func() (float64, error) { return 0, nil }
 	if os.Getenv(testChild) != "" {
 		dispatchControlFixture()
 	}

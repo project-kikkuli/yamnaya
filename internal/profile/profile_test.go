@@ -19,6 +19,9 @@ func isolated(t *testing.T) string {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "default-claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(dir, "default-codex"))
 	t.Setenv("YAMNAYA_PROFILE", "")
+	for _, key := range subscriptionOverrides {
+		t.Setenv(key, "")
+	}
 	return filepath.Join(dir, "state")
 }
 func TestDefaultsAreStableInsideNamedChildren(t *testing.T) {
