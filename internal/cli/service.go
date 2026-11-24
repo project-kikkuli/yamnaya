@@ -116,33 +116,23 @@ func serviceCmd() *cobra.Command {
 		if err = syscall.Flock(int(startLock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			return fmt.Errorf("another service start or restart is active")
 		}
+		old := serveLockHolder(dir)
 		if err = os.WriteFile(filepath.Join(dir, "work-service-stop"), []byte(fmt.Sprint(time.Now().UnixNano())), 0600); err != nil {
 			return err
 		}
-		deadline := time.NewTimer(40 * time.Second)
-		defer deadline.Stop()
-		ticker := time.NewTicker(50 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			free, err := serveLockFree(dir)
-			if err != nil {
-				return err
-			}
-			if free {
-				if err = startWorkService(); err != nil {
-					return err
-				}
-				fmt.Fprintln(cmd.OutOrStdout(), "Background service started with this environment; native agents continue independently.")
-				return nil
-			}
-			select {
-			case <-cmd.Context().Done():
-				return cmd.Context().Err()
-			case <-deadline.C:
-				return fmt.Errorf("ym serve has not stopped; see %s", filepath.Join(dir, "work-service.log"))
-			case <-ticker.C:
-			}
+		successor, err := awaitServeStop(cmd.Context(), dir, old, 40*time.Second)
+		if err != nil {
+			return err
 		}
+		if successor != 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "ym serve restarted as pid %d, a serve that was waiting for the lock; it keeps its own environment, not this shell's. Native agents continue independently.\n", successor)
+			return nil
+		}
+		if err = startWorkService(); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "Background service started with this environment; native agents continue independently.")
+		return nil
 	}}, &cobra.Command{Use: "ensure", Short: "Start background reconciliation unless it already runs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		return ensureService()
 	}}, &cobra.Command{Use: "keep", Short: "Keep background reconciliation running on this host across logouts and reboots, through a launchd agent on macOS or a systemd user timer", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -284,4 +274,36 @@ func serveUnit(state string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(state))
 	return "ym-serve-" + hex.EncodeToString(sum[:4]), nil
+}
+
+// awaitServeStop waits until the serve whose pid is old stops: the lock is free, or another serve took it over and wrote its pid,
+// which it returns.
+func awaitServeStop(ctx context.Context, dir string, old int, wait time.Duration) (successor int, err error) {
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		free, err := serveLockFree(dir)
+		if err != nil || free {
+			return 0, err
+		}
+		if now := serveLockHolder(dir); old > 0 && now > 0 && now != old {
+			return now, nil
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-deadline.C:
+			return 0, fmt.Errorf("ym serve has not stopped; see %s", filepath.Join(dir, "work-service.log"))
+		case <-ticker.C:
+		}
+	}
+}
+
+// serveLockHolder is the pid the serve holding dir's lock wrote there, 0 when none is written.
+func serveLockHolder(dir string) int {
+	raw, _ := os.ReadFile(filepath.Join(dir, "work-service.lock"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(raw)))
+	return pid
 }
