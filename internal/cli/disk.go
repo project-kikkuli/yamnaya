@@ -357,7 +357,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 		}
 	})
 	if r.env.Dry {
-		fmt.Fprintln(w, "dry run: nothing changed; a real pass stops as soon as free reaches 25%")
+		fmt.Fprintf(w, "dry run: nothing changed; a real pass stops as soon as free reaches %.0f%% and %s\n", disk.TargetFree*100, disk.Bytes(disk.SlotTarget))
 		return nil
 	}
 	st := readDiskState(r.dir)
