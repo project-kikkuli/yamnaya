@@ -26,13 +26,8 @@ func List() ([]Proc, error) {
 		pid := int(k.Proc.P_pid)
 		started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*1000)
 		comm := unix.ByteSliceToString(k.Proc.P_comm[:])
-		e, ok := argsCache[pid]
-		if !ok || !e.started.Equal(started) || e.comm != comm || now.Sub(started) < argsSettle {
-			e = argsEntry{started: started, comm: comm, args: procArgs(pid)}
-			if len(e.args) == 0 {
-				e.args = []string{comm}
-			}
-		}
+		prev, ok := argsCache[pid]
+		e := nextArgs(prev, ok, started, comm, now, func() []string { return procArgs(pid) })
 		seen[pid] = e
 		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys.name(k.Eproc.Tdev, now), Elapsed: now.Sub(started), Args: e.args})
 	}
@@ -48,6 +43,24 @@ type argsEntry struct {
 	started time.Time
 	comm    string
 	args    []string
+	// read is whether args came from the kernel rather than standing in for arguments it would not give.
+	read bool
+}
+
+// nextArgs is a process's arguments for this listing. kern.procargs2 sometimes refuses a live process for a moment, so a refusal keeps
+// what the same process gave before; a process never read stands in as its command name and is read again next time.
+func nextArgs(prev argsEntry, cached bool, started time.Time, comm string, now time.Time, read func() []string) argsEntry {
+	same := cached && prev.started.Equal(started) && prev.comm == comm
+	if same && prev.read && now.Sub(started) >= argsSettle {
+		return prev
+	}
+	if args := read(); len(args) > 0 {
+		return argsEntry{started: started, comm: comm, args: args, read: true}
+	}
+	if same && prev.read {
+		return prev
+	}
+	return argsEntry{started: started, comm: comm, args: []string{comm}}
 }
 
 var (

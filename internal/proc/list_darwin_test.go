@@ -76,3 +76,31 @@ func TestATerminalOpenedSinceTheLastReadIsNamedAtOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestAnArgumentReadTheKernelRefusesKeepsWhatTheSameProcessGave(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	claude := argsEntry{started: start, comm: "bash", args: []string{"claude", "--resume", "x"}, read: true}
+	for _, c := range []struct {
+		name    string
+		prev    argsEntry
+		cached  bool
+		started time.Time
+		comm    string
+		read    []string
+		want    []string
+	}{
+		{"a refused read keeps the process's arguments", claude, true, start, "bash", nil, claude.args},
+		{"a fresh read replaces them", claude, true, start, "bash", []string{"claude", "-c"}, []string{"claude", "-c"}},
+		{"a process never read stands in as its name", argsEntry{}, false, start, "bash", nil, []string{"bash"}},
+		{"a reused pid does not inherit them", claude, true, start.Add(time.Millisecond), "bash", nil, []string{"bash"}},
+		{"a process that exec'd does not keep them", claude, true, start, "sleep", nil, []string{"sleep"}},
+		{"a stand-in is read again", argsEntry{started: start, comm: "bash", args: []string{"bash"}}, true, start, "bash", []string{"claude"}, []string{"claude"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := nextArgs(c.prev, c.cached, c.started, c.comm, time.Now(), func() []string { return c.read })
+			if !slices.Equal(got.args, c.want) {
+				t.Fatalf("args %q, want %q", got.args, c.want)
+			}
+		})
+	}
+}

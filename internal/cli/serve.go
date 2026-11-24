@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -89,6 +90,12 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 		}
 		defer lock.Close()
+		if err = lock.Truncate(0); err == nil {
+			_, err = lock.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
+		}
+		if err != nil {
+			return err
+		}
 		e.core.Log = func(line string) { fmt.Fprintln(cmd.ErrOrStderr(), line) }
 		ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()

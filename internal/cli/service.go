@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +89,11 @@ func serviceCmd() *cobra.Command {
 		}
 		defer lock.Close()
 		status["running"] = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
+		if holder, err := io.ReadAll(lock); err == nil && status["running"] == true {
+			if pid, err := strconv.Atoi(string(holder)); err == nil {
+				status["pid"] = pid
+			}
+		}
 		if runtime.GOOS == "darwin" {
 			if path, loaded, pid := launchdState(); loaded {
 				status["kept"], status["kept_pid"] = path, pid

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -47,6 +48,9 @@ func TestStoppingTheControlDaemonLeavesItsExistingAgentRunning(t *testing.T) {
 		}
 		if json.Unmarshal(raw, &heartbeat) == nil && heartbeat.PID == cmd.Process.Pid {
 			break
+		}
+		if holder, _ := os.ReadFile(filepath.Join(state, "work-service.lock")); len(holder) > 0 && string(holder) != strconv.Itoa(cmd.Process.Pid) {
+			t.Fatalf("the serve lock names pid %s, not the serve holding it, %d", holder, cmd.Process.Pid)
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("daemon did not reach reconciliation")
