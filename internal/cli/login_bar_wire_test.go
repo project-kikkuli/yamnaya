@@ -56,7 +56,8 @@ main=$$
 ( last=$(mtime "$root/screen.txt"); while owned; do now=$(mtime "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &
 clear
 cat "$root/screen.txt"
-exec -a claude "$BASH" -c 'while :; do sleep 1; done'
+mkfifo "$root/wire-$$.fifo"
+exec -a claude "$BASH" -c 'exec 3<>"$1"; rm -f "$1"; while :; do read -r -t 3600 -u 3 _; done' _ "$root/wire-$$.fifo"
 `
 
 // claudeProjectDir is the directory name Claude Code keeps cwd's transcripts under.
@@ -173,19 +174,25 @@ func TestWireIdleFixtureExposesOneNativeSession(t *testing.T) {
 	if !ok || session.Status != core.Idle || session.PID == 0 {
 		t.Fatalf("idle native session identity missing: %+v", session)
 	}
-	ps, err := w.c.Procs()
-	if err != nil {
-		t.Fatal(err)
-	}
 	adapter := claude.New()
-	var native []proc.Proc
-	for _, p := range ps {
-		if adapter.Owns(p) && proc.ConfigRoot(p.PID, "CLAUDE_CONFIG_DIR") == w.def.Root {
-			native = append(native, p)
+	for range 30 {
+		ps, err := w.c.Procs()
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if len(native) != 1 || native[0].PID != session.PID {
-		t.Fatalf("fixture helpers impersonate extra native sessions: %+v, session %+v", native, session)
+		var native []proc.Proc
+		for _, p := range ps {
+			if adapter.Owns(p) && proc.ConfigRoot(p.PID, "CLAUDE_CONFIG_DIR") == w.def.Root {
+				native = append(native, p)
+			}
+			if p.PPID == session.PID && p.Command() != "bash" {
+				t.Fatalf("the native session forks %q, which a pass can catch as a claude child before it execs", p.Args)
+			}
+		}
+		if len(native) != 1 || native[0].PID != session.PID {
+			t.Fatalf("fixture helpers impersonate extra native sessions: %+v, session %+v", native, session)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
