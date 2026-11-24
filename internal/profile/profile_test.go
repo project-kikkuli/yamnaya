@@ -19,7 +19,7 @@ func isolated(t *testing.T) string {
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(dir, "default-claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(dir, "default-codex"))
 	t.Setenv("YAMNAYA_PROFILE", "")
-	for _, key := range SubscriptionOverrides {
+	for _, key := range subscriptionOverrides {
 		t.Setenv(key, "")
 	}
 	return filepath.Join(dir, "state")
@@ -116,7 +116,7 @@ func TestNamedEnvironmentSelectsNativeCredentialsWithoutLeakingParent(t *testing
 		t.Run(h, func(t *testing.T) {
 			p := Profile{Harness: h, ID: "p", Root: t.TempDir(), Explicit: true}
 			dirty := []string{"PATH=" + os.Getenv("PATH"), "YAMNAYA_PROFILE=wrong", "CLAUDE_CONFIG_DIR=/wrong", "CLAUDE_SECURESTORAGE_CONFIG_DIR=", "CODEX_HOME=/wrong", "CODEX_SQLITE_HOME=/wrong"}
-			for _, k := range SubscriptionOverrides {
+			for _, k := range subscriptionOverrides {
 				dirty = append(dirty, k+"=fixture-secret")
 			}
 			args := p.Argv([]string{"env"})

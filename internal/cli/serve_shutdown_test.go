@@ -68,6 +68,9 @@ func TestStoppingTheControlDaemonLeavesItsExistingAgentRunning(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("daemon did not stop")
 	}
+	if holder, err := os.ReadFile(filepath.Join(state, "work-service.lock")); err != nil || len(holder) > 0 {
+		t.Fatalf("the serve that stopped still names %q in its lock: %v", holder, err)
+	}
 	current, err := srv.Pane("independent-agent")
 	if err != nil || current.Dead || current.PID != pane.PID || syscall.Kill(pane.PID, 0) != nil {
 		t.Fatalf("daemon shutdown ended the agent: original %+v, current %+v, %v", pane, current, err)

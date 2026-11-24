@@ -90,6 +90,7 @@ func serveCmd(with func(runFunc) func(*cobra.Command, []string) error) *cobra.Co
 			}
 		}
 		defer lock.Close()
+		defer lock.Truncate(0)
 		if err = lock.Truncate(0); err == nil {
 			_, err = lock.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
 		}
@@ -324,6 +325,19 @@ func ensureWorkService() error {
 	return startWorkService()
 }
 
+// serveLockFree reports whether no serve holds dir's lock, emptying the pid a serve that ended without exiting cleanly left in it.
+func serveLockFree(dir string) (bool, error) {
+	lock, err := os.OpenFile(filepath.Join(dir, "work-service.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return false, err
+	}
+	defer lock.Close()
+	if syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		return false, nil
+	}
+	return true, lock.Truncate(0)
+}
+
 // startWorkService starts ym serve when none holds its lock: through launchd when it keeps one for this state directory, so there
 // is only ever that serve, else detached and without the calling agent's environment.
 func startWorkService() error {
@@ -331,15 +345,9 @@ func startWorkService() error {
 	if err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(filepath.Join(dir, "work-service.lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
+	if free, err := serveLockFree(dir); err != nil || !free {
 		return err
 	}
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
-		return nil
-	}
-	lock.Close()
 	if label, kept := keptServe(); kept {
 		return kickstart(label)
 	}

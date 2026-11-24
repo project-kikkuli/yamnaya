@@ -50,7 +50,7 @@ printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
 printf '%s %s %s\n' "$YAMNAYA_PROFILE" "$CLAUDE_SECURESTORAGE_CONFIG_DIR" "$root" >> "$WIRE_LOG.env"
 mkdir -p "$root/sessions"
 printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $$ "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$$.json"
-[ -f "$root/child" ] && { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$BASH" -c 'exec -a claude "$BASH" "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & until [ -f "$root/child-$$" ]; do sleep 0.02; done; }
+[ -f "$root/child" ] && { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$BASH" -c 'exec -a claude "$BASH" "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & for _ in $(seq 250); do [ -f "$root/child-$$" ] && break; sleep 0.02; done; [ -f "$root/child-$$" ] || { echo "wire child never started"; exit 7; }; }
 state() { printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $main "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$main.json.tmp" && mv "$root/sessions/$main.json.tmp" "$root/sessions/$main.json"; }
 main=$$
 ( last=$(mtime "$root/screen.txt"); while owned; do now=$(mtime "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &

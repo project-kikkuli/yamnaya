@@ -16,14 +16,12 @@ const (
 	testRun   = "YM_CLI_TEST_RUN"
 )
 
-// TestMain keeps ym from starting itself under go test, where the executable is the test binary: a detached helper, serve or
-// relay would rerun every test instead, unreaped. A copy started anyway exits at once. Agents tests start keep out of the owner's config,
-// launches never wait on this host's processor load or memory pressure, and no test inherits the host's auth overrides.
-// A copy started with testRun set runs the ym command its arguments name instead.
+// TestMain keeps ym from rerunning the test binary as a helper, serve or relay, and runs the ym command a testRun copy names.
+// Tests never read this host's load, memory pressure, auth overrides or owner config.
 func TestMain(m *testing.M) {
 	machineLoad = func() (float64, error) { return 0, nil }
 	machineMemory = func(*pressure.Meter) (pressure.Host, error) { return pressure.Host{}, nil }
-	for _, key := range profile.SubscriptionOverrides {
+	for _, key := range profile.SubscriptionOverrides() {
 		os.Unsetenv(key)
 	}
 	if os.Getenv(testChild) != "" {

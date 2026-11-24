@@ -86,18 +86,20 @@ func TestAnArgumentReadTheKernelRefusesKeepsWhatTheSameProcessGave(t *testing.T)
 		cached  bool
 		started time.Time
 		comm    string
+		ours    bool
 		read    []string
 		want    []string
 	}{
-		{"a refused read keeps the process's arguments", claude, true, start, "bash", nil, claude.args},
-		{"a fresh read replaces them", claude, true, start, "bash", []string{"claude", "-c"}, []string{"claude", "-c"}},
-		{"a process never read stands in as its name", argsEntry{}, false, start, "bash", nil, []string{"bash"}},
-		{"a reused pid does not inherit them", claude, true, start.Add(time.Millisecond), "bash", nil, []string{"bash"}},
-		{"a process that exec'd does not keep them", claude, true, start, "sleep", nil, []string{"sleep"}},
-		{"a stand-in is read again", argsEntry{started: start, comm: "bash", args: []string{"bash"}}, true, start, "bash", []string{"claude"}, []string{"claude"}},
+		{"a refused read keeps the process's arguments", claude, true, start, "bash", true, nil, claude.args},
+		{"a fresh read replaces them", claude, true, start, "bash", true, []string{"claude", "-c"}, []string{"claude", "-c"}},
+		{"a process never read stands in as its name", argsEntry{}, false, start, "bash", true, nil, []string{"bash"}},
+		{"a reused pid does not inherit them", claude, true, start.Add(time.Millisecond), "bash", true, nil, []string{"bash"}},
+		{"a process that exec'd does not keep them", claude, true, start, "sleep", true, nil, []string{"sleep"}},
+		{"another user's process stands in as its name unread", argsEntry{}, false, start, "bash", false, []string{"secret"}, []string{"bash"}},
+		{"a stand-in is read again", argsEntry{started: start, comm: "bash", args: []string{"bash"}}, true, start, "bash", true, []string{"claude"}, []string{"claude"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := nextArgs(c.prev, c.cached, c.started, c.comm, time.Now(), func() []string { return c.read })
+			got := nextArgs(c.prev, c.cached, c.started, c.comm, c.ours, time.Now(), func() []string { return c.read })
 			if !slices.Equal(got.args, c.want) {
 				t.Fatalf("args %q, want %q", got.args, c.want)
 			}

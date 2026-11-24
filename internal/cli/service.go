@@ -89,9 +89,12 @@ func serviceCmd() *cobra.Command {
 		}
 		defer lock.Close()
 		status["running"] = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil
-		if holder, err := io.ReadAll(lock); err == nil && status["running"] == true {
-			if pid, err := strconv.Atoi(string(holder)); err == nil {
-				status["pid"] = pid
+		if status["running"] == true {
+			delete(status, "pid")
+			if holder, err := io.ReadAll(lock); err == nil {
+				if pid, err := strconv.Atoi(string(holder)); err == nil {
+					status["pid"] = pid
+				}
 			}
 		}
 		if runtime.GOOS == "darwin" {
@@ -116,18 +119,16 @@ func serviceCmd() *cobra.Command {
 		if err = os.WriteFile(filepath.Join(dir, "work-service-stop"), []byte(fmt.Sprint(time.Now().UnixNano())), 0600); err != nil {
 			return err
 		}
-		lock, err := os.OpenFile(filepath.Join(dir, "work-service.lock"), os.O_CREATE|os.O_RDWR, 0600)
-		if err != nil {
-			return err
-		}
-		defer lock.Close()
 		deadline := time.NewTimer(40 * time.Second)
 		defer deadline.Stop()
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			if syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
-				lock.Close()
+			free, err := serveLockFree(dir)
+			if err != nil {
+				return err
+			}
+			if free {
 				if err = startWorkService(); err != nil {
 					return err
 				}

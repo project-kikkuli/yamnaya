@@ -95,30 +95,34 @@ func (e Env) Machine() Env {
 	return e
 }
 
-// Enough reports whether every watched filesystem reached TargetFree; a forced pass is never done early.
+// Enough reports whether every watched filesystem is Reached; a forced pass is never done early.
 func (e Env) Enough() bool {
 	if e.Force {
 		return false
 	}
-	low, ok := Lowest(e.Stat, e.Paths)
-	return !ok || low.Free() >= TargetFree
+	for _, u := range Each(e.Stat, e.Paths) {
+		if !u.Reached() {
+			return false
+		}
+	}
+	return true
 }
 
-// Needed reports whether freeing path helps: a forced pass always, else its filesystem is short of TargetFree.
+// Needed reports whether freeing path helps: a forced pass always, else its filesystem is not Reached.
 func (e Env) Needed(path string) bool {
 	if e.Force {
 		return true
 	}
 	u, err := e.Stat(path)
-	return err != nil || u.Free() < TargetFree
+	return err != nil || !u.Reached()
 }
 
-// Reapable is what a pass may take worktrees from, decided as it starts: a filesystem under Tier2Free itself, until it reaches
-// TargetFree, since another filesystem being low says nothing about this one. A forced pass takes from any.
+// Reapable is what a pass may take worktrees from, decided as it starts: a filesystem at tier 2 or worse itself, until it is
+// Reached, since another filesystem being low says nothing about this one. A forced pass takes from any.
 func (e Env) Reapable() func(path string) bool {
 	under := map[uint64]bool{}
 	for _, u := range Each(e.Stat, e.Paths) {
-		if u.Free() < Tier2Free {
+		if u.Tier() >= 2 {
 			under[u.Dev] = true
 		}
 	}
@@ -127,7 +131,7 @@ func (e Env) Reapable() func(path string) bool {
 			return true
 		}
 		u, err := e.Stat(path)
-		return err == nil && (under[u.Dev] || u.Free() < Tier2Free) && u.Free() < TargetFree
+		return err == nil && (under[u.Dev] || u.Tier() >= 2) && !u.Reached()
 	}
 }
 

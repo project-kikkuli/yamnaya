@@ -22,7 +22,7 @@ import (
 
 func usageAt(free *float64) func(string) (disk.Usage, error) {
 	return func(path string) (disk.Usage, error) {
-		return disk.Usage{Path: path, Dev: 1, Total: 1000, Avail: uint64(*free * 1000)}, nil
+		return disk.Usage{Path: path, Dev: 1, Total: 1000 << 30, Avail: uint64(*free*1000) << 30}, nil
 	}
 }
 
@@ -52,6 +52,36 @@ func TestTheWatcherFilesOnePersistentRequestWithoutReclaiming(t *testing.T) {
 				t.Fatalf("episode %+v, items %+v", readDiskState(dir), items)
 			}
 		})
+	}
+}
+
+func TestTheWatcherFilesASmallDiskUnderTheSlotFloorUntilItReachesTheTarget(t *testing.T) {
+	const gib = 1 << 30
+	dir := t.TempDir()
+	c := diskCore(t, dir)
+	tmp := disk.Usage{Path: "/tmp", Dev: 2, Total: 8 * gib, Avail: 4 * gib}
+	stat := func(p string) (disk.Usage, error) {
+		if p == "/tmp" {
+			return tmp, nil
+		}
+		return disk.Usage{Path: p, Dev: 1, Total: 1000 * gib, Avail: 500 * gib}, nil
+	}
+	w := &diskWatcher{dir: dir, paths: []string{"/home", "/tmp"}, stat: stat, now: time.Now, log: &strings.Builder{}, file: fileLowDisk(c), dismiss: diskDismiss(c.Store)}
+	for _, step := range []struct {
+		avail uint64
+		items int
+	}{{4 * gib, 1}, {5*gib + 1, 1}, {6 * gib, 0}} {
+		tmp.Avail = step.avail
+		if err := w.tick(); err != nil {
+			t.Fatal(err)
+		}
+		items, err := c.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != step.items || step.items > 0 && !strings.Contains(items[0].Rec, "/tmp has 50.0% free (4.0 GiB)") {
+			t.Fatalf("%d GiB free: owner items %+v, want %d about /tmp", step.avail/gib, items, step.items)
+		}
 	}
 }
 
@@ -467,7 +497,7 @@ func TestYmDiskNamesWhatAPassCouldNotFreeOnlyWhileTheDiskIsLow(t *testing.T) {
 	}{{"low", 150, true}, {"exactly at the tier", 200, false}, {"recovered", 400, false}} {
 		t.Run(c.name, func(t *testing.T) {
 			var b strings.Builder
-			printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: c.free}}, st)
+			printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000 << 30, Avail: c.free << 30}}, st)
 			if got := strings.Contains(b.String(), "could not free uv clean"); got != c.want {
 				t.Fatalf("printed %q, want the line %v", b.String(), c.want)
 			}
@@ -496,7 +526,7 @@ func TestYmDiskSaysWhatTheLastPassRiskedOnlyWhileTheDiskIsLow(t *testing.T) {
 		want bool
 	}{{150, true}, {400, false}} {
 		var b strings.Builder
-		printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000, Avail: x.free}}, readDiskState(dir))
+		printDisk(&b, []disk.Usage{{Path: "/x", Total: 1000 << 30, Avail: x.free << 30}}, readDiskState(dir))
 		if got := strings.Contains(b.String(), "builds may have failed"); got != x.want {
 			t.Errorf("free %d printed %q, want %v", x.free, b.String(), x.want)
 		}

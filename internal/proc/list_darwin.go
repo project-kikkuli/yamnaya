@@ -17,7 +17,7 @@ func List() ([]Proc, error) {
 	if err != nil {
 		return listPS()
 	}
-	now := time.Now()
+	now, me := time.Now(), uint32(os.Getuid())
 	argsMu.Lock()
 	defer argsMu.Unlock()
 	seen := make(map[int]argsEntry, len(ks))
@@ -27,7 +27,7 @@ func List() ([]Proc, error) {
 		started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*1000)
 		comm := unix.ByteSliceToString(k.Proc.P_comm[:])
 		prev, ok := argsCache[pid]
-		e := nextArgs(prev, ok, started, comm, now, func() []string { return procArgs(pid) })
+		e := nextArgs(prev, ok, started, comm, k.Eproc.Ucred.Uid == me, now, func() []string { return procArgs(pid) })
 		seen[pid] = e
 		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys.name(k.Eproc.Tdev, now), Elapsed: now.Sub(started), Args: e.args})
 	}
@@ -48,8 +48,12 @@ type argsEntry struct {
 }
 
 // nextArgs is a process's arguments for this listing. kern.procargs2 sometimes refuses a live process for a moment, so a refusal keeps
-// what the same process gave before; a process never read stands in as its command name and is read again next time.
-func nextArgs(prev argsEntry, cached bool, started time.Time, comm string, now time.Time, read func() []string) argsEntry {
+// what the same process gave before; a process never read stands in as its command name and is read again next time. Another user's
+// process is never read, since the kernel always refuses it.
+func nextArgs(prev argsEntry, cached bool, started time.Time, comm string, ours bool, now time.Time, read func() []string) argsEntry {
+	if !ours {
+		return argsEntry{started: started, comm: comm, args: []string{comm}}
+	}
 	same := cached && prev.started.Equal(started) && prev.comm == comm
 	if same && prev.read && now.Sub(started) >= argsSettle {
 		return prev

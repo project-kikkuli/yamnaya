@@ -136,9 +136,9 @@ func (w *diskWatcher) tick() error {
 	if !ok {
 		return nil
 	}
-	tier := disk.TierOf(low.Free())
+	tier := low.Tier()
 	if tier != w.tier {
-		fmt.Fprintf(w.log, "disk: %s has %.1f%% free, tier %d\n", low.Path, low.Free()*100, tier)
+		fmt.Fprintf(w.log, "disk: %s has %.1f%% free (%s), tier %d\n", low.Path, low.Free()*100, disk.Bytes(int64(low.Avail)), tier)
 		w.tier = tier
 	}
 	unlock, free, err := lockDisk(w.dir)
@@ -150,7 +150,7 @@ func (w *diskWatcher) tick() error {
 	if st.Filed == "" {
 		st.Filed = w.filed
 	}
-	if st.Filed != "" && low.Free() > disk.ClearFree {
+	if st.Filed != "" && disk.Cleared(w.stat, w.paths) {
 		if err := st.endEpisode(w.dir, w.dismiss); err != nil {
 			return err
 		}
@@ -181,7 +181,7 @@ func fileLowDisk(c *core.Core) func(disk.Usage) (string, error) {
 			}
 		}
 		it, err := c.Store.AddItem(core.Item{Scope: c.StateDir, Session: diskItemSession, Kind: core.KindChore, Question: question, DoLine: "Review disk usage", Impact: "agents",
-			Rec: fmt.Sprintf("%s has %.1f%% free. Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free.", low.Path, low.Free()*100), Evidence: []string{low.Path}})
+			Rec: fmt.Sprintf("%s has %.1f%% free (%s). Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free, ym slot admissions below %s.", low.Path, low.Free()*100, disk.Bytes(int64(low.Avail)), disk.Bytes(disk.SlotFloor)), Evidence: []string{low.Path}})
 		return it.Key(), err
 	}
 }
@@ -316,11 +316,11 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	}
 	forced := tier > 0
 	if !forced {
-		tier = disk.TierOf(low.Free())
+		tier = low.Tier()
 	}
 	if tier == 0 {
 		fmt.Fprintf(w, "%s has %.1f%% free, nothing to do\n", low.Path, low.Free()*100)
-		if st := readDiskState(r.dir); st.Filed != "" && low.Free() > disk.ClearFree {
+		if st := readDiskState(r.dir); st.Filed != "" && disk.Cleared(r.env.Stat, r.env.Paths) {
 			return st.endEpisode(r.dir, diskDismiss(r.core.Store))
 		}
 		return nil
@@ -368,10 +368,10 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 	after, ok := disk.Lowest(r.env.Stat, r.env.Paths)
 	if ok {
 		fmt.Fprintf(w, "%s has %.1f%% free after the pass\n", after.Path, after.Free()*100)
-		if st.Filed != "" && after.Free() > disk.ClearFree {
+		if st.Filed != "" && disk.Cleared(r.env.Stat, r.env.Paths) {
 			errs = append(errs, st.endEpisode(r.dir, diskDismiss(r.core.Store)))
 		}
-		if complete && tier >= 2 && after.Free() < disk.Tier2Free && st.Filed == "" {
+		if complete && tier >= 2 && after.Tier() >= 2 && st.Filed == "" {
 			added, err := r.fileOwnerItem(ctx, after, blocked)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("owner item: %w", err))
@@ -452,8 +452,8 @@ func serveRunning(dir string) bool {
 func printDisk(w io.Writer, usages []disk.Usage, st diskState) {
 	low := false
 	for _, u := range usages {
-		fmt.Fprintf(w, "%s  %.1f%% free  %s of %s  tier %d\n", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(int64(u.Total)), disk.TierOf(u.Free()))
-		low = low || disk.TierOf(u.Free()) > 0
+		fmt.Fprintf(w, "%s  %.1f%% free  %s of %s  tier %d\n", u.Path, u.Free()*100, disk.Bytes(int64(u.Avail)), disk.Bytes(int64(u.Total)), u.Tier())
+		low = low || u.Tier() > 0
 	}
 	if !st.LastPass.IsZero() {
 		fmt.Fprintf(w, "last automatic pass: tier %d, %s\n", st.LastTier, st.LastPass.Format(time.RFC3339))

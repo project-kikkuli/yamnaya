@@ -21,8 +21,12 @@ const (
 	ClearFree  = 0.20
 )
 
-// SlotFloor is the free space, in bytes, below which new ym slot admissions wait.
-const SlotFloor = 5 << 30
+// SlotFloor is the free space, in bytes, below which new ym slot admissions wait. A pass frees towards SlotTarget and an
+// episode ends above it, so the gate does not thrash.
+const (
+	SlotFloor  = 5 << 30
+	SlotTarget = 6 << 30
+)
 
 // FreeFileEnv names a file holding a fraction that replaces every filesystem's free space, for a drill under a rehearsal root.
 const FreeFileEnv = "YAMNAYA_DISK_FREE"
@@ -44,6 +48,20 @@ func (u Usage) Free() float64 {
 	}
 	return float64(u.Avail) / float64(u.Total)
 }
+
+// Tier is how low u is: its free share's tier, and 3 below SlotFloor, where new slots wait however large the filesystem.
+func (u Usage) Tier() int {
+	if u.Avail < SlotFloor {
+		return 3
+	}
+	return TierOf(u.Free())
+}
+
+// Reached reports whether a pass freed enough of u to stop.
+func (u Usage) Reached() bool { return u.Free() >= TargetFree && u.Avail >= SlotTarget }
+
+// Clear reports whether u is far enough from low to end an episode.
+func (u Usage) Clear() bool { return u.Free() > ClearFree && u.Avail >= SlotTarget }
 
 // TierOf is how low free is: 0 while healthy, else 1 to 3.
 func TierOf(free float64) int {
@@ -117,14 +135,24 @@ func Each(stat func(string) (Usage, error), paths []string) []Usage {
 	return out
 }
 
-// Lowest is the filesystem with the least free among paths; ok is false when none could be read.
+// Lowest is the filesystem in the highest tier among paths, the least free share among those; ok is false when none could be read.
 func Lowest(stat func(string) (Usage, error), paths []string) (low Usage, ok bool) {
 	for _, u := range Each(stat, paths) {
-		if !ok || u.Free() < low.Free() {
+		if !ok || u.Tier() > low.Tier() || u.Tier() == low.Tier() && u.Free() < low.Free() {
 			low, ok = u, true
 		}
 	}
 	return low, ok
+}
+
+// Cleared reports whether every filesystem among paths is Clear.
+func Cleared(stat func(string) (Usage, error), paths []string) bool {
+	for _, u := range Each(stat, paths) {
+		if !u.Clear() {
+			return false
+		}
+	}
+	return true
 }
 
 // Watched are the paths whose filesystems admission reads with no setup: home, the temp dir and the Go build cache.

@@ -233,8 +233,9 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, w *orgWorld) string
-		// back is what passes the snooze; zero means the row stays in later.
-		back time.Duration
+		// back is what passes the snooze; zero means the row stays in later. exact says it passes by only a minute.
+		back  time.Duration
+		exact bool
 	}{
 		{"an item for an hour", func(t *testing.T, w *orgWorld) string {
 			it := ownerAsk(t, w, "one hour")
@@ -242,14 +243,14 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, time.Hour + time.Minute},
+		}, time.Hour + time.Minute, true},
 		{"an item until tomorrow", func(t *testing.T, w *orgWorld) string {
 			it := ownerAsk(t, w, "tomorrow")
 			if _, err := w.core.SnoozeFor(it.Key(), "tomorrow"); err != nil {
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, 37 * time.Hour},
+		}, 28*time.Hour + time.Minute, true},
 		{"an item whose session has no live project", func(t *testing.T, w *orgWorld) string {
 			it, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "gone", Rec: "x", Session: "gone-session"})
 			if err != nil {
@@ -259,14 +260,14 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, time.Hour + time.Minute},
+		}, time.Hour + time.Minute, true},
 		{"an item until reopened stays", func(t *testing.T, w *orgWorld) string {
 			it := ownerAsk(t, w, "until reopened")
 			if _, err := w.core.Snooze(it.Key()); err != nil {
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, 0},
+		}, 0, false},
 		{"a review row", func(t *testing.T, w *orgWorld) string {
 			if err := w.core.Store.SyncReviews([]ReviewRequest{{URL: url, Updated: "2026-10-20T00:00:00Z", Title: "t", Author: "a"}}); err != nil {
 				t.Fatal(err)
@@ -275,7 +276,7 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return "repo#5"
-		}, 25 * time.Hour},
+		}, 25 * time.Hour, false},
 		{"a merge row, through a new head", func(t *testing.T, w *orgWorld) string {
 			st := *ownedPR(5).PR.Status
 			st.Fetched = w.clock.Add(2 * time.Hour)
@@ -293,7 +294,7 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return "repo#5"
-		}, 2 * time.Hour},
+		}, 2 * time.Hour, false},
 		{"an item of a finished goal stays", func(t *testing.T, w *orgWorld) string {
 			g, m := w.goal(t, "ship", "/repo/a")
 			it, err := w.core.AddOwnerItem(Item{Kind: KindGo, Question: "done goal", Rec: "x", Session: m.Session})
@@ -305,13 +306,16 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 				t.Fatal(err)
 			}
 			return it.Qualified()
-		}, stayRanked},
-		{"a prod item of a finished goal stays ranked", endedGoalAsk(ImpactProd, ""), stayRanked},
-		{"a clinical item of a finished goal stays ranked", endedGoalAsk(ImpactClinical, ""), stayRanked},
-		{"a routine item of a finished goal stays ranked", endedGoalAsk(ImpactRoutine, ""), stayRanked},
-		{"a snoozed prod item of a finished goal folds until it wakes", endedGoalAsk(ImpactProd, "1h"), time.Hour + time.Minute},
+		}, stayRanked, false},
+		{"a prod item of a finished goal stays ranked", endedGoalAsk(ImpactProd, ""), stayRanked, false},
+		{"a clinical item of a finished goal stays ranked", endedGoalAsk(ImpactClinical, ""), stayRanked, false},
+		{"a routine item of a finished goal stays ranked", endedGoalAsk(ImpactRoutine, ""), stayRanked, false},
+		{"a snoozed prod item of a finished goal folds until it wakes", endedGoalAsk(ImpactProd, "1h"), time.Hour + time.Minute, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			saved := time.Local
+			time.Local, _ = time.LoadLocation("America/New_York")
+			t.Cleanup(func() { time.Local = saved })
 			w := newOrgWorld(t)
 			id := tc.setup(t, w)
 			has := func(ns []Need) bool {
@@ -334,6 +338,14 @@ func TestOnlyExplicitSnoozesFoldAndEndedGoalDecisionsRemainVisible(t *testing.T)
 			}
 			if tc.back == 0 {
 				return
+			}
+			if tc.exact {
+				saved := w.clock
+				w.clock = saved.Add(tc.back - 2*time.Minute)
+				if b = w.board(t); has(b.Needs) || !has(b.Later) {
+					t.Fatalf("%s came back two minutes early", id)
+				}
+				w.clock = saved
 			}
 			w.clock = w.clock.Add(tc.back)
 			b = w.board(t)

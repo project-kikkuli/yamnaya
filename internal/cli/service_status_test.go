@@ -18,6 +18,7 @@ func TestServiceStatusNamesTheServeHoldingTheLockNotTheLastHeartbeat(t *testing.
 		running bool
 	}{
 		{"a serve that has not cycled yet", true, "4242", 4242, true},
+		{"a start holding the lock between serves", true, "", 0, true},
 		{"no serve running", false, "", 1177, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -55,6 +56,34 @@ func TestServiceStatusNamesTheServeHoldingTheLockNotTheLastHeartbeat(t *testing.
 			}
 			if st.PID != c.wantPID || st.Running != c.running {
 				t.Fatalf("status pid %d running %v, want pid %d running %v", st.PID, st.Running, c.wantPID, c.running)
+			}
+		})
+	}
+}
+
+func TestTakingAFreeServeLockForgetsTheServeThatLastHeldIt(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		t.Run(map[bool]string{false: "free", true: "held"}[held], func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "work-service.lock")
+			if err := os.WriteFile(path, []byte("999"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if held {
+				lock, err := os.OpenFile(path, os.O_RDWR, 0o600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { lock.Close() })
+				if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+					t.Fatal(err)
+				}
+			}
+			free, err := serveLockFree(dir)
+			holder, _ := os.ReadFile(path)
+			want := map[bool]string{false: "", true: "999"}[held]
+			if err != nil || free == held || string(holder) != want {
+				t.Fatalf("free %v err %v, lock names %q, want free %v naming %q", free, err, holder, !held, want)
 			}
 		})
 	}

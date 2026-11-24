@@ -22,7 +22,7 @@ func fixed(frees map[string]float64) func(string) (Usage, error) {
 		if !ok {
 			return Usage{}, os.ErrNotExist
 		}
-		return Usage{Path: path, Dev: devs[path], Total: 1000, Avail: uint64(f * 1000)}, nil
+		return Usage{Path: path, Dev: devs[path], Total: 1000 << 30, Avail: uint64(f*1000) << 30}, nil
 	}
 }
 
@@ -34,6 +34,43 @@ func TestTiersAreFractionsOfTheDisk(t *testing.T) {
 		if got := TierOf(c.free); got != c.want {
 			t.Errorf("TierOf(%v) = %d, want %d", c.free, got, c.want)
 		}
+	}
+}
+
+func TestASmallDiskUnderTheSlotFloorIsLowWhateverItsShare(t *testing.T) {
+	const gib = 1 << 30
+	big := Usage{Path: "/home", Dev: 1, Total: 1000 * gib, Avail: 500 * gib}
+	for _, c := range []struct {
+		name         string
+		small        Usage
+		tier         int
+		reached, end bool
+	}{
+		{"half of 8 GiB free", Usage{Total: 8 * gib, Avail: 4 * gib}, 3, false, false},
+		{"just above the floor, not yet the target", Usage{Total: 8 * gib, Avail: 5*gib + 1}, 0, false, false},
+		{"at the target", Usage{Total: 8 * gib, Avail: 6 * gib}, 0, true, true},
+		{"a big disk at 4% free", Usage{Total: 1000 * gib, Avail: 40 * gib}, 3, false, false},
+		{"a big disk at 22% free", Usage{Total: 1000 * gib, Avail: 220 * gib}, 0, false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			small := c.small
+			small.Path, small.Dev = "/tmp", 2
+			if got := small.Tier(); got != c.tier {
+				t.Errorf("tier %d, want %d", got, c.tier)
+			}
+			disks := map[string]Usage{"/home": big, "/tmp": small}
+			stat := func(p string) (Usage, error) { return disks[p], nil }
+			e := Env{Stat: stat, Paths: []string{"/home", "/tmp"}}
+			if e.Enough() != c.reached || e.Needed("/tmp") == c.reached {
+				t.Errorf("enough %v needed %v, want a pass done %v", e.Enough(), e.Needed("/tmp"), c.reached)
+			}
+			if got := Cleared(stat, e.Paths); got != c.end {
+				t.Errorf("cleared %v, want %v", got, c.end)
+			}
+			if low, _ := Lowest(stat, e.Paths); c.tier > 0 && low.Path != "/tmp" {
+				t.Errorf("lowest %s, want the disk holding slots", low.Path)
+			}
+		})
 	}
 }
 
@@ -228,11 +265,11 @@ func TestGoTrimStopsWhenTheDiskHasEnoughFree(t *testing.T) {
 	e.Force, e.Paths = false, []string{dir}
 	e.Stat = func(string) (Usage, error) {
 		calls++
-		avail := uint64(10)
+		avail := uint64(10) << 30
 		if calls > 1 {
-			avail = 500
+			avail = 500 << 30
 		}
-		return Usage{Path: dir, Dev: 1, Total: 1000, Avail: avail}, nil
+		return Usage{Path: dir, Dev: 1, Total: 1000 << 30, Avail: avail}, nil
 	}
 	goTrim(context.Background(), e, 0, goMinAge)
 	left := 0
