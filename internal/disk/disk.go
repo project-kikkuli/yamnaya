@@ -21,8 +21,8 @@ const (
 	ClearFree  = 0.20
 )
 
-// SlotFloor is the free space, in bytes, below which new ym slot admissions wait. A pass frees towards SlotTarget and an
-// episode ends above it, so the gate does not thrash.
+// SlotFloor is the free space, in bytes, below which new ym slot admissions wait on a big filesystem. A pass frees towards
+// SlotTarget and an episode ends above it, so the gate does not thrash. Usage.Floor and Usage.Target scale both to small ones.
 const (
 	SlotFloor  = 5 << 30
 	SlotTarget = 6 << 30
@@ -49,19 +49,29 @@ func (u Usage) Free() float64 {
 	return float64(u.Avail) / float64(u.Total)
 }
 
-// Tier is how low u is: its free share's tier, and 3 below SlotFloor, where new slots wait however large the filesystem.
+// Floor is the free space below which new ym slot admissions wait on u: SlotFloor, or Tier1Free of a filesystem too small
+// to hold SlotFloor at that share.
+func (u Usage) Floor() uint64 { return min(SlotFloor, uint64(Tier1Free*float64(u.Total))) }
+
+// Target is the free space a pass frees towards and an episode ends above: SlotTarget, or TargetFree of a smaller filesystem.
+func (u Usage) Target() uint64 { return min(SlotTarget, uint64(TargetFree*float64(u.Total))) }
+
+// SmallBelow is the size under which Target is TargetFree of the filesystem rather than SlotTarget.
+const SmallBelow = int64(SlotTarget / TargetFree)
+
+// Tier is how low u is: its free share's tier, and 3 below its Floor, where new slots wait.
 func (u Usage) Tier() int {
-	if u.Avail < SlotFloor {
+	if u.Avail < u.Floor() {
 		return 3
 	}
 	return TierOf(u.Free())
 }
 
 // Reached reports whether a pass freed enough of u to stop.
-func (u Usage) Reached() bool { return u.Free() >= TargetFree && u.Avail >= SlotTarget }
+func (u Usage) Reached() bool { return u.Free() >= TargetFree && u.Avail >= u.Target() }
 
 // Clear reports whether u is far enough from low to end an episode.
-func (u Usage) Clear() bool { return u.Free() > ClearFree && u.Avail >= SlotTarget }
+func (u Usage) Clear() bool { return u.Free() > ClearFree && u.Avail >= u.Target() }
 
 // TierOf is how low free is: 0 while healthy, else 1 to 3.
 func TierOf(free float64) int {
@@ -169,17 +179,16 @@ func Watched() []string {
 	return paths
 }
 
-// Held is the filesystem below SlotFloor among Watched and extra, the reason new slots wait.
+// Held is the filesystem with the least free below its Floor among Watched and extra, the reason new slots wait.
 func Held(extra ...string) (Usage, bool) {
 	return heldAmong(Stat, append(Watched(), extra...))
 }
 
 func heldAmong(stat func(string) (Usage, error), paths []string) (low Usage, held bool) {
-	ok := false
 	for _, u := range Each(stat, paths) {
-		if !ok || u.Avail < low.Avail {
-			low, ok = u, true
+		if u.Avail < u.Floor() && (!held || u.Avail < low.Avail) {
+			low, held = u, true
 		}
 	}
-	return low, ok && low.Avail < SlotFloor
+	return low, held
 }

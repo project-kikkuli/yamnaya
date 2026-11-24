@@ -55,33 +55,48 @@ func TestTheWatcherFilesOnePersistentRequestWithoutReclaiming(t *testing.T) {
 	}
 }
 
-func TestTheWatcherFilesASmallDiskUnderTheSlotFloorUntilItReachesTheTarget(t *testing.T) {
+func TestTheWatcherFilesASmallDiskUnderItsFloorUntilItReachesItsTarget(t *testing.T) {
 	const gib = 1 << 30
-	dir := t.TempDir()
-	c := diskCore(t, dir)
-	tmp := disk.Usage{Path: "/tmp", Dev: 2, Total: 8 * gib, Avail: 4 * gib}
-	stat := func(p string) (disk.Usage, error) {
-		if p == "/tmp" {
-			return tmp, nil
-		}
-		return disk.Usage{Path: p, Dev: 1, Total: 1000 * gib, Avail: 500 * gib}, nil
-	}
-	w := &diskWatcher{dir: dir, paths: []string{"/home", "/tmp"}, stat: stat, now: time.Now, log: &strings.Builder{}, file: fileLowDisk(c), dismiss: diskDismiss(c.Store)}
-	for _, step := range []struct {
+	type step struct {
 		avail uint64
 		items int
-	}{{4 * gib, 1}, {5*gib + 1, 1}, {6 * gib, 0}} {
-		tmp.Avail = step.avail
-		if err := w.tick(); err != nil {
-			t.Fatal(err)
-		}
-		items, err := c.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(items) != step.items || step.items > 0 && !strings.Contains(items[0].Rec, "/tmp has 50.0% free (4.0 GiB)") {
-			t.Fatalf("%d GiB free: owner items %+v, want %d about /tmp", step.avail/gib, items, step.items)
-		}
+	}
+	for _, c := range []struct {
+		name  string
+		total uint64
+		steps []step
+		rec   string
+	}{
+		{"a 4 GiB disk", 4 * gib, []step{{gib / 2, 1}, {4 * gib * 22 / 100, 1}, {gib, 0}}, "/tmp has 12.5% free (512 MiB). Choose"},
+		{"a 2 GiB tmpfs", 2 * gib, []step{{gib / 4, 1}, {gib / 2, 0}}, "ym slot admissions below 410 MiB"},
+		{"a 30 GiB disk", 30 * gib, []step{{4 * gib, 1}, {5*gib + 1, 1}, {8 * gib, 0}}, "ym slot admissions below 5.0 GiB"},
+		{"a small disk with half free files nothing", 8 * gib, []step{{4 * gib, 0}}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			yc := diskCore(t, dir)
+			tmp := disk.Usage{Path: "/tmp", Dev: 2, Total: c.total}
+			stat := func(p string) (disk.Usage, error) {
+				if p == "/tmp" {
+					return tmp, nil
+				}
+				return disk.Usage{Path: p, Dev: 1, Total: 1000 * gib, Avail: 500 * gib}, nil
+			}
+			w := &diskWatcher{dir: dir, paths: []string{"/home", "/tmp"}, stat: stat, now: time.Now, log: &strings.Builder{}, file: fileLowDisk(yc), dismiss: diskDismiss(yc.Store)}
+			for _, s := range c.steps {
+				tmp.Avail = s.avail
+				if err := w.tick(); err != nil {
+					t.Fatal(err)
+				}
+				items, err := yc.Store.Items(core.ItemFilter{States: []string{core.ItemOpen}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(items) != s.items || s.items > 0 && !strings.Contains(items[0].Rec, c.rec) {
+					t.Fatalf("%s free: owner items %+v, want %d saying %q", disk.Bytes(int64(s.avail)), items, s.items, c.rec)
+				}
+			}
+		})
 	}
 }
 

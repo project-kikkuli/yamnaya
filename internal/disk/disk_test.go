@@ -37,7 +37,7 @@ func TestTiersAreFractionsOfTheDisk(t *testing.T) {
 	}
 }
 
-func TestASmallDiskUnderTheSlotFloorIsLowWhateverItsShare(t *testing.T) {
+func TestASmallDiskUnderItsFloorIsLowAndCanReachItsTarget(t *testing.T) {
 	const gib = 1 << 30
 	big := Usage{Path: "/home", Dev: 1, Total: 1000 * gib, Avail: 500 * gib}
 	for _, c := range []struct {
@@ -46,9 +46,19 @@ func TestASmallDiskUnderTheSlotFloorIsLowWhateverItsShare(t *testing.T) {
 		tier         int
 		reached, end bool
 	}{
-		{"half of 8 GiB free", Usage{Total: 8 * gib, Avail: 4 * gib}, 3, false, false},
-		{"just above the floor, not yet the target", Usage{Total: 8 * gib, Avail: 5*gib + 1}, 0, false, false},
-		{"at the target", Usage{Total: 8 * gib, Avail: 6 * gib}, 0, true, true},
+		{"a 2 GiB tmpfs at 15% free", Usage{Total: 2 * gib, Avail: 2 * gib * 15 / 100}, 3, false, false},
+		{"a 2 GiB tmpfs at a quarter free", Usage{Total: 2 * gib, Avail: gib / 2}, 0, true, true},
+		{"a 4 GiB disk under a fifth free", Usage{Total: 4 * gib, Avail: 4*gib/5 - 1}, 3, false, false},
+		{"a 4 GiB disk above its floor, short of its target", Usage{Total: 4 * gib, Avail: 4 * gib * 22 / 100}, 0, false, false},
+		{"a 4 GiB disk at its target", Usage{Total: 4 * gib, Avail: gib}, 0, true, true},
+		{"half of 8 GiB free", Usage{Total: 8 * gib, Avail: 4 * gib}, 0, true, true},
+		{"a 20 GiB disk under 5 GiB but above a fifth", Usage{Total: 20 * gib, Avail: 9 * gib / 2}, 0, false, false},
+		{"25 GiB, just under the 5 GiB floor", Usage{Total: 25 * gib, Avail: 5*gib - 1}, 3, false, false},
+		{"25 GiB, at the floor", Usage{Total: 25 * gib, Avail: 5 * gib}, 0, false, false},
+		{"24 GiB, at 6 GiB, a quarter", Usage{Total: 24 * gib, Avail: 6 * gib}, 0, true, true},
+		{"24 GiB, just under 6 GiB", Usage{Total: 24 * gib, Avail: 6*gib - 1}, 0, false, false},
+		{"a 30 GiB disk at a third free still needs 6 GiB", Usage{Total: 30 * gib, Avail: 10 * gib}, 0, true, true},
+		{"a 30 GiB disk under 5 GiB", Usage{Total: 30 * gib, Avail: 5*gib - 1}, 3, false, false},
 		{"a big disk at 4% free", Usage{Total: 1000 * gib, Avail: 40 * gib}, 3, false, false},
 		{"a big disk at 22% free", Usage{Total: 1000 * gib, Avail: 220 * gib}, 0, false, true},
 	} {
@@ -88,7 +98,7 @@ func TestLowestReadsEachFilesystemOnceAndSkipsWhatIsMissing(t *testing.T) {
 	}
 }
 
-func TestNewSlotsWaitOnlyBelowFiveGiBFree(t *testing.T) {
+func TestNewSlotsWaitOnlyBelowTheFloorOfTheirDisk(t *testing.T) {
 	const gib = 1 << 30
 	for _, c := range []struct {
 		name     string
@@ -96,11 +106,17 @@ func TestNewSlotsWaitOnlyBelowFiveGiBFree(t *testing.T) {
 		wantHeld bool
 		wantPath string
 	}{
-		{"a big disk with a small share free runs", map[string][2]uint64{"/tmp": {460 * gib, 14 * gib}}, false, "/tmp"},
-		{"a small disk with a large share free under the floor waits", map[string][2]uint64{"/tmp": {8 * gib, 4 * gib}}, true, "/tmp"},
+		{"a big disk with a small share free runs", map[string][2]uint64{"/tmp": {460 * gib, 147 * gib / 10}}, false, ""},
+		{"half of a small disk free runs", map[string][2]uint64{"/tmp": {8 * gib, 4 * gib}}, false, ""},
+		{"a 2 GiB tmpfs under a fifth free waits", map[string][2]uint64{"/tmp": {2 * gib, 2 * gib / 10}}, true, "/tmp"},
+		{"a 4 GiB disk above a fifth free runs", map[string][2]uint64{"/tmp": {4 * gib, 4 * gib * 22 / 100}}, false, ""},
+		{"25 GiB, just under 5 GiB, waits", map[string][2]uint64{"/tmp": {25 * gib, 5*gib - 1}}, true, "/tmp"},
+		{"24 GiB, just under a fifth, waits", map[string][2]uint64{"/tmp": {24 * gib, 24*gib/5 - 1}}, true, "/tmp"},
+		{"24 GiB, at a fifth, runs", map[string][2]uint64{"/tmp": {24 * gib, 24*gib/5 + 1}}, false, ""},
 		{"just under the floor waits", map[string][2]uint64{"/tmp": {1000 * gib, 5*gib - 1}}, true, "/tmp"},
-		{"exactly the floor runs", map[string][2]uint64{"/tmp": {1000 * gib, 5 * gib}}, false, "/tmp"},
-		{"the disk with the least free holds", map[string][2]uint64{"/home": {100 * gib, 2 * gib}, "/tmp": {10 * gib, 3 * gib}}, true, "/home"},
+		{"exactly the floor runs", map[string][2]uint64{"/tmp": {1000 * gib, 5 * gib}}, false, ""},
+		{"the disk with the least free holds", map[string][2]uint64{"/home": {100 * gib, 2 * gib}, "/tmp": {10 * gib, 3 * gib / 2}}, true, "/tmp"},
+		{"only a disk under its own floor holds", map[string][2]uint64{"/home": {1000 * gib, 4 * gib}, "/tmp": {2 * gib, gib}}, true, "/home"},
 		{"no readable disk runs", map[string][2]uint64{}, false, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {

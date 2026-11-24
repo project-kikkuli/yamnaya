@@ -181,7 +181,7 @@ func fileLowDisk(c *core.Core) func(disk.Usage) (string, error) {
 			}
 		}
 		it, err := c.Store.AddItem(core.Item{Scope: c.StateDir, Session: diskItemSession, Kind: core.KindChore, Question: question, DoLine: "Review disk usage", Impact: "agents",
-			Rec: fmt.Sprintf("%s has %.1f%% free (%s). Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free, ym slot admissions below %s.", low.Path, low.Free()*100, disk.Bytes(int64(low.Avail)), disk.Bytes(disk.SlotFloor)), Evidence: []string{low.Path}})
+			Rec: fmt.Sprintf("%s has %.1f%% free (%s). Choose which caches or worktrees can be removed; run ym disk reclaim only after reviewing them. Automatic cleanup is off; launches wait below 10%% free, ym slot admissions below %s.", low.Path, low.Free()*100, disk.Bytes(int64(low.Avail)), disk.Bytes(int64(low.Floor()))), Evidence: []string{low.Path}})
 		return it.Key(), err
 	}
 }
@@ -357,7 +357,7 @@ func (r reclaimer) run(ctx context.Context, tier int, w io.Writer) error {
 		}
 	})
 	if r.env.Dry {
-		fmt.Fprintf(w, "dry run: nothing changed; a real pass stops as soon as free reaches %.0f%% and %s\n", disk.TargetFree*100, disk.Bytes(disk.SlotTarget))
+		fmt.Fprintf(w, "dry run: nothing changed; a real pass stops as soon as free reaches %.0f%% and %s, or %.0f%% alone on a disk under %s\n", disk.TargetFree*100, disk.Bytes(disk.SlotTarget), disk.TargetFree*100, disk.Bytes(disk.SmallBelow))
 		return nil
 	}
 	st := readDiskState(r.dir)
@@ -412,7 +412,7 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	return core.Item{Kind: core.KindChore, DoLine: "Free disk on this host", Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
 		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %s free new ym slot admissions wait; below %.0f%% free ym also trims Go's build cache towards 1 GiB, sparing only the last 10 minutes, so builds may fail on missing cache entries while that lasts; rerun them.",
-			largest, disk.Bytes(disk.SlotFloor), disk.Tier3Free*100),
+			largest, disk.Bytes(int64(low.Floor())), disk.Tier3Free*100),
 		Evidence: []string{log},
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
 }
