@@ -43,14 +43,14 @@ case " $* " in *" auth status "*|*" login status "*) echo x >> "${CLAUDE_CONFIG_
 owned() { local row me=$BASHPID; if [ -r /proc/self/stat ]; then read -r row < /proc/self/stat || return; row=${row##*) }; set -- $row; row=$2; else row=$(ps -o ppid= -p $me) || return; fi; [ "${row// /}" = "$main" ]; }
 ms() { local us=${EPOCHREALTIME/[.,]/}; echo $((us / 1000)); }
 mtime() { stat -c %y "$1" 2>/dev/null || stat -f %Fm "$1"; }
-if [ "$1" = --wire-child ]; then main=$2; while owned; do sleep 0.1; done; exit; fi
+if [ "$1" = --wire-child ]; then main=$2; : > "$CLAUDE_CONFIG_DIR/child-$main"; while owned; do sleep 0.1; done; exit; fi
 root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
 printf '%s %s %s\n' "$YAMNAYA_PROFILE" "$CLAUDE_SECURESTORAGE_CONFIG_DIR" "$root" >> "$WIRE_LOG.env"
 mkdir -p "$root/sessions"
 printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $$ "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$$.json"
-[ -f "$root/child" ] && { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$BASH" -c 'exec -a claude "$BASH" "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & }
+[ -f "$root/child" ] && { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$BASH" -c 'exec -a claude "$BASH" "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & until [ -f "$root/child-$$" ]; do sleep 0.02; done; }
 state() { printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $main "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$main.json.tmp" && mv "$root/sessions/$main.json.tmp" "$root/sessions/$main.json"; }
 main=$$
 ( last=$(mtime "$root/screen.txt"); while owned; do now=$(mtime "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &
