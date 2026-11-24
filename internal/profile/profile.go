@@ -277,7 +277,7 @@ func (p Profile) Argv(args []string) []string {
 		prefix = append(prefix, "-u", "CODEX_SQLITE_HOME")
 	}
 	if p.ID != "default" {
-		for _, k := range subscriptionOverrides {
+		for _, k := range SubscriptionOverrides {
 			prefix = append(prefix, "-u", k)
 		}
 	}
@@ -308,7 +308,7 @@ func (p Profile) Environment(base []string) []string {
 		}
 		if p.ID != "default" {
 			drop := false
-			for _, key := range subscriptionOverrides {
+			for _, key := range SubscriptionOverrides {
 				if k == key {
 					drop = true
 				}

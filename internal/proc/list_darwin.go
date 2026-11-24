@@ -17,7 +17,6 @@ func List() ([]Proc, error) {
 	if err != nil {
 		return listPS()
 	}
-	ttys := ttyNames()
 	now := time.Now()
 	argsMu.Lock()
 	defer argsMu.Unlock()
@@ -35,7 +34,7 @@ func List() ([]Proc, error) {
 			}
 		}
 		seen[pid] = e
-		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys[k.Eproc.Tdev], Elapsed: now.Sub(started), Args: e.args})
+		procs = append(procs, Proc{PID: pid, PPID: int(k.Eproc.Ppid), TTY: ttys.name(k.Eproc.Tdev, now), Elapsed: now.Sub(started), Args: e.args})
 	}
 	argsCache = seen
 	return procs, nil
@@ -84,19 +83,35 @@ func procArgs(pid int) []string {
 	return args
 }
 
-var (
-	ttyOnce sync.Mutex
-	ttyMap  map[int32]string
-	ttyAt   time.Time
-)
+var ttys = ttyCache{scan: scanTTYs}
 
-// ttyNames maps terminal device numbers to their /dev paths.
-func ttyNames() map[int32]string {
-	ttyOnce.Lock()
-	defer ttyOnce.Unlock()
-	if ttyMap != nil && time.Since(ttyAt) < 10*time.Second {
-		return ttyMap
+// ttyCache maps terminal device numbers to their /dev paths. A device it does not know makes it read /dev again once, so a
+// terminal opened since the last read is named at once.
+type ttyCache struct {
+	mu     sync.Mutex
+	names  map[int32]string
+	missed map[int32]bool
+	at     time.Time
+	scan   func() map[int32]string
+}
+
+func (c *ttyCache) name(dev int32, now time.Time) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.names == nil || now.Sub(c.at) >= 10*time.Second {
+		c.names, c.missed, c.at = c.scan(), map[int32]bool{}, now
 	}
+	if name, ok := c.names[dev]; ok || c.missed[dev] {
+		return name
+	}
+	c.names, c.at = c.scan(), now
+	if _, ok := c.names[dev]; !ok {
+		c.missed[dev] = true
+	}
+	return c.names[dev]
+}
+
+func scanTTYs() map[int32]string {
 	m := map[int32]string{}
 	entries, _ := os.ReadDir("/dev")
 	for _, e := range entries {
@@ -109,6 +124,5 @@ func ttyNames() map[int32]string {
 			m[st.Rdev] = "/dev/" + name
 		}
 	}
-	ttyMap, ttyAt = m, time.Now()
 	return m
 }

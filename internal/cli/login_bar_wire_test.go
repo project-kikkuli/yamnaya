@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,24 +38,31 @@ type wireWorld struct {
 
 const wireIdle = "✻ Done\n────────────────\n❯ \n────────────────\n"
 
-const wireClaude = `#!/bin/bash
+const wireClaude = `#!WIRE_BASH
 case " $* " in *" auth status "*|*" login status "*) echo x >> "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/status-calls"; while [ -f "$CLAUDE_CONFIG_DIR/hang" ]; do sleep 0.2; done; [ -f "$CLAUDE_CONFIG_DIR/five" ] && sleep 5; [ -f "$CLAUDE_CONFIG_DIR/slow" ] && { rm "$CLAUDE_CONFIG_DIR/slow"; sleep 3; }; [ -f "$CLAUDE_CONFIG_DIR/fail" ] && exit 3; [ -f "$CLAUDE_CONFIG_DIR/killed" ] && kill -9 $$; [ -f "$CLAUDE_CONFIG_DIR/out" ] && { printf '%s\n' '{"loggedIn":false,"authMethod":"none"}'; exit 1; }; printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'; exit 0;; esac
-owned() { local row; read -r row < /proc/self/stat || return; row=${row##*) }; set -- $row; [ "$2" = "$main" ]; }
+owned() { local row me=$BASHPID; if [ -r /proc/self/stat ]; then read -r row < /proc/self/stat || return; row=${row##*) }; set -- $row; row=$2; else row=$(ps -o ppid= -p $me) || return; fi; [ "${row// /}" = "$main" ]; }
+ms() { local us=${EPOCHREALTIME/[.,]/}; echo $((us / 1000)); }
+mtime() { stat -c %y "$1" 2>/dev/null || stat -f %Fm "$1"; }
 if [ "$1" = --wire-child ]; then main=$2; while owned; do sleep 0.1; done; exit; fi
 root="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 prev=""; for a in "$@"; do [ "$prev" = --resume ] && id="$a"; [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$YAMNAYA_PROFILE" >> "$WIRE_LOG"
 printf '%s %s %s\n' "$YAMNAYA_PROFILE" "$CLAUDE_SECURESTORAGE_CONFIG_DIR" "$root" >> "$WIRE_LOG.env"
 mkdir -p "$root/sessions"
-printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $$ "$id" "$PWD" "$(cat "$root/status")" "$(date +%s%3N)" > "$root/sessions/$$.json"
-[ -f "$root/child" ] && { setsid bash -c 'exec -a claude bash "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & }
-state() { printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $main "$id" "$PWD" "$(cat "$root/status")" "$(date +%s%3N)" > "$root/sessions/$main.json.tmp" && mv "$root/sessions/$main.json.tmp" "$root/sessions/$main.json"; }
+printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $$ "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$$.json"
+[ -f "$root/child" ] && { perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$BASH" -c 'exec -a claude "$BASH" "$1" --wire-child "$2"' _ "$0" "$$" </dev/null >/dev/null 2>&1 & }
+state() { printf '{"pid":%d,"sessionId":"%s","cwd":"%s","status":"%s","statusUpdatedAt":%d}' $main "$id" "$PWD" "$(cat "$root/status")" "$(ms)" > "$root/sessions/$main.json.tmp" && mv "$root/sessions/$main.json.tmp" "$root/sessions/$main.json"; }
 main=$$
-( last=$(stat -c %y "$root/screen.txt"); while owned; do now=$(stat -c %y "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &
+( last=$(mtime "$root/screen.txt"); while owned; do now=$(mtime "$root/screen.txt"); if [ "$now" != "$last" ]; then last=$now; state; clear; cat "$root/screen.txt"; fi; sleep 0.1; done ) </dev/null &
 clear
 cat "$root/screen.txt"
-exec -a claude sleep 100000
+exec -a claude "$BASH" -c 'while :; do sleep 1; done'
 `
+
+// claudeProjectDir is the directory name Claude Code keeps cwd's transcripts under.
+func claudeProjectDir(cwd string) string {
+	return regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(cwd, "-")
+}
 
 func wireTurn(id string, at time.Time) string {
 	return fmt.Sprintf(`{"type":"user","sessionId":"%s","timestamp":"%s","message":{"role":"user","content":"go"}}
@@ -91,8 +99,12 @@ func newWireWorld(t *testing.T, inherited ...string) *wireWorld {
 		os.Unsetenv(profile.EnvKey("claude"))
 		t.Setenv("HOME", state)
 	}
+	shell, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"claude", "codex"} {
-		if err := os.WriteFile(filepath.Join(bins, name), []byte(wireClaude), 0o700); err != nil {
+		if err := os.WriteFile(filepath.Join(bins, name), []byte(strings.Replace(wireClaude, "WIRE_BASH", shell, 1)), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -145,7 +157,7 @@ func newWireWorld(t *testing.T, inherited ...string) *wireWorld {
 	if err = w.l.records.Save(w.rec); err != nil {
 		t.Fatal(err)
 	}
-	transcript := filepath.Join(w.def.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(cwd), profileConversation+".jsonl")
+	transcript := filepath.Join(w.def.Root, "projects", claudeProjectDir(cwd), profileConversation+".jsonl")
 	putProfileFile(t, transcript, wireTurn(profileConversation, now.Add(-time.Minute)))
 	return w
 }
@@ -743,7 +755,7 @@ func TestWireAStopThatCannotBeProvedSaysWhyAndBarsTheLogin(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWireWorld(t)
-			path := filepath.Join(w.def.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd), profileConversation+".jsonl")
+			path := filepath.Join(w.def.Root, "projects", claudeProjectDir(w.cwd), profileConversation+".jsonl")
 			switch c.turn {
 			case "user":
 				putProfileFile(t, path, fmt.Sprintf(`{"type":"user","sessionId":"%s","timestamp":"%s","message":{"role":"user","content":"go"}}`+"\n", profileConversation, w.clock.UTC().Format(time.RFC3339Nano)))
@@ -888,7 +900,7 @@ func (w *wireWorld) walled(t *testing.T, file string) (string, time.Time) {
 
 func (w *wireWorld) transcript(t *testing.T, p profile.Profile) string {
 	t.Helper()
-	return filepath.Join(p.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd), profileConversation+".jsonl")
+	return filepath.Join(p.Root, "projects", claudeProjectDir(w.cwd), profileConversation+".jsonl")
 }
 
 func wireWall(at time.Time) string {
@@ -1136,7 +1148,7 @@ func TestWireExitedSessionsPortOnlyOnABarWithEvidence(t *testing.T) {
 			w.addCodex(t)
 			w.exhaust(t, w.def, w.other)
 			c.evidence(t, w)
-			rel := strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd)
+			rel := claudeProjectDir(w.cwd)
 			for i := range c.records {
 				id := fmt.Sprintf("33333333-3333-4333-8333-%012d", i)
 				rec := launch.Record{Key: fmt.Sprintf("r%d", i), Harness: "claude", Session: id, Running: true, Worktree: launch.Worktree{Path: w.cwd}}
@@ -1749,7 +1761,7 @@ func (w *wireWorld) addSession(t *testing.T, i int, p profile.Profile) string {
 	if err := w.l.records.Save(rec); err != nil {
 		t.Fatal(err)
 	}
-	putProfileFile(t, filepath.Join(p.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd), id+".jsonl"), wireTurn(id, w.clock.Add(-time.Minute)))
+	putProfileFile(t, filepath.Join(p.Root, "projects", claudeProjectDir(w.cwd), id+".jsonl"), wireTurn(id, w.clock.Add(-time.Minute)))
 	once := w.l
 	once.anyway = true
 	if _, err := once.revive(rec); err != nil {
@@ -1768,7 +1780,15 @@ func TestWireOneFailedLandingStopsNobody(t *testing.T) {
 	w.pass(t, time.Minute)
 	*w.clock = w.bar(t, w.def).Until
 	path := os.Getenv("PATH")
-	t.Setenv("PATH", t.TempDir()+":/usr/bin:/bin")
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	only := t.TempDir()
+	if err := os.Symlink(tmux, filepath.Join(only, "tmux")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", only+":/usr/bin:/bin")
 	for range 3 {
 		*w.clock = w.clock.Add(time.Minute)
 		b, err := w.c.Board()

@@ -45,3 +45,34 @@ func TestListSeesTheProgramASettledProcessExecs(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestATerminalOpenedSinceTheLastReadIsNamedAtOnce(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		devs      []map[int32]string
+		lookups   []int32
+		want      string
+		wantScans int
+	}{
+		{"a known terminal reads /dev once", []map[int32]string{{4: "/dev/ttys004"}}, []int32{4, 4}, "/dev/ttys004", 1},
+		{"a terminal opened after the read is named", []map[int32]string{{4: "/dev/ttys004"}, {4: "/dev/ttys004", 5: "/dev/ttys005"}}, []int32{4, 5}, "/dev/ttys005", 2},
+		{"a device with no terminal reads /dev again only once", []map[int32]string{{4: "/dev/ttys004"}}, []int32{-1, -1, -1}, "", 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			scans := 0
+			cache := ttyCache{scan: func() map[int32]string {
+				m := c.devs[min(scans, len(c.devs)-1)]
+				scans++
+				return m
+			}}
+			now := time.Now()
+			var got string
+			for _, dev := range c.lookups {
+				got = cache.name(dev, now)
+			}
+			if got != c.want || scans != c.wantScans {
+				t.Fatalf("name %q after %d reads of /dev, want %q after %d", got, scans, c.want, c.wantScans)
+			}
+		})
+	}
+}

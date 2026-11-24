@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-var subscriptionOverrides = []string{
+// SubscriptionOverrides are the environment variables that make a harness bill something other than its login's subscription.
+var SubscriptionOverrides = []string{
 	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
 	"CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES",
 	"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
@@ -78,7 +79,7 @@ func (p Profile) ValidateSubscription(cwd string) error {
 			return fmt.Errorf("profile %s settings env must contain string values", p.ID)
 		}
 		{
-			for _, k := range subscriptionOverrides {
+			for _, k := range SubscriptionOverrides {
 				if v, ok := settings.env[k]; ok && v != "" {
 					return fmt.Errorf("profile %s settings override subscription authentication (%s)", p.ID, k)
 				}
@@ -106,7 +107,7 @@ func (p Profile) SubscriptionSafe(cwd string) bool {
 	return p.ValidateSubscription(cwd) == nil
 }
 func authEnvironment(harness string) bool {
-	for _, key := range subscriptionOverrides {
+	for _, key := range SubscriptionOverrides {
 		matches := strings.HasPrefix(key, "ANTHROPIC_") || strings.HasPrefix(key, "CLAUDE_")
 		if harness == "codex" {
 			matches = strings.HasPrefix(key, "OPENAI_") || strings.HasPrefix(key, "CODEX_")

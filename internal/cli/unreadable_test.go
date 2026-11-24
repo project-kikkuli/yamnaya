@@ -10,7 +10,7 @@ import (
 
 func TestWireAnExitedSessionShowsItsConversationCannotBeRead(t *testing.T) {
 	w := newWireWorld(t)
-	path := filepath.Join(w.def.Root, "projects", strings.NewReplacer("/", "-", ".", "-").Replace(w.cwd), profileConversation+".jsonl")
+	path := filepath.Join(w.def.Root, "projects", claudeProjectDir(w.cwd), profileConversation+".jsonl")
 	if err := os.Chmod(path, 0); err != nil {
 		t.Fatal(err)
 	}
