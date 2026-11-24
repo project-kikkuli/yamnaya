@@ -65,8 +65,10 @@ func TestASignalReachesOnlyAProcessTheTestStartedOrOneWorkingInsideItsRoot(t *te
 	}
 	pane := 0
 	for end := time.Now().Add(5 * time.Second); pane == 0 && time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
-		out, _ := exec.Command("tmux", "-L", sock, "display-message", "-p", "#{pane_pid}").Output()
-		pane = atoi(strings.TrimSpace(string(out)))
+		out, _ := exec.Command("tmux", "-L", sock, "display-message", "-p", "#{pane_current_command} #{pane_pid}").Output()
+		if command, pid, _ := strings.Cut(strings.TrimSpace(string(out)), " "); command == "sleep" {
+			pane = atoi(pid)
+		}
 	}
 	for _, c := range []struct {
 		name string
