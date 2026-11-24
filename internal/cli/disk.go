@@ -411,8 +411,8 @@ func diskItem(host string, low disk.Usage, consumers []disk.Consumer, complete b
 	}
 	return core.Item{Kind: core.KindChore, DoLine: "Free disk on this host", Session: diskItemSession,
 		Question: fmt.Sprintf("Disk on %s has %.1f%% free on %s after a reclaim pass; %s", host, low.Free()*100, low.Path, outcome),
-		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %s free new ym slot admissions wait; below %.0f%% free ym also trims Go's build cache towards 1 GiB, sparing only the last 10 minutes, so builds may fail on missing cache entries while that lasts; rerun them.",
-			largest, disk.Bytes(int64(low.Floor())), disk.Tier3Free*100),
+		Rec: fmt.Sprintf("Remove what you no longer need. %s. ym keeps worktrees holding unsaved work. Below %s free new ym slot admissions wait; below %s or %.0f%% free ym also trims Go's build cache towards 1 GiB, sparing only the last 10 minutes, so builds may fail on missing cache entries while that lasts; rerun them.",
+			largest, disk.Bytes(int64(low.Floor())), disk.Bytes(int64(low.Floor())), disk.Tier3Free*100),
 		Evidence: []string{log},
 		Tried:    "ym disk reclaim: trimmed regenerable caches, reaped worktrees idle over an hour, stripped ignored regenerable dirs from idle worktrees"}
 }

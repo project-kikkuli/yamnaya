@@ -57,7 +57,7 @@ func TestASmallDiskUnderItsFloorIsLowAndCanReachItsTarget(t *testing.T) {
 		{"25 GiB, at the floor", Usage{Total: 25 * gib, Avail: 5 * gib}, 0, false, false},
 		{"24 GiB, at 6 GiB, a quarter", Usage{Total: 24 * gib, Avail: 6 * gib}, 0, true, true},
 		{"24 GiB, just under 6 GiB", Usage{Total: 24 * gib, Avail: 6*gib - 1}, 0, false, false},
-		{"a 30 GiB disk at a third free still needs 6 GiB", Usage{Total: 30 * gib, Avail: 10 * gib}, 0, true, true},
+		{"a 30 GiB disk at a third free is done", Usage{Total: 30 * gib, Avail: 10 * gib}, 0, true, true},
 		{"a 30 GiB disk under 5 GiB", Usage{Total: 30 * gib, Avail: 5*gib - 1}, 3, false, false},
 		{"a big disk at 4% free", Usage{Total: 1000 * gib, Avail: 40 * gib}, 3, false, false},
 		{"a big disk at 22% free", Usage{Total: 1000 * gib, Avail: 220 * gib}, 0, false, true},
