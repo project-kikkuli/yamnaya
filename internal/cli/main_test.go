@@ -39,6 +39,9 @@ func TestMain(m *testing.M) {
 	}
 	isolated = os.Getenv(isolatedEnv)
 	os.Unsetenv(isolatedEnv)
+	if isolated != "" {
+		endWithParent()
+	}
 	if os.Getenv(testChild) != "" && isolated == "" {
 		os.Exit(0)
 	}

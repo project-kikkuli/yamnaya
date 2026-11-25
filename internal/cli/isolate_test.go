@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -18,6 +19,16 @@ import (
 const isolatedEnv = "YM_CLI_TEST_ISOLATED"
 
 var isolated string
+
+// endWithParent kills this copy's process group, itself included, once the parent holding the other end of fd 3 is gone, however
+// it died; the copy's watcher, in a session of its own, then clears its tmux servers and root.
+func endWithParent() {
+	parent := os.NewFile(3, "parent")
+	go func() {
+		io.Copy(io.Discard, parent)
+		syscall.Kill(-os.Getpid(), syscall.SIGKILL)
+	}()
+}
 
 // isolatedAtOnce is how many isolated copies run at once unless -parallel says: each mostly waits on the processes it starts.
 const isolatedAtOnce = 8
@@ -60,10 +71,18 @@ func isolate(t *testing.T, body func(*testing.T)) {
 	cmd.Env = append(env, isolatedEnv+"="+t.Name())
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Start(); err != nil {
+	parent, held, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	cmd.ExtraFiles = []*os.File{parent}
+	err = cmd.Start()
+	parent.Close()
+	if err != nil {
 		t.Fatalf("%s in a copy of its own did not start: %v", t.Name(), err)
 	}
-	err := cmd.Wait()
+	err = cmd.Wait()
 	if syscall.Kill(-cmd.Process.Pid, 0) == nil {
 		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
