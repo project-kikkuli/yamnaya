@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,7 +19,7 @@ import (
 // Run runs m inside a fresh temporary root, removed afterwards, and returns its exit code. The root is a rehearsal root, so the
 // owner's ym never shows, records or adopts a session a test starts. HOME, TMPDIR, CLAUDE_CONFIG_DIR and CODEX_HOME point
 // inside it, YAMNAYA_STATE_DIR at the default state dir under that HOME, and ym's tmux servers and brief page are private ones. A signal to a process neither started by the test nor
-// working inside the root is refused and fails the run. A test binary a test runs again keeps the root it inherits.
+// working inside the root is refused and fails the run. A test binary a test runs again keeps the root it inherits. A run killed before it cleans up has its servers and root removed when it dies.
 func Run(m *testing.M) int {
 	if root := os.Getenv(rootEnv); root != "" {
 		f := &fence{root: root}
@@ -62,6 +63,13 @@ func Run(m *testing.M) int {
 			exec.Command("tmux", "-L", s, "kill-server").Run()
 		}
 	}()
+	watch := exec.Command("/bin/sh", "-c", `while kill -0 "$1" 2>/dev/null; do sleep 1; done; for s in "$2" "$3"; do tmux -L "$s" kill-server; rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$s"; done; rm -rf "$4"`,
+		"ymt-watch", strconv.Itoa(os.Getpid()), socks[0], socks[1], base)
+	watch.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := watch.Start(); err != nil {
+		panic(err)
+	}
+	go watch.Wait()
 	f := &fence{root: root}
 	proc.Signal = f.signal
 	return f.check(m.Run())

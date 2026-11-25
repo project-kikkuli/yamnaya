@@ -2,12 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"flag"
 	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // isolatedEnv names the one test a copy of the test binary runs itself; TestMain moves it into isolated, so nothing that copy starts inherits it.
@@ -18,6 +22,9 @@ var isolated string
 // isolatedAtOnce is how many isolated copies run at once unless -parallel says: each mostly waits on the processes it starts.
 const isolatedAtOnce = 8
 
+// isolateGrace is how long before the test deadline a copy times out by itself, and as long again before it is killed.
+const isolateGrace = 5 * time.Second
+
 // isolate runs body in a copy of the test binary with a test root and tmux servers of its own, so tests that set the process's
 // environment run alongside each other.
 func isolate(t *testing.T, body func(*testing.T)) {
@@ -27,15 +34,79 @@ func isolate(t *testing.T, body func(*testing.T)) {
 		return
 	}
 	t.Parallel()
-	parts := strings.Split(t.Name(), "/")
-	for i, p := range parts {
-		parts[i] = "^" + regexp.QuoteMeta(p) + "$"
+	args := []string{"-test.run=" + isolatedRun(t.Name(), flag.Lookup("test.run").Value.String()), "-test.count=1", "-test.v"}
+	flag.Visit(func(f *flag.Flag) {
+		if slices.Contains([]string{"test.parallel", "test.failfast", "test.short", "test.skip"}, f.Name) {
+			args = append(args, "-"+f.Name+"="+f.Value.String())
+		}
+	})
+	ctx := context.Background()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-isolateGrace))
+		defer cancel()
+		args = append(args, "-test.timeout="+max(time.Until(deadline.Add(-2*isolateGrace)), time.Second).String())
 	}
-	cmd := exec.Command(os.Args[0], "-test.run="+strings.Join(parts, "/"), "-test.count=1", "-test.v")
+	cmd := exec.CommandContext(ctx, os.Args[0], args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = isolateGrace
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "YM_AGENTTEST_ROOT=") })
 	cmd.Env = append(env, isolatedEnv+"="+t.Name())
 	out, err := cmd.CombinedOutput()
+	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	if err != nil || !bytes.Contains(out, []byte("--- PASS: "+t.Name()+" (")) {
 		t.Fatalf("%s in a copy of its own: %v\n%s", t.Name(), err, out)
 	}
+}
+
+// isolatedRun is the -run pattern a copy runs test with: test alone at the top, and whatever each alternative of run naming it asks of its
+// subtests, split as the testing package splits it.
+func isolatedRun(test, run string) string {
+	top := "^" + regexp.QuoteMeta(test) + "$"
+	var alts []string
+	for _, alt := range splitRun(run, '|') {
+		levels := splitRun(alt, '/')
+		if ok, err := regexp.MatchString(levels[0], test); err != nil || !ok {
+			continue
+		}
+		if len(levels) == 1 {
+			return top
+		}
+		alts = append(alts, top+"/"+strings.Join(levels[1:], "/"))
+	}
+	if len(alts) == 0 {
+		return top
+	}
+	return strings.Join(alts, "|")
+}
+
+// splitRun splits s at each sep outside brackets and parentheses.
+func splitRun(s string, sep byte) []string {
+	var parts []string
+	brackets, parens, start := 0, 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '[':
+			brackets++
+		case ']':
+			brackets = max(brackets-1, 0)
+		case '(':
+			if brackets == 0 {
+				parens++
+			}
+		case ')':
+			if brackets == 0 {
+				parens--
+			}
+		case '\\':
+			i++
+		case sep:
+			if brackets == 0 && parens == 0 {
+				parts = append(parts, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, s[start:])
 }
