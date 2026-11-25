@@ -22,7 +22,8 @@ var isolated string
 // isolatedAtOnce is how many isolated copies run at once unless -parallel says: each mostly waits on the processes it starts.
 const isolatedAtOnce = 8
 
-// isolateGrace is how long before the test deadline a copy times out by itself, and as long again before it is killed.
+// isolateGrace is how long before the test deadline a copy times out by itself, and as long again before it is killed; a
+// copy with under three graces left splits what it has into thirds.
 const isolateGrace = 5 * time.Second
 
 // isolate runs body in a copy of the test binary with a test root and tmux servers of its own, so tests that set the process's
@@ -40,23 +41,34 @@ func isolate(t *testing.T, body func(*testing.T)) {
 			args = append(args, "-"+f.Name+"="+f.Value.String())
 		}
 	})
-	ctx := context.Background()
+	ctx, grace := context.Background(), isolateGrace
 	if deadline, ok := t.Deadline(); ok {
+		left := time.Until(deadline)
+		grace = max(min(isolateGrace, left/3), 0)
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-isolateGrace))
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-grace))
 		defer cancel()
-		args = append(args, "-test.timeout="+max(time.Until(deadline.Add(-2*isolateGrace)), time.Second).String())
+		args = append(args, "-test.timeout="+max(left-2*grace, time.Millisecond).String())
+	} else {
+		args = append(args, "-test.timeout=0")
 	}
 	cmd := exec.CommandContext(ctx, os.Args[0], args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = isolateGrace
+	cmd.WaitDelay = grace
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "YM_AGENTTEST_ROOT=") })
 	cmd.Env = append(env, isolatedEnv+"="+t.Name())
-	out, err := cmd.CombinedOutput()
-	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	if err != nil || !bytes.Contains(out, []byte("--- PASS: "+t.Name()+" (")) {
-		t.Fatalf("%s in a copy of its own: %v\n%s", t.Name(), err, out)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("%s in a copy of its own did not start: %v", t.Name(), err)
+	}
+	err := cmd.Wait()
+	if syscall.Kill(-cmd.Process.Pid, 0) == nil {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	if err != nil || !bytes.Contains(out.Bytes(), []byte("--- PASS: "+t.Name()+" (")) {
+		t.Fatalf("%s in a copy of its own: %v\n%s", t.Name(), err, out.Bytes())
 	}
 }
 
