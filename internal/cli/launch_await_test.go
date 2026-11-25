@@ -60,50 +60,52 @@ func recordThread(t *testing.T, db *sql.DB, ran, id string) {
 }
 
 func TestACodexManagerIsKeyedByTheThreadCodexRecordsOnStartAndOnStartingOver(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	db, ran := fakeCodex(t)
-	base, _ := filepath.EvalSymlinks(t.TempDir())
-	repo := filepath.Join(base, "repo")
-	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-	git(t, repo, "push", "-q", "origin", "main")
-	l := testLauncher(t, base)
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		db, ran := fakeCodex(t)
+		base, _ := filepath.EvalSymlinks(t.TempDir())
+		repo := filepath.Join(base, "repo")
+		git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+		git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+		git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+		git(t, repo, "push", "-q", "origin", "main")
+		l := testLauncher(t, base)
 
-	recordThread(t, db, ran, "019a0000-0000-7000-8000-000000000001")
-	st, err := l.Start(core.NewLaunch{Prompt: "own the goal", Harness: "codex", Repo: repo, Slug: "mgr1-own-goal", Session: "ignored", Await: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Session != "019a0000-0000-7000-8000-000000000001" || !strings.Contains(st.Message, core.Short(st.Session)) {
-		t.Fatalf("started %+v, want the thread codex recorded", st)
-	}
+		recordThread(t, db, ran, "019a0000-0000-7000-8000-000000000001")
+		st, err := l.Start(core.NewLaunch{Prompt: "own the goal", Harness: "codex", Repo: repo, Slug: "mgr1-own-goal", Session: "ignored", Await: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Session != "019a0000-0000-7000-8000-000000000001" || !strings.Contains(st.Message, core.Short(st.Session)) {
+			t.Fatalf("started %+v, want the thread codex recorded", st)
+		}
 
-	if _, err := db.Exec(`UPDATE threads SET updated_at = ?`, time.Now().Add(-time.Hour).Unix()); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.srv.Kill(tmux.SessionName(st.Key)); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(ran)
-	recordThread(t, db, ran, "019a0000-0000-7000-8000-000000000002")
-	now, resumed, err := l.Resume(st.Session, "you stopped", "own the goal again")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resumed || now != "019a0000-0000-7000-8000-000000000002" {
-		t.Fatalf("resume of a thread with no rollout gave %s resumed %v, want a fresh start under the new thread", now, resumed)
-	}
-	if rec, _ := l.records.Find(st.Key); rec.Session != now {
-		t.Fatalf("launch record keeps %s, want %s", rec.Session, now)
-	}
-	actions, err := l.core.Store.Activations()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(actions) != 1 || actions[0].Session != now || actions[0].Kind != "directive" || !strings.Contains(actions[0].Payload, "you stopped") {
-		t.Fatalf("recovery lost its new native identity or persisted work: %+v", actions)
-	}
+		if _, err := db.Exec(`UPDATE threads SET updated_at = ?`, time.Now().Add(-time.Hour).Unix()); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.srv.Kill(tmux.SessionName(st.Key)); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(ran)
+		recordThread(t, db, ran, "019a0000-0000-7000-8000-000000000002")
+		now, resumed, err := l.Resume(st.Session, "you stopped", "own the goal again")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resumed || now != "019a0000-0000-7000-8000-000000000002" {
+			t.Fatalf("resume of a thread with no rollout gave %s resumed %v, want a fresh start under the new thread", now, resumed)
+		}
+		if rec, _ := l.records.Find(st.Key); rec.Session != now {
+			t.Fatalf("launch record keeps %s, want %s", rec.Session, now)
+		}
+		actions, err := l.core.Store.Activations()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(actions) != 1 || actions[0].Session != now || actions[0].Kind != "directive" || !strings.Contains(actions[0].Payload, "you stopped") {
+			t.Fatalf("recovery lost its new native identity or persisted work: %+v", actions)
+		}
+	})
 }

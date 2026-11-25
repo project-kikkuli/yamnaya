@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,7 +110,7 @@ func runCodexNativeFixture(args []string) error {
 	if err := os.MkdirAll(sqliteRoot, 0700); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(sqliteRoot, "state_5.sqlite"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(sqliteRoot, "state_5.sqlite")+"?"+url.Values{"_pragma": {"busy_timeout(30000)"}}.Encode())
 	if err != nil {
 		return err
 	}

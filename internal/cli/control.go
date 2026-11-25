@@ -90,30 +90,12 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	var serverErr error
 	go func() { serverErr = server.Wait(); close(done) }()
 	defer func() { _ = syscall.Kill(-server.Process.Pid, syscall.SIGKILL); <-done }()
-	var client *codex.ControlClient
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(25 * time.Millisecond)
-	defer ticker.Stop()
-	for client == nil {
-		select {
-		case <-done:
-			return fmt.Errorf("native Codex control exited before readiness: %v", serverErr)
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return errors.New("native Codex control socket did not become ready")
-		case <-ticker.C:
-			if info, statErr := os.Lstat(socket); statErr == nil && info.Mode()&os.ModeSocket != 0 {
-				if err := os.Chmod(socket, 0600); err != nil {
-					return err
-				}
-				client, err = codex.ConnectControl(socket)
-				if err != nil {
-					return err
-				}
-			}
-		}
+	client, err := awaitControl(ctx, socket, done, 10*time.Second)
+	if errors.Is(err, errControlExited) {
+		return fmt.Errorf("native Codex control exited before readiness: %v", serverErr)
+	}
+	if err != nil {
+		return err
 	}
 	defer client.Close()
 	cwd, err := os.Getwd()
@@ -159,4 +141,37 @@ func runCodexControl(parent context.Context, binary, session, action, model stri
 	nativeControlShutdown(tui, false)
 	tui.Env, tui.Stdin, tui.Stdout, tui.Stderr = env, os.Stdin, os.Stdout, os.Stderr
 	return tui.Run()
+}
+
+var errControlExited = errors.New("native Codex control exited")
+
+// awaitControl connects to the native server on socket once it accepts: the socket appears when the server binds it, a moment before it
+// listens, and a connection refused then means not yet.
+func awaitControl(ctx context.Context, socket string, done <-chan struct{}, limit time.Duration) (*codex.ControlClient, error) {
+	deadline := time.NewTimer(limit)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return nil, errControlExited
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, errors.New("native Codex control socket did not become ready")
+		case <-ticker.C:
+			if info, err := os.Lstat(socket); err != nil || info.Mode()&os.ModeSocket == 0 {
+				continue
+			}
+			if err := os.Chmod(socket, 0600); err != nil {
+				return nil, err
+			}
+			client, err := codex.ConnectControl(socket)
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				continue
+			}
+			return client, err
+		}
+	}
 }

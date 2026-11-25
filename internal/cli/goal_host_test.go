@@ -133,89 +133,91 @@ func nick(t *testing.T, c *core.Core, host string) string {
 }
 
 func TestAGoalAskedForWithHostStartsOnTheHostThatPullsOrTellsTheRequesterWhyNot(t *testing.T) {
-	t.Setenv("YAMNAYA_NO_SERVE", "1")
-	for _, tc := range []struct {
-		name, repo, harness, profile string
-		// host and under are how the requester writes a and its chief; under "" leaves the calling chief to default.
-		host, under func(a, b *core.Core, chief string) string
-		// refusal is in the requester's item when a cannot start the goal; "" means it starts. outside asks from no session, so the
-		// owner gets the item.
-		refusal string
-		outside bool
-	}{
-		{name: "codex and a profile, by host name", repo: "app", harness: "codex", profile: "work"},
-		{name: "by the host's nickname", repo: "app", host: func(a, b *core.Core, _ string) string { return nick(t, b, a.SelfName()) }},
-		{name: "under the chief by id", repo: "app", under: func(_, _ *core.Core, chief string) string { return chief }},
-		{name: "under the chief qualified by its host", repo: "app", under: func(_, _ *core.Core, chief string) string { return "b/" + chief }},
-		{name: "under the chief qualified by its host's nickname", repo: "app",
-			under: func(_, b *core.Core, chief string) string { return nick(t, b, "b") + "/" + chief }},
-		{name: "a repository name that matches two", repo: "svc", refusal: `"svc" matches several repositories`},
-		{name: "a repository the host does not have", repo: "nowhere", refusal: `no repository matches "nowhere"`},
-		{name: "a repository path the host does not have", repo: "/definitely/not/here", refusal: `/definitely/not/here does not exist`},
-		{name: "a repository the host does not have, asked from outside a session", repo: "nowhere", outside: true,
-			refusal: `no repository matches "nowhere"`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			a, b, chief, sync, roots := relayedHosts(t)
-			host := a.SelfName()
-			if tc.host != nil {
-				host = tc.host(a, b, chief.ID)
-			}
-			args := []string{"--host", host, "--repo", tc.repo}
-			if tc.harness == "codex" {
-				args = append(args, "--codex")
-			}
-			if tc.profile != "" {
-				args = append(args, "--profile", tc.profile)
-			}
-			if tc.under != nil {
-				args = append(args, "--under", tc.under(a, b, chief.ID))
-			}
-			session, to := chief.Session, chief.ID
-			if tc.outside {
-				session, to = "", core.Owner
-				args = append(args, "--under", chief.ID)
-			}
-			if out, err := goalRun(b, session, append(args, "ship the fix")...); err != nil {
-				t.Fatalf("ym goal on b: %v: %s", err, out)
-			}
-			for range 3 {
-				sync()
-			}
-			started := managersOn(t, a)
-			items, err := b.Store.Items(core.ItemFilter{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.refusal != "" {
-				if len(started) != 0 {
-					t.Errorf("a started %+v", started)
+	isolate(t, func(t *testing.T) {
+		t.Setenv("YAMNAYA_NO_SERVE", "1")
+		for _, tc := range []struct {
+			name, repo, harness, profile string
+			// host and under are how the requester writes a and its chief; under "" leaves the calling chief to default.
+			host, under func(a, b *core.Core, chief string) string
+			// refusal is in the requester's item when a cannot start the goal; "" means it starts. outside asks from no session, so the
+			// owner gets the item.
+			refusal string
+			outside bool
+		}{
+			{name: "codex and a profile, by host name", repo: "app", harness: "codex", profile: "work"},
+			{name: "by the host's nickname", repo: "app", host: func(a, b *core.Core, _ string) string { return nick(t, b, a.SelfName()) }},
+			{name: "under the chief by id", repo: "app", under: func(_, _ *core.Core, chief string) string { return chief }},
+			{name: "under the chief qualified by its host", repo: "app", under: func(_, _ *core.Core, chief string) string { return "b/" + chief }},
+			{name: "under the chief qualified by its host's nickname", repo: "app",
+				under: func(_, b *core.Core, chief string) string { return nick(t, b, "b") + "/" + chief }},
+			{name: "a repository name that matches two", repo: "svc", refusal: `"svc" matches several repositories`},
+			{name: "a repository the host does not have", repo: "nowhere", refusal: `no repository matches "nowhere"`},
+			{name: "a repository path the host does not have", repo: "/definitely/not/here", refusal: `/definitely/not/here does not exist`},
+			{name: "a repository the host does not have, asked from outside a session", repo: "nowhere", outside: true,
+				refusal: `no repository matches "nowhere"`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				a, b, chief, sync, roots := relayedHosts(t)
+				host := a.SelfName()
+				if tc.host != nil {
+					host = tc.host(a, b, chief.ID)
 				}
-				if len(items) != 1 || items[0].Recipient != to || !strings.Contains(items[0].Question, tc.refusal) {
-					t.Fatalf("b's items %+v; want one to %s carrying %q", items, to, tc.refusal)
+				args := []string{"--host", host, "--repo", tc.repo}
+				if tc.harness == "codex" {
+					args = append(args, "--codex")
 				}
-				return
-			}
-			if len(items) != 0 {
-				t.Errorf("b has items %+v after the goal started", items)
-			}
-			harness := tc.harness
-			if harness == "" {
-				harness = "claude"
-			}
-			if len(started) != 1 {
-				t.Fatalf("a started %+v; want one manager", started)
-			}
-			m := started[0]
-			if m.Repo != filepath.Join(roots, "app") || m.Harness != harness || m.Profile != tc.profile || m.ParentID != "b/"+chief.ID {
-				t.Errorf("a started %s in %s on %s with profile %q under %s; want app on %s with %q under b/%s",
-					m.ID, m.Repo, m.Harness, m.Profile, m.ParentID, harness, tc.profile, chief.ID)
-			}
-			if heard := told(t, b, chief.Session); !strings.Contains(heard, m.Name) {
-				t.Errorf("requester was told %q, want the started goal %s", heard, m.Name)
-			}
-		})
-	}
+				if tc.profile != "" {
+					args = append(args, "--profile", tc.profile)
+				}
+				if tc.under != nil {
+					args = append(args, "--under", tc.under(a, b, chief.ID))
+				}
+				session, to := chief.Session, chief.ID
+				if tc.outside {
+					session, to = "", core.Owner
+					args = append(args, "--under", chief.ID)
+				}
+				if out, err := goalRun(b, session, append(args, "ship the fix")...); err != nil {
+					t.Fatalf("ym goal on b: %v: %s", err, out)
+				}
+				for range 3 {
+					sync()
+				}
+				started := managersOn(t, a)
+				items, err := b.Store.Items(core.ItemFilter{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.refusal != "" {
+					if len(started) != 0 {
+						t.Errorf("a started %+v", started)
+					}
+					if len(items) != 1 || items[0].Recipient != to || !strings.Contains(items[0].Question, tc.refusal) {
+						t.Fatalf("b's items %+v; want one to %s carrying %q", items, to, tc.refusal)
+					}
+					return
+				}
+				if len(items) != 0 {
+					t.Errorf("b has items %+v after the goal started", items)
+				}
+				harness := tc.harness
+				if harness == "" {
+					harness = "claude"
+				}
+				if len(started) != 1 {
+					t.Fatalf("a started %+v; want one manager", started)
+				}
+				m := started[0]
+				if m.Repo != filepath.Join(roots, "app") || m.Harness != harness || m.Profile != tc.profile || m.ParentID != "b/"+chief.ID {
+					t.Errorf("a started %s in %s on %s with profile %q under %s; want app on %s with %q under b/%s",
+						m.ID, m.Repo, m.Harness, m.Profile, m.ParentID, harness, tc.profile, chief.ID)
+				}
+				if heard := told(t, b, chief.Session); !strings.Contains(heard, m.Name) {
+					t.Errorf("requester was told %q, want the started goal %s", heard, m.Name)
+				}
+			})
+		}
+	})
 }
 
 func TestAGoalWithHostNamingAPathOnlyTheCallerCanReadIsRefusedWhereItIsAsked(t *testing.T) {

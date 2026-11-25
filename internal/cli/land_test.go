@@ -26,271 +26,275 @@ func git(t *testing.T, dir string, args ...string) {
 }
 
 func TestEveryExitedLaunchIsCleanedUpAtOnceAndKeepsItsWorkForRevive(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	commit := func(t *testing.T, wt string) { git(t, wt, "commit", "-q", "--allow-empty", "-m", "work") }
-	push := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }
-	merged := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD:main") }
-	dirty := func(t *testing.T, wt string) { os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644) }
-	day := 25 * time.Hour
-	for _, c := range []struct {
-		name   string
-		agent  string
-		age    time.Duration
-		state  string
-		setup  func(t *testing.T, wt string)
-		killed bool
-		forget bool
-		busy   bool
-		landed bool
-		tree   bool
-		branch bool
-		goal   bool
-		// deleted removes the worktree, its repository and the repository's origin.
-		deleted bool
-		// running marks the agent running when its pane went, as a restart of the host leaves it.
-		running bool
-		// bundle is set when the cleanup must keep work no remote holds.
-		bundle bool
-	}{
-		{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false, false, false, false},
-		{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
-		{"exit 0, dirty", "exit 0", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
-		{"exit 0, unpushed", "exit 0", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
-		{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false, false, false, false},
-		{"exit 3, unpushed", "exit 3", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
-		{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
-		{"gone, dirty", "", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
-		{"gone while the agent ran, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false, false, true, false},
-		{"SIGTERM today, pushed", "kill -TERM $$", 0, "", push, false, false, false, true, false, true, false, false, false, false},
-		{"SIGKILL today, unpushed", "kill -KILL $$", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
-		{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "", commit, false, false, false, true, false, true, false, false, false, true},
-		{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false, false, false, false},
-		{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false, false, false, false},
-		{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false, false, false, false},
-		{"exit 0 after ym kill today, pushed", "exit 0", 0, "", push, true, false, false, true, false, true, false, false, false, false},
-		{"gone after ym kill today, merged", "", 0, "", merged, true, false, false, true, false, false, false, false, false, false},
-		{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true, false, false, false},
-		{"gone after ym kill, merged, a goal's agent", "", 0, "", merged, true, false, false, true, false, false, true, false, false, false},
-		{"exit 0, unpushed, a goal's agent", "exit 0", 0, "", commit, false, false, false, true, false, true, true, false, false, true},
-		{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "", commit, false, false, false, true, false, false, false, true, false, false},
-		{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "", dirty, true, false, false, true, false, false, false, true, false, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			base, _ := filepath.EvalSymlinks(t.TempDir())
-			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-			git(t, base, "init", "-q", "-b", "main", "repo")
-			repo := filepath.Join(base, "repo")
-			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-			git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
-			git(t, repo, "push", "-q", "origin", "main")
-			wt := launch.WorktreePath(repo, "feature")
-			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
-			c.setup(t, wt)
-			if c.busy {
-				sleep := exec.Command("sleep", "60")
-				sleep.Dir = wt
-				if err := sleep.Start(); err != nil {
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		commit := func(t *testing.T, wt string) { git(t, wt, "commit", "-q", "--allow-empty", "-m", "work") }
+		push := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD") }
+		merged := func(t *testing.T, wt string) { commit(t, wt); git(t, wt, "push", "-q", "origin", "HEAD:main") }
+		dirty := func(t *testing.T, wt string) { os.WriteFile(filepath.Join(wt, "new.txt"), []byte("x"), 0o644) }
+		day := 25 * time.Hour
+		for _, c := range []struct {
+			name   string
+			agent  string
+			age    time.Duration
+			state  string
+			setup  func(t *testing.T, wt string)
+			killed bool
+			forget bool
+			busy   bool
+			landed bool
+			tree   bool
+			branch bool
+			goal   bool
+			// deleted removes the worktree, its repository and the repository's origin.
+			deleted bool
+			// running marks the agent running when its pane went, as a restart of the host leaves it.
+			running bool
+			// bundle is set when the cleanup must keep work no remote holds.
+			bundle bool
+		}{
+			{"exit 0, pushed", "exit 0", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+			{"exit 0, merged", "exit 0", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
+			{"exit 0, dirty", "exit 0", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
+			{"exit 0, unpushed", "exit 0", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+			{"exit 3, pushed", "exit 3", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+			{"exit 3, unpushed", "exit 3", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+			{"gone, merged", "", 0, "", merged, false, false, false, true, false, false, false, false, false, false},
+			{"gone, dirty", "", 0, "", dirty, false, false, false, true, false, true, false, false, false, true},
+			{"gone while the agent ran, dirty", "", 0, "gone", dirty, false, false, false, false, true, true, false, false, true, false},
+			{"SIGTERM today, pushed", "kill -TERM $$", 0, "", push, false, false, false, true, false, true, false, false, false, false},
+			{"SIGKILL today, unpushed", "kill -KILL $$", 0, "", commit, false, false, false, true, false, true, false, false, false, true},
+			{"SIGTERM a day ago, unpushed", "kill -TERM $$", day, "", commit, false, false, false, true, false, true, false, false, false, true},
+			{"gone, merged, a process works inside", "", 0, "gone", merged, false, false, true, false, true, true, false, false, false, false},
+			{"exit 0, merged, a process works inside", "exit 0", 0, "exited 0", merged, false, false, true, false, true, true, false, false, false, false},
+			{"forget, unpushed", "exit 3", 0, "", commit, false, true, false, true, true, true, false, false, false, false},
+			{"exit 0 after ym kill today, pushed", "exit 0", 0, "", push, true, false, false, true, false, true, false, false, false, false},
+			{"gone after ym kill today, merged", "", 0, "", merged, true, false, false, true, false, false, false, false, false, false},
+			{"gone, merged, a goal's agent", "", 0, "gone", merged, false, false, false, false, true, true, true, false, false, false},
+			{"gone after ym kill, merged, a goal's agent", "", 0, "", merged, true, false, false, true, false, false, true, false, false, false},
+			{"exit 0, unpushed, a goal's agent", "exit 0", 0, "", commit, false, false, false, true, false, true, true, false, false, true},
+			{"SIGTERM today, repository deleted", "kill -TERM $$", 0, "", commit, false, false, false, true, false, false, false, true, false, false},
+			{"exit 0 after ym kill today, repository deleted", "exit 0", 0, "", dirty, true, false, false, true, false, false, false, true, false, false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				base, _ := filepath.EvalSymlinks(t.TempDir())
+				git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+				git(t, base, "init", "-q", "-b", "main", "repo")
+				repo := filepath.Join(base, "repo")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+				git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
+				git(t, repo, "push", "-q", "origin", "main")
+				wt := launch.WorktreePath(repo, "feature")
+				git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+				c.setup(t, wt)
+				if c.busy {
+					sleep := exec.Command("sleep", "60")
+					sleep.Dir = wt
+					if err := sleep.Start(); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { sleep.Process.Kill(); sleep.Wait() })
+				}
+
+				srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+				conf := filepath.Join(base, "tmux.conf")
+				if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { sleep.Process.Kill(); sleep.Wait() })
-			}
-
-			srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
-			conf := filepath.Join(base, "tmux.conf")
-			if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			log := filepath.Join(base, "landings.jsonl")
-			l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: log}
-			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-c.age),
-				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
-			if c.goal {
-				l.core, rec.Parent = goalCore(t, base, repo), "mgr-session"
-			}
-			if c.killed {
-				rec.Killed = rec.Started
-			}
-			rec.Running = c.running
-			if err := l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-			if c.agent != "" {
-				if _, err := srv.Start(conf, tmux.SessionName(rec.Key), wt, []string{"sh", "-c", c.agent}); err != nil {
+				log := filepath.Join(base, "landings.jsonl")
+				l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: log}
+				rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-c.age),
+					Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+				if c.goal {
+					l.core, rec.Parent = goalCore(t, base, repo), "mgr-session"
+				}
+				if c.killed {
+					rec.Killed = rec.Started
+				}
+				rec.Running = c.running
+				if err := l.records.Save(rec); err != nil {
 					t.Fatal(err)
 				}
-				for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-					if p, err := srv.Pane(tmux.SessionName(rec.Key)); err == nil && p.Dead {
-						break
+				if c.agent != "" {
+					if _, err := srv.Start(conf, tmux.SessionName(rec.Key), wt, []string{"sh", "-c", c.agent}); err != nil {
+						t.Fatal(err)
 					}
-					if time.Now().After(end) {
-						t.Fatal("the agent never exited")
+					for end := time.Now().Add(5 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+						if p, err := srv.Pane(tmux.SessionName(rec.Key)); err == nil && p.Dead {
+							break
+						}
+						if time.Now().After(end) {
+							t.Fatal("the agent never exited")
+						}
 					}
 				}
-			}
-			if c.deleted {
-				for _, dir := range []string{wt, repo, filepath.Join(base, "origin.git")} {
-					os.RemoveAll(dir)
+				if c.deleted {
+					for _, dir := range []string{wt, repo, filepath.Join(base, "origin.git")} {
+						os.RemoveAll(dir)
+					}
 				}
-			}
-			if c.forget {
-				l.forget(rec)
-			}
+				if c.forget {
+					l.forget(rec)
+				}
 
-			l.Sweep(core.Stopped(l.Launched()))
-			rows := l.Dormant()
-			kept, recorded := l.records.Find(rec.Key)
-			_, statErr := os.Stat(wt)
-			_, paneErr := srv.Pane(tmux.SessionName(rec.Key))
-			if gone := len(rows) == 0 && paneErr != nil; gone != c.landed || (statErr == nil) != c.tree {
-				t.Fatalf("rows %+v, pane err %v, worktree kept %v; want landed %v, worktree kept %v",
-					rows, paneErr, statErr == nil, c.landed, c.tree)
-			}
-			marked := c.landed && !c.forget
-			logged, _ := os.ReadFile(log)
-			if recorded != !c.forget || kept.IsLanded() != marked || strings.Count(string(logged), `"key":"repo-wt-feature"`) != map[bool]int{true: 1}[marked] {
-				t.Fatalf("record kept %v, marked landed %v, landing log %q; want record kept %v, marked and logged %v",
-					recorded, kept.IsLanded(), logged, !c.forget, marked)
-			}
-			if len(rows) == 1 && rows[0].State != c.state {
-				t.Fatalf("row state %q, want %q", rows[0].State, c.state)
-			}
-			if kept := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil; kept != c.branch {
-				t.Fatalf("branch kept %v, want %v", kept, c.branch)
-			}
-			if bundled := kept.Recovery.Bundle != ""; bundled != c.bundle {
-				t.Fatalf("work bundled %+v, want a bundle %v", kept.Recovery, c.bundle)
-			}
-			if marked && !strings.Contains(string(logged), "cleaned up") && !c.killed {
-				t.Fatalf("landing log %q does not say it was cleaned up", logged)
-			}
-		})
-	}
+				l.Sweep(core.Stopped(l.Launched()))
+				rows := l.Dormant()
+				kept, recorded := l.records.Find(rec.Key)
+				_, statErr := os.Stat(wt)
+				_, paneErr := srv.Pane(tmux.SessionName(rec.Key))
+				if gone := len(rows) == 0 && paneErr != nil; gone != c.landed || (statErr == nil) != c.tree {
+					t.Fatalf("rows %+v, pane err %v, worktree kept %v; want landed %v, worktree kept %v",
+						rows, paneErr, statErr == nil, c.landed, c.tree)
+				}
+				marked := c.landed && !c.forget
+				logged, _ := os.ReadFile(log)
+				if recorded != !c.forget || kept.IsLanded() != marked || strings.Count(string(logged), `"key":"repo-wt-feature"`) != map[bool]int{true: 1}[marked] {
+					t.Fatalf("record kept %v, marked landed %v, landing log %q; want record kept %v, marked and logged %v",
+						recorded, kept.IsLanded(), logged, !c.forget, marked)
+				}
+				if len(rows) == 1 && rows[0].State != c.state {
+					t.Fatalf("row state %q, want %q", rows[0].State, c.state)
+				}
+				if kept := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil; kept != c.branch {
+					t.Fatalf("branch kept %v, want %v", kept, c.branch)
+				}
+				if bundled := kept.Recovery.Bundle != ""; bundled != c.bundle {
+					t.Fatalf("work bundled %+v, want a bundle %v", kept.Recovery, c.bundle)
+				}
+				if marked && !strings.Contains(string(logged), "cleaned up") && !c.killed {
+					t.Fatalf("landing log %q does not say it was cleaned up", logged)
+				}
+			})
+		}
+	})
 }
 
 func TestReviveBringsBackAKilledLaunchInItsOriginalWorktreeWithItsWork(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	bins := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bins, "claude"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	rev := func(t *testing.T, dir, ref string) string {
-		out, err := exec.Command("git", "-C", dir, "rev-parse", ref).Output()
-		if err != nil {
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		bins := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bins, "claude"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		return strings.TrimSpace(string(out))
-	}
-	for _, c := range []struct {
-		name    string
-		target  string
-		lostSHA bool
-		want    string
-		// gone deletes the branch after the kill, so only the kill's bundle holds an unpushed commit.
-		gone, dirty bool
-		// moved deletes the repository after the kill, leaving no clone; stranded deletes its origin too.
-		moved, stranded bool
-	}{
-		{"pushed, branch kept", "HEAD", false, "head", false, false, false, false},
-		{"merged, branch deleted", "HEAD:main", false, "head", false, false, false, false},
-		{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main", false, false, false, false},
-		{"repository and origin deleted", "HEAD", false, "", false, false, false, false},
-		{"unpushed commit and uncommitted files, branch deleted", "", false, "head", true, true, false, false},
-		{"unpushed commit and uncommitted files, repository moved away", "", false, "head", false, true, true, false},
-		{"unpushed commit and uncommitted files, repository and origin gone", "", false, "", false, true, true, true},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			base, _ := filepath.EvalSymlinks(t.TempDir())
-			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-			git(t, base, "init", "-q", "-b", "main", "repo")
-			repo := filepath.Join(base, "repo")
-			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-			git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
-			git(t, repo, "push", "-q", "origin", "main")
-			git(t, repo, "fetch", "-q", "origin")
-			wt := launch.WorktreePath(repo, "feature")
-			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
-			git(t, wt, "commit", "-q", "--allow-empty", "-m", "work")
-			if c.target != "" {
-				git(t, wt, "push", "-q", "origin", c.target)
-				git(t, repo, "fetch", "-q", "origin")
-			}
-			head := rev(t, wt, "HEAD")
-			if c.dirty {
-				os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("half done"), 0o644)
-			}
-
-			srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
-			conf := filepath.Join(base, "tmux.conf")
-			if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
-			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(),
-				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
-			if err := l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := l.End(rec.Key, ""); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Stat(wt); err == nil {
-				t.Fatalf("kill left the worktree %s", wt)
-			}
-			if c.gone {
-				git(t, repo, "branch", "-q", "-D", "feature")
-				git(t, repo, "reflog", "expire", "--expire=now", "--all")
-				git(t, repo, "gc", "-q", "--prune=now")
-			}
-			if c.lostSHA {
-				landed, _ := l.records.Find(rec.Key)
-				landed.Head = strings.Repeat("e", 40)
-				l.records.Save(landed)
-			}
-			for _, row := range l.Launched() {
-				if row.Key == rec.Key && row.Landed.IsZero() {
-					t.Fatalf("landed launch listed as %+v", row)
-				}
-			}
-
-			if c.want == "" || c.moved {
-				os.RemoveAll(repo)
-			}
-			if c.want == "" && !c.moved || c.stranded {
-				os.RemoveAll(filepath.Join(base, "origin.git"))
-			}
-			msg, err := l.Revive(rec.Key)
+		t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
+		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+		rev := func(t *testing.T, dir, ref string) string {
+			out, err := exec.Command("git", "-C", dir, "rev-parse", ref).Output()
 			if err != nil {
 				t.Fatal(err)
 			}
-			back, _ := l.records.Find(rec.Key)
-			if _, st := l.state(back); c.want == "" {
-				if fi, err := os.Stat(wt); err != nil || !fi.IsDir() || back.IsLanded() || st != "running" {
-					t.Fatalf("directory %v, still landed %v, pane %s; want the conversation resumed at %s", err, back.IsLanded(), st, wt)
+			return strings.TrimSpace(string(out))
+		}
+		for _, c := range []struct {
+			name    string
+			target  string
+			lostSHA bool
+			want    string
+			// gone deletes the branch after the kill, so only the kill's bundle holds an unpushed commit.
+			gone, dirty bool
+			// moved deletes the repository after the kill, leaving no clone; stranded deletes its origin too.
+			moved, stranded bool
+		}{
+			{"pushed, branch kept", "HEAD", false, "head", false, false, false, false},
+			{"merged, branch deleted", "HEAD:main", false, "head", false, false, false, false},
+			{"merged, branch and recorded commit gone", "HEAD:main", true, "origin/main", false, false, false, false},
+			{"repository and origin deleted", "HEAD", false, "", false, false, false, false},
+			{"unpushed commit and uncommitted files, branch deleted", "", false, "head", true, true, false, false},
+			{"unpushed commit and uncommitted files, repository moved away", "", false, "head", false, true, true, false},
+			{"unpushed commit and uncommitted files, repository and origin gone", "", false, "", false, true, true, true},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				base, _ := filepath.EvalSymlinks(t.TempDir())
+				git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+				git(t, base, "init", "-q", "-b", "main", "repo")
+				repo := filepath.Join(base, "repo")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+				git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
+				git(t, repo, "push", "-q", "origin", "main")
+				git(t, repo, "fetch", "-q", "origin")
+				wt := launch.WorktreePath(repo, "feature")
+				git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+				git(t, wt, "commit", "-q", "--allow-empty", "-m", "work")
+				if c.target != "" {
+					git(t, wt, "push", "-q", "origin", c.target)
+					git(t, repo, "fetch", "-q", "origin")
 				}
-				if bundle := back.Recovery.Bundle; c.stranded && (bundle == "" || !strings.Contains(msg, bundle) || !strings.Contains(msg, "apply it by hand")) {
-					t.Fatalf("revive said %q; want the kept bundle %q and how to apply it", msg, bundle)
+				head := rev(t, wt, "HEAD")
+				if c.dirty {
+					os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("half done"), 0o644)
 				}
-				return
-			}
-			want := head
-			if c.want != "head" {
-				want = rev(t, repo, c.want)
-			}
-			_, st := l.state(back)
-			if got := rev(t, wt, "HEAD"); got != want || back.IsLanded() || st != "running" {
-				t.Fatalf("worktree at %s, still landed %v, pane %s; want %s, revived, running", got, back.IsLanded(), st, want)
-			}
-			if notes, _ := os.ReadFile(filepath.Join(wt, "notes.txt")); c.dirty && string(notes) != "half done" {
-				t.Fatalf("uncommitted notes.txt came back as %q", notes)
-			}
-		})
-	}
+
+				srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+				conf := filepath.Join(base, "tmux.conf")
+				if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
+				rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now(),
+					Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+				if err := l.records.Save(rec); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := l.End(rec.Key, ""); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(wt); err == nil {
+					t.Fatalf("kill left the worktree %s", wt)
+				}
+				if c.gone {
+					git(t, repo, "branch", "-q", "-D", "feature")
+					git(t, repo, "reflog", "expire", "--expire=now", "--all")
+					git(t, repo, "gc", "-q", "--prune=now")
+				}
+				if c.lostSHA {
+					landed, _ := l.records.Find(rec.Key)
+					landed.Head = strings.Repeat("e", 40)
+					l.records.Save(landed)
+				}
+				for _, row := range l.Launched() {
+					if row.Key == rec.Key && row.Landed.IsZero() {
+						t.Fatalf("landed launch listed as %+v", row)
+					}
+				}
+
+				if c.want == "" || c.moved {
+					os.RemoveAll(repo)
+				}
+				if c.want == "" && !c.moved || c.stranded {
+					os.RemoveAll(filepath.Join(base, "origin.git"))
+				}
+				msg, err := l.Revive(rec.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				back, _ := l.records.Find(rec.Key)
+				if _, st := l.state(back); c.want == "" {
+					if fi, err := os.Stat(wt); err != nil || !fi.IsDir() || back.IsLanded() || st != "running" {
+						t.Fatalf("directory %v, still landed %v, pane %s; want the conversation resumed at %s", err, back.IsLanded(), st, wt)
+					}
+					if bundle := back.Recovery.Bundle; c.stranded && (bundle == "" || !strings.Contains(msg, bundle) || !strings.Contains(msg, "apply it by hand")) {
+						t.Fatalf("revive said %q; want the kept bundle %q and how to apply it", msg, bundle)
+					}
+					return
+				}
+				want := head
+				if c.want != "head" {
+					want = rev(t, repo, c.want)
+				}
+				_, st := l.state(back)
+				if got := rev(t, wt, "HEAD"); got != want || back.IsLanded() || st != "running" {
+					t.Fatalf("worktree at %s, still landed %v, pane %s; want %s, revived, running", got, back.IsLanded(), st, want)
+				}
+				if notes, _ := os.ReadFile(filepath.Join(wt, "notes.txt")); c.dirty && string(notes) != "half done" {
+					t.Fatalf("uncommitted notes.txt came back as %q", notes)
+				}
+			})
+		}
+	})
 }
 
 func TestGCDropsOnlyRecordsLandedLongAgo(t *testing.T) {

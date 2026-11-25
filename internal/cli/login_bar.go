@@ -371,9 +371,10 @@ func (l launcher) closeLoginItem(dir string, p profile.Profile, why string) erro
 const authBudget = 2 * time.Second
 
 // statusChecks runs native status checks out of serve's pass, which only reads what they answered: one slower than a pass still counts on the
-// next, however long it took. A timeout of zero is statusTimeout.
+// next, however long it took. A timeout of zero is statusTimeout, a budget of zero authBudget.
 type statusChecks struct {
 	timeout time.Duration
+	budget  time.Duration
 	mu      sync.Mutex
 	answers map[string]statusAnswer
 	running map[string]chan struct{}
@@ -382,6 +383,9 @@ type statusChecks struct {
 	cancel  context.CancelFunc
 	closed  bool
 }
+
+// waits is how long a caller waits on these checks.
+func (c *statusChecks) waits() time.Duration { return cmp.Or(c.budget, authBudget) }
 
 // loginKey tells logins apart, those with no identity readable right now included.
 func loginKey(p profile.Profile) string { return cmp.Or(p.Account, p.Harness+"/"+p.ID) }
@@ -424,7 +428,7 @@ func (c *statusChecks) ask(q profile.Profile) <-chan struct{} {
 	go func() {
 		started := time.Now()
 		err := nativeStatusContext(c.ctx, q, cmp.Or(c.timeout, statusTimeout))
-		if took := time.Since(started); took > authBudget {
+		if took := time.Since(started); took > c.waits() {
 			log.Printf("ym: status check of %s/%s took %s: %v", q.Harness, q.ID, took.Round(time.Millisecond), err)
 		}
 		c.mu.Lock()
@@ -482,14 +486,14 @@ func (l launcher) loginChecks(ps []profile.Profile, except string) (signedOut, u
 		defer checks.Close()
 	}
 	signedOut, unanswered = map[string]bool{}, map[string]bool{}
-	wait := time.After(authBudget)
+	wait := time.After(checks.waits())
 	var asked []profile.Profile
 	var dones []<-chan struct{}
 	for _, q := range ps {
 		if q.Account == "" || q.Account != except {
 			asked = append(asked, q)
 			done := checks.ask(q)
-			if checks.waited(q) < authBudget {
+			if checks.waited(q) < checks.waits() {
 				dones = append(dones, done)
 			}
 		}

@@ -72,108 +72,110 @@ func boxBoard(k *core.Core) *itemRemote {
 }
 
 func TestItemCommandsOnAnotherHostsItemActOnTheOriginal(t *testing.T) {
-	commands := []struct {
-		name string
-		args []string
-		want []string
-	}{
-		{"show", []string{"show"}, []string{"item", "show", "#788"}},
-		{"prepare", []string{"prepare", "--rec", "ship it", "--option", "a=adopt"}, []string{"item", "prepare", "#788", "--rec", "ship it", "--option", "a=adopt"}},
-		{"escalate", []string{"escalate"}, []string{"item", "escalate", "#788"}},
-		{"answer", []string{"answer", "yes"}, []string{"item", "answer", "#788", "yes"}},
-	}
-	setups := []struct {
-		name   string
-		ref    string
-		wire   func(*core.Core) *itemRemote
-		fail   string
-		relay  bool
-		cached bool
-	}{
-		{name: "unknown nickname", ref: "@dm6tyx3m6c/#788", wire: func(*core.Core) *itemRemote { return nil }, fail: "host dm6tyx3m6c is not a configured remote"},
-		{name: "relay peer without remotes", ref: "box/#788", wire: func(k *core.Core) *itemRemote {
-			if _, err := k.ServeSync(core.RelaySync{As: "here", From: "box"}); err != nil {
-				t.Fatal(err)
-			}
-			return nil
-		}, relay: true},
-		{name: "relay snapshot", ref: "box/#788", wire: itemSnapshotPeer, relay: true, cached: true},
-		{name: "relay snapshot by name", ref: "mgr51:D2", wire: itemSnapshotPeer, relay: true, cached: true},
-		{name: "remote board", ref: "box/#788", wire: boxBoard},
-		{name: "remote board by id", ref: "box/D2", wire: boxBoard},
-	}
-	for _, s := range setups {
-		for _, c := range commands {
-			t.Run(s.name+"/"+c.name, func(t *testing.T) {
-				st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
-				if err != nil {
+	isolate(t, func(t *testing.T) {
+		commands := []struct {
+			name string
+			args []string
+			want []string
+		}{
+			{"show", []string{"show"}, []string{"item", "show", "#788"}},
+			{"prepare", []string{"prepare", "--rec", "ship it", "--option", "a=adopt"}, []string{"item", "prepare", "#788", "--rec", "ship it", "--option", "a=adopt"}},
+			{"escalate", []string{"escalate"}, []string{"item", "escalate", "#788"}},
+			{"answer", []string{"answer", "yes"}, []string{"item", "answer", "#788", "yes"}},
+		}
+		setups := []struct {
+			name   string
+			ref    string
+			wire   func(*core.Core) *itemRemote
+			fail   string
+			relay  bool
+			cached bool
+		}{
+			{name: "unknown nickname", ref: "@dm6tyx3m6c/#788", wire: func(*core.Core) *itemRemote { return nil }, fail: "host dm6tyx3m6c is not a configured remote"},
+			{name: "relay peer without remotes", ref: "box/#788", wire: func(k *core.Core) *itemRemote {
+				if _, err := k.ServeSync(core.RelaySync{As: "here", From: "box"}); err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { st.Close() })
-				k := &core.Core{Store: st, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-				r := s.wire(k)
-				with := func(run runFunc) func(*cobra.Command, []string) error {
-					return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
-				}
-				cmd := itemCmd(with, with)
-				var out bytes.Buffer
-				cmd.SetOut(&out)
-				cmd.SetErr(&out)
-				cmd.SetArgs(append([]string{c.args[0], s.ref}, c.args[1:]...))
-				err = cmd.Execute()
-				pending, perr := st.PendingRelays()
-				if perr != nil {
-					t.Fatal(perr)
-				}
-				switch {
-				case s.fail != "":
-					if err == nil || !strings.Contains(err.Error(), s.fail) {
-						t.Fatalf("error %v, want it to say %q", err, s.fail)
-					}
-					if len(pending) != 0 {
-						t.Fatalf("refused ref queued relays: %+v", pending)
-					}
-				case s.relay && c.name == "show" && s.cached:
-					if err != nil || !strings.Contains(out.String(), "merge?") {
-						t.Fatalf("cached show: %v, %s", err, out.String())
-					}
-				case s.relay && c.name == "show":
-					if err == nil || !strings.Contains(err.Error(), "not found on box") {
-						t.Fatalf("show before receiving a snapshot: %v", err)
-					}
-				case s.relay:
-					if err != nil {
-						t.Fatalf("%s: %v, output %s", c.name, err, out.String())
-					}
-					var y struct{ Args []string }
-					if len(pending) != 1 || pending[0].Dest != "box" || json.Unmarshal([]byte(pending[0].Body), &y) != nil || !reflect.DeepEqual(y.Args, c.want) {
-						t.Fatalf("relays %+v, want one to box carrying %q", pending, c.want)
-					}
-				default:
-					if err != nil {
-						t.Fatalf("%s: %v, output %s", c.name, err, out.String())
-					}
-					_, rest, _ := core.SplitRemote(s.ref)
-					want := []string{"box"}
-					for _, a := range c.want {
-						if a == "#788" {
-							a = rest
-						}
-						want = append(want, a)
-					}
-					if !reflect.DeepEqual(r.ran, [][]string{want}) {
-						t.Fatalf("ran %q, want %q", r.ran, [][]string{want})
-					}
-					if c.name != "show" && !strings.HasPrefix(out.String(), "D2 ") {
-						t.Fatalf("%s printed %q, want the original item's id D2", c.name, out.String())
-					}
-				}
-				if items, err := st.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
-					t.Fatalf("another host's item touched this host's store: %+v, %v", items, err)
-				}
-			})
+				return nil
+			}, relay: true},
+			{name: "relay snapshot", ref: "box/#788", wire: itemSnapshotPeer, relay: true, cached: true},
+			{name: "relay snapshot by name", ref: "mgr51:D2", wire: itemSnapshotPeer, relay: true, cached: true},
+			{name: "remote board", ref: "box/#788", wire: boxBoard},
+			{name: "remote board by id", ref: "box/D2", wire: boxBoard},
 		}
-	}
+		for _, s := range setups {
+			for _, c := range commands {
+				t.Run(s.name+"/"+c.name, func(t *testing.T) {
+					st, err := core.OpenStore(filepath.Join(t.TempDir(), "ym.db"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { st.Close() })
+					k := &core.Core{Store: st, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+					r := s.wire(k)
+					with := func(run runFunc) func(*cobra.Command, []string) error {
+						return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+					}
+					cmd := itemCmd(with, with)
+					var out bytes.Buffer
+					cmd.SetOut(&out)
+					cmd.SetErr(&out)
+					cmd.SetArgs(append([]string{c.args[0], s.ref}, c.args[1:]...))
+					err = cmd.Execute()
+					pending, perr := st.PendingRelays()
+					if perr != nil {
+						t.Fatal(perr)
+					}
+					switch {
+					case s.fail != "":
+						if err == nil || !strings.Contains(err.Error(), s.fail) {
+							t.Fatalf("error %v, want it to say %q", err, s.fail)
+						}
+						if len(pending) != 0 {
+							t.Fatalf("refused ref queued relays: %+v", pending)
+						}
+					case s.relay && c.name == "show" && s.cached:
+						if err != nil || !strings.Contains(out.String(), "merge?") {
+							t.Fatalf("cached show: %v, %s", err, out.String())
+						}
+					case s.relay && c.name == "show":
+						if err == nil || !strings.Contains(err.Error(), "not found on box") {
+							t.Fatalf("show before receiving a snapshot: %v", err)
+						}
+					case s.relay:
+						if err != nil {
+							t.Fatalf("%s: %v, output %s", c.name, err, out.String())
+						}
+						var y struct{ Args []string }
+						if len(pending) != 1 || pending[0].Dest != "box" || json.Unmarshal([]byte(pending[0].Body), &y) != nil || !reflect.DeepEqual(y.Args, c.want) {
+							t.Fatalf("relays %+v, want one to box carrying %q", pending, c.want)
+						}
+					default:
+						if err != nil {
+							t.Fatalf("%s: %v, output %s", c.name, err, out.String())
+						}
+						_, rest, _ := core.SplitRemote(s.ref)
+						want := []string{"box"}
+						for _, a := range c.want {
+							if a == "#788" {
+								a = rest
+							}
+							want = append(want, a)
+						}
+						if !reflect.DeepEqual(r.ran, [][]string{want}) {
+							t.Fatalf("ran %q, want %q", r.ran, [][]string{want})
+						}
+						if c.name != "show" && !strings.HasPrefix(out.String(), "D2 ") {
+							t.Fatalf("%s printed %q, want the original item's id D2", c.name, out.String())
+						}
+					}
+					if items, err := st.Items(core.ItemFilter{}); err != nil || len(items) != 0 {
+						t.Fatalf("another host's item touched this host's store: %+v, %v", items, err)
+					}
+				})
+			}
+		}
+	})
 }
 
 func TestChiefListsAndReadsRemoteEscalationsInItsInbox(t *testing.T) {

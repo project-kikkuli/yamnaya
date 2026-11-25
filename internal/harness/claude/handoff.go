@@ -188,6 +188,9 @@ func parseQuotaReset(text string, now time.Time) time.Time {
 		return at
 	}
 	at := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
+	if yesterday := at.AddDate(0, 0, -1); !yesterday.Before(now.Add(-lateRead)) {
+		return yesterday
+	}
 	if at.Before(now.Add(-lateRead)) {
 		at = at.AddDate(0, 0, 1)
 	}

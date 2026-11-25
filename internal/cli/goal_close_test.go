@@ -132,81 +132,83 @@ func TestGoalCloseKnowsWhoIsCalling(t *testing.T) {
 }
 
 func TestClosingAGoalKeepsUnpushedWorkAndRevivingPutsItBack(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	bins := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bins, "claude"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	for _, as := range []string{core.CloseSuperseded, core.CloseAbandoned} {
-		t.Run(as, func(t *testing.T) {
-			c, g, m, _ := closeWorld(t, "")
-			base, _ := filepath.EvalSymlinks(t.TempDir())
-			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-			git(t, base, "init", "-q", "-b", "main", "repo")
-			repo := filepath.Join(base, "repo")
-			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-			git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
-			git(t, repo, "push", "-q", "origin", "main")
-			git(t, repo, "fetch", "-q", "origin")
-			wt := launch.WorktreePath(repo, "feature")
-			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
-			git(t, wt, "commit", "-q", "--allow-empty", "-m", "unpushed work")
-			head := strings.TrimSpace(gitOut(t, wt, "rev-parse", "HEAD"))
-			if err := os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("half done"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
-			conf := filepath.Join(base, "tmux.conf")
-			if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			l := launcher{core: c, srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
-			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "manager-session", Prompt: "fix it", Started: time.Now(),
-				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
-			if err := l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-			c.Launches = l
-			b, err := c.Board()
-			if err != nil {
-				t.Fatal(err)
-			}
-			closed, err := c.CloseGoal(b, core.CloseOrder{Ref: g.ID, As: as, Why: "taken over"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if closed.Toll.Commits != 1 || closed.Toll.Files != 1 {
-				t.Fatalf("toll %+v, want the unpushed commit and uncommitted file counted", closed.Toll)
-			}
-			if _, err := os.Stat(wt); err == nil {
-				t.Fatalf("close left the worktree %s", wt)
-			}
-			landed, found := l.records.Find(rec.Key)
-			if !found || landed.Recovery.Bundle == "" || landed.Goal != m.ID {
-				t.Fatalf("record %+v (%v), want the work bundled under %s", landed, found, m.ID)
-			}
-			msg, err := l.Revive(g.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(msg, "1 sessions") {
-				t.Fatalf("revive said %q", msg)
-			}
-			if got := strings.TrimSpace(gitOut(t, wt, "rev-parse", "HEAD")); got != head {
-				t.Fatalf("worktree at %s, want %s", got, head)
-			}
-			if notes, _ := os.ReadFile(filepath.Join(wt, "notes.txt")); string(notes) != "half done" {
-				t.Fatalf("uncommitted notes.txt came back as %q", notes)
-			}
-			if now, _ := c.Store.Goal(g.ID); now.State != core.GoalActive {
-				t.Fatalf("goal %s after revive", now.State)
-			}
-		})
-	}
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		bins := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bins, "claude"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
+		t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+		for _, as := range []string{core.CloseSuperseded, core.CloseAbandoned} {
+			t.Run(as, func(t *testing.T) {
+				c, g, m, _ := closeWorld(t, "")
+				base, _ := filepath.EvalSymlinks(t.TempDir())
+				git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+				git(t, base, "init", "-q", "-b", "main", "repo")
+				repo := filepath.Join(base, "repo")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+				git(t, repo, "remote", "add", "origin", filepath.Join(base, "origin.git"))
+				git(t, repo, "push", "-q", "origin", "main")
+				git(t, repo, "fetch", "-q", "origin")
+				wt := launch.WorktreePath(repo, "feature")
+				git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+				git(t, wt, "commit", "-q", "--allow-empty", "-m", "unpushed work")
+				head := strings.TrimSpace(gitOut(t, wt, "rev-parse", "HEAD"))
+				if err := os.WriteFile(filepath.Join(wt, "notes.txt"), []byte("half done"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+				conf := filepath.Join(base, "tmux.conf")
+				if err := os.WriteFile(conf, []byte(tmux.ServerConf), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				l := launcher{core: c, srv: srv, records: launch.Records{Dir: filepath.Join(base, "launches")}, conf: conf, landings: filepath.Join(base, "landings.jsonl")}
+				rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "manager-session", Prompt: "fix it", Started: time.Now(),
+					Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+				if err := l.records.Save(rec); err != nil {
+					t.Fatal(err)
+				}
+				c.Launches = l
+				b, err := c.Board()
+				if err != nil {
+					t.Fatal(err)
+				}
+				closed, err := c.CloseGoal(b, core.CloseOrder{Ref: g.ID, As: as, Why: "taken over"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if closed.Toll.Commits != 1 || closed.Toll.Files != 1 {
+					t.Fatalf("toll %+v, want the unpushed commit and uncommitted file counted", closed.Toll)
+				}
+				if _, err := os.Stat(wt); err == nil {
+					t.Fatalf("close left the worktree %s", wt)
+				}
+				landed, found := l.records.Find(rec.Key)
+				if !found || landed.Recovery.Bundle == "" || landed.Goal != m.ID {
+					t.Fatalf("record %+v (%v), want the work bundled under %s", landed, found, m.ID)
+				}
+				msg, err := l.Revive(g.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(msg, "1 sessions") {
+					t.Fatalf("revive said %q", msg)
+				}
+				if got := strings.TrimSpace(gitOut(t, wt, "rev-parse", "HEAD")); got != head {
+					t.Fatalf("worktree at %s, want %s", got, head)
+				}
+				if notes, _ := os.ReadFile(filepath.Join(wt, "notes.txt")); string(notes) != "half done" {
+					t.Fatalf("uncommitted notes.txt came back as %q", notes)
+				}
+				if now, _ := c.Store.Goal(g.ID); now.State != core.GoalActive {
+					t.Fatalf("goal %s after revive", now.State)
+				}
+			})
+		}
+	})
 }
 
 func gitOut(t *testing.T, dir string, args ...string) string {

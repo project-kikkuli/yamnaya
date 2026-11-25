@@ -15,92 +15,94 @@ import (
 // TestUpdateBuildsTheCommitAskedForFromItsRepository serves a module whose go.mod replaces a dependency with a directory in
 // the repository, as ym's does, which go install module@version refuses to build.
 func TestUpdateBuildsTheCommitAskedForFromItsRepository(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
-	t.Setenv("GOBIN", filepath.Join(root, "bin"))
-	t.Setenv("GOFLAGS", "")
-	work := filepath.Join(root, "work")
-	git := func(args ...string) string {
-		t.Helper()
-		out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-C", work}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
+	isolate(t, func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv("HOME", filepath.Join(root, "home"))
+		t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+		t.Setenv("GOBIN", filepath.Join(root, "bin"))
+		t.Setenv("GOFLAGS", "")
+		work := filepath.Join(root, "work")
+		git := func(args ...string) string {
+			t.Helper()
+			out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-C", work}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("git %v: %v: %s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
 		}
-		return strings.TrimSpace(string(out))
-	}
-	write := func(path, text string) {
-		t.Helper()
-		path = filepath.Join(work, path)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		write := func(path, text string) {
+			t.Helper()
+			path = filepath.Join(work, path)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		commit := func(says string) string {
+			write("dep/dep.go", "package dep\n\nconst Says = \""+says+"\"\n")
+			git("add", "-A")
+			git("commit", "-q", "-m", says)
+			return git("rev-parse", "HEAD")
+		}
+		if err := os.MkdirAll(work, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	commit := func(says string) string {
-		write("dep/dep.go", "package dep\n\nconst Says = \""+says+"\"\n")
-		git("add", "-A")
-		git("commit", "-q", "-m", says)
-		return git("rev-parse", "HEAD")
-	}
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	git("init", "-q", "-b", "main")
-	write("go.mod", "module example.com/ymtest\n\ngo 1.26.0\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n")
-	write("dep/go.mod", "module example.com/dep\n\ngo 1.26.0\n")
-	write("cmd/ym/main.go", "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/dep\"\n)\n\nfunc main() { fmt.Print(dep.Says) }\n")
-	first := commit("first")
-	latest := commit("latest")
-	git("switch", "-q", "-c", "side")
-	side := commit("side")
-	git("switch", "-q", "main")
-	origin := filepath.Join(root, "origin.git")
-	git("clone", "-q", "--bare", work, origin)
-	old := ymRepo
-	ymRepo = origin
-	t.Cleanup(func() { ymRepo = old })
-	for _, tc := range []struct {
-		name, ref, sha, says string
-	}{
-		{"default branch", "", latest, "latest"},
-		{"an older commit", first, first, "first"},
-		{"a branch", "side", side, "side"},
-		{"the default branch by name", "main", latest, "latest"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			running := filepath.Join(root, "local", "ym")
-			writeFile(t, running, "old ym")
-			var restarted []string
-			cmd := updateCmd(runGo, func() (string, error) { return running, nil }, func(_ io.Writer, bin string) error {
-				restarted = append(restarted, bin)
-				return nil
+		git("init", "-q", "-b", "main")
+		write("go.mod", "module example.com/ymtest\n\ngo 1.26.0\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n")
+		write("dep/go.mod", "module example.com/dep\n\ngo 1.26.0\n")
+		write("cmd/ym/main.go", "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/dep\"\n)\n\nfunc main() { fmt.Print(dep.Says) }\n")
+		first := commit("first")
+		latest := commit("latest")
+		git("switch", "-q", "-c", "side")
+		side := commit("side")
+		git("switch", "-q", "main")
+		origin := filepath.Join(root, "origin.git")
+		git("clone", "-q", "--bare", work, origin)
+		old := ymRepo
+		ymRepo = origin
+		t.Cleanup(func() { ymRepo = old })
+		for _, tc := range []struct {
+			name, ref, sha, says string
+		}{
+			{"default branch", "", latest, "latest"},
+			{"an older commit", first, first, "first"},
+			{"a branch", "side", side, "side"},
+			{"the default branch by name", "main", latest, "latest"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				running := filepath.Join(root, "local", "ym")
+				writeFile(t, running, "old ym")
+				var restarted []string
+				cmd := updateCmd(runGo, func() (string, error) { return running, nil }, func(_ io.Writer, bin string) error {
+					restarted = append(restarted, bin)
+					return nil
+				})
+				var out bytes.Buffer
+				cmd.SetOut(&out)
+				cmd.SetArgs(slices.DeleteFunc([]string{tc.ref}, func(s string) bool { return s == "" }))
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("%v: %s", err, out.String())
+				}
+				for _, bin := range []string{running, filepath.Join(root, "bin", "ym")} {
+					if !strings.Contains(out.String(), "installed ym "+tc.sha[:12]+" at "+bin) {
+						t.Fatalf("output %q does not report %s at %s", out.String(), tc.sha[:12], bin)
+					}
+					got, err := exec.Command(bin).Output()
+					if err != nil || string(got) != tc.says {
+						t.Fatalf("%s says %q (%v), want %q", bin, got, err, tc.says)
+					}
+				}
+				if got := readFile(t, running+".bak"); got != "old ym" {
+					t.Fatalf("backup holds %q, want the old ym", got)
+				}
+				if !slices.Equal(restarted, []string{running}) {
+					t.Fatalf("restarted into %v, want %s", restarted, running)
+				}
 			})
-			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetArgs(slices.DeleteFunc([]string{tc.ref}, func(s string) bool { return s == "" }))
-			if err := cmd.Execute(); err != nil {
-				t.Fatalf("%v: %s", err, out.String())
-			}
-			for _, bin := range []string{running, filepath.Join(root, "bin", "ym")} {
-				if !strings.Contains(out.String(), "installed ym "+tc.sha[:12]+" at "+bin) {
-					t.Fatalf("output %q does not report %s at %s", out.String(), tc.sha[:12], bin)
-				}
-				got, err := exec.Command(bin).Output()
-				if err != nil || string(got) != tc.says {
-					t.Fatalf("%s says %q (%v), want %q", bin, got, err, tc.says)
-				}
-			}
-			if got := readFile(t, running+".bak"); got != "old ym" {
-				t.Fatalf("backup holds %q, want the old ym", got)
-			}
-			if !slices.Equal(restarted, []string{running}) {
-				t.Fatalf("restarted into %v, want %s", restarted, running)
-			}
-		})
-	}
+		}
+	})
 }
 
 func TestUpdateRefusesARefTheRepositoryLacks(t *testing.T) {

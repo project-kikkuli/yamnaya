@@ -127,158 +127,162 @@ func TestGoalRenameOfAnotherHostsGoalRunsOnThatHost(t *testing.T) {
 }
 
 func TestEveryCommandTakingAGoalOrChiefTakesItsNameOrId(t *testing.T) {
-	for _, form := range []string{"name", "id"} {
+	isolate(t, func(t *testing.T) {
+		for _, form := range []string{"name", "id"} {
+			for _, tc := range []struct {
+				name string
+				args func(goal, chief string) []string
+				want string
+			}{
+				{"goal list --under", func(_, chief string) []string { return []string{"goal", "list", "--under", chief} }, "ship-the-thing"},
+				{"goal show a goal", func(goal, _ string) []string { return []string{"goal", "show", goal} }, "ship-the-thing"},
+				{"goal show a chief", func(_, chief string) []string { return []string{"goal", "show", chief} }, "ops-lead"},
+				{"goal context", func(goal, _ string) []string { return []string{"goal", "context", goal} }, "ship the thing"},
+				{"goal feed", func(goal, _ string) []string { return []string{"goal", "feed", goal} }, "ship-the-thing"},
+			} {
+				t.Run(tc.name+" by "+form, func(t *testing.T) {
+					dir := t.TempDir()
+					t.Setenv("YAMNAYA_STATE_DIR", dir)
+					st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer st.Close()
+					c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+					g, m, err := c.NewGoalNamed("ship-the-thing", "ship the thing", dir, "", "")
+					if err != nil {
+						t.Fatal(err)
+					}
+					boss, err := c.NewChief("ops-lead", "", dir, "", []string{m.ID})
+					if err != nil {
+						t.Fatal(err)
+					}
+					goal, chief := g.Name, boss.Name
+					if form == "id" {
+						goal, chief = g.ID, boss.ID
+					}
+					root := NewRoot()
+					var out bytes.Buffer
+					root.SetOut(&out)
+					root.SetErr(&out)
+					root.SetArgs(tc.args(goal, chief))
+					if err := root.Execute(); err != nil {
+						t.Fatalf("%v: %v\n%s", tc.args(goal, chief), err, out.String())
+					}
+					if !strings.Contains(out.String(), tc.want) {
+						t.Fatalf("%v printed %q, want %q", tc.args(goal, chief), out.String(), tc.want)
+					}
+				})
+			}
+		}
+	})
+}
+
+func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
+	isolate(t, func(t *testing.T) {
+		here := t.TempDir()
 		for _, tc := range []struct {
-			name string
-			args func(goal, chief string) []string
-			want string
+			name    string
+			args    []string
+			ssh     bool
+			parent  string
+			started bool
+			// refusal is in the error when ym goal refuses; queued says the goal went to the host, whichever way ym reached it.
+			refusal        string
+			queued         bool
+			down, noChiefs bool
 		}{
-			{"goal list --under", func(_, chief string) []string { return []string{"goal", "list", "--under", chief} }, "ship-the-thing"},
-			{"goal show a goal", func(goal, _ string) []string { return []string{"goal", "show", goal} }, "ship-the-thing"},
-			{"goal show a chief", func(_, chief string) []string { return []string{"goal", "show", chief} }, "ops-lead"},
-			{"goal context", func(goal, _ string) []string { return []string{"goal", "context", goal} }, "ship the thing"},
-			{"goal feed", func(goal, _ string) []string { return []string{"goal", "feed", goal} }, "ship-the-thing"},
+			{name: "a local repository", args: []string{"--repo", here}, started: true},
+			{name: "under a chief by host and name", args: []string{"--repo", here, "--under", "box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
+			{name: "under a chief by host and id", args: []string{"--repo", here, "--under", "box/mgr9"}, ssh: true, parent: "box/mgr9", started: true},
+			{name: "under a chief in upper case", args: []string{"--repo", here, "--under", "BOX/CORE-LEAD"}, ssh: true, parent: "box/mgr9", started: true},
+			{name: "under a chief by @host", args: []string{"--repo", here, "--under", "@box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
+			{name: "a repository another host holds", args: []string{"--repo", "/src/app"}, ssh: true},
+			{name: "under a chief the host does not have", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
+			{name: "under a chief by @host the host does not have", args: []string{"--repo", here, "--under", "@box/nosuch"}, ssh: true, refusal: "core-lead"},
+			{name: "on the host, under a chief it does not have", args: []string{"--host", "box", "--repo", "app", "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
+			{name: "on the host, under its chief", args: []string{"--host", "box", "--repo", "app", "--under", "box/core-lead"}, ssh: true, queued: true},
+			{name: "under a chief of a host that does not answer", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, down: true, parent: "box/nosuch", started: true},
+			{name: "under a chief of a host known only through relays", args: []string{"--repo", here, "--under", "elsewhere/nosuch"}, ssh: true, parent: "elsewhere/nosuch", started: true},
+			{name: "under a chief of a host with none to compare", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, noChiefs: true, parent: "box/nosuch", started: true},
 		} {
-			t.Run(tc.name+" by "+form, func(t *testing.T) {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Setenv("YAMNAYA_NO_SERVE", "1")
 				dir := t.TempDir()
-				t.Setenv("YAMNAYA_STATE_DIR", dir)
+				roster := []core.Manager{{ID: "mgr9", Role: core.RoleChief, Name: "core-lead", Repo: "/src/app"}}
+				if tc.noChiefs {
+					roster = nil
+				}
+				managers, err := json.Marshal(roster)
+				if err != nil {
+					t.Fatal(err)
+				}
+				board := []byte(`{"managers":` + string(managers) + `,` + fakeBoard[1:])
+				log := filepath.Join(dir, "ssh.log")
+				if err := os.WriteFile(filepath.Join(dir, "board.json"), board, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				stub := filepath.Join(dir, "ssh")
+				answer := "cat " + filepath.Join(dir, "board.json")
+				if tc.down {
+					answer = "exit 255"
+				}
+				if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\n"+answer+"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("YAMNAYA_SSH_BIN", stub)
 				st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer st.Close()
-				c := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-				g, m, err := c.NewGoalNamed("ship-the-thing", "ship the thing", dir, "", "")
-				if err != nil {
+				if err := st.RecordHost("box", time.Now()); err != nil {
 					t.Fatal(err)
 				}
-				boss, err := c.NewChief("ops-lead", "", dir, "", []string{m.ID})
-				if err != nil {
-					t.Fatal(err)
+				k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+				with := func(run runFunc) func(*cobra.Command, []string) error {
+					return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
 				}
-				goal, chief := g.Name, boss.Name
-				if form == "id" {
-					goal, chief = g.ID, boss.ID
-				}
-				root := NewRoot()
+				cmd := goalCmd(with, with)
 				var out bytes.Buffer
-				root.SetOut(&out)
-				root.SetErr(&out)
-				root.SetArgs(tc.args(goal, chief))
-				if err := root.Execute(); err != nil {
-					t.Fatalf("%v: %v\n%s", tc.args(goal, chief), err, out.String())
+				cmd.SetOut(&out)
+				cmd.SetErr(&out)
+				cmd.SetArgs(append(tc.args, "ship the thing"))
+				err = cmd.Execute()
+				if tc.refusal != "" {
+					if err == nil || !strings.Contains(err.Error(), tc.refusal) {
+						t.Errorf("ym goal %v = %v, want it refused naming %q", tc.args, err, tc.refusal)
+					}
+					if pending, _ := st.PendingRelays(); len(pending) != 0 {
+						t.Errorf("queued %+v", pending)
+					}
+				} else if err != nil {
+					t.Fatalf("ym goal %v: %v\n%s", tc.args, err, out.String())
 				}
-				if !strings.Contains(out.String(), tc.want) {
-					t.Fatalf("%v printed %q, want %q", tc.args(goal, chief), out.String(), tc.want)
+				if tc.queued {
+					if !strings.Contains(out.String(), "goal for app on box") {
+						t.Errorf("ym goal %v printed %q, want the goal sent to box", tc.args, out.String())
+					}
+					return
+				}
+				if _, err := os.Stat(log); (err == nil) != tc.ssh {
+					t.Fatalf("ssh ran %v, want %v", err == nil, tc.ssh)
+				}
+				o, err := k.LoadOrg()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(o.Managers) == 1 != tc.started {
+					t.Fatalf("managers here %+v, want started here %v", o.Managers, tc.started)
+				}
+				for _, m := range o.Managers {
+					if m.ParentID != tc.parent {
+						t.Fatalf("parent %q, want %q", m.ParentID, tc.parent)
+					}
 				}
 			})
 		}
-	}
-}
-
-func TestAGoalStartReadsOtherHostsOnlyWhenItDependsOnThem(t *testing.T) {
-	here := t.TempDir()
-	for _, tc := range []struct {
-		name    string
-		args    []string
-		ssh     bool
-		parent  string
-		started bool
-		// refusal is in the error when ym goal refuses; queued says the goal went to the host, whichever way ym reached it.
-		refusal        string
-		queued         bool
-		down, noChiefs bool
-	}{
-		{name: "a local repository", args: []string{"--repo", here}, started: true},
-		{name: "under a chief by host and name", args: []string{"--repo", here, "--under", "box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
-		{name: "under a chief by host and id", args: []string{"--repo", here, "--under", "box/mgr9"}, ssh: true, parent: "box/mgr9", started: true},
-		{name: "under a chief in upper case", args: []string{"--repo", here, "--under", "BOX/CORE-LEAD"}, ssh: true, parent: "box/mgr9", started: true},
-		{name: "under a chief by @host", args: []string{"--repo", here, "--under", "@box/core-lead"}, ssh: true, parent: "box/mgr9", started: true},
-		{name: "a repository another host holds", args: []string{"--repo", "/src/app"}, ssh: true},
-		{name: "under a chief the host does not have", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
-		{name: "under a chief by @host the host does not have", args: []string{"--repo", here, "--under", "@box/nosuch"}, ssh: true, refusal: "core-lead"},
-		{name: "on the host, under a chief it does not have", args: []string{"--host", "box", "--repo", "app", "--under", "box/nosuch"}, ssh: true, refusal: "core-lead"},
-		{name: "on the host, under its chief", args: []string{"--host", "box", "--repo", "app", "--under", "box/core-lead"}, ssh: true, queued: true},
-		{name: "under a chief of a host that does not answer", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, down: true, parent: "box/nosuch", started: true},
-		{name: "under a chief of a host known only through relays", args: []string{"--repo", here, "--under", "elsewhere/nosuch"}, ssh: true, parent: "elsewhere/nosuch", started: true},
-		{name: "under a chief of a host with none to compare", args: []string{"--repo", here, "--under", "box/nosuch"}, ssh: true, noChiefs: true, parent: "box/nosuch", started: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("YAMNAYA_NO_SERVE", "1")
-			dir := t.TempDir()
-			roster := []core.Manager{{ID: "mgr9", Role: core.RoleChief, Name: "core-lead", Repo: "/src/app"}}
-			if tc.noChiefs {
-				roster = nil
-			}
-			managers, err := json.Marshal(roster)
-			if err != nil {
-				t.Fatal(err)
-			}
-			board := []byte(`{"managers":` + string(managers) + `,` + fakeBoard[1:])
-			log := filepath.Join(dir, "ssh.log")
-			if err := os.WriteFile(filepath.Join(dir, "board.json"), board, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			stub := filepath.Join(dir, "ssh")
-			answer := "cat " + filepath.Join(dir, "board.json")
-			if tc.down {
-				answer = "exit 255"
-			}
-			if err := os.WriteFile(stub, []byte("#!/bin/sh\necho \"$*\" >> "+log+"\n"+answer+"\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("YAMNAYA_SSH_BIN", stub)
-			st, err := core.OpenStore(filepath.Join(dir, "ym.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer st.Close()
-			if err := st.RecordHost("box", time.Now()); err != nil {
-				t.Fatal(err)
-			}
-			k := &core.Core{Store: st, StateDir: dir, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-			with := func(run runFunc) func(*cobra.Command, []string) error {
-				return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
-			}
-			cmd := goalCmd(with, with)
-			var out bytes.Buffer
-			cmd.SetOut(&out)
-			cmd.SetErr(&out)
-			cmd.SetArgs(append(tc.args, "ship the thing"))
-			err = cmd.Execute()
-			if tc.refusal != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.refusal) {
-					t.Errorf("ym goal %v = %v, want it refused naming %q", tc.args, err, tc.refusal)
-				}
-				if pending, _ := st.PendingRelays(); len(pending) != 0 {
-					t.Errorf("queued %+v", pending)
-				}
-			} else if err != nil {
-				t.Fatalf("ym goal %v: %v\n%s", tc.args, err, out.String())
-			}
-			if tc.queued {
-				if !strings.Contains(out.String(), "goal for app on box") {
-					t.Errorf("ym goal %v printed %q, want the goal sent to box", tc.args, out.String())
-				}
-				return
-			}
-			if _, err := os.Stat(log); (err == nil) != tc.ssh {
-				t.Fatalf("ssh ran %v, want %v", err == nil, tc.ssh)
-			}
-			o, err := k.LoadOrg()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(o.Managers) == 1 != tc.started {
-				t.Fatalf("managers here %+v, want started here %v", o.Managers, tc.started)
-			}
-			for _, m := range o.Managers {
-				if m.ParentID != tc.parent {
-					t.Fatalf("parent %q, want %q", m.ParentID, tc.parent)
-				}
-			}
-		})
-	}
+	})
 }
 
 func TestTheNamerRunsOnALoginWithRoom(t *testing.T) {

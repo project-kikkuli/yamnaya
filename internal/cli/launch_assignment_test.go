@@ -37,219 +37,223 @@ func launchAssignmentManager(t *testing.T, st *core.Store, session string) (core
 }
 
 func TestAssignmentSettlementSurvivesLauncherRestartAndReplay(t *testing.T) {
-	for _, method := range []string{"find", "await", "launch-link", "launched", "start-replay"} {
-		for _, persisted := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/persisted=%v", method, persisted), func(t *testing.T) {
-				db, _ := fakeCodex(t)
+	isolate(t, func(t *testing.T) {
+		for _, method := range []string{"find", "await", "launch-link", "launched", "start-replay"} {
+			for _, persisted := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/persisted=%v", method, persisted), func(t *testing.T) {
+					db, _ := fakeCodex(t)
+					state := t.TempDir()
+					storePath := filepath.Join(state, "ym.db")
+					st, err := core.OpenStore(storePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					g, m := launchAssignmentManager(t, st, "manager")
+					k := &core.Core{Store: st, StateDir: state, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+					a, err := k.AssignWork(m.Session, "launch:planned", "launch:one", "implement work")
+					if err != nil {
+						t.Fatal(err)
+					}
+					l := testLauncher(t, state)
+					l.core = k
+					t.Setenv("YAMNAYA_YM_SOCKET", l.srv.Socket)
+					rec := launch.Record{Key: "worker", Harness: "codex", Parent: m.Session, Assignment: a.ID, ConfigRoot: os.Getenv("CODEX_HOME"), Worktree: launch.Worktree{Path: t.TempDir()}, Started: time.Now()}
+					if err = l.records.Save(rec); err != nil {
+						t.Fatal(err)
+					}
+					if initial, err := l.settle(rec); err != nil || initial.Session != "" {
+						t.Fatalf("identity invented before Codex recorded it: %+v %v", initial, err)
+					}
+					worker := "019a0000-0000-7000-8000-000000000099"
+					if _, err = db.Exec(`INSERT INTO threads (id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), rec.Worktree.Path); err != nil {
+						t.Fatal(err)
+					}
+					if persisted {
+						rec.Session = worker
+						if err = l.records.Save(rec); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := st.Close(); err != nil {
+						t.Fatal(err)
+					}
+					st, err = core.OpenStore(storePath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer st.Close()
+					k = &core.Core{Store: st, StateDir: state, Procs: func() ([]proc.Proc, error) { return nil, nil }}
+					l = launcher{srv: l.srv, conf: l.conf, records: l.records, core: k}
+					settle := func() {
+						t.Helper()
+						switch method {
+						case "find":
+							if _, err := l.find(rec.Key); err != nil {
+								t.Fatal(err)
+							}
+						case "await":
+							stored, _ := l.records.Find(rec.Key)
+							if _, err := l.await(stored); err != nil {
+								t.Fatal(err)
+							}
+						case "launch-link":
+							with := func(run runFunc) func(*cobra.Command, []string) error {
+								return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
+							}
+							cmd := linkLaunchCmd(with)
+							cmd.SetArgs([]string{rec.Key})
+							if err := cmd.Execute(); err != nil {
+								t.Fatal(err)
+							}
+						case "launched":
+							rows := l.Launched()
+							if len(rows) != 1 || rows[0].Session != worker {
+								t.Fatalf("launched did not settle actual identity: %+v", rows)
+							}
+						case "start-replay":
+							started, err := l.Start(core.NewLaunch{Assignment: a.ID, Harness: "invalid", Parent: "wrong-parent"})
+							if err != nil || started.Session != worker || started.Key != rec.Key {
+								t.Fatalf("assignment replay started another launch: %+v %v", started, err)
+							}
+						}
+					}
+					settle()
+					all, err := st.Assignments(g.ID)
+					if err != nil || len(all) != 1 || all[0].Session != worker || all[0].Generation != a.Generation || all[0].State != "outstanding" {
+						t.Fatalf("settlement changed the obligation: %+v %v", all, err)
+					}
+					report, err := k.ReportAssignment(worker, a.ID, "implemented work")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err = k.AcceptAssignment(m.Session, a.ID, report); err != nil {
+						t.Fatal(err)
+					}
+					_, next := launchAssignmentManager(t, st, "next-manager")
+					if _, err = k.AssignWork(next.Session, worker, "launch:next", "new work"); err != nil {
+						t.Fatal(err)
+					}
+					settle()
+					lineage, err := st.Lineage()
+					if err != nil || lineage.Parent[worker] != next.Session {
+						t.Fatalf("old launch reclaimed reassigned worker: %+v %v", lineage, err)
+					}
+				})
+			}
+		}
+	})
+}
+
+func TestOriginAuthorityBindsRealLauncherWithoutNestedStoreWrite(t *testing.T) {
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		for _, await := range []bool{false, true} {
+			t.Run(fmt.Sprintf("await=%v", await), func(t *testing.T) {
+				db, ran := fakeCodex(t)
+				worker := "019a0000-0000-7000-8000-000000000088"
+				if !await {
+					t.Setenv("YM_CODEX_FIXTURE_DELAY_REGISTRATION", "1")
+					if err := os.WriteFile(ran+".thread", []byte(worker), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				state := t.TempDir()
-				storePath := filepath.Join(state, "ym.db")
-				st, err := core.OpenStore(storePath)
+				path := filepath.Join(state, "ym.db")
+				st, err := core.OpenStore(path)
 				if err != nil {
 					t.Fatal(err)
 				}
+				defer func() { st.Close() }()
 				g, m := launchAssignmentManager(t, st, "manager")
 				k := &core.Core{Store: st, StateDir: state, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-				a, err := k.AssignWork(m.Session, "launch:planned", "launch:one", "implement work")
+				a, err := k.AssignWork(m.Session, "planned", "return", "returning work")
 				if err != nil {
 					t.Fatal(err)
 				}
 				l := testLauncher(t, state)
 				l.core = k
-				t.Setenv("YAMNAYA_YM_SOCKET", l.srv.Socket)
-				rec := launch.Record{Key: "worker", Harness: "codex", Parent: m.Session, Assignment: a.ID, ConfigRoot: os.Getenv("CODEX_HOME"), Worktree: launch.Worktree{Path: t.TempDir()}, Started: time.Now()}
-				if err = l.records.Save(rec); err != nil {
+				k.Launches = l
+				n := core.NewLaunch{Harness: "codex", Parent: "b/root", Directory: t.TempDir(), Prompt: "returning work", Slug: "return", Await: await}
+				w := core.RemoteAssignment{Origin: k.SelfName(), Host: k.SelfName(), Goal: g.ID, Worker: "planned", Assignment: a, Parent: "b/root", Launch: &n}
+				if err = k.WorkReceive(core.WorkMessage{Op: "launch-request", Work: w}); err != nil {
 					t.Fatal(err)
 				}
-				if initial, err := l.settle(rec); err != nil || initial.Session != "" {
-					t.Fatalf("identity invented before Codex recorded it: %+v %v", initial, err)
+				if await {
+					recordThread(t, db, ran, worker)
 				}
-				worker := "019a0000-0000-7000-8000-000000000099"
-				if _, err = db.Exec(`INSERT INTO threads (id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), rec.Worktree.Path); err != nil {
+				if err = os.MkdirAll(l.records.Dir, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if persisted {
-					rec.Session = worker
-					if err = l.records.Save(rec); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if err := st.Close(); err != nil {
-					t.Fatal(err)
-				}
-				st, err = core.OpenStore(storePath)
+				lock, err := os.OpenFile(filepath.Join(l.records.Dir, "assignment-start.lock"), os.O_CREATE|os.O_RDWR, 0600)
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer st.Close()
-				k = &core.Core{Store: st, StateDir: state, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-				l = launcher{srv: l.srv, conf: l.conf, records: l.records, core: k}
-				settle := func() {
-					t.Helper()
-					switch method {
-					case "find":
-						if _, err := l.find(rec.Key); err != nil {
-							t.Fatal(err)
-						}
-					case "await":
-						stored, _ := l.records.Find(rec.Key)
-						if _, err := l.await(stored); err != nil {
-							t.Fatal(err)
-						}
-					case "launch-link":
-						with := func(run runFunc) func(*cobra.Command, []string) error {
-							return func(cmd *cobra.Command, args []string) error { return run(&env{core: k}, cmd, args) }
-						}
-						cmd := linkLaunchCmd(with)
-						cmd.SetArgs([]string{rec.Key})
-						if err := cmd.Execute(); err != nil {
-							t.Fatal(err)
-						}
-					case "launched":
-						rows := l.Launched()
-						if len(rows) != 1 || rows[0].Session != worker {
-							t.Fatalf("launched did not settle actual identity: %+v", rows)
-						}
-					case "start-replay":
-						started, err := l.Start(core.NewLaunch{Assignment: a.ID, Harness: "invalid", Parent: "wrong-parent"})
-						if err != nil || started.Session != worker || started.Key != rec.Key {
-							t.Fatalf("assignment replay started another launch: %+v %v", started, err)
-						}
+				defer lock.Close()
+				if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+					t.Fatal(err)
+				}
+				authorized := make(chan error, 1)
+				go func() {
+					authorized <- k.AuthorizeWork(a.ID, func(core.RemoteAssignment) error {
+						t.Error("local origin called remote start")
+						return nil
+					})
+				}()
+				select {
+				case err = <-authorized:
+					syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+				case <-time.After(10 * time.Second):
+					syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+					<-authorized
+					t.Fatal("origin writer waited for an ordinary launch's record lock")
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = st.Close(); err != nil {
+					t.Fatal(err)
+				}
+				st, err = core.OpenStore(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				k.Store = st
+				if !await {
+					cwd := resumed(t, ran)
+					pending, err := st.Assignments(g.ID)
+					if err != nil || len(pending) != 1 || pending[0].Session != "planned" {
+						t.Fatalf("unregistered identity bound early: %+v, %v", pending, err)
+					}
+					if _, err = db.Exec(`INSERT INTO threads (id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), cwd); err != nil {
+						t.Fatal(err)
+					}
+					rows := l.Launched()
+					if len(rows) != 1 || rows[0].Session != worker {
+						t.Fatalf("async return did not settle after restart: %+v", rows)
 					}
 				}
-				settle()
 				all, err := st.Assignments(g.ID)
-				if err != nil || len(all) != 1 || all[0].Session != worker || all[0].Generation != a.Generation || all[0].State != "outstanding" {
-					t.Fatalf("settlement changed the obligation: %+v %v", all, err)
+				if err != nil || len(all) != 1 || all[0].Session != worker || all[0].Generation != a.Generation {
+					t.Fatalf("origin binding lost: %+v %v", all, err)
 				}
-				report, err := k.ReportAssignment(worker, a.ID, "implemented work")
+				if err = k.AuthorizeWork(a.ID, func(core.RemoteAssignment) error { t.Error("replay started worker"); return nil }); err != nil {
+					t.Fatal(err)
+				}
+				report, err := k.ReportAssignment(worker, a.ID, "return complete")
 				if err != nil {
 					t.Fatal(err)
 				}
 				if err = k.AcceptAssignment(m.Session, a.ID, report); err != nil {
 					t.Fatal(err)
 				}
-				_, next := launchAssignmentManager(t, st, "next-manager")
-				if _, err = k.AssignWork(next.Session, worker, "launch:next", "new work"); err != nil {
-					t.Fatal(err)
-				}
-				settle()
-				lineage, err := st.Lineage()
-				if err != nil || lineage.Parent[worker] != next.Session {
-					t.Fatalf("old launch reclaimed reassigned worker: %+v %v", lineage, err)
+				if records, err := l.records.All(); err != nil || len(records) != 1 {
+					t.Fatalf("replay created another launch record: %+v %v", records, err)
 				}
 			})
 		}
-	}
-}
-
-func TestOriginAuthorityBindsRealLauncherWithoutNestedStoreWrite(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	for _, await := range []bool{false, true} {
-		t.Run(fmt.Sprintf("await=%v", await), func(t *testing.T) {
-			db, ran := fakeCodex(t)
-			worker := "019a0000-0000-7000-8000-000000000088"
-			if !await {
-				t.Setenv("YM_CODEX_FIXTURE_DELAY_REGISTRATION", "1")
-				if err := os.WriteFile(ran+".thread", []byte(worker), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			state := t.TempDir()
-			path := filepath.Join(state, "ym.db")
-			st, err := core.OpenStore(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { st.Close() }()
-			g, m := launchAssignmentManager(t, st, "manager")
-			k := &core.Core{Store: st, StateDir: state, Procs: func() ([]proc.Proc, error) { return nil, nil }}
-			a, err := k.AssignWork(m.Session, "planned", "return", "returning work")
-			if err != nil {
-				t.Fatal(err)
-			}
-			l := testLauncher(t, state)
-			l.core = k
-			k.Launches = l
-			n := core.NewLaunch{Harness: "codex", Parent: "b/root", Directory: t.TempDir(), Prompt: "returning work", Slug: "return", Await: await}
-			w := core.RemoteAssignment{Origin: k.SelfName(), Host: k.SelfName(), Goal: g.ID, Worker: "planned", Assignment: a, Parent: "b/root", Launch: &n}
-			if err = k.WorkReceive(core.WorkMessage{Op: "launch-request", Work: w}); err != nil {
-				t.Fatal(err)
-			}
-			if await {
-				recordThread(t, db, ran, worker)
-			}
-			if err = os.MkdirAll(l.records.Dir, 0700); err != nil {
-				t.Fatal(err)
-			}
-			lock, err := os.OpenFile(filepath.Join(l.records.Dir, "assignment-start.lock"), os.O_CREATE|os.O_RDWR, 0600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer lock.Close()
-			if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-				t.Fatal(err)
-			}
-			authorized := make(chan error, 1)
-			go func() {
-				authorized <- k.AuthorizeWork(a.ID, func(core.RemoteAssignment) error {
-					t.Error("local origin called remote start")
-					return nil
-				})
-			}()
-			select {
-			case err = <-authorized:
-				syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-			case <-time.After(10 * time.Second):
-				syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-				<-authorized
-				t.Fatal("origin writer waited for an ordinary launch's record lock")
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = st.Close(); err != nil {
-				t.Fatal(err)
-			}
-			st, err = core.OpenStore(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			k.Store = st
-			if !await {
-				cwd := resumed(t, ran)
-				pending, err := st.Assignments(g.ID)
-				if err != nil || len(pending) != 1 || pending[0].Session != "planned" {
-					t.Fatalf("unregistered identity bound early: %+v, %v", pending, err)
-				}
-				if _, err = db.Exec(`INSERT INTO threads (id,rollout_path,created_at,updated_at,cwd) VALUES (?,'',?,?,?)`, worker, time.Now().Unix(), time.Now().Unix(), cwd); err != nil {
-					t.Fatal(err)
-				}
-				rows := l.Launched()
-				if len(rows) != 1 || rows[0].Session != worker {
-					t.Fatalf("async return did not settle after restart: %+v", rows)
-				}
-			}
-			all, err := st.Assignments(g.ID)
-			if err != nil || len(all) != 1 || all[0].Session != worker || all[0].Generation != a.Generation {
-				t.Fatalf("origin binding lost: %+v %v", all, err)
-			}
-			if err = k.AuthorizeWork(a.ID, func(core.RemoteAssignment) error { t.Error("replay started worker"); return nil }); err != nil {
-				t.Fatal(err)
-			}
-			report, err := k.ReportAssignment(worker, a.ID, "return complete")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = k.AcceptAssignment(m.Session, a.ID, report); err != nil {
-				t.Fatal(err)
-			}
-			if records, err := l.records.All(); err != nil || len(records) != 1 {
-				t.Fatalf("replay created another launch record: %+v %v", records, err)
-			}
-		})
-	}
+	})
 }
 
 func TestNonAwaitAssignmentLaunchPersistsIdentityBindingAndReusesProcess(t *testing.T) {

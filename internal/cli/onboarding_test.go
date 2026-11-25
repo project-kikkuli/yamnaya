@@ -256,73 +256,75 @@ func TestPreparingACodexRecordLeavesClaudeConfigAlone(t *testing.T) {
 }
 
 func TestEveryClaudeStartFindsOnboardingDone(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux not installed")
-	}
-	for _, path := range []string{"new launch", "revive", "unstall restart"} {
-		t.Run(path, func(t *testing.T) {
-			base, _ := filepath.EvalSymlinks(t.TempDir())
-			bins, config := filepath.Join(base, "bin"), filepath.Join(base, "config")
-			for _, d := range []string{bins, config} {
-				if err := os.MkdirAll(d, 0o755); err != nil {
+	isolate(t, func(t *testing.T) {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			t.Skip("tmux not installed")
+		}
+		for _, path := range []string{"new launch", "revive", "unstall restart"} {
+			t.Run(path, func(t *testing.T) {
+				base, _ := filepath.EvalSymlinks(t.TempDir())
+				bins, config := filepath.Join(base, "bin"), filepath.Join(base, "config")
+				for _, d := range []string{bins, config} {
+					if err := os.MkdirAll(d, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				configFile := filepath.Join(config, ".claude.json")
+				snapshot := filepath.Join(base, "seen")
+				reset := func() {
+					t.Helper()
+					os.Remove(snapshot)
+					if err := os.WriteFile(configFile, []byte(`{"theme":null,"userID":"kept"}`), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				script := fmt.Sprintf("#!/bin/sh\ncp %q %q.tmp && mv %q.tmp %q\necho %q\nexec sleep 60\n", configFile, snapshot, snapshot, snapshot, trustPrompt)
+				if err := os.WriteFile(filepath.Join(bins, "claude"), []byte(script), 0o755); err != nil {
 					t.Fatal(err)
 				}
-			}
-			configFile := filepath.Join(config, ".claude.json")
-			snapshot := filepath.Join(base, "seen")
-			reset := func() {
-				t.Helper()
-				os.Remove(snapshot)
-				if err := os.WriteFile(configFile, []byte(`{"theme":null,"userID":"kept"}`), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			script := fmt.Sprintf("#!/bin/sh\ncp %q %q.tmp && mv %q.tmp %q\necho %q\nexec sleep 60\n", configFile, snapshot, snapshot, snapshot, trustPrompt)
-			if err := os.WriteFile(filepath.Join(bins, "claude"), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
-			t.Setenv("CLAUDE_CONFIG_DIR", config)
-			t.Setenv("YAMNAYA_STATE_DIR", base)
-			reset()
+				t.Setenv("PATH", bins+":"+os.Getenv("PATH"))
+				t.Setenv("CLAUDE_CONFIG_DIR", config)
+				t.Setenv("YAMNAYA_STATE_DIR", base)
+				reset()
 
-			l := testLauncher(t, base)
-			st, err := core.OpenStore(filepath.Join(base, "ym.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer st.Close()
-			l.core = &core.Core{Store: st, StateDir: base}
-			started, err := l.Start(core.NewLaunch{Harness: claude.Name, Directory: filepath.Join(base, "work"), Slug: "task", Prompt: "fix it", Session: "11111111-1111-4111-8111-111111111111", Repo: filepath.Join(base, "work")})
-			if err != nil {
-				t.Fatal(err)
-			}
-			rec, _ := l.records.Find(started.Key)
-			name := tmux.SessionName(rec.Key)
-			switch path {
-			case "new launch":
-			case "revive":
-				resumed(t, snapshot)
-				if err := l.srv.Kill(name); err != nil {
+				l := testLauncher(t, base)
+				st, err := core.OpenStore(filepath.Join(base, "ym.db"))
+				if err != nil {
 					t.Fatal(err)
 				}
-				reset()
-				if _, err := l.revive(rec); err != nil {
+				defer st.Close()
+				l.core = &core.Core{Store: st, StateDir: base}
+				started, err := l.Start(core.NewLaunch{Harness: claude.Name, Directory: filepath.Join(base, "work"), Slug: "task", Prompt: "fix it", Session: "11111111-1111-4111-8111-111111111111", Repo: filepath.Join(base, "work")})
+				if err != nil {
 					t.Fatal(err)
 				}
-			case "unstall restart":
-				waitScreen(t, l.srv, name, trustPrompt)
-				reset()
-				if err := l.unstall(time.Now()); err != nil {
-					t.Fatal(err)
+				rec, _ := l.records.Find(started.Key)
+				name := tmux.SessionName(rec.Key)
+				switch path {
+				case "new launch":
+				case "revive":
+					resumed(t, snapshot)
+					if err := l.srv.Kill(name); err != nil {
+						t.Fatal(err)
+					}
+					reset()
+					if _, err := l.revive(rec); err != nil {
+						t.Fatal(err)
+					}
+				case "unstall restart":
+					waitScreen(t, l.srv, name, trustPrompt)
+					reset()
+					if err := l.unstall(time.Now()); err != nil {
+						t.Fatal(err)
+					}
 				}
-			}
-			seen := resumed(t, snapshot)
-			if !strings.Contains(seen, `"hasCompletedOnboarding": true`) || !strings.Contains(seen, `"userID": "kept"`) {
-				t.Fatalf("claude started on %s", seen)
-			}
-		})
-	}
+				seen := resumed(t, snapshot)
+				if !strings.Contains(seen, `"hasCompletedOnboarding": true`) || !strings.Contains(seen, `"userID": "kept"`) {
+					t.Fatalf("claude started on %s", seen)
+				}
+			})
+		}
+	})
 }
 
 func TestATypedMessageWaitsOutOnboarding(t *testing.T) {

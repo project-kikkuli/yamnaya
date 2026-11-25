@@ -461,6 +461,8 @@ func TestAQuotaResetReadsAsItsNextOccurrenceInTheRightZone(t *testing.T) {
 		{"later today", "3pm", utc(2026, 11, 4, 4, 31), utc(2026, 11, 4, 15, 0)},
 		{"already passed today means tomorrow", "3am", utc(2026, 11, 4, 4, 31), utc(2026, 11, 5, 3, 0)},
 		{"read just after it passed has passed", "3am", utc(2026, 11, 4, 3, 1), utc(2026, 11, 4, 3, 0)},
+		{"read just after it passed, past midnight, has passed", "11:59pm", utc(2026, 11, 5, 0, 29), utc(2026, 11, 4, 23, 59)},
+		{"a clock past midnight read before it is the coming one", "12:10am", utc(2026, 11, 4, 23, 50), utc(2026, 11, 5, 0, 10)},
 		{"with minutes", "3:30am", utc(2026, 11, 4, 3, 0), utc(2026, 11, 4, 3, 30)},
 		{"noon", "12pm", utc(2026, 11, 4, 4, 0), utc(2026, 11, 4, 12, 0)},
 		{"midnight", "12am", utc(2026, 11, 4, 4, 0), utc(2026, 11, 5, 0, 0)},

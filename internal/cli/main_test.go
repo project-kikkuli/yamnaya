@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/project-kikkuli/yamnaya/internal/agenttest"
@@ -35,11 +37,19 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	if os.Getenv(testChild) != "" {
+	isolated = os.Getenv(isolatedEnv)
+	os.Unsetenv(isolatedEnv)
+	if os.Getenv(testChild) != "" && isolated == "" {
 		os.Exit(0)
 	}
 	os.Setenv(testChild, "1")
 	detach = func(...string) error { return nil }
+	flag.Parse()
+	parallel := false
+	flag.Visit(func(f *flag.Flag) { parallel = parallel || f.Name == "test.parallel" })
+	if !parallel {
+		flag.Set("test.parallel", strconv.Itoa(isolatedAtOnce))
+	}
 	code := func() int {
 		dir, err := os.MkdirTemp("", "ym-cli-capacity-")
 		if err != nil {

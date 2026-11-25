@@ -279,56 +279,58 @@ func TestAScopedYMReclaimsOnlyInsideItsRehearsalRoot(t *testing.T) {
 }
 
 func TestALiveSessionKeepsItsWorktreeWhereverItsCwdMoved(t *testing.T) {
-	for _, c := range []struct {
-		name   string
-		pane   bool
-		landed bool
-		want   string
-	}{
-		{"a live pane with its cwd elsewhere", true, false, launch.KeepInUse},
-		{"no pane yet, as right after a restart", false, false, launch.KeepRecord},
-		{"landed record with a pane of the same name", true, true, ""},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			base, _ := filepath.EvalSymlinks(t.TempDir())
-			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
-			repo := filepath.Join(base, "repo")
-			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-			git(t, repo, "push", "-q", "origin", "main")
-			git(t, repo, "fetch", "-q", "origin")
-			wt := launch.WorktreePath(repo, "feature")
-			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
-			old := time.Now().Add(-launch.Idle - time.Hour)
-			admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
-			for _, p := range []string{wt, filepath.Join(admin, "HEAD"), filepath.Join(admin, "logs", "HEAD")} {
-				os.Chtimes(p, old, old)
-			}
-			os.Remove(filepath.Join(admin, "logs", "HEAD"))
-			state := t.TempDir()
-			srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
-			l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(state, "launches")}, removals: filepath.Join(state, "gc.log")}
-			rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Started: old,
-				Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
-			if c.landed {
-				rec.Landed = time.Now()
-			}
-			if err := l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-			if c.pane {
-				conf := filepath.Join(state, "tmux.conf")
-				os.WriteFile(conf, []byte(tmux.Conf()), 0o644)
-				if _, err := srv.Start(conf, tmux.SessionName(rec.Key), base, []string{"sleep", "600"}); err != nil {
+	isolate(t, func(t *testing.T) {
+		for _, c := range []struct {
+			name   string
+			pane   bool
+			landed bool
+			want   string
+		}{
+			{"a live pane with its cwd elsewhere", true, false, launch.KeepInUse},
+			{"no pane yet, as right after a restart", false, false, launch.KeepRecord},
+			{"landed record with a pane of the same name", true, true, ""},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				base, _ := filepath.EvalSymlinks(t.TempDir())
+				git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+				git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+				repo := filepath.Join(base, "repo")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+				git(t, repo, "push", "-q", "origin", "main")
+				git(t, repo, "fetch", "-q", "origin")
+				wt := launch.WorktreePath(repo, "feature")
+				git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+				old := time.Now().Add(-launch.Idle - time.Hour)
+				admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+				for _, p := range []string{wt, filepath.Join(admin, "HEAD"), filepath.Join(admin, "logs", "HEAD")} {
+					os.Chtimes(p, old, old)
+				}
+				os.Remove(filepath.Join(admin, "logs", "HEAD"))
+				state := t.TempDir()
+				srv := &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+				l := launcher{srv: srv, records: launch.Records{Dir: filepath.Join(state, "launches")}, removals: filepath.Join(state, "gc.log")}
+				rec := launch.Record{Key: "repo-wt-feature", Harness: "claude", Session: "s1", Started: old,
+					Worktree: launch.Worktree{Path: wt, Branch: "feature", GitDir: filepath.Join(repo, ".git")}}
+				if c.landed {
+					rec.Landed = time.Now()
+				}
+				if err := l.records.Save(rec); err != nil {
 					t.Fatal(err)
 				}
-			}
-			all, _ := l.gcWith([]string{repo}, true, false, launch.Policy{Idle: time.Hour})
-			if len(all) != 1 || len(all[0].Trees) != 1 || all[0].Trees[0].Keep != c.want {
-				t.Fatalf("decided %+v, want keep %q", all, c.want)
-			}
-		})
-	}
+				if c.pane {
+					conf := filepath.Join(state, "tmux.conf")
+					os.WriteFile(conf, []byte(tmux.Conf()), 0o644)
+					if _, err := srv.Start(conf, tmux.SessionName(rec.Key), base, []string{"sleep", "600"}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				all, _ := l.gcWith([]string{repo}, true, false, launch.Policy{Idle: time.Hour})
+				if len(all) != 1 || len(all[0].Trees) != 1 || all[0].Trees[0].Keep != c.want {
+					t.Fatalf("decided %+v, want keep %q", all, c.want)
+				}
+			})
+		}
+	})
 }
 
 func TestAReapLeavesAWorktreeOnAFilesystemWithEnoughFree(t *testing.T) {
@@ -642,120 +644,124 @@ func TestAWatcherThatCannotStartTellsTheOwnerOnce(t *testing.T) {
 }
 
 func TestGCForceRemovesProvenSubmodulesAndSaysSo(t *testing.T) {
-	base, _ := filepath.EvalSymlinks(t.TempDir())
-	git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
-	git(t, base, "init", "-q", "--bare", "-b", "main", "dep.git")
-	git(t, base, "clone", "-q", filepath.Join(base, "dep.git"), "dep")
-	git(t, filepath.Join(base, "dep"), "commit", "-q", "--allow-empty", "-m", "first")
-	git(t, filepath.Join(base, "dep"), "push", "-q", "origin", "HEAD:main")
-	git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
-	repo := filepath.Join(base, "repo")
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-	git(t, repo, "push", "-q", "origin", "main")
-	wt := launch.WorktreePath(repo, "feature")
-	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
-	git(t, wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.Join(base, "dep.git"), "dep")
-	git(t, wt, "commit", "-q", "-m", "add dep")
-	git(t, wt, "push", "-q", "origin", "HEAD")
-	old := time.Now().Add(-launch.Idle - time.Hour)
-	admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
-	os.Remove(filepath.Join(admin, "logs", "HEAD"))
-	for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
-		os.Chtimes(p, old, old)
-	}
-	state := t.TempDir()
-	l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")},
-		removals: filepath.Join(state, "gc.log"), everywhere: true}
-	all, pruned := l.gc([]string{repo}, true, false)
-	var out strings.Builder
-	printSwept(&out, all, pruned, true)
-	if !strings.Contains(out.String(), "submodules proven") {
-		t.Fatalf("dry run said %q", out.String())
-	}
-	if _, err := os.Stat(wt); err != nil {
-		t.Fatal("a dry run removed it")
-	}
-	l.gc([]string{repo}, false, false)
-	if _, err := os.Stat(wt); err == nil {
-		t.Fatal("kept a worktree whose submodules lose nothing")
-	}
-	logged, _ := os.ReadFile(l.removals)
-	if !strings.Contains(string(logged), "force-removed worktree") {
-		t.Fatalf("gc.log %q", logged)
-	}
-}
-
-func TestAYmOffTheOwnersStateTouchesOnlyWorktreesInsideItsRehearsalRoot(t *testing.T) {
-	outside, err := os.MkdirTemp("/tmp", "ym-gc-scope")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(outside)
-	outside, _ = filepath.EvalSymlinks(outside)
-	worktree := func(t *testing.T, base string) (repo, wt string) {
-		t.Helper()
-		os.MkdirAll(base, 0o755)
+	isolate(t, func(t *testing.T) {
+		base, _ := filepath.EvalSymlinks(t.TempDir())
 		git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+		git(t, base, "init", "-q", "--bare", "-b", "main", "dep.git")
+		git(t, base, "clone", "-q", filepath.Join(base, "dep.git"), "dep")
+		git(t, filepath.Join(base, "dep"), "commit", "-q", "--allow-empty", "-m", "first")
+		git(t, filepath.Join(base, "dep"), "push", "-q", "origin", "HEAD:main")
 		git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
-		repo = filepath.Join(base, "repo")
+		repo := filepath.Join(base, "repo")
 		git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
 		git(t, repo, "push", "-q", "origin", "main")
-		git(t, repo, "fetch", "-q", "origin")
-		wt = launch.WorktreePath(repo, "feature")
+		wt := launch.WorktreePath(repo, "feature")
 		git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+		git(t, wt, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.Join(base, "dep.git"), "dep")
+		git(t, wt, "commit", "-q", "-m", "add dep")
+		git(t, wt, "push", "-q", "origin", "HEAD")
 		old := time.Now().Add(-launch.Idle - time.Hour)
 		admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
 		os.Remove(filepath.Join(admin, "logs", "HEAD"))
 		for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
 			os.Chtimes(p, old, old)
 		}
-		return repo, wt
-	}
-	for _, c := range []struct {
-		name  string
-		setup func(t *testing.T, root string) (state, repo, wt, recPath, recGit string)
-		gone  bool
-	}{
-		{"a record inside the root", func(t *testing.T, root string) (string, string, string, string, string) {
-			repo, wt := worktree(t, filepath.Join(root, "r"))
-			return filepath.Join(root, "state"), repo, wt, wt, filepath.Join(repo, ".git")
-		}, true},
-		{"a record outside the root", func(t *testing.T, root string) (string, string, string, string, string) {
-			repo, wt := worktree(t, filepath.Join(outside, "decoy1"))
-			return filepath.Join(root, "state"), repo, wt, wt, filepath.Join(repo, ".git")
-		}, false},
-		{"a symlink in the root pointing out of it", func(t *testing.T, root string) (string, string, string, string, string) {
-			repo, wt := worktree(t, filepath.Join(outside, "decoy2"))
-			os.Symlink(repo, filepath.Join(root, "repo-link"))
-			os.Symlink(wt, filepath.Join(root, "wt-link"))
-			return filepath.Join(root, "state"), repo, wt, filepath.Join(root, "wt-link"), filepath.Join(root, "repo-link", ".git")
-		}, false},
-		{"no rehearsal root at all", func(t *testing.T, root string) (string, string, string, string, string) {
-			repo, wt := worktree(t, filepath.Join(outside, "decoy3"))
-			return filepath.Join(outside, "state3"), repo, wt, wt, filepath.Join(repo, ".git")
-		}, false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			root, _ := filepath.EvalSymlinks(t.TempDir())
-			os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
-			state, repo, wt, recPath, recGit := c.setup(t, root)
-			os.MkdirAll(state, 0o755)
-			l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")},
-				removals: filepath.Join(state, "gc.log")}
-			if err := l.records.Save(launch.Record{Key: "k", Harness: "claude", Session: "s", Started: time.Now(), Landed: time.Now(),
-				Worktree: launch.Worktree{Path: recPath, Branch: "feature", GitDir: recGit}}); err != nil {
-				t.Fatal(err)
+		state := t.TempDir()
+		l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")},
+			removals: filepath.Join(state, "gc.log"), everywhere: true}
+		all, pruned := l.gc([]string{repo}, true, false)
+		var out strings.Builder
+		printSwept(&out, all, pruned, true)
+		if !strings.Contains(out.String(), "submodules proven") {
+			t.Fatalf("dry run said %q", out.String())
+		}
+		if _, err := os.Stat(wt); err != nil {
+			t.Fatal("a dry run removed it")
+		}
+		l.gc([]string{repo}, false, false)
+		if _, err := os.Stat(wt); err == nil {
+			t.Fatal("kept a worktree whose submodules lose nothing")
+		}
+		logged, _ := os.ReadFile(l.removals)
+		if !strings.Contains(string(logged), "force-removed worktree") {
+			t.Fatalf("gc.log %q", logged)
+		}
+	})
+}
+
+func TestAYmOffTheOwnersStateTouchesOnlyWorktreesInsideItsRehearsalRoot(t *testing.T) {
+	isolate(t, func(t *testing.T) {
+		outside, err := os.MkdirTemp("/tmp", "ym-gc-scope")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(outside)
+		outside, _ = filepath.EvalSymlinks(outside)
+		worktree := func(t *testing.T, base string) (repo, wt string) {
+			t.Helper()
+			os.MkdirAll(base, 0o755)
+			git(t, base, "init", "-q", "--bare", "-b", "main", "origin.git")
+			git(t, base, "clone", "-q", filepath.Join(base, "origin.git"), "repo")
+			repo = filepath.Join(base, "repo")
+			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+			git(t, repo, "push", "-q", "origin", "main")
+			git(t, repo, "fetch", "-q", "origin")
+			wt = launch.WorktreePath(repo, "feature")
+			git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+			old := time.Now().Add(-launch.Idle - time.Hour)
+			admin := filepath.Join(repo, ".git", "worktrees", filepath.Base(wt))
+			os.Remove(filepath.Join(admin, "logs", "HEAD"))
+			for _, p := range []string{wt, filepath.Join(admin, "HEAD")} {
+				os.Chtimes(p, old, old)
 			}
-			l.gcWith(nil, false, false, launch.Policy{Idle: time.Hour})
-			if _, err := os.Stat(wt); (err != nil) != c.gone {
-				t.Fatalf("worktree gone %v, want %v", err != nil, c.gone)
-			}
-			hasBranch := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil
-			if hasBranch == c.gone {
-				t.Fatalf("branch kept %v, want gone %v", hasBranch, c.gone)
-			}
-		})
-	}
+			return repo, wt
+		}
+		for _, c := range []struct {
+			name  string
+			setup func(t *testing.T, root string) (state, repo, wt, recPath, recGit string)
+			gone  bool
+		}{
+			{"a record inside the root", func(t *testing.T, root string) (string, string, string, string, string) {
+				repo, wt := worktree(t, filepath.Join(root, "r"))
+				return filepath.Join(root, "state"), repo, wt, wt, filepath.Join(repo, ".git")
+			}, true},
+			{"a record outside the root", func(t *testing.T, root string) (string, string, string, string, string) {
+				repo, wt := worktree(t, filepath.Join(outside, "decoy1"))
+				return filepath.Join(root, "state"), repo, wt, wt, filepath.Join(repo, ".git")
+			}, false},
+			{"a symlink in the root pointing out of it", func(t *testing.T, root string) (string, string, string, string, string) {
+				repo, wt := worktree(t, filepath.Join(outside, "decoy2"))
+				os.Symlink(repo, filepath.Join(root, "repo-link"))
+				os.Symlink(wt, filepath.Join(root, "wt-link"))
+				return filepath.Join(root, "state"), repo, wt, filepath.Join(root, "wt-link"), filepath.Join(root, "repo-link", ".git")
+			}, false},
+			{"no rehearsal root at all", func(t *testing.T, root string) (string, string, string, string, string) {
+				repo, wt := worktree(t, filepath.Join(outside, "decoy3"))
+				return filepath.Join(outside, "state3"), repo, wt, wt, filepath.Join(repo, ".git")
+			}, false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				root, _ := filepath.EvalSymlinks(t.TempDir())
+				os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
+				state, repo, wt, recPath, recGit := c.setup(t, root)
+				os.MkdirAll(state, 0o755)
+				l := launcher{srv: &tmux.Host{Socket: "ymtest-unused", Kind: tmux.Server}, records: launch.Records{Dir: filepath.Join(state, "launches")},
+					removals: filepath.Join(state, "gc.log")}
+				if err := l.records.Save(launch.Record{Key: "k", Harness: "claude", Session: "s", Started: time.Now(), Landed: time.Now(),
+					Worktree: launch.Worktree{Path: recPath, Branch: "feature", GitDir: recGit}}); err != nil {
+					t.Fatal(err)
+				}
+				l.gcWith(nil, false, false, launch.Policy{Idle: time.Hour})
+				if _, err := os.Stat(wt); (err != nil) != c.gone {
+					t.Fatalf("worktree gone %v, want %v", err != nil, c.gone)
+				}
+				hasBranch := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/feature").Run() == nil
+				if hasBranch == c.gone {
+					t.Fatalf("branch kept %v, want gone %v", hasBranch, c.gone)
+				}
+			})
+		}
+	})
 }
 
 func TestTheWatcherOffItemIsReadyForTheOwner(t *testing.T) {
@@ -812,102 +818,104 @@ func TestNoBackgroundGCStartsSoonAfterThisYmStarts(t *testing.T) {
 }
 
 func TestAYmOffTheOwnersStateLeavesARecordOutsideItsRootCompletelyAlone(t *testing.T) {
-	outside, err := os.MkdirTemp("/tmp", "ym-record-scope")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(outside)
-	outside, _ = filepath.EvalSymlinks(outside)
-	for _, c := range []struct {
-		name   string
-		root   bool
-		inside bool
-		locked bool
-		acted  bool
-	}{
-		{"outside the root, dirty", true, false, false, false},
-		{"outside the root, dirty and locked", true, false, true, false},
-		{"no root at all, dirty", false, false, false, false},
-		{"no root at all, dirty and locked", false, false, true, false},
-		{"inside the root, handled as ever", true, true, false, true},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			base, err := os.MkdirTemp(outside, "case")
-			if err != nil {
-				t.Fatal(err)
-			}
-			root := filepath.Join(base, "drill")
-			os.MkdirAll(root, 0o755)
-			state := filepath.Join(base, "private")
-			if c.root {
-				os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
-				state = filepath.Join(root, "state")
-			}
-			os.MkdirAll(state, 0o755)
-			where := filepath.Join(base, "real")
-			if c.inside {
-				where = filepath.Join(root, "real")
-			}
-			os.MkdirAll(where, 0o755)
-			git(t, where, "init", "-q", "-b", "main", "repo")
-			repo := filepath.Join(where, "repo")
-			git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
-			wt := launch.WorktreePath(repo, "task")
-			git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
-			work := filepath.Join(wt, "unsaved.txt")
-			os.WriteFile(work, []byte("work"), 0o644)
-			if c.locked {
-				git(t, repo, "worktree", "lock", wt)
-			}
-			l, err := newLauncher(state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			l.srv = &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
-			l.stamp = ""
-			rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-72 * time.Hour),
-				Killed: time.Now().Add(-48 * time.Hour), Repo: "repo", Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
-			if err := l.records.Save(rec); err != nil {
-				t.Fatal(err)
-			}
-			file := filepath.Join(state, "launches", rec.Key+".json")
-			before, _ := os.ReadFile(file)
-			conf := filepath.Join(state, "tmux.conf")
-			os.WriteFile(conf, []byte(tmux.ServerConf), 0o644)
-			name := tmux.SessionName(rec.Key)
-			if !c.acted {
-				if _, err := l.srv.Start(conf, name, base, []string{"sleep", "600"}); err != nil {
+	isolate(t, func(t *testing.T) {
+		outside, err := os.MkdirTemp("/tmp", "ym-record-scope")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(outside)
+		outside, _ = filepath.EvalSymlinks(outside)
+		for _, c := range []struct {
+			name   string
+			root   bool
+			inside bool
+			locked bool
+			acted  bool
+		}{
+			{"outside the root, dirty", true, false, false, false},
+			{"outside the root, dirty and locked", true, false, true, false},
+			{"no root at all, dirty", false, false, false, false},
+			{"no root at all, dirty and locked", false, false, true, false},
+			{"inside the root, handled as ever", true, true, false, true},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				base, err := os.MkdirTemp(outside, "case")
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			seen := map[string]string{rec.Key: "gone"}
-			if err := l.Sweep(seen); err != nil && !c.acted {
-				t.Fatal(err)
-			}
-			if !c.acted {
-				if _, err := l.End(rec.Key, ""); err == nil {
-					t.Fatal("ended a session outside this ym's scope")
+				root := filepath.Join(base, "drill")
+				os.MkdirAll(root, 0o755)
+				state := filepath.Join(base, "private")
+				if c.root {
+					os.WriteFile(filepath.Join(root, core.RehearsalMark), nil, 0o644)
+					state = filepath.Join(root, "state")
 				}
-				if _, err := os.ReadFile(work); err != nil {
-					t.Fatal("the worktree lost its work")
+				os.MkdirAll(state, 0o755)
+				where := filepath.Join(base, "real")
+				if c.inside {
+					where = filepath.Join(root, "real")
 				}
-				after, _ := os.ReadFile(file)
-				if string(after) != string(before) {
-					t.Fatalf("the record changed:\n%s", after)
+				os.MkdirAll(where, 0o755)
+				git(t, where, "init", "-q", "-b", "main", "repo")
+				repo := filepath.Join(where, "repo")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "root")
+				wt := launch.WorktreePath(repo, "task")
+				git(t, repo, "worktree", "add", "-q", "-b", "task", wt)
+				work := filepath.Join(wt, "unsaved.txt")
+				os.WriteFile(work, []byte("work"), 0o644)
+				if c.locked {
+					git(t, repo, "worktree", "lock", wt)
 				}
-				if _, err := os.Stat(filepath.Join(state, "recovery")); err == nil {
-					t.Fatal("bundled work it does not own")
+				l, err := newLauncher(state)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if p, err := l.srv.Pane(name); err != nil || p.Dead {
-					t.Fatalf("the pane went: %+v, %v", p, err)
+				l.srv = &tmux.Host{Socket: tmuxtest.Socket(t), Kind: tmux.Server}
+				l.stamp = ""
+				rec := launch.Record{Key: "repo-wt-task", Harness: "claude", Session: "s1", Prompt: "fix it", Started: time.Now().Add(-72 * time.Hour),
+					Killed: time.Now().Add(-48 * time.Hour), Repo: "repo", Worktree: launch.Worktree{Path: wt, Branch: "task", GitDir: filepath.Join(repo, ".git")}}
+				if err := l.records.Save(rec); err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if got, ok := l.records.Find(rec.Key); !ok || !got.IsLanded() || got.Recovery.Files != 1 {
-				t.Fatalf("record inside the root: %+v, found %v", got, ok)
-			}
-		})
-	}
+				file := filepath.Join(state, "launches", rec.Key+".json")
+				before, _ := os.ReadFile(file)
+				conf := filepath.Join(state, "tmux.conf")
+				os.WriteFile(conf, []byte(tmux.ServerConf), 0o644)
+				name := tmux.SessionName(rec.Key)
+				if !c.acted {
+					if _, err := l.srv.Start(conf, name, base, []string{"sleep", "600"}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				seen := map[string]string{rec.Key: "gone"}
+				if err := l.Sweep(seen); err != nil && !c.acted {
+					t.Fatal(err)
+				}
+				if !c.acted {
+					if _, err := l.End(rec.Key, ""); err == nil {
+						t.Fatal("ended a session outside this ym's scope")
+					}
+					if _, err := os.ReadFile(work); err != nil {
+						t.Fatal("the worktree lost its work")
+					}
+					after, _ := os.ReadFile(file)
+					if string(after) != string(before) {
+						t.Fatalf("the record changed:\n%s", after)
+					}
+					if _, err := os.Stat(filepath.Join(state, "recovery")); err == nil {
+						t.Fatal("bundled work it does not own")
+					}
+					if p, err := l.srv.Pane(name); err != nil || p.Dead {
+						t.Fatalf("the pane went: %+v, %v", p, err)
+					}
+					return
+				}
+				if got, ok := l.records.Find(rec.Key); !ok || !got.IsLanded() || got.Recovery.Files != 1 {
+					t.Fatalf("record inside the root: %+v, found %v", got, ok)
+				}
+			})
+		}
+	})
 }
 
 func TestYmDiskSaysWhetherAServeIsActuallyWatching(t *testing.T) {

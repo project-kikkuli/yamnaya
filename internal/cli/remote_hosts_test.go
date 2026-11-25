@@ -40,60 +40,66 @@ esac
 }
 
 func TestRemoteHostsReadEveryHostAtOnceAndNameTheOnesThatFail(t *testing.T) {
-	r := newRemoteHosts([]string{"box", "dead", "slow"}, 5*time.Second, nil)
-	r.ssh, r.timeout = fakeSSH(t), 2*time.Second
-	start := time.Now()
-	boards := r.Boards()
-	if took := time.Since(start); took > 4*time.Second {
-		t.Errorf("Boards took %s; hosts should be read at once and bounded by the timeout", took)
-	}
-	states := map[string]string{}
-	for _, b := range boards {
-		states[b.Host] = b.State()
-	}
-	for host, want := range map[string]string{"box": "1 sessions", "dead": "Could not resolve hostname dead", "slow": "no answer in 2s"} {
-		if !strings.Contains(states[host], want) {
-			t.Errorf("%s: state %q, want it to say %q", host, states[host], want)
+	isolate(t, func(t *testing.T) {
+		r := newRemoteHosts([]string{"box", "dead", "slow"}, 5*time.Second, nil)
+		r.ssh, r.timeout = fakeSSH(t), 2*time.Second
+		start := time.Now()
+		boards := r.Boards()
+		if took := time.Since(start); took > 4*time.Second {
+			t.Errorf("Boards took %s; hosts should be read at once and bounded by the timeout", took)
 		}
-	}
-	box := boards[0]
-	s := box.Sessions[0]
-	if s.Remote != "box" || s.Location() != "box ym %2" || s.RepoKey != "box//src/app/.git" {
-		t.Errorf("session = %+v", s)
-	}
-	if box.Items[0].Key() != "box/#4" || box.Launched[0].Key != "box/fix-one-typo" || box.Launched[0].Session != "aaaa-1111" {
-		t.Errorf("item %q, launch %+v", box.Items[0].Key(), box.Launched[0])
-	}
+		states := map[string]string{}
+		for _, b := range boards {
+			states[b.Host] = b.State()
+		}
+		for host, want := range map[string]string{"box": "1 sessions", "dead": "Could not resolve hostname dead", "slow": "no answer in 2s"} {
+			if !strings.Contains(states[host], want) {
+				t.Errorf("%s: state %q, want it to say %q", host, states[host], want)
+			}
+		}
+		box := boards[0]
+		s := box.Sessions[0]
+		if s.Remote != "box" || s.Location() != "box ym %2" || s.RepoKey != "box//src/app/.git" {
+			t.Errorf("session = %+v", s)
+		}
+		if box.Items[0].Key() != "box/#4" || box.Launched[0].Key != "box/fix-one-typo" || box.Launched[0].Session != "aaaa-1111" {
+			t.Errorf("item %q, launch %+v", box.Items[0].Key(), box.Launched[0])
+		}
+	})
 }
 
 func TestRemoteHostsNeverHoldTheBoardWhenItWaitsForNoOne(t *testing.T) {
-	r := newRemoteHosts([]string{"box", "slow"}, 0, nil)
-	r.ssh, r.timeout = fakeSSH(t), 2*time.Second
-	start := time.Now()
-	for _, b := range r.Boards() {
-		if b.State() != "checking" {
-			t.Errorf("%s: first read %q, want checking", b.Host, b.State())
+	isolate(t, func(t *testing.T) {
+		r := newRemoteHosts([]string{"box", "slow"}, 0, nil)
+		r.ssh, r.timeout = fakeSSH(t), 2*time.Second
+		start := time.Now()
+		for _, b := range r.Boards() {
+			if b.State() != "checking" {
+				t.Errorf("%s: first read %q, want checking", b.Host, b.State())
+			}
 		}
-	}
-	if took := time.Since(start); took > 500*time.Millisecond {
-		t.Errorf("Boards waited %s", took)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if b := r.Boards(); b[0].State() == "1 sessions" && strings.HasPrefix(b[1].State(), "unreachable") {
-			return
+		if took := time.Since(start); took > 500*time.Millisecond {
+			t.Errorf("Boards waited %s", took)
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Errorf("later reads = %+v", r.Boards())
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			if b := r.Boards(); b[0].State() == "1 sessions" && strings.HasPrefix(b[1].State(), "unreachable") {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Errorf("later reads = %+v", r.Boards())
+	})
 }
 
 func TestOneShotReadsCallAHostStillSilentAtTheirDeadlineUnreachable(t *testing.T) {
-	r := newRemoteHosts([]string{"slow"}, time.Second, nil)
-	r.ssh, r.timeout = fakeSSH(t), 5*time.Second
-	if got := r.Boards()[0].State(); got != "unreachable: no answer in 1s" {
-		t.Errorf("state = %q", got)
-	}
+	isolate(t, func(t *testing.T) {
+		r := newRemoteHosts([]string{"slow"}, time.Second, nil)
+		r.ssh, r.timeout = fakeSSH(t), 5*time.Second
+		if got := r.Boards()[0].State(); got != "unreachable: no answer in 1s" {
+			t.Errorf("state = %q", got)
+		}
+	})
 }
 
 func TestABoardCarriesLatelyClosedItemsWithTheirHistoryToAnotherHost(t *testing.T) {
@@ -178,44 +184,46 @@ func TestAHostReadsAsHowOldItsBoardIsAndHowLongItHasGoneWithoutAnswering(t *test
 }
 
 func TestAHostWhoseReadRunsLongReadsAsSlowUntilItAnswersOrTimesOut(t *testing.T) {
-	dir := t.TempDir()
-	board, hang := filepath.Join(dir, "board.json"), filepath.Join(dir, "hang")
-	script := filepath.Join(dir, "ssh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile [ -e "+hang+" ]; do sleep 0.05; done\nexec cat "+board+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	at := time.Now().Add(-time.Minute)
-	if err := os.WriteFile(board, []byte(`{"at":"`+at.UTC().Format(time.RFC3339)+`",`+fakeBoard[1:]), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := newRemoteHosts([]string{"box"}, 5*time.Second, nil)
-	r.ssh, r.every, r.slow, r.timeout = script, 0, 200*time.Millisecond, 3*time.Second
-	state := func() string { return r.Boards()[0].State() }
-	if got := state(); got != "1 sessions" {
-		t.Fatalf("first read %q", got)
-	}
-	os.WriteFile(hang, nil, 0o644)
-	for _, step := range []struct {
-		after time.Duration
-		want  string
-	}{
-		{0, "1 sessions"},
-		{400 * time.Millisecond, "slow (last answer 1m"},
-		{2 * time.Second, "slow (last answer 1m"},
-	} {
-		time.Sleep(step.after)
-		if got := state(); !strings.HasPrefix(got, step.want) {
-			t.Errorf("%s into the read: state %q, want it to start %q", step.after, got, step.want)
+	isolate(t, func(t *testing.T) {
+		dir := t.TempDir()
+		board, hang := filepath.Join(dir, "board.json"), filepath.Join(dir, "hang")
+		script := filepath.Join(dir, "ssh")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nwhile [ -e "+hang+" ]; do sleep 0.05; done\nexec cat "+board+"\n"), 0o755); err != nil {
+			t.Fatal(err)
 		}
-	}
-	for deadline := time.Now().Add(5 * time.Second); !strings.HasPrefix(state(), "no answer for "); time.Sleep(50 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatalf("state %q once the read timed out, want no answer", state())
+		at := time.Now().Add(-time.Minute)
+		if err := os.WriteFile(board, []byte(`{"at":"`+at.UTC().Format(time.RFC3339)+`",`+fakeBoard[1:]), 0o644); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if err := r.Silent("box"); !errors.Is(err, core.ErrUnreachable) {
-		t.Errorf("after the read timed out Silent = %v, want unreachable", err)
-	}
+		r := newRemoteHosts([]string{"box"}, 5*time.Second, nil)
+		r.ssh, r.every, r.slow, r.timeout = script, 0, 200*time.Millisecond, 3*time.Second
+		state := func() string { return r.Boards()[0].State() }
+		if got := state(); got != "1 sessions" {
+			t.Fatalf("first read %q", got)
+		}
+		os.WriteFile(hang, nil, 0o644)
+		for _, step := range []struct {
+			after time.Duration
+			want  string
+		}{
+			{0, "1 sessions"},
+			{400 * time.Millisecond, "slow (last answer 1m"},
+			{2 * time.Second, "slow (last answer 1m"},
+		} {
+			time.Sleep(step.after)
+			if got := state(); !strings.HasPrefix(got, step.want) {
+				t.Errorf("%s into the read: state %q, want it to start %q", step.after, got, step.want)
+			}
+		}
+		for deadline := time.Now().Add(5 * time.Second); !strings.HasPrefix(state(), "no answer for "); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("state %q once the read timed out, want no answer", state())
+			}
+		}
+		if err := r.Silent("box"); !errors.Is(err, core.ErrUnreachable) {
+			t.Errorf("after the read timed out Silent = %v, want unreachable", err)
+		}
+	})
 }
 
 func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
@@ -249,33 +257,35 @@ func TestBoardPrintsTheSnapshotYmServeTookAndBuildsNothing(t *testing.T) {
 }
 
 func TestAHostThatStopsAnsweringIsSilentAndLosesItsSharedConnectionOnlyWhenSshFailedOnIt(t *testing.T) {
-	for _, c := range []struct {
-		host            string
-		silent, dropped bool
-	}{{"box", false, false}, {"dead", true, true}, {"slow", true, false}} {
-		t.Run(c.host, func(t *testing.T) {
-			bin := fakeSSH(t)
-			log := filepath.Join(t.TempDir(), "calls")
-			wrapper := filepath.Join(t.TempDir(), "ssh")
-			if err := os.WriteFile(wrapper, []byte("#!/bin/sh\necho \"$@\" >> "+log+"\nexec "+bin+" \"$@\"\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			r := newRemoteHosts([]string{c.host}, 3*time.Second, nil)
-			r.ssh, r.timeout = wrapper, time.Second
-			r.Boards()
-			calls, _ := os.ReadFile(log)
-			dropped := strings.Contains(string(calls), "-O exit")
-			if err := r.Silent(c.host); (err != nil) != c.silent || c.silent && !errors.Is(err, core.ErrUnreachable) {
-				t.Errorf("Silent = %v", err)
-			}
-			if dropped != c.dropped {
-				t.Errorf("shared connection dropped %v; ssh calls:\n%s", dropped, calls)
-			}
-			if err := r.Reach(c.host); (err != nil) != (c.host != "box") {
-				t.Errorf("Reach = %v", err)
-			}
-		})
-	}
+	isolate(t, func(t *testing.T) {
+		for _, c := range []struct {
+			host            string
+			silent, dropped bool
+		}{{"box", false, false}, {"dead", true, true}, {"slow", true, false}} {
+			t.Run(c.host, func(t *testing.T) {
+				bin := fakeSSH(t)
+				log := filepath.Join(t.TempDir(), "calls")
+				wrapper := filepath.Join(t.TempDir(), "ssh")
+				if err := os.WriteFile(wrapper, []byte("#!/bin/sh\necho \"$@\" >> "+log+"\nexec "+bin+" \"$@\"\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				r := newRemoteHosts([]string{c.host}, 3*time.Second, nil)
+				r.ssh, r.timeout = wrapper, time.Second
+				r.Boards()
+				calls, _ := os.ReadFile(log)
+				dropped := strings.Contains(string(calls), "-O exit")
+				if err := r.Silent(c.host); (err != nil) != c.silent || c.silent && !errors.Is(err, core.ErrUnreachable) {
+					t.Errorf("Silent = %v", err)
+				}
+				if dropped != c.dropped {
+					t.Errorf("shared connection dropped %v; ssh calls:\n%s", dropped, calls)
+				}
+				if err := r.Reach(c.host); (err != nil) != (c.host != "box") {
+					t.Errorf("Reach = %v", err)
+				}
+			})
+		}
+	})
 }
 
 func TestBoardSeesHostsRememberedAndForgottenWhileItRuns(t *testing.T) {
